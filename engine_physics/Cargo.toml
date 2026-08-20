@@ -1,0 +1,8 @@
+# Copyright Rob Gage 2026
+
+[package]
+name = "engine_physics"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
