@@ -1,5 +1,8 @@
 # Copyright Rob Gage 2026
 
 [workspace]
-members = ["engine", "engine_audio"]
+members = [
+    "engine",
+    "engine_audio", "engine_graphics",
+]
 resolver = "2"
