@@ -5,3 +5,7 @@ version = 4
 [[package]]
 name = "engine"
 version = "0.0.0"
+
+[[package]]
+name = "engine_audio"
+version = "0.0.0"
