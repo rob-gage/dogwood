@@ -1,0 +1,5 @@
+# Copyright Rob Gage 2026
+
+[workspace]
+members = []
+resolver = "2"
