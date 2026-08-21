@@ -2,13 +2,13 @@
 
 [workspace]
 members = [
-    "demo-game",
     "engine",
     "engine_audio",
     "engine_compute",
     "engine_graphics",
     "engine_input",
     "engine_physics",
+    "engine_user_interface",
 ]
 resolver = "2"
 
