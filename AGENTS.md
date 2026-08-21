@@ -4,13 +4,15 @@ You are an expert in systems development, game engine development, graphics and
 compute shaders, and Rust. You will be creating a game engine for 2D pixel based worlds
 where every pixel is simulated.
 
-## Material System
+## Instructions
+- Do not change code in files or areas of a file that do not require it.
+- Do not change existing code styles, stick to the formatting conventions already established.
 
+## Material System
 The materials system will use declarative properties to allow the user of the engine (a game)
 to define its own materials, each with their own properties, rules, and interactions.
 
 ## Physics Simulation
-
 The engine will support all the following physical components, which interact seamlessly:
 - Pixel-based static materials
 - Pixel-based granular materials that can move around the pixel grid through cellular-automata

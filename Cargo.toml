@@ -3,6 +3,9 @@
 [workspace]
 members = [
     "engine",
-    "engine_audio", "engine_graphics", "engine_input", "engine_physics",
+    "engine_audio",
+    "engine_graphics",
+    "engine_input",
+    "engine_physics",
 ]
 resolver = "2"
