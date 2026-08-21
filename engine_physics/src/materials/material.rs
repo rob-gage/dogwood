@@ -7,8 +7,10 @@ use super::{
 
 /// A material
 pub struct Material {
+    /// The name of this `Material`
+    pub name: &'static str,
     /// The appearance of this `Material`
-    appearance: MaterialAppearance,
+    pub appearance: MaterialAppearance,
     /// The form of this `Material`
-    form: MaterialForm,
+    pub form: MaterialForm,
 }
