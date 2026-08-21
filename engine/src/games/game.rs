@@ -1,8 +1,8 @@
 // Copyright Rob Gage 2026
 
-use std::error::Error;
-
 use super::game_application::GameApplication;
+use std::error::Error;
+use engine_physics::scenes::Scene;
 
 /// Implementors are games that run on this engine.
 pub trait Game {
@@ -46,5 +46,11 @@ pub trait Game {
         event_loop.run_app(&mut application)?;
         application.finish()
     }
+
+    /// Returns `true` if the simulation of the active `Scene` of this `Game` is paused
+    fn is_paused(&self) -> bool;
+
+    /// Returns a mutable reference to the active `Scene` of this `Game`
+    fn scene(&mut self) -> &mut Scene;
 
 }

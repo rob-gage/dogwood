@@ -5,12 +5,13 @@ use crate::tiles::{
 };
 
 /// A scene that can be simulated by the engine
-pub struct Scene<
-    const WIDTH: usize,
-    const HEIGHT: usize,
-> {
+pub struct Scene {
+    /// The width of this `Scene` in tiles
+    width: u32,
+    /// The height of this `Scene` in tiles
+    height: u32,
     /// The active tiles in this `Scene`
-    tiles: [[(); HEIGHT]; WIDTH],
+    tiles: Box<[()]>,
     /// The `TilePosition` of the tile in `tiles` that is furthest to the left and bottom
     tiles_offset: TilePosition,
 }

@@ -1,9 +1,0 @@
-# Copyright Rob Gage 2026
-
-[package]
-name = "demo-game"
-version = "0.0.0"
-edition = "2024"
-
-[dependencies]
-engine = { version = "0.0.0", path = "../engine" }
