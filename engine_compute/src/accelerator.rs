@@ -16,18 +16,15 @@ pub struct Accelerator {
 impl Accelerator {
 
     /// Allocates an `AcceleratorBuffer`
-    pub fn allocate<T>(&self, size: usize) -> Result<AcceleratorBuffer, ()> {
-        let byte_size: usize = size.checked_mul(size_of::<T>()).ok_or(())?;
-        let byte_size: u64 = u64::try_from(byte_size).map_err(|_| ())?;
-        if byte_size == 0 { return Err(()); }
-        Ok(AcceleratorBuffer(self.wgpu_device.create_buffer(
+    pub fn allocate<T>(&self, size: usize) -> AcceleratorBuffer {
+        AcceleratorBuffer(self.wgpu_device.create_buffer(
             &wgpu::BufferDescriptor {
                 label: None,
-                size: byte_size,
+                size: (size as u64).into(),
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             },
-        )))
+        ))
     }
 
     /// Returns a reference to the `Accelerator`'s `wgpu::Adapter`
