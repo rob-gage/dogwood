@@ -16,7 +16,7 @@ pub trait Game {
         Self: Sized,
     {
         let event_loop: winit::event_loop::EventLoop<()> = winit::event_loop::EventLoop::new()?;
-        let mut application = GameApplication::new(self);
+        let mut application: GameApplication<Self> = GameApplication::new(self);
         event_loop.run_app(&mut application)?;
         application.finish()
     }

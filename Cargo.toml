@@ -1,7 +1,7 @@
 # Copyright Rob Gage 2026
 
 [workspace]
-members = [
+members = ["demo-game",
     "engine",
     "engine_audio",
     "engine_graphics",
