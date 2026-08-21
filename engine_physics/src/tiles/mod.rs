@@ -1,3 +1,3 @@
 // Copyright Rob Gage 2026
 
-mod cellular_particle;
+mod tile_inactive;
