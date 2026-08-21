@@ -16,7 +16,7 @@ pub struct GameApplication<G: Game> {
 
 impl<G: Game> GameApplication<G> {
 
-    pub(super) fn new(game: G) -> Self {
+    pub fn new(game: G) -> Self {
         Self {
             game: game,
             window: None,
@@ -24,9 +24,7 @@ impl<G: Game> GameApplication<G> {
         }
     }
 
-    pub(super) fn finish(self) -> Result<(), Box<dyn Error>> {
-        self.error.map_or(Ok(()), Err)
-    }
+    pub fn finish(self) -> Result<(), Box<dyn Error>> { self.error.map_or(Ok(()), Err) }
 
 }
 

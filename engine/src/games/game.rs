@@ -15,7 +15,33 @@ pub trait Game {
     where
         Self: Sized,
     {
-        let event_loop: winit::event_loop::EventLoop<()> = winit::event_loop::EventLoop::new()?;
+        let mut event_loop_builder: winit::event_loop::EventLoopBuilder<()> =
+            winit::event_loop::EventLoop::builder();
+        #[cfg(all(
+            unix,
+            not(target_os = "android"),
+            not(target_os = "emscripten"),
+            not(target_os = "ios"),
+            not(target_os = "macos"),
+            not(target_os = "redox"),
+            feature = "x11",
+            not(feature = "wayland"),
+        ))]
+        winit::platform::x11::EventLoopBuilderExtX11::with_x11(&mut event_loop_builder);
+        #[cfg(all(
+            unix,
+            not(target_os = "android"),
+            not(target_os = "emscripten"),
+            not(target_os = "ios"),
+            not(target_os = "macos"),
+            not(target_os = "redox"),
+            feature = "wayland",
+            not(feature = "x11"),
+        ))]
+        winit::platform::wayland::EventLoopBuilderExtWayland::with_wayland(
+            &mut event_loop_builder,
+        );
+        let event_loop: winit::event_loop::EventLoop<()> = event_loop_builder.build()?;
         let mut application: GameApplication<Self> = GameApplication::new(self);
         event_loop.run_app(&mut application)?;
         application.finish()
