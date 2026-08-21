@@ -1,7 +1,7 @@
 # Copyright Rob Gage 2026
 
 [package]
-name = "engine_graphics"
+name = "engine_compute"
 version = "0.0.0"
 edition = "2024"
 

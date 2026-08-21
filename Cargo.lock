@@ -368,6 +368,13 @@ name = "engine_audio"
 version = "0.0.0"
 
 [[package]]
+name = "engine_compute"
+version = "0.0.0"
+dependencies = [
+ "wgpu",
+]
+
+[[package]]
 name = "engine_graphics"
 version = "0.0.0"
 dependencies = [

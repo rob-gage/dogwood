@@ -5,8 +5,12 @@ members = [
     "demo-game",
     "engine",
     "engine_audio",
+    "engine_compute",
     "engine_graphics",
     "engine_input",
     "engine_physics",
 ]
 resolver = "2"
+
+[workspace.dependencies]
+wgpu = "30.0.0"
