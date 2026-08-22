@@ -454,6 +454,7 @@ dependencies = [
 name = "engine"
 version = "0.0.0"
 dependencies = [
+ "engine_compute",
  "engine_physics",
  "engine_user_interface",
  "pollster",
