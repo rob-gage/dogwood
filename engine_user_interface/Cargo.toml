@@ -5,4 +5,11 @@ name = "engine_user_interface"
 version = "0.0.0"
 edition = "2024"
 
+[features]
+x11 = ["egui-wgpu/x11", "egui-winit/x11"]
+wayland = ["egui-wgpu/wayland", "egui-winit/wayland"]
+
 [dependencies]
+egui = { workspace = true }
+egui-wgpu = { workspace = true }
+egui-winit = { workspace = true }

@@ -7,9 +7,14 @@ edition = "2024"
 
 [features]
 default = ["x11"]
-x11 = ["winit/x11"]
-wayland = ["winit/wayland", "winit/wayland-dlopen"]
+x11 = ["winit/x11", "engine_user_interface/x11"]
+wayland = [
+    "winit/wayland",
+    "winit/wayland-dlopen",
+    "engine_user_interface/wayland",
+]
 
 [dependencies]
 engine_physics = { version = "0.0.0", path = "../engine_physics" }
+engine_user_interface = { version = "0.0.0", path = "../engine_user_interface" }
 winit = { version = "0.30.13", default-features = false, features = ["rwh_06"] }
