@@ -16,5 +16,7 @@ wayland = [
 
 [dependencies]
 engine_physics = { version = "0.0.0", path = "../engine_physics" }
+pollster = { workspace = true }
+wgpu = { workspace = true }
 engine_user_interface = { version = "0.0.0", path = "../engine_user_interface" }
 winit = { version = "0.30.13", default-features = false, features = ["rwh_06"] }

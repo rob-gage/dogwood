@@ -28,7 +28,9 @@ pub trait Game {
             feature = "x11",
             not(feature = "wayland"),
         ))]
-        winit::platform::x11::EventLoopBuilderExtX11::with_x11(&mut event_loop_builder);
+        winit::platform::x11::EventLoopBuilderExtX11::with_x11(
+            &mut event_loop_builder
+        );
         #[cfg(all(
             unix,
             not(target_os = "android"),
@@ -51,8 +53,8 @@ pub trait Game {
     /// Returns `true` if the simulation of the active `Scene` of this `Game` is paused
     fn is_paused(&self) -> bool;
 
-    /// Returns a mutable reference to the active `Scene` of this `Game`
-    fn scene(&mut self) -> &mut Scene;
+    /// Returns an immutable reference to the active `Scene` of this `Game`
+    fn scene(&self) -> &Scene;
 
     /// Returns a mutable reference to the active `UserInterfaceContext` of this `Game`
     fn user_interface_context(&mut self) -> &mut UserInterfaceContext;

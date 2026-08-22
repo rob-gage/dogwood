@@ -17,3 +17,4 @@ egui = "0.36.1"
 egui-wgpu = { version = "0.36.1", default-features = false, features = ["winit"] }
 egui-winit = { version = "0.36.1", default-features = false }
 wgpu = "30.0.0"
+pollster = "0.4.0"
