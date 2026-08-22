@@ -387,6 +387,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "editor"
+version = "0.0.0"
+
+[[package]]
 name = "egui"
 version = "0.36.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
