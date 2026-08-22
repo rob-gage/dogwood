@@ -1,0 +1,11 @@
+# Copyright Rob Gage 2026
+
+[package]
+name = "demo-game"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+engine = { version = "0.0.0", path = "../engine" }
+engine_physics = { version = "0.0.0", path = "../engine_physics" }
+engine_user_interface = { version = "0.0.0", path = "../engine_user_interface" }

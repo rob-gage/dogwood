@@ -53,8 +53,8 @@ pub trait Game {
     /// Returns `true` if the simulation of the active `Scene` of this `Game` is paused
     fn is_paused(&self) -> bool;
 
-    /// Returns an immutable reference to the active `Scene` of this `Game`
-    fn scene(&self) -> &Scene;
+    /// Returns an immutable reference to the active `Scene` of this `Game`, if one is loaded
+    fn scene(&self) -> Option<&Scene>;
 
     /// Returns a mutable reference to the active `UserInterfaceContext` of this `Game`
     fn user_interface_context(&mut self) -> &mut UserInterfaceContext;

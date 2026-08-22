@@ -9,6 +9,7 @@ members = [
     "engine_input",
     "engine_physics",
     "engine_user_interface",
+    "demo-game",
 ]
 resolver = "2"
 

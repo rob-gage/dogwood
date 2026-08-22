@@ -13,7 +13,7 @@ impl SceneRenderer {
     /// Clears the target with the scene's temporary background color
     pub fn render(
         &self,
-        _scene: &Scene,
+        _scene: Option<&Scene>,
         command_encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
     ) {
@@ -24,7 +24,7 @@ impl SceneRenderer {
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.02, g: 0.15, b: 0.06, a: 1.0, }),
+                    load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0, }),
                     store: wgpu::StoreOp::Store,
                 },
             })],
