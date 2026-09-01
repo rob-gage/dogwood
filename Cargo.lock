@@ -391,6 +391,8 @@ version = "0.0.0"
 dependencies = [
  "engine",
  "engine_compute",
+ "engine_graphics",
+ "engine_user_interface",
  "pollster",
  "wgpu",
  "winit",
@@ -473,6 +475,8 @@ dependencies = [
 name = "engine"
 version = "0.0.0"
 dependencies = [
+ "egui",
+ "egui-wgpu",
  "engine_compute",
  "engine_physics",
  "engine_user_interface",
@@ -496,6 +500,7 @@ dependencies = [
 name = "engine_graphics"
 version = "0.0.0"
 dependencies = [
+ "egui",
  "wgpu",
 ]
 
@@ -514,6 +519,7 @@ dependencies = [
  "egui",
  "egui-wgpu",
  "egui-winit",
+ "engine_graphics",
 ]
 
 [[package]]

@@ -6,4 +6,5 @@ version = "0.0.0"
 edition = "2024"
 
 [dependencies]
+egui.workspace = true
 wgpu = { workspace = true }

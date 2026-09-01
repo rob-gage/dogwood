@@ -13,3 +13,4 @@ wayland = ["egui-wgpu/wayland", "egui-winit/wayland"]
 egui = { workspace = true }
 egui-wgpu = { workspace = true }
 egui-winit = { workspace = true }
+engine_graphics = { version = "0.0.0", path = "../engine_graphics" }

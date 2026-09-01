@@ -1,11 +1,15 @@
 // Copyright Rob Gage 2026
 
-use crate::renders::RenderContext;
+use crate::renders::{
+    RenderContext,
+    UserInterfaceRenderer
+};
 use super::{
     Game,
     render_game,
 };
 use engine_compute::Accelerator;
+use engine_user_interface::Widget;
 use std::{
     error::Error,
     sync::Arc,
@@ -16,13 +20,15 @@ pub struct GameApplication<G: Game> {
     /// The game run by this `GameApplication`
     game: G,
     /// The title of the application window
-    title: &'static str,
+    title: String,
     /// The `winit` window used by this `GameApplication`
     window: Option<Arc<winit::window::Window>>,
     /// The shared WGPU accelerator used for graphics and compute
     accelerator: Option<Accelerator>,
     /// The graphics-specific state used to render the window
     render_context: Option<RenderContext>,
+    /// The renderer for the active user interface
+    user_interface_renderer: UserInterfaceRenderer,
     /// An error with the `GameApplication`
     error: Option<Box<dyn Error>>,
 }
@@ -33,13 +39,14 @@ impl<G: Game> GameApplication<G> {
     pub fn new(game: G) -> Self { Self::new_with_title(game, G::TITLE) }
 
     /// Creates a `GameApplication` from a `Game` with a provided title
-    pub fn new_with_title(game: G, title: &'static str) -> Self {
+    pub fn new_with_title(game: G, title: impl Into<String>) -> Self {
         Self {
             game,
-            title,
+            title: title.into(),
             window: None,
             accelerator: None,
             render_context: None,
+            user_interface_renderer: UserInterfaceRenderer::new(),
             error: None,
         }
     }
@@ -66,13 +73,23 @@ impl<G: Game> GameApplication<G> {
                 };
         let view: wgpu::TextureView =
             frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let Some(accelerator) = self.accelerator.as_ref() else { return; };
         let mut command_encoder: wgpu::CommandEncoder = {
-            let Some(accelerator) = self.accelerator.as_ref() else { return; };
             accelerator.wgpu_device().create_command_encoder(
                 &wgpu::CommandEncoderDescriptor { label: Some("frame") },
             )
         };
-        render_game(&mut self.game, &mut command_encoder, &view);
+        let Some(render_context) = self.render_context.as_ref() else { return; };
+        let configuration: &wgpu::SurfaceConfiguration = render_context.configuration();
+        render_game(
+            &mut self.game,
+            &mut self.user_interface_renderer,
+            accelerator,
+            configuration.format,
+            [configuration.width, configuration.height],
+            &mut command_encoder,
+            &view,
+        );
         let Some(accelerator) = self.accelerator.as_ref() else { return; };
         accelerator.wgpu_queue().submit(Some(command_encoder.finish()));
         accelerator.wgpu_queue().present(frame);
@@ -84,6 +101,16 @@ impl<G: Game> GameApplication<G> {
         let (Some(accelerator), Some(render_context)) =
             (self.accelerator.as_ref(), self.render_context.as_mut()) else { return; };
         render_context.resize(accelerator, width, height);
+    }
+
+    /// Adds a widget to the game's user interface.
+    pub fn add_widget(&mut self, widget: &mut impl Widget) {
+        let Some(render_context) = self.render_context.as_ref() else { return; };
+        let configuration = render_context.configuration();
+        self.game.user_interface_context().add_widget(
+            widget,
+            [configuration.width, configuration.height],
+        );
     }
 
 }
@@ -114,7 +141,7 @@ impl<G: Game> GameApplication<G> {
     pub fn set_up(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         if self.window.is_some() { return; }
         let attributes: winit::window::WindowAttributes =
-            winit::window::WindowAttributes::default().with_title(self.title);
+            winit::window::WindowAttributes::default().with_title(&self.title);
         match event_loop.create_window(attributes) {
             Ok(window) => {
                 let window: Arc<winit::window::Window> = Arc::new(window);
