@@ -7,6 +7,7 @@ where every pixel is simulated.
 ## Instructions
 - Do not change code in files or areas of a file that do not require it.
 - Do not change existing code styles, stick to the formatting conventions already established.
+- NEVER RUN `rustfmt`
 
 ## Material System
 The materials system will use declarative properties to allow the user of the engine (a game)

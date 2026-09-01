@@ -30,6 +30,9 @@ impl Game for DemoGame {
     /// Returns no scene because the demo does not load one yet.
     fn scene(&self) -> Option<&Scene> { None }
 
+    /// Returns no scene because the demo does not load one yet.
+    fn scene_mutable(&mut self) -> Option<&mut Scene> { None }
+
     /// Returns the empty user-interface context used by the demo.
     fn user_interface_context(&mut self) -> &mut UserInterfaceContext {
         &mut self.user_interface_context

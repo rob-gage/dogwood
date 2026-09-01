@@ -5,7 +5,11 @@ name = "demo-game"
 version = "0.0.0"
 edition = "2024"
 
+[features]
+editor = ["dep:editor"]
+
 [dependencies]
+editor = { version = "0.0.0", path = "../editor", optional = true }
 engine = { version = "0.0.0", path = "../engine" }
 engine_physics = { version = "0.0.0", path = "../engine_physics" }
 engine_user_interface = { version = "0.0.0", path = "../engine_user_interface" }

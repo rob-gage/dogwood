@@ -6,3 +6,8 @@ version = "0.0.0"
 edition = "2024"
 
 [dependencies]
+engine = { version = "0.0.0", path = "../engine" }
+engine_compute = { version = "0.0.0", path = "../engine_compute" }
+pollster = { workspace = true }
+wgpu = { workspace = true }
+winit = { version = "0.30.13", default-features = false, features = ["rwh_06"] }

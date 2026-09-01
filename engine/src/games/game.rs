@@ -1,9 +1,9 @@
 // Copyright Rob Gage 2026
 
 use super::game_application::GameApplication;
-use std::error::Error;
 use engine_physics::scenes::Scene;
 use engine_user_interface::UserInterfaceContext;
+use std::error::Error;
 
 /// Implementors are games that run on this engine.
 pub trait Game {
@@ -55,6 +55,9 @@ pub trait Game {
 
     /// Returns an immutable reference to the active `Scene` of this `Game`, if one is loaded
     fn scene(&self) -> Option<&Scene>;
+
+    /// Returns a mutable reference to the active `Scene` of this `Game`, if one is loaded
+    fn scene_mutable(&mut self) -> Option<&mut Scene>;
 
     /// Returns a mutable reference to the active `UserInterfaceContext` of this `Game`
     fn user_interface_context(&mut self) -> &mut UserInterfaceContext;
