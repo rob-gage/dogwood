@@ -1,7 +1,7 @@
 // Copyright Rob Gage 2026
 
 use crate::editor_application::EditorApplication;
-use engine::games::Game;
+use engine::Game;
 use std::error::Error;
 
 /// Extends a `Game` with editor launch support

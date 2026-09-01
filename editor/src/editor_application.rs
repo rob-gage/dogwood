@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-use engine::games::{
+use engine::{
     Game,
     GameApplication
 };

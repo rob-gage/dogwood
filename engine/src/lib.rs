@@ -1,4 +1,25 @@
 // Copyright Rob Gage 2026
 
-pub mod games;
-pub mod renders;
+mod games;
+mod renders;
+
+pub use games::{
+    Game,
+    GameApplication,
+};
+
+pub mod audio {
+
+}
+pub mod input {
+
+}
+pub mod graphics {
+
+}
+pub mod physics {
+
+}
+pub mod user_interface {
+
+}

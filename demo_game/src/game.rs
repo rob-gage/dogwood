@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-use engine::games::Game;
+use engine::Game;
 use engine_physics::scenes::Scene;
 use engine_user_interface::UserInterfaceContext;
 
