@@ -1,15 +1,24 @@
 # Copyright Rob Gage 2026
 
 [package]
-name = "demo-game"
+name = "demo_game"
 version = "0.0.0"
 edition = "2024"
+autobins = false
 
-[features]
-editor = ["dep:editor"]
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "demo-game"
+path = "demo-game.rs"
+
+[[bin]]
+name = "demo-game-editor"
+path = "demo-game-editor.rs"
 
 [dependencies]
-editor = { version = "0.0.0", path = "../editor", optional = true }
+editor = { version = "0.0.0", path = "../editor" }
 engine = { version = "0.0.0", path = "../engine" }
 engine_physics = { version = "0.0.0", path = "../engine_physics" }
 engine_user_interface = { version = "0.0.0", path = "../engine_user_interface" }
