@@ -327,8 +327,6 @@ version = "0.0.0"
 dependencies = [
  "editor",
  "engine",
- "engine_physics",
- "engine_user_interface",
 ]
 
 [[package]]

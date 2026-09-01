@@ -1,8 +1,10 @@
 // Copyright Rob Gage 2026
 
-use engine::Game;
-use engine_physics::scenes::Scene;
-use engine_user_interface::UserInterfaceContext;
+use engine::{
+    Game,
+    physics::scenes::Scene,
+    user_interface::UserInterfaceContext,
+};
 
 /// A minimal game used to exercise the engine.
 pub struct DemoGame {
