@@ -1,7 +1,7 @@
 // Copyright Rob Gage 2026
 
 use crate::tiles::{
-    TilePosition
+    TileCoordinates
 };
 
 /// A scene that can be simulated by the engine
@@ -13,5 +13,5 @@ pub struct Scene {
     /// The active tiles in this `Scene`
     tiles: Box<[()]>,
     /// The `TilePosition` of the tile in `tiles` that is furthest to the left and bottom
-    tiles_offset: TilePosition,
+    tiles_offset: TileCoordinates,
 }
