@@ -4,6 +4,7 @@
 name = "engine_compute"
 version = "0.0.0"
 edition = "2024"
+license.workspace = true
 
 [dependencies]
 wgpu = { workspace = true }

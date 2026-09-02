@@ -2,6 +2,8 @@
 
 [workspace]
 members = [
+    "demo_game",
+    "editor",
     "engine",
     "engine_audio",
     "engine_compute",
@@ -9,9 +11,11 @@ members = [
     "engine_input",
     "engine_physics",
     "engine_user_interface",
-    "demo_game", "editor",
 ]
 resolver = "2"
+
+[workspace.package]
+license = "AGPL-3.0-only"
 
 [workspace.dependencies]
 egui = "0.36.1"

@@ -4,6 +4,7 @@
 name = "engine_user_interface"
 version = "0.0.0"
 edition = "2024"
+license.workspace = true
 
 [features]
 x11 = ["egui-wgpu/x11", "egui-winit/x11"]
