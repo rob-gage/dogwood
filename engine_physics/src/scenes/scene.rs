@@ -6,10 +6,10 @@ use crate::tiles::{
 
 /// A scene that can be simulated by the engine
 pub struct Scene {
-    /// The width of this `Scene` in tiles
-    width: u32,
+    /// The simulation width of this `Scene` in tiles
+    simulation_width: u32,
     /// The height of this `Scene` in tiles
-    height: u32,
+    simulation_height: u32,
     /// The active tiles in this `Scene`
     tiles: Box<[()]>,
     /// The `TilePosition` of the tile in `tiles` that is furthest to the left and bottom
