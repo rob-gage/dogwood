@@ -3,3 +3,4 @@
 pub mod materials;
 pub mod scenes;
 pub mod tiles;
+pub mod actors;
