@@ -11,13 +11,13 @@ pub struct TileCoordinates {
 
 impl TileCoordinates {
 
-    /// Returns the region X coordinate of these `TileCoordinates`
-    pub const fn region_coordinates_x(self) -> u64 {
+    /// Returns the chunk X coordinate of these `TileCoordinates`
+    pub const fn chunk_coordinates_x(self) -> u64 {
         (self.x as i64 - i32::MIN as i64).div_euclid(64) as u64
     }
 
-    /// Returns the region Y coordinate of these `TileCoordinates`
-    pub const fn region_coordinates_y(self) -> u64 {
+    /// Returns the chunk Y coordinate of these `TileCoordinates`
+    pub const fn chunk_coordinates_y(self) -> u64 {
         (self.y as i64 - i32::MIN as i64).div_euclid(64) as u64
     }
 
