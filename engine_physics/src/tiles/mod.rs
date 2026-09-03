@@ -2,6 +2,7 @@
 
 mod tile_coordinates;
 mod tile_inactive;
+mod tile;
 
 pub use tile_coordinates::TileCoordinates;
 pub use tile_inactive::TileInactive;

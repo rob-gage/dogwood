@@ -62,3 +62,11 @@ impl Scene {
     }
 
 }
+
+impl Drop for Scene {
+
+    fn drop(&mut self) {
+        self.cellular_particle_material_identifier_buffer.free()
+    }
+
+}
