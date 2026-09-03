@@ -14,7 +14,7 @@ pub struct SceneChunk {
     /// The `TilePosition` of the bottom left tile in this `SceneChunk`
     pub tile_coordinates: TileCoordinates,
     /// The tiles in this `SceneChunk`,
-    tiles: [[TileData; 8]; 8],
+    tiles: [[TileData; 64]; 64],
 }
 
 impl SceneChunk {
@@ -38,10 +38,10 @@ impl SceneChunk {
             x: i32::from_le_bytes(coordinate_data[0..4].try_into().unwrap()),
             y: i32::from_le_bytes(coordinate_data[4..8].try_into().unwrap()),
         };
-        let mut tile_data: Vec<TileData> = Vec::with_capacity(64);
-        for _ in 0..64 { tile_data.push(TileData::deserialize(reader)?); }
+        let mut tile_data: Vec<TileData> = Vec::with_capacity(4096);
+        for _ in 0..4096 { tile_data.push(TileData::deserialize(reader)?); }
         let mut tile_data = tile_data.into_iter();
-        let tiles: [[TileData; 8]; 8] = array::from_fn(|_| {
+        let tiles: [[TileData; 64]; 64] = array::from_fn(|_| {
             array::from_fn(|_| tile_data.next().unwrap())
         });
         Ok(Self { tile_coordinates, tiles })

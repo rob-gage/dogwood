@@ -8,3 +8,12 @@ pub struct TileCoordinates {
     pub x: i32,
     pub y: i32,
 }
+
+impl TileCoordinates {
+
+    /// Returns the `TileCoordinates` of the `SceneChunk` that these `TileCoordinates` are in
+    pub const fn chunk_coordinates(self) -> TileCoordinates {
+        TileCoordinates { x: self.x.div_euclid(64) * 64, y: self.y.div_euclid(64) * 64, }
+    }
+
+}

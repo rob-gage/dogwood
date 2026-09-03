@@ -12,6 +12,7 @@ use engine_compute::{
     AcceleratorBuffer
 };
 use std::{
+    collections::HashMap,
     error::Error,
     path::PathBuf,
     sync::Arc,
@@ -27,6 +28,8 @@ pub struct Scene {
     data: SceneData,
     /// The `SceneGenerator` generating new tiles for this `Scene`
     generator: Box<dyn SceneGenerator>,
+    /// Chunks in this scene indexed by their `TilePosition`s
+    chunks: HashMap<TileCoordinates, SceneChunk>,
     /// The active tiles in this `Scene`
     tiles: Box<[()]>,
     /// The `TilePosition` of the tile in `tiles` that is furthest to the left and bottom
@@ -55,6 +58,7 @@ impl Scene {
             configuration,
             data,
             generator,
+            chunks: HashMap::new(),
             tiles: Box::new([]),
             origin,
             cellular_particle_material_identifier_buffer,
