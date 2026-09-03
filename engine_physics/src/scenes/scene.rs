@@ -6,14 +6,17 @@ use super::{
     SceneGenerator,
 };
 use crate::tiles::TileCoordinates;
-use engine_compute::AcceleratorBuffer;
+use engine_compute::{Accelerator, AcceleratorBuffer};
 use std::{
     error::Error,
-    path::PathBuf
+    path::PathBuf,
+    sync::Arc,
 };
 
 /// A scene that can be simulated by the engine
 pub struct Scene {
+    /// The `Accelerator` this `Scene` is running on
+    accelerator: Arc<Accelerator>,
     /// The persistent `SceneData` backing this `Scene`
     data: SceneData,
     /// The `SceneGenerator` generating new tiles for this `Scene`
@@ -34,10 +37,28 @@ impl Scene {
 
     /// Creates a new `Scene` with provided dimensions
     pub fn new(
+        accelerator: &Arc<Accelerator>,
         scene_data_path: impl Into<PathBuf>,
         simulation_dimensions: (u16, u16),
     ) -> Result<Self, Box<dyn Error>> {
-        todo!()
+        let accelerator: Arc<Accelerator> = accelerator.clone();
+        let data: SceneData = SceneData::open(scene_data_path.into())?;
+        let generator: Box<dyn SceneGenerator> = Box::new(());
+        let (simulation_width, simulation_height): (u16, u16) = simulation_dimensions;
+        let active_tile_count: usize = simulation_width as usize * simulation_height as usize;
+        let tiles_offset: TileCoordinates = TileCoordinates {x: 0, y: 0};
+        let cellular_particle_material_identifier_buffer: AcceleratorBuffer =
+            accelerator.allocate::<u32>(active_tile_count * 64);
+        Ok(Self {
+            accelerator,
+            data,
+            generator,
+            simulation_width,
+            simulation_height,
+            tiles: Box::new([]),
+            tiles_offset,
+            cellular_particle_material_identifier_buffer,
+        })
     }
 
 }
