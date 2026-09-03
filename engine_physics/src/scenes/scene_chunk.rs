@@ -19,6 +19,14 @@ pub struct SceneChunk {
 
 impl SceneChunk {
 
+    /// Creates a new empty `SceneChunk`
+    pub fn new_empty(tile_coordinates: TileCoordinates) -> Self {
+        Self {
+            tile_coordinates,
+            tiles: array::from_fn(|_| array::from_fn(|_| TileInactive::EMPTY))
+        }
+    }
+
     /// Deserializes binary data into a `SceneChunk`
     pub fn deserialize<R: io::Read>(reader: &mut R) -> Result<SceneChunk, io::Error> {
         let mut magic: [u8; 8] = [0; 8];

@@ -511,6 +511,9 @@ version = "0.0.0"
 [[package]]
 name = "engine_physics"
 version = "0.0.0"
+dependencies = [
+ "engine_compute",
+]
 
 [[package]]
 name = "engine_user_interface"

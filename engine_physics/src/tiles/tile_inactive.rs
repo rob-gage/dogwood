@@ -7,6 +7,9 @@ pub struct TileInactive([[(); 8]; 8]);
 
 impl TileInactive {
 
+    /// An empty `TileInactive`
+    pub const EMPTY: Self = Self([[(); 8]; 8]);
+
     /// Deserializes binary data into a `TileInactive`
     pub fn deserialize<R: io::Read>(reader: &mut R) -> Result<TileInactive, io::Error> {
         let mut data: [u8; 64] = [0; 64];

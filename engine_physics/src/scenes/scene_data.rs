@@ -21,9 +21,9 @@ impl SceneData {
 
     fn chunk_path(&self, position: TileCoordinates) -> PathBuf {
         self.path.join("chunks").join(format!(
-            "{:08}_{:08}.chunk",
-            position.chunk_coordinates_x(),
-            position.chunk_coordinates_y(),
+            "{:08x}{:08x}.chunk",
+            position.x as u32,
+            position.y as u32,
         ))
     }
 
