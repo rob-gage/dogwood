@@ -6,3 +6,4 @@ mod tile;
 
 pub use tile_coordinates::TileCoordinates;
 pub use tile_data::TileData;
+pub use tile::Tile;

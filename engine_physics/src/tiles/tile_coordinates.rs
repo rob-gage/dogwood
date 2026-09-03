@@ -3,7 +3,7 @@
 /// The position of a tile within a `Scene`
 ///
 /// Positions move higher up as Y increases, and they move further right as X increases.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct TileCoordinates {
     pub x: i32,
     pub y: i32,
