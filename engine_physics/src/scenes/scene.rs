@@ -75,7 +75,7 @@ pub struct Scene {
     /// The `TilePosition` of the tile in `tiles` that is furthest to the left and bottom
     origin: TileCoordinates,
     /// The buffer containing `MaterialIdentifier`s for cellular particles
-    cellular_particle_material_identifier_buffer: AcceleratorBuffer,
+    cell_material_identifier_buffer: AcceleratorBuffer,
 }
 
 impl Scene {
@@ -110,7 +110,7 @@ impl Scene {
             simulation_width: configuration.simulation_width,
             simulation_height: configuration.simulation_height,
             origin: TileCoordinates { x: 0, y: 0 },
-            cellular_particle_material_identifier_buffer,
+            cell_material_identifier_buffer: cellular_particle_material_identifier_buffer,
         };
         // load or generate every chunk needed by the initial area and prefetch buffer.
         for coordinates in scene.streaming_area().iterate_chunk_coordinates() {
@@ -189,7 +189,6 @@ impl Scene {
                 _ => (),
             }
         }
-        // reserve a streaming identifier
         let streaming_identifier: u64 = self.chunks_streaming_identifier_next;
         self.chunks_streaming_identifier_next =
             self.chunks_streaming_identifier_next.wrapping_add(1);
@@ -222,12 +221,9 @@ impl Scene {
                 _ => (),
             }
         }
-        // reserve a streaming identifier
         let streaming_identifier: u64 = self.chunks_streaming_identifier_next;
         self.chunks_streaming_identifier_next =
-            streaming_identifier.checked_add(1).ok_or_else(|| {
-                io::Error::new(io::ErrorKind::Other, "chunk streaming identifier overflow")
-            })?;
+            self.chunks_streaming_identifier_next.wrapping_add(1);
         self.chunks.insert(coordinates, ChunkEntry::Generating {
             streaming_identifier,
         });
@@ -266,8 +262,9 @@ impl Scene {
         Ok(())
     }
 
-    /// Refreshes the active tile area towards the desired origin
-    fn refresh(&mut self, desired_origin: TileCoordinates) -> Result<(), io::Error> {
+    /// Refreshes the active tile area towards the desired origin, loading and generating
+    /// chunks as necessary
+    fn chunks_refresh(&mut self, desired_origin: TileCoordinates) -> Result<(), io::Error> {
         // apply completed background loads and generations before planning movement
         while let Ok(response) = self.chunk_streaming_responses.try_recv() {
             match response {
@@ -329,7 +326,7 @@ impl Scene {
         let batch_size: i64 = self.tile_streaming_batch_size as i64;
         if batch_size == 0 { return Ok(()); }
         // request the desired prefetch region before the active origin reaches it
-        self.ensure_chunk_availability()?;
+        self.chunks_request()?;
         // move by at most one configured batch on each axis per refresh
         let x_difference: i64 = i64::from(desired_origin.x) - i64::from(self.origin.x);
         let y_difference: i64 = i64::from(desired_origin.y) - i64::from(self.origin.y);
@@ -338,6 +335,20 @@ impl Scene {
         if y_difference >= batch_size { self.shift_up()?; }
         if y_difference <= -batch_size { self.shift_down()?; }
         self.chunks_prune()
+    }
+
+    /// Requests every chunk in the streaming area
+    fn chunks_request(&mut self) -> Result<(), io::Error> {
+        let streaming_area: TileArea = self.streaming_area();
+        for coordinates in streaming_area.iterate_chunk_coordinates() {
+            match self.chunks.get(&coordinates) {
+                None | Some(ChunkEntry::Error(_)) => self.chunk_load(coordinates)?,
+                Some(ChunkEntry::Active { .. }) |
+                Some(ChunkEntry::Loading { .. }) |
+                Some(ChunkEntry::Generating { .. }) => { },
+            };
+        }
+        Ok(())
     }
 
     /// Shifts the active tile area up by the configured streaming batch size
@@ -382,7 +393,7 @@ impl Scene {
 
     /// Moves the active origin if all chunks required at the new origin are ready
     fn shift_to(&mut self, new_origin: TileCoordinates) -> Result<(), io::Error> {
-        self.ensure_chunk_availability()?;
+        self.chunks_request()?;
         let new_active_area: TileArea = TileArea::new(
             new_origin,
             self.simulation_width,
@@ -397,26 +408,12 @@ impl Scene {
         Ok(())
     }
 
-    /// Requests every chunk in the streaming area
-    fn ensure_chunk_availability(&mut self) -> Result<(), io::Error> {
-        let streaming_area: TileArea = self.streaming_area();
-        for coordinates in streaming_area.iterate_chunk_coordinates() {
-            match self.chunks.get(&coordinates) {
-                None | Some(ChunkEntry::Error(_)) => self.chunk_load(coordinates)?,
-                Some(ChunkEntry::Active { .. }) |
-                Some(ChunkEntry::Loading { .. }) |
-                Some(ChunkEntry::Generating { .. }) => { },
-            };
-        }
-        Ok(())
-    }
-
 }
 
 impl Drop for Scene {
 
     fn drop(&mut self) {
-        self.cellular_particle_material_identifier_buffer.free()
+        self.cell_material_identifier_buffer.free()
     }
 
 }

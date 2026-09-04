@@ -1,6 +1,7 @@
 // Copyright Rob Gage 2026
 
 /// Render view configuration measured in tiles
+#[derive(Copy, Clone)]
 pub struct Camera {
     /// The width of the camera view in floating-point units
     pub width: f32,

@@ -9,10 +9,12 @@ use super::{
     render_game,
 };
 use engine_compute::Accelerator;
+use engine_graphics::Camera;
 use engine_input::{
     InputTranslator,
     KeyboardInputState,
 };
+use engine_physics::scenes::ScenePosition;
 use engine_user_interface::Widget;
 use std::{
     error::Error,
@@ -39,6 +41,14 @@ pub struct GameApplication<G: Game> {
     error: Option<Box<dyn Error>>,
     /// The current keyboard input state
     keyboard_input_state: KeyboardInputState,
+    /// The runtime camera state
+    camera: Camera,
+    /// The current camera position in world tiles
+    camera_position: [f32; 2],
+    /// The current camera follow velocity in world tiles per second
+    camera_velocity: [f32; 2],
+    /// The time at which the previous application update occurred
+    update_time: std::time::Instant,
 }
 
 impl<G: Game> GameApplication<G> {
@@ -49,6 +59,7 @@ impl<G: Game> GameApplication<G> {
     /// Creates a `GameApplication` from a `Game` with a provided title
     pub fn new_with_title(game: G, title: impl Into<String>) -> Self {
         let input_translator: Box<dyn InputTranslator> = game.input_translator();
+        let camera: Camera = game.camera();
         Self {
             game,
             input_translator,
@@ -59,6 +70,10 @@ impl<G: Game> GameApplication<G> {
             user_interface_renderer: UserInterfaceRenderer::new(),
             error: None,
             keyboard_input_state: KeyboardInputState::new(),
+            camera,
+            camera_position: [0.5, 0.5],
+            camera_velocity: [0.0, 0.0],
+            update_time: std::time::Instant::now(),
         }
     }
 
@@ -122,6 +137,68 @@ impl<G: Game> GameApplication<G> {
             widget,
             [configuration.width, configuration.height],
         );
+    }
+
+    /// Updates the application systems
+    fn update(&mut self) {
+        let update_time: std::time::Instant = std::time::Instant::now();
+        let delta_time: f32 = update_time.duration_since(self.update_time).as_secs_f32();
+        self.update_time = update_time;
+        self.update_camera(delta_time);
+    }
+
+    /// Updates the camera position to follow the game's camera target
+    fn update_camera(&mut self, delta_time: f32) {
+        let target: engine_physics::scenes::ScenePosition = self.game.camera_target();
+        let target: [f32; 2] = [
+            target.tile_coordinates.x as f32 + target.x_offset,
+            target.tile_coordinates.y as f32 + target.y_offset,
+        ];
+        if delta_time <= 0.0 {
+            self.camera_position = target;
+            self.camera_velocity = [0.0, 0.0];
+            return;
+        }
+        let difference_x: f32 = target[0] - self.camera_position[0];
+        let difference_y: f32 = target[1] - self.camera_position[1];
+        let distance_squared: f32 = difference_x * difference_x + difference_y * difference_y;
+        if distance_squared <= f32::EPSILON {
+            self.camera_position = target;
+            self.camera_velocity = [0.0, 0.0];
+            return;
+        }
+        if self.camera.follow_acceleration <= 0.0 || self.camera.follow_speed <= 0.0 {
+            self.camera_position = target;
+            self.camera_velocity = [0.0, 0.0];
+            return;
+        }
+        let distance: f32 = distance_squared.sqrt();
+        let direction_x: f32 = difference_x / distance;
+        let direction_y: f32 = difference_y / distance;
+        if self.camera.follow_distance_maximum > 0.0 &&
+                distance > self.camera.follow_distance_maximum {
+            self.camera_position[0] = target[0] - direction_x * self.camera.follow_distance_maximum;
+            self.camera_position[1] = target[1] - direction_y * self.camera.follow_distance_maximum;
+            self.camera_velocity = [0.0, 0.0];
+            return;
+        }
+        self.camera_velocity[0] += direction_x * self.camera.follow_acceleration * delta_time;
+        self.camera_velocity[1] += direction_y * self.camera.follow_acceleration * delta_time;
+        let velocity_squared: f32 = self.camera_velocity[0] * self.camera_velocity[0] +
+            self.camera_velocity[1] * self.camera_velocity[1];
+        let speed: f32 = velocity_squared.sqrt();
+        if speed > self.camera.follow_speed {
+            self.camera_velocity[0] = self.camera_velocity[0] / speed * self.camera.follow_speed;
+            self.camera_velocity[1] = self.camera_velocity[1] / speed * self.camera.follow_speed;
+        }
+        self.camera_position[0] += self.camera_velocity[0] * delta_time;
+        self.camera_position[1] += self.camera_velocity[1] * delta_time;
+        let remaining_x: f32 = target[0] - self.camera_position[0];
+        let remaining_y: f32 = target[1] - self.camera_position[1];
+        if remaining_x * difference_x + remaining_y * difference_y < 0.0 {
+            self.camera_position = target;
+            self.camera_velocity = [0.0, 0.0];
+        }
     }
 
 }
@@ -191,6 +268,7 @@ impl<G: Game> GameApplication<G> {
                 };
                 self.accelerator = Some(accelerator);
                 self.render_context = Some(render_context);
+                self.update_camera(0.0);
                 self.window = Some(window);
             }
             Err(error) => {
@@ -222,6 +300,7 @@ impl<G: Game> winit::application::ApplicationHandler for GameApplication<G> {
             &self.keyboard_input_state,
             self.input_translator.as_ref(),
         );
+        self.update();
         self.redraw();
     }
 
