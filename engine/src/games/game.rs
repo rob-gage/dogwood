@@ -1,12 +1,19 @@
 // Copyright Rob Gage 2026
 
 use super::game_application::GameApplication;
+use engine_graphics::Camera;
 use engine_input::{
     InputTranslator,
     KeyboardInputState,
 };
 use engine_physics::actors::ActorControlState;
-use engine_physics::scenes::Scene;
+use engine_physics::{
+    scenes::{
+        Scene,
+        ScenePosition,
+    },
+    tiles::TileCoordinates,
+};
 use engine_user_interface::UserInterfaceContext;
 use std::error::Error;
 
@@ -15,6 +22,21 @@ pub trait Game {
 
     /// The title of the game.
     const TITLE: &'static str;
+
+    /// Returns the camera configuration used by this `Game`
+    fn camera(&self) -> Camera;
+
+    /// Returns the position followed by this `Game`'s camera
+    fn camera_target(&self) -> ScenePosition {
+        let static_position: ScenePosition = ScenePosition {
+            tile_coordinates: TileCoordinates { x: 0, y: 0 },
+            x_offset: 0.5,
+            y_offset: 0.5,
+        };
+        let Some(scene) = self.scene() else { return static_position; };
+        let Some(actor) = scene.possessed_actor() else { return static_position; };
+        scene.actor_registry().get_position(actor).copied().unwrap_or(static_position)
+    }
 
     /// Returns the input translator used by this `Game`
     fn input_translator(&self) -> Box<dyn InputTranslator> {

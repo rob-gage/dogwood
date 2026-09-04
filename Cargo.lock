@@ -746,6 +746,7 @@ dependencies = [
  "egui",
  "egui-wgpu",
  "engine_compute",
+ "engine_graphics",
  "engine_input",
  "engine_physics",
  "engine_user_interface",

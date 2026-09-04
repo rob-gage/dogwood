@@ -2,6 +2,7 @@
 
 use engine::{
     Game,
+    graphics::Camera,
     physics::scenes::Scene,
     user_interface::UserInterfaceContext,
 };
@@ -25,6 +26,18 @@ impl DemoGame {
 impl Game for DemoGame {
 
     const TITLE: &'static str = "Demo Game";
+
+    /// Returns the camera configuration used by the demo.
+    fn camera(&self) -> Camera {
+        Camera {
+            width: 16.0,
+            height: 9.0,
+            zoom: 1.0,
+            follow_acceleration: 0.0,
+            follow_speed: 0.0,
+            follow_distance_maximum: 0.0,
+        }
+    }
 
     /// Returns whether the demo simulation is paused.
     fn is_paused(&self) -> bool { true }

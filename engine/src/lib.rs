@@ -15,7 +15,7 @@ pub mod input {
 
 }
 pub mod graphics {
-
+    pub use engine_graphics::Camera;
 }
 pub mod physics {
     pub use engine_physics::scenes;
