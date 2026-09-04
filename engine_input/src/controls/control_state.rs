@@ -1,4 +1,4 @@
-// Copyright Rob Gage
+// Copyright Rob Gage 2026
 
 /// The current universal controls produced by an input or control scheme
 #[derive(Copy, Clone, Default)]

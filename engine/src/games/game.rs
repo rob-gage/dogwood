@@ -5,7 +5,7 @@ use engine_input::{
     InputTranslator,
     KeyboardInputState,
 };
-use engine_input::ControlState;
+use engine_physics::actors::ActorControlState;
 use engine_physics::scenes::Scene;
 use engine_user_interface::UserInterfaceContext;
 use std::error::Error;
@@ -25,8 +25,11 @@ pub trait Game {
     fn pass_input(
         &mut self,
         keyboard_input_state: &KeyboardInputState,
-        control_state: ControlState
+        input_translator: &dyn InputTranslator,
     ) {
+        let control_state: ActorControlState = ActorControlState(
+            input_translator.translate(keyboard_input_state)
+        );
         let Some(scene) = self.scene_mutable() else { return; };
         let Some(actor) = scene.possessed_actor() else { return; };
         scene.actor_registry_mutable().set_control_state(actor, control_state);
