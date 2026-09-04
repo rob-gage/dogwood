@@ -140,7 +140,7 @@ impl Scene {
 
     /// Possesses an actor if it exists in this `Scene`
     pub fn possess_actor(&mut self, identifier: Actor) -> bool {
-        if !self.actor_registry.contains(identifier) { return false; }
+        if !self.actor_registry.is_possessable(identifier) { return false; }
         self.possessed_actor = Some(identifier);
         true
     }
