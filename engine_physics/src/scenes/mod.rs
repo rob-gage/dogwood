@@ -4,8 +4,10 @@ mod scene;
 mod scene_configuration;
 mod scene_data;
 mod scene_generator;
+mod scene_position;
 
 pub use scene::Scene;
 pub use scene_configuration::SceneConfiguration;
 pub use scene_data::SceneData;
 pub use scene_generator::SceneGenerator;
+pub use scene_position::ScenePosition;

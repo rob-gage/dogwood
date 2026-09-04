@@ -3,9 +3,13 @@
 use super::{
     SceneConfiguration,
     SceneData,
-    SceneGenerator
+    SceneGenerator,
 };
 use crate::{
+    actors::{
+        Actor,
+        ActorRegistry,
+    },
     chunks::{
         Chunk,
         ChunkEntry,
@@ -46,6 +50,10 @@ pub struct Scene {
     data: SceneData,
     /// The `SceneGenerator` used to generate new tiles for this `Scene`
     generator: Arc<dyn SceneGenerator>,
+    /// The `ActorRegistry` currently managed by this `Scene`
+    actor_registry: ActorRegistry,
+    /// The actor currently receiving player control, if any
+    possessed_actor: Option<Actor>,
     /// Chunks in this scene indexed by their `TilePosition`s
     chunks: HashMap<TileCoordinates, ChunkEntry>,
     /// The sender used by chunk streaming threads to return streamed chunks
@@ -90,6 +98,8 @@ impl Scene {
             accelerator,
             data,
             generator,
+            actor_registry: ActorRegistry::new(),
+            possessed_actor: None,
             chunks: HashMap::new(),
             chunk_streaming_response_sender,
             chunk_streaming_responses,
@@ -114,6 +124,30 @@ impl Scene {
             });
         }
         Ok(scene)
+    }
+
+    /// Returns the `ActorRegistry` for this `Scene`
+    pub const fn actor_registry(&self) -> &ActorRegistry { &self.actor_registry }
+
+    /// Returns mutable access to the `ActorRegistry` for this `Scene`
+    pub const fn actor_registry_mutable(&mut self) -> &mut ActorRegistry
+    { &mut self.actor_registry }
+
+    /// Returns the currently possessed actor if one exists
+    pub fn possessed_actor(&self) -> Option<Actor> {
+        self.possessed_actor.filter(|actor| self.actor_registry.contains(*actor))
+    }
+
+    /// Possesses an actor if it exists in this `Scene`
+    pub fn possess_actor(&mut self, identifier: Actor) -> bool {
+        if !self.actor_registry.contains(identifier) { return false; }
+        self.possessed_actor = Some(identifier);
+        true
+    }
+
+    /// Releases the currently possessed actor
+    pub fn dispossess_actor(&mut self) {
+        self.possessed_actor = None;
     }
 
     /// Returns the exact tile area currently being simulated
