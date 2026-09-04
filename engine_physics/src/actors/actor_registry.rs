@@ -9,16 +9,24 @@ use crate::scenes::{
     ScenePosition,
     SceneVelocity,
 };
+use engine_input::ControlState;
+use std::collections::HashMap;
 
 /// Owns the ECS world and provides the engine's actor-facing API
 pub struct ActorRegistry {
     world: bevy_ecs::world::World,
+    control_states: HashMap<Actor, ControlState>,
 }
 
 impl ActorRegistry {
 
     /// Creates an empty `ActorRegistry`
-    pub fn new() -> Self { Self { world: bevy_ecs::world::World::new() } }
+    pub fn new() -> Self {
+        Self {
+            world: bevy_ecs::world::World::new(),
+            control_states: HashMap::new(),
+        }
+    }
 
     /// Creates an actor with a `ScenePosition`
     pub fn spawn(&mut self, position: ScenePosition) -> Actor {
@@ -47,7 +55,9 @@ impl ActorRegistry {
 
     /// Removes an actor from the registry, returning true if successful
     pub fn despawn(&mut self, identifier: Actor) -> bool {
-        self.world.despawn(identifier.bevy_entity())
+        let despawned: bool = self.world.despawn(identifier.bevy_entity());
+        if despawned { self.control_states.remove(&identifier); }
+        despawned
     }
 
     /// Returns `true` if this `ActorRegistry` contains this `Actor`
@@ -85,6 +95,19 @@ impl ActorRegistry {
         self.world.get_mut::<SceneVelocity>(identifier.bevy_entity())
             .map(|mut current| *current = velocity)
             .is_some()
+    }
+
+    /// Passes universal controls to a pawn
+    pub fn set_control_state(
+        &mut self,
+        identifier: Actor,
+        control_state: ControlState,
+    ) -> bool {
+        if self.world.get::<ActorPawn>(identifier.bevy_entity()).is_none() {
+            return false;
+        }
+        self.control_states.insert(identifier, control_state);
+        true
     }
 
     /// Returns whether an actor is eligible for possession

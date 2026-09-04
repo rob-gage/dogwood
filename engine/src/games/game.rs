@@ -1,7 +1,11 @@
 // Copyright Rob Gage 2026
 
 use super::game_application::GameApplication;
-use engine_input::InputTranslator;
+use engine_input::{
+    InputTranslator,
+    KeyboardInputState,
+};
+use engine_input::ControlState;
 use engine_physics::scenes::Scene;
 use engine_user_interface::UserInterfaceContext;
 use std::error::Error;
@@ -15,6 +19,17 @@ pub trait Game {
     /// Returns the input translator used by this `Game`
     fn input_translator(&self) -> Box<dyn InputTranslator> {
         Box::new(engine_input::SimpleInputTranslator::ARROWS_AND_WASD)
+    }
+
+    /// Passes input to the `Game`
+    fn pass_input(
+        &mut self,
+        keyboard_input_state: &KeyboardInputState,
+        control_state: ControlState
+    ) {
+        let Some(scene) = self.scene_mutable() else { return; };
+        let Some(actor) = scene.possessed_actor() else { return; };
+        scene.actor_registry_mutable().set_control_state(actor, control_state);
     }
 
     /// Launches this `Game`.

@@ -10,8 +10,9 @@ use super::{
 };
 use engine_compute::Accelerator;
 use engine_input::{
+    ControlState,
     InputTranslator,
-    KeyboardInputState,
+    KeyboardInputState
 };
 use engine_user_interface::Widget;
 use std::{
@@ -23,6 +24,8 @@ use std::{
 pub struct GameApplication<G: Game> {
     /// The game run by this `GameApplication`
     game: G,
+    /// The input translator selected by this `Game`
+    input_translator: Box<dyn InputTranslator>,
     /// The title of the application window
     title: String,
     /// The `winit` window used by this `GameApplication`
@@ -46,8 +49,10 @@ impl<G: Game> GameApplication<G> {
 
     /// Creates a `GameApplication` from a `Game` with a provided title
     pub fn new_with_title(game: G, title: impl Into<String>) -> Self {
+        let input_translator: Box<dyn InputTranslator> = game.input_translator();
         Self {
             game,
+            input_translator,
             title: title.into(),
             window: None,
             accelerator: None,
@@ -214,6 +219,8 @@ impl<G: Game> winit::application::ApplicationHandler for GameApplication<G> {
     }
 
     fn about_to_wait(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
+        let control_state: ControlState = self.input_translator.translate(&self.keyboard_input_state);
+        self.game.pass_input(&self.keyboard_input_state, control_state);
         self.redraw();
     }
 
