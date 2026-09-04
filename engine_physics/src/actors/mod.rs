@@ -2,8 +2,10 @@
 
 mod actor;
 mod actor_pawn;
+mod actor_possessable;
 mod actor_registry;
 
 pub use actor::Actor;
 pub use actor_pawn::ActorPawn;
+pub use actor_possessable::ActorPossessable;
 pub use actor_registry::ActorRegistry;
