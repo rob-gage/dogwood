@@ -126,6 +126,12 @@ impl Scene {
         Ok(scene)
     }
 
+    /// Sets the `SceneGenerator` of this `Scene` that will be used for generating new chunks
+    pub fn with_generator(mut self, generator: impl SceneGenerator + 'static) -> Self {
+        self.generator = Arc::new(generator);
+        self
+    }
+
     /// Returns the `ActorRegistry` for this `Scene`
     pub const fn actor_registry(&self) -> &ActorRegistry { &self.actor_registry }
 
