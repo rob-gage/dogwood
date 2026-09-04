@@ -775,6 +775,9 @@ dependencies = [
 [[package]]
 name = "engine_input"
 version = "0.0.0"
+dependencies = [
+ "winit",
+]
 
 [[package]]
 name = "engine_physics"
