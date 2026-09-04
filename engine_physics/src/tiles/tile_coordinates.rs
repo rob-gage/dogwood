@@ -11,7 +11,7 @@ pub struct TileCoordinates {
 
 impl TileCoordinates {
 
-    /// Returns the `TileCoordinates` of the `SceneChunk` that these `TileCoordinates` are in
+    /// Returns the `TileCoordinates` of the `Chunk` that these `TileCoordinates` are in
     pub const fn chunk_coordinates(self) -> TileCoordinates {
         TileCoordinates { x: self.x.div_euclid(64) * 64, y: self.y.div_euclid(64) * 64, }
     }

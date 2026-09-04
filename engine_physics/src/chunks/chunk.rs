@@ -10,16 +10,19 @@ use std::{
 };
 
 /// An inactive 64 tile by 64 tile chunk of a `Scene`
-pub struct SceneChunk {
-    /// The `TilePosition` of the bottom left tile in this `SceneChunk`
+pub struct Chunk {
+    /// The `TilePosition` of the bottom left tile in this `Chunk`
     pub tile_coordinates: TileCoordinates,
-    /// The tiles in this `SceneChunk`,
+    /// The tiles in this `Chunk`,
     tiles: [[TileData; 64]; 64],
 }
 
-impl SceneChunk {
+impl Chunk {
 
-    /// Creates a new empty `SceneChunk`
+    /// The width and height of a `Chunk` in tiles
+    pub const WIDTH: u16 = 64;
+
+    /// Creates a new empty `Chunk`
     pub fn new_empty(tile_coordinates: TileCoordinates) -> Self {
         Self {
             tile_coordinates,
@@ -27,8 +30,8 @@ impl SceneChunk {
         }
     }
 
-    /// Deserializes binary data into a `SceneChunk`
-    pub fn deserialize<R: io::Read>(reader: &mut R) -> Result<SceneChunk, io::Error> {
+    /// Deserializes binary data into a `Chunk`
+    pub fn deserialize<R: io::Read>(reader: &mut R) -> Result<Chunk, io::Error> {
         let mut magic: [u8; 8] = [0; 8];
         reader.read_exact(&mut magic)?;
         if &magic != b"dogwood_" { return Err(io::ErrorKind::InvalidData.into()); }
@@ -47,7 +50,7 @@ impl SceneChunk {
         Ok(Self { tile_coordinates, tiles })
     }
 
-    /// Serializes a `SceneChunk` into binary data
+    /// Serializes a `Chunk` into binary data
     pub fn serialize<W: io::Write>(&self, writer: &mut W) -> Result<(), io::Error> {
         writer.write_all(b"dogwood_")?;
         writer.write_all(&self.tile_coordinates.x.to_le_bytes())?;
@@ -60,8 +63,7 @@ impl SceneChunk {
         Ok(())
     }
 
-    /// Returns the `TileInactive` at a given position in this `SceneChunk` if it is not out
-    /// of bounds
+    /// Returns the `TileData` at a given position in this `Chunk` if it is not out of bounds
     pub fn get_tile(&self, position: TileCoordinates) -> Result<&TileData, ()> {
         let x: usize = usize::try_from(
             position.x.checked_sub(self.tile_coordinates.x).ok_or(())?
@@ -73,14 +75,12 @@ impl SceneChunk {
         Ok(&self.tiles[y][x])
     }
 
-    /// Returns the `TileInactive` at a given position in this `SceneChunk` if it is not out of
-    /// bounds, panicking if it is
+    /// Returns the `TileData` at a given position in this `Chunk`, panicking if it is out of bounds
     pub fn get_tile_unchecked(&self, position: TileCoordinates) -> &TileData {
         self.get_tile(position).unwrap()
     }
 
-    /// Sets a provided `TileInactive` at a given position in this `SceneChunk` if it is not out of
-    /// bounds
+    /// Sets a provided `TileData` at a given position in this `Chunk` if it is not out of bounds
     pub fn set_tile(&mut self, position: TileCoordinates, tile: TileData) -> Result<(), ()> {
         let x: usize = usize::try_from(
             position.x.checked_sub(self.tile_coordinates.x).ok_or(())?
@@ -93,8 +93,7 @@ impl SceneChunk {
         Ok(())
     }
 
-    /// Sets a provided `TileInactive` at a given position in this `SceneChunk` if it is not out of
-    /// bounds, panicking if it is
+    /// Sets a provided `TileData` at a given position in this `Chunk`, panicking if it is out of bounds
     pub fn set_tile_unchecked(&mut self, position: TileCoordinates, tile: TileData) {
         self.set_tile(position, tile).unwrap()
     }

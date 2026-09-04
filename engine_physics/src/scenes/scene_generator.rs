@@ -1,25 +1,27 @@
 // Copyright Rob Gage 2026
 
-use super::SceneChunk;
-use crate::tiles::TileCoordinates;
+use crate::{
+    chunks::Chunk,
+    tiles::TileCoordinates,
+};
 
-/// Generates `SceneChunks` that do not already exist in a `Scene`
-pub trait SceneGenerator {
+/// Generates `Chunks` that do not already exist in a `Scene`
+pub trait SceneGenerator: Send + Sync {
 
-    /// Generates a `SceneChunk` at the provided `TileCoordinates`
-    fn generate_chunk(&self, tile_coordinates: TileCoordinates) -> SceneChunk {
+    /// Generates a `Chunk` at the provided `TileCoordinates`
+    fn generate_chunk(&self, tile_coordinates: TileCoordinates) -> Chunk {
         self.generate_chunk_with_seed(0_u128, tile_coordinates)
     }
 
-    /// Generates a `SceneChunk` at the provided `TileCoordinates` with a provided seed
-    fn generate_chunk_with_seed(&self, seed: u128, tile_coordinates: TileCoordinates) -> SceneChunk;
+    /// Generates a `Chunk` at the provided `TileCoordinates` with a provided seed
+    fn generate_chunk_with_seed(&self, seed: u128, tile_coordinates: TileCoordinates) -> Chunk;
 
 }
 
 impl SceneGenerator for () {
 
-    fn generate_chunk_with_seed(&self, _: u128, tile_coordinates: TileCoordinates) -> SceneChunk {
-        SceneChunk::new_empty(tile_coordinates)
+    fn generate_chunk_with_seed(&self, _: u128, tile_coordinates: TileCoordinates) -> Chunk {
+        Chunk::new_empty(tile_coordinates)
     }
 
 }
