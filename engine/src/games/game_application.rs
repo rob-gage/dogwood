@@ -9,6 +9,10 @@ use super::{
     render_game,
 };
 use engine_compute::Accelerator;
+use engine_input::{
+    InputTranslator,
+    KeyboardInputState,
+};
 use engine_user_interface::Widget;
 use std::{
     error::Error,
@@ -31,6 +35,8 @@ pub struct GameApplication<G: Game> {
     user_interface_renderer: UserInterfaceRenderer,
     /// An error with the `GameApplication`
     error: Option<Box<dyn Error>>,
+    /// The current keyboard input state
+    keyboard_input_state: KeyboardInputState,
 }
 
 impl<G: Game> GameApplication<G> {
@@ -48,6 +54,7 @@ impl<G: Game> GameApplication<G> {
             render_context: None,
             user_interface_renderer: UserInterfaceRenderer::new(),
             error: None,
+            keyboard_input_state: KeyboardInputState::new(),
         }
     }
 
@@ -127,6 +134,7 @@ impl<G: Game> GameApplication<G> {
         match event {
             CloseRequested => event_loop.exit(),
             Resized(size) => self.resize(size.width, size.height),
+            KeyboardInput { event, .. } => self.keyboard_input_state.process_event(&event),
             RedrawRequested => self.render(),
             _ => {}
         }

@@ -1,6 +1,7 @@
 // Copyright Rob Gage 2026
 
 use super::game_application::GameApplication;
+use engine_input::InputTranslator;
 use engine_physics::scenes::Scene;
 use engine_user_interface::UserInterfaceContext;
 use std::error::Error;
@@ -10,6 +11,11 @@ pub trait Game {
 
     /// The title of the game.
     const TITLE: &'static str;
+
+    /// Returns the input translator used by this `Game`
+    fn input_translator(&self) -> Box<dyn InputTranslator> {
+        Box::new(engine_input::SimpleInputTranslator::ARROWS_AND_WASD)
+    }
 
     /// Launches this `Game`.
     fn launch(self) -> Result<(), Box<dyn Error>>

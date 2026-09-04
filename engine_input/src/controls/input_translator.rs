@@ -1,11 +1,12 @@
 // Copyright Rob Gage 2026
 
 use super::ControlState;
+use crate::keyboard::KeyboardInputState;
 
-/// Translates keyboard and mouse input state into engine-specific controls
-pub trait InputTranslator {
+/// Translates input state into universal controls
+pub trait InputTranslator: Send + Sync {
 
-    /// Translates source input into a universal `ControlState`
-    fn translate(&self, keyboard_input:(), mouse_input: ()) -> ControlState;
+    /// Translates keyboard input into a universal `ControlState`
+    fn translate(&self, keyboard_input: &KeyboardInputState) -> ControlState;
 
 }

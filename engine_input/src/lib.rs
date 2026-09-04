@@ -10,4 +10,5 @@ pub use keyboard::{
 pub use controls::{
     ControlState,
     InputTranslator,
+    SimpleInputTranslator,
 };
