@@ -11,6 +11,11 @@ pub struct TileData {
 
 impl TileData {
 
+    /// The size of serialized `TileData` in bytes
+    pub const SERIALIZED_SIZE: usize = 8 * 8
+        * 4 // material identifier
+    ;
+
     /// An empty `TileInactive`
     pub const EMPTY: Self = Self {
         cell_material_identifiers: [[MaterialIdentifier::NULL; 8]; 8],
