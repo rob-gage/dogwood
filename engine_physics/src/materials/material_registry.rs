@@ -5,6 +5,7 @@ use super::{
     MaterialForm,
     MaterialIdentifier
 };
+use engine_graphics::MaterialGraphics;
 use std::ops::Index;
 
 /// Registers `Material`s to `MaterialIdentifier`s
@@ -47,6 +48,15 @@ impl MaterialRegistry {
                 MaterialIdentifier::new(MaterialForm::Fluid, index)
             }
         }
+    }
+
+    /// Builds graphics properties for all registered materials
+    pub fn build_material_graphics(&self) -> MaterialGraphics {
+        MaterialGraphics::new(
+            self.cellular_statics.iter().map(|material| *material.graphics()).collect(),
+            self.cellular_dynamics.iter().map(|material| *material.graphics()).collect(),
+            self.fluids.iter().map(|material| *material.graphics()).collect(),
+        )
     }
 
 }

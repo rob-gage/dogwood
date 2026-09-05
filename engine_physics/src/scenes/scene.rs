@@ -28,6 +28,10 @@ use engine_compute::{
     Accelerator,
     AcceleratorBuffer
 };
+use engine_graphics::{
+    MaterialGraphics,
+    SceneGraphics,
+};
 use std::{
     collections::HashMap,
     error::Error,
@@ -51,6 +55,8 @@ pub const CHUNK_STREAMING_QUEUE_CAPACITY: usize = 64;
 pub struct Scene {
     /// The `Accelerator` this `Scene` is running on
     accelerator: Arc<Accelerator>,
+    /// The graphics properties of this scene's materials
+    material_graphics: MaterialGraphics,
     /// The persistent `SceneData` backing this `Scene`
     data: SceneData,
     /// The `SceneGenerator` used to generate new tiles for this `Scene`
@@ -105,6 +111,7 @@ impl Scene {
         configuration: SceneConfiguration,
     ) -> Result<Self, Box<dyn Error>> {
         configuration.validate()?;
+        let material_graphics: MaterialGraphics = configuration.material_graphics;
         let accelerator: Arc<Accelerator> = accelerator.clone();
         let data: SceneData = SceneData::open(configuration.data_path.clone())?;
         let generator: Arc<dyn SceneGenerator> = Arc::new(());
@@ -121,6 +128,7 @@ impl Scene {
             sync_channel(CHUNK_STREAMING_QUEUE_CAPACITY);
         let mut scene: Self = Self {
             accelerator,
+            material_graphics,
             data,
             generator,
             actor_registry: ActorRegistry::new(),
@@ -160,6 +168,11 @@ impl Scene {
     pub fn with_generator(mut self, generator: impl SceneGenerator + 'static) -> Self {
         self.generator = Arc::new(generator);
         self
+    }
+
+    /// Returns graphics information for this scene
+    pub fn graphics(&self) -> SceneGraphics<'_> {
+        SceneGraphics { material_graphics: &self.material_graphics }
     }
 
     /// Returns the `ActorRegistry` for this `Scene`

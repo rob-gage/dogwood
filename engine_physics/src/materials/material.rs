@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-use super::MaterialAppearance;
+use engine_graphics::MaterialGraphicsProperties;
 
 /// A material
 pub enum Material {
@@ -8,33 +8,33 @@ pub enum Material {
     CellularStatic {
         /// The name of this `Material`
         name: &'static str,
-        /// The appearance of this `Material`
-        appearance: MaterialAppearance,
+        /// The graphics information for this `Material`
+        graphics: MaterialGraphicsProperties,
     },
     /// A dynamic cellular material
     CellularDynamic {
         /// The name of this `Material`
         name: &'static str,
-        /// The appearance of this `Material`
-        appearance: MaterialAppearance,
+        /// The graphics information for this `Material`
+        graphics: MaterialGraphicsProperties,
     },
     /// A fluid material
     Fluid {
         /// The name of this `Material`
         name: &'static str,
-        /// The appearance of this `Material`
-        appearance: MaterialAppearance,
+        /// The graphics information for this `Material`
+        graphics: MaterialGraphicsProperties,
     }
 }
 
 impl Material {
 
-    /// Returns the `MaterialAppearance` of this `Material`
-    pub const fn appearance(&self) -> &MaterialAppearance {
+    /// Returns the graphics information for this `Material`
+    pub const fn graphics(&self) -> &MaterialGraphicsProperties {
         match self {
-            Self::CellularStatic { appearance, .. } => appearance,
-            Self::CellularDynamic { appearance, .. } => appearance,
-            Self::Fluid { appearance, .. } => appearance,
+            Self::CellularStatic { graphics, .. } => graphics,
+            Self::CellularDynamic { graphics, .. } => graphics,
+            Self::Fluid { graphics, .. } => graphics,
         }
     }
 

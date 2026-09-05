@@ -1,5 +1,6 @@
 // Copyright Rob Gage 2026
 
+use engine_graphics::MaterialGraphics;
 use std::{
     io,
     path::PathBuf,
@@ -7,6 +8,8 @@ use std::{
 
 /// Configuration used by a `Scene`
 pub struct SceneConfiguration {
+    /// The graphics properties of this scene's materials
+    pub material_graphics: MaterialGraphics,
     /// The path used to store this `Scene`'s data
     pub data_path: PathBuf,
     /// The simulation width of the `Scene`
