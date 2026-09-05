@@ -21,18 +21,8 @@ pub struct EditorApplication<G: Game> {
 impl<G: Game> EditorApplication<G> {
 
     fn new(game: G) -> Self {
-        let background: Color = Color {
-            red: 47.0 / 255.0,
-            green: 47.0 / 255.0,
-            blue: 47.0 / 255.0,
-            alpha: 1.0,
-        };
-        let background_dark: Color = Color {
-            red: background.red * 0.80,
-            green: background.green * 0.80,
-            blue: background.blue * 0.80,
-            alpha: 1.0
-        };
+        let background: Color = Color::new_rgba(47, 47, 47, 255);
+        let background_dark: Color = Color::new_rgba(37, 37, 37, 255);
         let stack_horizontal: StackHorizontal = StackHorizontal::new()
             .with_child(Spacer::new(128.0).with_background_color(&background))
             .with_child(Spacer::new_flexible())
