@@ -221,9 +221,8 @@ impl Scene {
     /// Returns the chunk-aligned area currently resident for prefetching
     fn area_streaming(&self) -> TileArea { self.area_buffered().chunk_area() }
 
-    /// Requests every chunk in the streaming area
-    fn chunks_fetch(&mut self) -> Result<(), io::Error> {
-        let streaming_area: TileArea = self.area_streaming();
+    /// Requests every chunk in a chunk-aligned streaming area
+    fn chunks_fetch(&mut self, streaming_area: TileArea) -> Result<(), io::Error> {
         for coordinates in streaming_area.iterate_chunk_coordinates() {
             match self.chunks.get(&coordinates) {
                 None | Some(ChunkEntry::Error(_)) => self.chunk_load(coordinates)?,
@@ -378,7 +377,7 @@ impl Scene {
                 }
             }
         }
-        self.chunks_fetch()?; // request prefetch region before active origin reaches it
+        self.chunks_fetch(self.area_streaming())?;
         // move by at most one batch
         let batch_size: i64 = self.tile_streaming_batch_size as i64;
         let x_difference: i64 = self.origin_target.x as i64 - self.origin.x as i64;
@@ -427,20 +426,56 @@ impl Scene {
         self.shift_to(origin)
     }
 
-    /// Moves the active origin if all chunks required at the new origin are ready
+    /// Moves the origin, remaps ring slots, and streams tiles
     fn shift_to(&mut self, new_origin: TileCoordinates) -> Result<(), io::Error> {
-        self.chunks_fetch()?;
-        let new_active_area: TileArea = TileArea::new(
-            new_origin,
-            self.simulation_width,
-            self.simulation_height,
-        ).chunk_area();
-        if new_active_area.iterate_chunk_coordinates().all(|coordinates| {
-            matches!(
-                self.chunks.get(&coordinates),
-                Some(ChunkEntry::Active { .. })
-            )
-        }) { self.origin = new_origin; }
+        // return early if chunks are not available
+        let buffer_size: i32 = i32::from(self.simulation_buffer_size);
+        let dimensions: u16 = u16::from(self.simulation_buffer_size) * 2;
+        let width: u16 = self.simulation_width + dimensions;
+        let height: u16 = self.simulation_height + dimensions;
+        let buffered_area: TileArea = TileArea::new(TileCoordinates {
+            x: new_origin.x - buffer_size,
+            y: new_origin.y - buffer_size,
+        }, width, height);
+        let streaming_area: TileArea = buffered_area.chunk_area();
+        self.chunks_fetch(streaming_area)?;
+        if !streaming_area.iterate_chunk_coordinates().all(|coordinates| { matches!(
+            self.chunks.get(&coordinates),
+            Some(ChunkEntry::Active { .. })
+        ) }) { return Ok(()); }
+        self.tile_downloads_submit()?; // streaming out must happen before streaming in
+        // reuse the outgoing tiles' slots for incoming tiles
+        let batch_size: u16 = u16::from(self.tile_streaming_batch_size);
+        let tiles_upload_area: TileArea;
+        if new_origin.x > self.origin.x {
+            self.tiles_ring_offset_x = (self.tiles_ring_offset_x + batch_size) % width;
+            tiles_upload_area = TileArea::new(TileCoordinates {
+                x: new_origin.x - buffer_size + width as i32 - batch_size as i32,
+                y: new_origin.y - buffer_size,
+            }, batch_size, height);
+        } else if new_origin.x < self.origin.x {
+            self.tiles_ring_offset_x =
+                (self.tiles_ring_offset_x + width - batch_size) % width;
+            tiles_upload_area = TileArea::new(TileCoordinates {
+                x: new_origin.x - buffer_size,
+                y: new_origin.y - buffer_size,
+            }, batch_size, height);
+        } else if new_origin.y > self.origin.y {
+            self.tiles_ring_offset_y = (self.tiles_ring_offset_y + batch_size) % height;
+            tiles_upload_area = TileArea::new(TileCoordinates {
+                x: new_origin.x - buffer_size,
+                y: new_origin.y - buffer_size + height as i32 - batch_size as i32,
+            }, width, batch_size);
+        } else {
+            self.tiles_ring_offset_y =
+                (self.tiles_ring_offset_y + height - batch_size) % height;
+            tiles_upload_area = TileArea::new(TileCoordinates {
+                x: new_origin.x - buffer_size,
+                y: new_origin.y - buffer_size,
+            }, width, batch_size);
+        }
+        self.origin = new_origin;
+        let _ = self.tiles_upload(tiles_upload_area);
         Ok(())
     }
 

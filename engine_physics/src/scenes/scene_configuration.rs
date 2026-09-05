@@ -36,6 +36,13 @@ impl SceneConfiguration {
                 "Tile streaming batch size must not be zero",
             ));
         }
+        if u16::from(self.tile_streaming_batch_size) > self.simulation_width ||
+                u16::from(self.tile_streaming_batch_size) > self.simulation_height {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Tile streaming batch size exceeds the simulation dimensions",
+            ));
+        }
         if self.simulation_buffer_size % self.tile_streaming_batch_size != 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
