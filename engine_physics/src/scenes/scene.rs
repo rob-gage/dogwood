@@ -73,22 +73,24 @@ pub struct Scene {
     simulation_height: u16,
     /// The size of the GPU tile buffer outside the active area
     simulation_buffer_size: u8,
-    /// The current GPU-resident tiles in this `Scene`
-    tiles: Box<[Tile]>,
-    /// The next GPU-resident tiles in this `Scene`
-    tiles_next: Box<[Tile]>,
-    /// The streaming batch size for tiles
-    tile_streaming_batch_size: u8,
     /// The `TilePosition` of the tile in `tiles` that is furthest to the left and bottom
     origin: TileCoordinates,
     /// The desired `origin` for the active tile area
     origin_target: TileCoordinates,
+    /// The current GPU-resident tiles in this `Scene`
+    tiles: Box<[Tile]>,
+    /// The streaming batch size for tiles
+    tile_streaming_batch_size: u8,
     /// The buffer containing `MaterialIdentifier`s for GPU-resident tiles
     tile_material_identifier_buffer: AcceleratorBuffer,
     /// The tile downloads pending processing by `tick`
     tile_downloads: Mutex<Vec<Arc<Mutex<TileDownload>>>>,
     /// The tile uploads pending processing by `tick`
     tile_uploads: Mutex<Vec<Arc<Mutex<TileUpload>>>>,
+    /// The physical X slot containing the buffered area's leftmost tile
+    tiles_ring_offset_x: u16,
+    /// The physical Y slot containing the buffered area's bottommost tile
+    tiles_ring_offset_y: u16,
 }
 
 impl Scene {
@@ -130,7 +132,6 @@ impl Scene {
             chunk_streaming_response_sender,
             chunk_streaming_responses,
             chunks_streaming_identifier_next: 0,
-            tiles_next: tiles.clone(),
             tiles,
             tile_streaming_batch_size: configuration.tile_streaming_batch_size,
             simulation_width: configuration.simulation_width,
@@ -138,6 +139,8 @@ impl Scene {
             simulation_buffer_size: configuration.simulation_buffer_size,
             origin: TileCoordinates { x: 0, y: 0 },
             origin_target: TileCoordinates { x: 0, y: 0 },
+            tiles_ring_offset_x: 0,
+            tiles_ring_offset_y: 0,
             tile_material_identifier_buffer,
             tile_downloads: Mutex::new(Vec::new()),
             tile_uploads: Mutex::new(Vec::new()),
@@ -406,7 +409,7 @@ impl Scene {
                     x: origin.x + x,
                     y: origin.y + y,
                 };
-                if self.tile_from_coordinates(coordinates).is_none() {
+                if self.tile_at(coordinates).is_none() {
                     return Err(io::Error::other("GPU tile buffer is inconsistent"));
                 }
                 match self.chunks.get(&coordinates.chunk_coordinates()) {
@@ -476,18 +479,20 @@ impl Scene {
         Ok(())
     }
 
-    /// Returns the GPU tile assigned to a world tile coordinate
-    pub fn tile_from_coordinates(&self, coordinates: TileCoordinates) -> Option<Tile> {
+    /// Returns the active tile at a provided `TileCoordinates` if one exists
+    pub fn tile_at(&self, coordinates: TileCoordinates) -> Option<Tile> {
         let buffer_size: i32 = i32::from(self.simulation_buffer_size);
         let width: usize = self.simulation_width as usize + buffer_size as usize * 2;
         let x: usize = usize::try_from(coordinates.x - (self.origin.x - buffer_size)).ok()?;
         let y: usize = usize::try_from(coordinates.y - (self.origin.y - buffer_size)).ok()?;
         let height: usize = self.simulation_height as usize + buffer_size as usize * 2;
         if x >= width || y >= height { return None; }
+        let x: usize = (x + self.tiles_ring_offset_x as usize) % width;
+        let y: usize = (y + self.tiles_ring_offset_y as usize) % height;
         self.tiles.get(y * width + x).copied()
     }
 
-    /// Queues a GPU tile download and returns a future resolved
+    /// Queues a tile download from the `Accelerator`
     pub fn tile_download(
         &self,
         coordinates: TileCoordinates,
@@ -517,7 +522,7 @@ impl Scene {
         })
     }
 
-    /// Queues a GPU tile upload and returns a future resolved
+    /// Queues a GPU tile upload to the `Accelerator`
     pub fn tile_upload(
         &self,
         coordinates: TileCoordinates,
@@ -586,7 +591,7 @@ impl Scene {
                 let mut state: std::sync::MutexGuard<TileDownload> = download.lock().unwrap();
                 if state.result.is_some() { continue; }
                 if state.is_started { continue; }
-                let Some(tile) = self.tile_from_coordinates(state.coordinates) else {
+                let Some(tile) = self.tile_at(state.coordinates) else {
                     state.result = Some(Err(io::Error::new(
                         io::ErrorKind::InvalidInput,
                         "Tile is outside the GPU buffer",
@@ -657,7 +662,7 @@ impl Scene {
         for upload in uploads.iter() {
             let mut state: std::sync::MutexGuard<TileUpload> = upload.lock().unwrap();
             if state.result.is_some() { continue; }
-            let Some(tile) = self.tile_from_coordinates(state.coordinates) else {
+            let Some(tile) = self.tile_at(state.coordinates) else {
                 state.result = Some(Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     "Tile is outside the GPU buffer",
