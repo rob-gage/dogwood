@@ -145,16 +145,21 @@ impl<G: Game> GameApplication<G> {
     }
 
     /// Updates the application systems
-    fn update(&mut self) {
+    fn update(&mut self) -> Result<(), std::io::Error> {
         let update_time: std::time::Instant = std::time::Instant::now();
-        let delta_time: f32 = update_time.duration_since(self.update_time).as_secs_f32();
+        let elapsed: std::time::Duration = update_time.duration_since(self.update_time);
         self.update_time = update_time;
-        self.update_camera(delta_time);
+        let simulation_active: bool = !self.game.is_paused();
+        if let Some(scene) = self.game.scene_mutable() {
+            scene.update(elapsed, simulation_active)?;
+        }
+        self.update_camera(elapsed.as_secs_f32());
+        Ok(())
     }
 
     /// Updates the camera position to follow the game's camera target
     fn update_camera(&mut self, delta_time: f32) {
-        let target: engine_physics::scenes::ScenePosition = self.game.camera_target();
+        let target: ScenePosition = self.game.camera_target();
         let target: [f32; 2] = [
             target.tile_coordinates.x as f32 + target.x_offset,
             target.tile_coordinates.y as f32 + target.y_offset,
@@ -291,12 +296,16 @@ impl<G: Game> winit::application::ApplicationHandler for GameApplication<G> {
         self.handle_window_event(event_loop, event);
     }
 
-    fn about_to_wait(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         self.game.pass_input(
             &self.keyboard_input_state,
             self.input_translator.as_ref(),
         );
-        self.update();
+        if let Err(error) = self.update() {
+            self.error = Some(Box::new(error));
+            event_loop.exit();
+            return;
+        }
         self.redraw();
     }
 

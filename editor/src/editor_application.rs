@@ -69,9 +69,9 @@ impl<G: Game> winit::application::ApplicationHandler for EditorApplication<G> {
         event: winit::event::WindowEvent,
     ) { self.application.handle_window_event(event_loop, event); }
 
-    fn about_to_wait(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         self.application.add_widget(&mut self.layout);
-        self.application.redraw();
+        winit::application::ApplicationHandler::about_to_wait(&mut self.application, event_loop);
     }
 
 }

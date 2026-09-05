@@ -46,10 +46,14 @@ use std::{
             sync_channel,
         }
     },
+    time::Duration,
 };
 
 /// The capacity of the chunk streaming queue
 pub const CHUNK_STREAMING_QUEUE_CAPACITY: usize = 64;
+
+/// The fixed scene tick rate
+const TICK_RATE: u32 = 60;
 
 /// A scene that can be simulated by the engine
 pub struct Scene {
@@ -73,6 +77,8 @@ pub struct Scene {
     chunk_streaming_responses: Receiver<ChunkStreamingResponse>,
     /// The next identifier to be used for streaming chunks
     chunks_streaming_identifier_next: u64,
+    /// Elapsed time not yet consumed by fixed ticks
+    tick_time: Duration,
     /// The width of the active tile area
     simulation_width: u16,
     /// The height of the active tile area
@@ -137,6 +143,7 @@ impl Scene {
             chunk_streaming_response_sender,
             chunk_streaming_responses,
             chunks_streaming_identifier_next: 0,
+            tick_time: Duration::ZERO,
             tiles,
             tile_streaming_batch_size: configuration.tile_streaming_batch_size,
             simulation_width: configuration.simulation_width,
@@ -197,16 +204,29 @@ impl Scene {
     /// Releases the currently possessed actor
     pub fn dispossess_actor(&mut self) { self.possessed_actor = None; }
 
-    /// Processes chunk streaming and pending nonblocking GPU tile transfers
-    pub fn tick(&mut self) -> Result<(), io::Error> {
+    /// Handles `Scene` streaming and fixed-rate simulation
+    pub fn update(
+        &mut self,
+        elapsed: Duration,
+        is_simulation_active: bool,
+    ) -> Result<(), io::Error> {
         self.chunks_refresh()?;
         self.tile_downloads_submit()?;
         self.tile_uploads_submit()?;
         self.accelerator.poll().map_err(|error| io::Error::other(error.to_string()))?;
         self.tile_download_clean()?;
         self.tile_upload_clean()?;
+        self.tick_time += elapsed;
+        let tick_time: Duration = Duration::from_secs(1) / TICK_RATE;
+        while self.tick_time >= tick_time {
+            if is_simulation_active { self.tick()?; }
+            self.tick_time -= tick_time;
+        }
         Ok(())
     }
+
+    /// Runs one fixed-rate physics simulation tick
+    fn tick(&mut self) -> Result<(), io::Error> { Ok(()) }
 
     /// Returns the exact tile area currently being simulated
     const fn area_active(&self) -> TileArea {

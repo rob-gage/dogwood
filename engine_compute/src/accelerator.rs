@@ -33,7 +33,6 @@ impl Accelerator {
         ))?;
         let (device, queue): (wgpu::Device, wgpu::Queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))?;
-
         Ok(Self {
             wgpu_instance: instance,
             wgpu_adapter: adapter,
