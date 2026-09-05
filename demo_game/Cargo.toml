@@ -21,3 +21,4 @@ path = "demo-game-editor.rs"
 [dependencies]
 editor = { version = "0.0.0", path = "../editor" }
 engine = { version = "0.0.0", path = "../engine" }
+pollster.workspace = true

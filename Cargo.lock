@@ -560,6 +560,7 @@ version = "0.0.0"
 dependencies = [
  "editor",
  "engine",
+ "pollster",
 ]
 
 [[package]]
@@ -750,7 +751,6 @@ dependencies = [
  "engine_input",
  "engine_physics",
  "engine_user_interface",
- "pollster",
  "wgpu",
  "winit",
 ]

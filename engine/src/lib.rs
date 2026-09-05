@@ -11,6 +11,9 @@ pub use games::{
 pub mod audio {
 
 }
+pub mod compute {
+    pub use engine_compute::Accelerator;
+}
 pub mod input {
 
 }
@@ -18,6 +21,7 @@ pub mod graphics {
     pub use engine_graphics::Camera;
 }
 pub mod physics {
+    pub use engine_physics::materials;
     pub use engine_physics::scenes;
 }
 pub mod user_interface {

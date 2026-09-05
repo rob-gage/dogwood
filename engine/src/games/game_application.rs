@@ -33,7 +33,7 @@ pub struct GameApplication<G: Game> {
     /// The `winit` window used by this `GameApplication`
     window: Option<Arc<winit::window::Window>>,
     /// The shared WGPU accelerator used for graphics and compute
-    accelerator: Option<Arc<Accelerator>>,
+    accelerator: Arc<Accelerator>,
     /// The graphics-specific state used to render the window
     render_context: Option<RenderContext>,
     /// The renderer for the active scene
@@ -57,10 +57,16 @@ pub struct GameApplication<G: Game> {
 impl<G: Game> GameApplication<G> {
 
     /// Creates a `GameApplication` from a `Game`
-    pub fn new(game: G) -> Self { Self::new_with_title(game, G::TITLE) }
+    pub fn new(accelerator: Arc<Accelerator>, game: G) -> Self {
+        Self::new_with_title(accelerator, game, G::TITLE)
+    }
 
     /// Creates a `GameApplication` from a `Game` with a provided title
-    pub fn new_with_title(game: G, title: impl Into<String>) -> Self {
+    pub fn new_with_title(
+        accelerator: Arc<Accelerator>,
+        game: G,
+        title: impl Into<String>,
+    ) -> Self {
         let input_translator: Box<dyn InputTranslator> = game.input_translator();
         let camera: Camera = game.camera();
         Self {
@@ -68,7 +74,7 @@ impl<G: Game> GameApplication<G> {
             input_translator,
             title: title.into(),
             window: None,
-            accelerator: None,
+            accelerator,
             render_context: None,
             scene_renderer: SceneRenderer::new(),
             user_interface_renderer: UserInterfaceRenderer::new(),
@@ -92,20 +98,16 @@ impl<G: Game> GameApplication<G> {
                     None => return,
                     Some(Success(frame)) | Some(Suboptimal(frame)) => frame,
                     Some(Outdated) | Some(Lost) => {
-                        let (Some(accelerator), Some(render_context)) = (
-                            self.accelerator.as_ref(),
-                            self.render_context.as_ref()
-                        ) else { return; };
-                        render_context.configure(accelerator);
+                        let Some(render_context) = self.render_context.as_ref() else { return; };
+                        render_context.configure(&self.accelerator);
                         return;
                     }
                     Some(Timeout) | Some(Occluded) | Some(Validation) => return,
                 };
         let view: wgpu::TextureView =
             frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let Some(accelerator) = self.accelerator.as_ref() else { return; };
         let mut command_encoder: wgpu::CommandEncoder = {
-            accelerator.wgpu_device().create_command_encoder(
+            self.accelerator.wgpu_device().create_command_encoder(
                 &wgpu::CommandEncoderDescriptor { label: Some("frame") },
             )
         };
@@ -115,23 +117,21 @@ impl<G: Game> GameApplication<G> {
             &mut self.game,
             &self.scene_renderer,
             &mut self.user_interface_renderer,
-            accelerator,
+            &self.accelerator,
             configuration.format,
             [configuration.width, configuration.height],
             &mut command_encoder,
             &view,
         );
-        let Some(accelerator) = self.accelerator.as_ref() else { return; };
-        accelerator.wgpu_queue().submit(Some(command_encoder.finish()));
-        accelerator.wgpu_queue().present(frame);
+        self.accelerator.wgpu_queue().submit(Some(command_encoder.finish()));
+        self.accelerator.wgpu_queue().present(frame);
     }
 
     /// Reconfigures the graphics surface for a new window size
     fn resize(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 { return; }
-        let (Some(accelerator), Some(render_context)) =
-            (self.accelerator.as_ref(), self.render_context.as_mut()) else { return; };
-        render_context.resize(accelerator, width, height);
+        let Some(render_context) = self.render_context.as_mut() else { return; };
+        render_context.resize(&self.accelerator, width, height);
     }
 
     /// Adds a widget to the game's user interface.
@@ -232,15 +232,16 @@ impl<G: Game> GameApplication<G> {
     }
 
     /// Creates the application window and initializes its graphics resources
-    pub fn set_up(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+    pub fn window_initialize(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         if self.window.is_some() { return; }
         let attributes: winit::window::WindowAttributes =
             winit::window::WindowAttributes::default().with_title(&self.title);
         match event_loop.create_window(attributes) {
             Ok(window) => {
                 let window: Arc<winit::window::Window> = Arc::new(window);
-                let instance: wgpu::Instance = wgpu::Instance::default();
-                let surface: wgpu::Surface = match instance.create_surface(window.clone()) {
+                let surface: wgpu::Surface = match self.accelerator.wgpu_instance().create_surface(
+                    window.clone()
+                ) {
                     Ok(surface) => surface,
                     Err(error) => {
                         self.error = Some(Box::new(error));
@@ -249,19 +250,9 @@ impl<G: Game> GameApplication<G> {
                     }
                 };
                 let size: winit::dpi::PhysicalSize<u32> = window.inner_size();
-                let accelerator: Arc<Accelerator> = Arc::new(
-                    match pollster::block_on(Accelerator::new(instance, &surface)) {
-                        Ok(accelerator) => accelerator,
-                        Err(error) => {
-                            self.error = Some(error);
-                            event_loop.exit();
-                            return;
-                        }
-                    }
-                );
                 let render_context: RenderContext = match RenderContext::new(
                     surface,
-                    &accelerator,
+                    &self.accelerator,
                     size.width,
                     size.height,
                 ) {
@@ -272,7 +263,6 @@ impl<G: Game> GameApplication<G> {
                         return;
                     }
                 };
-                self.accelerator = Some(accelerator);
                 self.render_context = Some(render_context);
                 self.update_camera(0.0);
                 self.window = Some(window);
@@ -289,7 +279,7 @@ impl<G: Game> GameApplication<G> {
 impl<G: Game> winit::application::ApplicationHandler for GameApplication<G> {
 
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        self.set_up(event_loop);
+        self.window_initialize(event_loop);
     }
 
     fn window_event(

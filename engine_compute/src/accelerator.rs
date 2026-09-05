@@ -20,15 +20,13 @@ pub struct Accelerator {
 
 impl Accelerator {
 
-    /// Creates an `Accelerator` compatible with a surface.
-    pub async fn new(
-        instance: wgpu::Instance,
-        surface: &wgpu::Surface<'_>,
-    ) -> Result<Self, Box<dyn Error>> {
+    /// Creates an `Accelerator`
+    pub async fn new() -> Result<Self, Box<dyn Error>> {
+        let instance: wgpu::Instance = wgpu::Instance::default();
         let adapter: wgpu::Adapter = instance.request_adapter(
             &wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
-                compatible_surface: Some(surface),
+                compatible_surface: None,
                 force_fallback_adapter: false,
                 apply_limit_buckets: false,
             },

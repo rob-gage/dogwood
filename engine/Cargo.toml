@@ -20,7 +20,6 @@ engine_compute = { version = "0.0.0", path = "../engine_compute" }
 engine_graphics = { version = "0.0.0", path = "../engine_graphics" }
 engine_input = { version = "0.0.0", path = "../engine_input" }
 engine_physics = { version = "0.0.0", path = "../engine_physics" }
-pollster = { workspace = true }
 wgpu = { workspace = true }
 egui-wgpu = { workspace = true }
 engine_user_interface = { version = "0.0.0", path = "../engine_user_interface" }

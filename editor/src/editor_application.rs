@@ -10,7 +10,10 @@ use engine_user_interface::widgets::{
     StackVertical,
 };
 use engine_graphics::Color;
-use std::error::Error;
+use std::{
+    error::Error,
+    sync::Arc,
+};
 
 /// A windowed editor application for a `Game`
 pub struct EditorApplication<G: Game> {
@@ -20,7 +23,7 @@ pub struct EditorApplication<G: Game> {
 
 impl<G: Game> EditorApplication<G> {
 
-    fn new(game: G) -> Self {
+    fn new(accelerator: Arc<engine::compute::Accelerator>, game: G) -> Self {
         let background: Color = Color::new_rgba(47, 47, 47, 255);
         let background_dark: Color = Color::new_rgba(37, 37, 37, 255);
         let stack_horizontal: StackHorizontal = StackHorizontal::new()
@@ -33,6 +36,7 @@ impl<G: Game> EditorApplication<G> {
             .with_child(Spacer::new(16.0).with_background_color(&background_dark));
         Self {
             application: GameApplication::new_with_title(
+                accelerator,
                 game,
                 format!("Engine Editor: {}", G::TITLE)
             ),
@@ -40,10 +44,13 @@ impl<G: Game> EditorApplication<G> {
         }
     }
 
-    pub fn launch(game: G) -> Result<(), Box<dyn Error>> {
+    pub fn launch(
+        accelerator: Arc<engine::compute::Accelerator>,
+        game: G,
+    ) -> Result<(), Box<dyn Error>> {
         let event_loop: winit::event_loop::EventLoop<()> =
             winit::event_loop::EventLoop::builder().build()?;
-        let mut application: EditorApplication<G> = Self::new(game);
+        let mut application: EditorApplication<G> = Self::new(accelerator, game);
         event_loop.run_app(&mut application)?;
         application.application.finish()
     }
@@ -53,7 +60,7 @@ impl<G: Game> EditorApplication<G> {
 impl<G: Game> winit::application::ApplicationHandler for EditorApplication<G> {
 
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop)
-    { self.application.set_up(event_loop); }
+    { self.application.window_initialize(event_loop); }
 
     fn window_event(
         &mut self,

@@ -2,23 +2,44 @@
 
 use engine::{
     Game,
+    compute::Accelerator,
     graphics::Camera,
-    physics::scenes::Scene,
+    physics::{
+        materials::MaterialRegistry,
+        scenes::{
+            Scene,
+            SceneConfiguration,
+        },
+    },
     user_interface::UserInterfaceContext,
+};
+use std::{
+    error::Error,
+    sync::Arc,
 };
 
 /// A minimal game used to exercise the engine.
 pub struct DemoGame {
     user_interface_context: UserInterfaceContext,
+    scene: Option<Scene>,
 }
 
 impl DemoGame {
 
-    /// Creates an empty `DemoGame`.
-    pub fn new() -> Self {
-        Self {
+    /// Creates a `DemoGame` with a GPU-backed scene
+    pub fn new(accelerator: &Arc<Accelerator>) -> Result<Self, Box<dyn Error>> {
+        let materials: MaterialRegistry = MaterialRegistry::new();
+        Ok(Self {
             user_interface_context: UserInterfaceContext::new(),
-        }
+            scene: Some(Scene::new(accelerator, SceneConfiguration {
+                material_graphics: materials.build_material_graphics(),
+                data_path: "demo_data".into(),
+                simulation_width: 16,
+                simulation_height: 9,
+                simulation_buffer_size: 0,
+                tile_streaming_batch_size: 1,
+            })?),
+        })
     }
 
 }
@@ -27,7 +48,6 @@ impl Game for DemoGame {
 
     const TITLE: &'static str = "Demo Game";
 
-    /// Returns the camera configuration used by the demo.
     fn camera(&self) -> Camera {
         Camera {
             width: 16.0,
@@ -39,16 +59,12 @@ impl Game for DemoGame {
         }
     }
 
-    /// Returns whether the demo simulation is paused.
     fn is_paused(&self) -> bool { true }
 
-    /// Returns no scene because the demo does not load one yet.
-    fn scene(&self) -> Option<&Scene> { None }
+    fn scene(&self) -> Option<&Scene> { self.scene.as_ref() }
 
-    /// Returns no scene because the demo does not load one yet.
-    fn scene_mutable(&mut self) -> Option<&mut Scene> { None }
+    fn scene_mutable(&mut self) -> Option<&mut Scene> { self.scene.as_mut() }
 
-    /// Returns the empty user-interface context used by the demo.
     fn user_interface_context(&mut self) -> &mut UserInterfaceContext {
         &mut self.user_interface_context
     }

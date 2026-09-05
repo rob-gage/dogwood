@@ -1,6 +1,7 @@
 // Copyright Rob Gage 2026
 
 use super::game_application::GameApplication;
+use engine_compute::Accelerator;
 use engine_graphics::Camera;
 use engine_input::{
     InputTranslator,
@@ -15,7 +16,10 @@ use engine_physics::{
     tiles::TileCoordinates,
 };
 use engine_user_interface::UserInterfaceContext;
-use std::error::Error;
+use std::{
+    error::Error,
+    sync::Arc,
+};
 
 /// Implementors are games that run on this engine.
 pub trait Game {
@@ -58,7 +62,7 @@ pub trait Game {
     }
 
     /// Launches this `Game`.
-    fn launch(self) -> Result<(), Box<dyn Error>>
+    fn launch(self, accelerator: Arc<Accelerator>) -> Result<(), Box<dyn Error>>
     where
         Self: Sized,
     {
@@ -91,7 +95,7 @@ pub trait Game {
             &mut event_loop_builder,
         );
         let event_loop: winit::event_loop::EventLoop<()> = event_loop_builder.build()?;
-        let mut application: GameApplication<Self> = GameApplication::new(self);
+        let mut application: GameApplication<Self> = GameApplication::new(accelerator, self);
         event_loop.run_app(&mut application)?;
         application.finish()
     }
