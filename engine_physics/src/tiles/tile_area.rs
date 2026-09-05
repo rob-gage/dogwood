@@ -40,11 +40,17 @@ impl TileArea {
             coordinates.y >= self.minimum.y && coordinates.y <= self.maximum.y
     }
 
+    /// Iterates over tile coordinates contained in this `TileArea`
+    pub fn iterate_tile_coordinates(self) -> impl Iterator<Item = TileCoordinates> {
+        (self.minimum.y..=self.maximum.y).flat_map(move |y| {
+            (self.minimum.x..=self.maximum.x).map(move |x| TileCoordinates { x, y })
+        })
+    }
+
     /// Iterates over chunk coordinates contained in this `Chunk`-aligned `TileArea`
     pub fn iterate_chunk_coordinates(self) -> impl Iterator<Item = TileCoordinates> {
         (self.minimum.y..=self.maximum.y).step_by(64).flat_map(move |y| {
-            (self.minimum.x..=self.maximum.x).step_by(64)
-                .map(move |x| TileCoordinates { x, y })
+            (self.minimum.x..=self.maximum.x).step_by(64).map(move |x| TileCoordinates { x, y })
         })
     }
 

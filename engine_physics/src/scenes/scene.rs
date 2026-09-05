@@ -104,12 +104,10 @@ impl Scene {
         accelerator: &Arc<Accelerator>,
         configuration: SceneConfiguration,
     ) -> Result<Self, Box<dyn Error>> {
-        // validate dimensions before deriving the size of the GPU tile buffer.
         configuration.validate()?;
         let accelerator: Arc<Accelerator> = accelerator.clone();
         let data: SceneData = SceneData::open(configuration.data_path.clone())?;
         let generator: Arc<dyn SceneGenerator> = Arc::new(());
-        // allocate one material identifier for every cell in the buffered tile area.
         let buffer_size: u16 = u16::from(configuration.simulation_buffer_size) * 2;
         let buffered_tile_count: usize =
             (configuration.simulation_width + buffer_size) as usize *
@@ -121,7 +119,6 @@ impl Scene {
         let tiles: Box<[Tile]> = (0..tile_count).map(Tile).collect();
         let (chunk_streaming_response_sender, chunk_streaming_responses) =
             sync_channel(CHUNK_STREAMING_QUEUE_CAPACITY);
-        // construct the scene before populating chunks so its area helpers can be reused.
         let mut scene: Self = Self {
             accelerator,
             data,
@@ -145,7 +142,6 @@ impl Scene {
             tile_downloads: Mutex::new(Vec::new()),
             tile_uploads: Mutex::new(Vec::new()),
         };
-        // load or generate every chunk needed by the initial area and GPU buffer.
         for coordinates in scene.area_streaming().iterate_chunk_coordinates() {
             let chunk: Chunk = match scene.data.read_chunk(coordinates)? {
                 Some(chunk) => chunk,
@@ -156,7 +152,7 @@ impl Scene {
                 is_dirty: false,
             });
         }
-        scene.refresh_tiles()?;
+        drop(scene.tiles_upload(scene.area_buffered()));
         Ok(scene)
     }
 
@@ -186,13 +182,11 @@ impl Scene {
     }
 
     /// Releases the currently possessed actor
-    pub fn dispossess_actor(&mut self) {
-        self.possessed_actor = None;
-    }
+    pub fn dispossess_actor(&mut self) { self.possessed_actor = None; }
 
     /// Processes chunk streaming and pending nonblocking GPU tile transfers
     pub fn tick(&mut self) -> Result<(), io::Error> {
-        self.refresh_chunks()?;
+        self.chunks_refresh()?;
         self.tile_downloads_submit()?;
         self.tile_uploads_submit()?;
         self.accelerator.poll().map_err(|error| io::Error::other(error.to_string()))?;
@@ -326,9 +320,10 @@ impl Scene {
         Ok(())
     }
 
-    /// Attempts to move to `origin_target` and refreshes active chunks
-    fn refresh_chunks(&mut self) -> Result<(), io::Error> {
+    /// Refreshes streamed chunks and queues newly available resident tiles for upload
+    fn chunks_refresh(&mut self) -> Result<(), io::Error> {
         // apply completed background loads and generations before planning movement
+        let mut chunks_available: Vec<TileCoordinates> = Vec::new();
         while let Ok(response) = self.chunk_streaming_responses.try_recv() {
             match response {
                 ChunkStreamingResponse::Loaded {
@@ -348,6 +343,7 @@ impl Scene {
                                 chunk: *chunk,
                                 is_dirty: false,
                             });
+                            chunks_available.push(coordinates);
                         }
                         Ok(None) => self.chunk_generate(coordinates)?,
                         Err(error) => {
@@ -372,6 +368,7 @@ impl Scene {
                                 chunk: *chunk,
                                 is_dirty: false,
                             });
+                            chunks_available.push(coordinates);
                         }
                         Err(error) => {
                             let error: Box<dyn Error> = error;
@@ -391,41 +388,9 @@ impl Scene {
         if y_difference >= batch_size { self.shift_up()?; }
         if y_difference <= -batch_size { self.shift_down()?; }
         self.chunks_save()?;
-        self.refresh_tiles()
-    }
-
-    /// Attempts to move to `origin_target` and refreshes active tiles
-    fn refresh_tiles(&self) -> Result<(), io::Error> {
-        let buffer_size: i32 = i32::from(self.simulation_buffer_size);
-        let width: i32 = i32::from(self.simulation_width) + buffer_size * 2;
-        let height: i32 = i32::from(self.simulation_height) + buffer_size * 2;
-        let origin: TileCoordinates = TileCoordinates {
-            x: self.origin.x - buffer_size,
-            y: self.origin.y - buffer_size,
-        };
-        for y in 0..height {
-            for x in 0..width {
-                let coordinates: TileCoordinates = TileCoordinates {
-                    x: origin.x + x,
-                    y: origin.y + y,
-                };
-                if self.tile_at(coordinates).is_none() {
-                    return Err(io::Error::other("GPU tile buffer is inconsistent"));
-                }
-                match self.chunks.get(&coordinates.chunk_coordinates()) {
-                    Some(ChunkEntry::Active { chunk, .. }) if chunk.get_tile(coordinates).is_ok()
-                        => (),
-                    Some(ChunkEntry::Active { .. }) => return Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "Tile is not in its active chunk",
-                    )),
-                    _ => return Err(io::Error::new(
-                        io::ErrorKind::NotFound,
-                        "Tile chunk is not active",
-                    )),
-                }
-                drop(self.tile_upload(coordinates));
-            }
+        // queue upload only newly available chunks
+        for coordinates in chunks_available {
+            let _ = self.tiles_upload(TileArea::new(coordinates, Chunk::WIDTH, Chunk::WIDTH));
         }
         Ok(())
     }
@@ -492,88 +457,97 @@ impl Scene {
         self.tiles.get(y * width + x).copied()
     }
 
-    /// Queues a tile download from the `Accelerator`
-    pub fn tile_download(
+    /// Queues tile downloads from the `Accelerator`
+    pub fn tiles_download(
         &self,
-        coordinates: TileCoordinates,
-    ) -> impl Future<Output = Result<TileData, io::Error>> + 'static {
-        // create the `TileDownload`
-        let download: Arc<Mutex<TileDownload>> = Arc::new(Mutex::new(
-            TileDownload::new(self.accelerator.as_ref(), coordinates)
-        ));
-        // return validation or queue failures
-        if let Err(_) = self.tile_downloads.lock().map(|mut downloads| {
-            downloads.push(download.clone());
-        }) {
-            let mut download: std::sync::MutexGuard<TileDownload> = download.lock().unwrap();
-            download.result = Some(Err(io::Error::other("Tile download queue is unavailable")));
-            download.is_complete = true;
-        }
-        // poll until result is ready
+        area: TileArea,
+    ) -> impl Future<Output = Result<HashMap<TileCoordinates, TileData>, io::Error>> + 'static {
+        let downloads: Vec<Arc<Mutex<TileDownload>>> = area.iterate_tile_coordinates()
+            .filter(|coordinates| self.tile_at(*coordinates).is_some())
+            .map(|coordinates| Arc::new(Mutex::new(TileDownload::new(
+                self.accelerator.as_ref(),
+                coordinates,
+            )))).collect();
+        let mut error: Option<io::Error> = None;
+        if let Err(_) = self.tile_downloads.lock().map(|mut tile_downloads| {
+            tile_downloads.extend(downloads.iter().cloned());
+        }) { error = Some(io::Error::other("Tile download queue is unavailable")); }
+        let mut downloads: Vec<Arc<Mutex<TileDownload>>> = downloads;
+        let mut tile_data: HashMap<TileCoordinates, TileData> = HashMap::new();
         poll_fn(move |context| {
-            let mut download: std::sync::MutexGuard<TileDownload> = download.lock().unwrap();
-            match download.result.take() {
-                Some(result) => std::task::Poll::Ready(result),
-                None => {
-                    download.waker = Some(context.waker().clone());
-                    std::task::Poll::Pending
+            if let Some(error) = error.take() { return std::task::Poll::Ready(Err(error)); }
+            let mut index: usize = 0;
+            while index < downloads.len() {
+                let mut download: std::sync::MutexGuard<TileDownload> =
+                    downloads[index].lock().unwrap();
+                match download.result.take() {
+                    Some(Ok(data)) => {
+                        let coordinates: TileCoordinates = download.coordinates;
+                        drop(download);
+                        downloads.swap_remove(index);
+                        tile_data.insert(coordinates, data);
+                    }
+                    Some(Err(error)) => return std::task::Poll::Ready(Err(error)),
+                    None => {
+                        download.waker = Some(context.waker().clone());
+                        index += 1;
+                    }
                 }
             }
+            std::task::Poll::Ready(Ok(std::mem::take(&mut tile_data)))
         })
     }
 
-    /// Queues a GPU tile upload to the `Accelerator`
-    pub fn tile_upload(
+    /// Queues tile uploads to the `Accelerator`
+    pub fn tiles_upload(
         &self,
-        coordinates: TileCoordinates,
+        area: TileArea,
     ) -> impl Future<Output = Result<(), io::Error>> + 'static {
-        // create the `TileUpload`
         let mut error: Option<io::Error> = None;
-        let upload: Option<Arc<Mutex<TileUpload>>> = match self.chunks.get(
-            &coordinates.chunk_coordinates()
-        ) {
-            Some(ChunkEntry::Active { chunk, .. }) => match chunk.get_tile(coordinates) {
-                Ok(tile_data) => Some(Arc::new(Mutex::new(
-                    TileUpload::new(coordinates, tile_data)
-                ))),
-                Err(()) => {
-                    error = Some(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "Tile is not in its active chunk",
+        let mut uploads: Vec<Arc<Mutex<TileUpload>>> = Vec::new();
+        for coordinates in area.iterate_tile_coordinates() {
+            if self.tile_at(coordinates).is_none() { continue; }
+            match self.chunks.get(&coordinates.chunk_coordinates()) {
+                Some(ChunkEntry::Active { chunk, .. }) => match chunk.get_tile(coordinates) {
+                    Ok(tile_data) => uploads.push(Arc::new(Mutex::new(
+                        TileUpload::new(coordinates, tile_data)
+                    ))),
+                    Err(()) => {
+                        error = Some(io::Error::new(io::ErrorKind::InvalidInput,
+                            "Tile is not in its active chunk",
+                        ));
+                        break;
+                    }
+                },
+                _ => {
+                    error = Some(io::Error::new(io::ErrorKind::NotFound,
+                        "Tile chunk is not active",
                     ));
-                    None
+                    break;
                 }
-            },
-            _ => {
-                error = Some(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "Tile chunk is not active",
-                ));
-                None
-            }
-        };
-        // return validation or queue failures
-        if let Some(upload) = &upload {
-            if let Err(_) = self.tile_uploads.lock().map(|mut uploads| {
-                uploads.push(upload.clone());
-            }) {
-                let mut upload: std::sync::MutexGuard<TileUpload> = upload.lock().unwrap();
-                upload.result = Some(Err(io::Error::other("Tile upload queue is unavailable")));
-                upload.is_complete = true;
             }
         }
-        // poll until the result is ready
+        if error.is_none() && let Err(_) = self.tile_uploads.lock().map(|mut tile_uploads| {
+            tile_uploads.extend(uploads.iter().cloned());
+        }) { error = Some(io::Error::other("Tile upload queue is unavailable")); }
         poll_fn(move |context| {
             if let Some(error) = error.take() { return std::task::Poll::Ready(Err(error)); }
-            let upload: &Arc<Mutex<TileUpload>> = upload.as_ref().unwrap();
-            let mut upload: std::sync::MutexGuard<TileUpload> = upload.lock().unwrap();
-            match upload.result.take() {
-                Some(result) => std::task::Poll::Ready(result),
-                None => {
-                    upload.waker = Some(context.waker().clone());
-                    std::task::Poll::Pending
+            let mut index: usize = 0;
+            while index < uploads.len() {
+                let mut upload: std::sync::MutexGuard<TileUpload> = uploads[index].lock().unwrap();
+                match upload.result.take() {
+                    Some(Ok(())) => {
+                        drop(upload);
+                        uploads.swap_remove(index);
+                    }
+                    Some(Err(error)) => return std::task::Poll::Ready(Err(error)),
+                    None => {
+                        upload.waker = Some(context.waker().clone());
+                        index += 1;
+                    }
                 }
             }
+            std::task::Poll::Ready(Ok(()))
         })
     }
 
