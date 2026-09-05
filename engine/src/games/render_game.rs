@@ -10,6 +10,7 @@ use super::Game;
 /// Renders the current game frame, with the user interface over the scene
 pub fn render_game<G: Game>(
     game: &mut G,
+    scene_renderer: &SceneRenderer,
     user_interface_renderer: &mut UserInterfaceRenderer,
     accelerator: &Accelerator,
     format: wgpu::TextureFormat,
@@ -17,7 +18,7 @@ pub fn render_game<G: Game>(
     command_encoder: &mut wgpu::CommandEncoder,
     target: &wgpu::TextureView,
 ) {
-    SceneRenderer::new().render(game.scene(), command_encoder, target);
+    scene_renderer.render(game.scene(), command_encoder, target);
     user_interface_renderer.render(
         game.user_interface_context(),
         accelerator,

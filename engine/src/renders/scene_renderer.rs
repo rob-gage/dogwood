@@ -18,7 +18,7 @@ impl SceneRenderer {
         target: &wgpu::TextureView,
     ) {
         let _render_pass = command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Scene renderer"),
+            label: Some("Scene Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: target,
                 depth_slice: None,

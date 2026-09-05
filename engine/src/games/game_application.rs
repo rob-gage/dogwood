@@ -2,6 +2,7 @@
 
 use crate::renders::{
     RenderContext,
+    SceneRenderer,
     UserInterfaceRenderer
 };
 use super::{
@@ -32,9 +33,11 @@ pub struct GameApplication<G: Game> {
     /// The `winit` window used by this `GameApplication`
     window: Option<Arc<winit::window::Window>>,
     /// The shared WGPU accelerator used for graphics and compute
-    accelerator: Option<Accelerator>,
+    accelerator: Option<Arc<Accelerator>>,
     /// The graphics-specific state used to render the window
     render_context: Option<RenderContext>,
+    /// The renderer for the active scene
+    scene_renderer: SceneRenderer,
     /// The renderer for the active user interface
     user_interface_renderer: UserInterfaceRenderer,
     /// An error with the `GameApplication`
@@ -67,6 +70,7 @@ impl<G: Game> GameApplication<G> {
             window: None,
             accelerator: None,
             render_context: None,
+            scene_renderer: SceneRenderer::new(),
             user_interface_renderer: UserInterfaceRenderer::new(),
             error: None,
             keyboard_input_state: KeyboardInputState::new(),
@@ -109,6 +113,7 @@ impl<G: Game> GameApplication<G> {
         let configuration: &wgpu::SurfaceConfiguration = render_context.configuration();
         render_game(
             &mut self.game,
+            &self.scene_renderer,
             &mut self.user_interface_renderer,
             accelerator,
             configuration.format,
@@ -244,7 +249,7 @@ impl<G: Game> GameApplication<G> {
                     }
                 };
                 let size: winit::dpi::PhysicalSize<u32> = window.inner_size();
-                let accelerator: Accelerator =
+                let accelerator: Arc<Accelerator> = Arc::new(
                     match pollster::block_on(Accelerator::new(instance, &surface)) {
                         Ok(accelerator) => accelerator,
                         Err(error) => {
@@ -252,7 +257,8 @@ impl<G: Game> GameApplication<G> {
                             event_loop.exit();
                             return;
                         }
-                    };
+                    }
+                );
                 let render_context: RenderContext = match RenderContext::new(
                     surface,
                     &accelerator,
