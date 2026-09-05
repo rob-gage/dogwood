@@ -771,6 +771,7 @@ name = "engine_graphics"
 version = "0.0.0"
 dependencies = [
  "egui",
+ "engine_compute",
  "wgpu",
 ]
 

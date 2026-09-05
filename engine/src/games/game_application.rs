@@ -1,14 +1,10 @@
 // Copyright Rob Gage 2026
 
 use crate::renders::{
-    RenderContext,
     SceneRenderer,
     UserInterfaceRenderer
 };
-use super::{
-    Game,
-    render_game,
-};
+use super::Game;
 use engine_compute::Accelerator;
 use engine_graphics::Camera;
 use engine_input::{
@@ -34,8 +30,10 @@ pub struct GameApplication<G: Game> {
     window: Option<Arc<winit::window::Window>>,
     /// The shared WGPU accelerator used for graphics and compute
     accelerator: Arc<Accelerator>,
-    /// The graphics-specific state used to render the window
-    render_context: Option<RenderContext>,
+    /// The WGPU surface used to render the window
+    surface: Option<wgpu::Surface<'static>>,
+    /// The current configuration of the window surface
+    surface_configuration: Option<wgpu::SurfaceConfiguration>,
     /// The renderer for the active scene
     scene_renderer: SceneRenderer,
     /// The renderer for the active user interface
@@ -75,7 +73,8 @@ impl<G: Game> GameApplication<G> {
             title: title.into(),
             window: None,
             accelerator,
-            render_context: None,
+            surface: None,
+            surface_configuration: None,
             scene_renderer: SceneRenderer::new(),
             user_interface_renderer: UserInterfaceRenderer::new(),
             error: None,
@@ -93,13 +92,16 @@ impl<G: Game> GameApplication<G> {
     /// Acquires the next window frame, renders it, and presents it
     fn render(&mut self) {
         use wgpu::CurrentSurfaceTexture::*;
-        let frame: wgpu::SurfaceTexture = match self.render_context.as_ref()
-                .map(|context| context.surface().get_current_texture()) {
+        let frame: wgpu::SurfaceTexture = match self.surface.as_ref()
+                .map(wgpu::Surface::get_current_texture) {
                     None => return,
                     Some(Success(frame)) | Some(Suboptimal(frame)) => frame,
                     Some(Outdated) | Some(Lost) => {
-                        let Some(render_context) = self.render_context.as_ref() else { return; };
-                        render_context.configure(&self.accelerator);
+                        let (Some(surface), Some(configuration)) = (
+                            self.surface.as_ref(),
+                            self.surface_configuration.as_ref(),
+                        ) else { return; };
+                        surface.configure(self.accelerator.wgpu_device(), configuration);
                         return;
                     }
                     Some(Timeout) | Some(Occluded) | Some(Validation) => return,
@@ -111,18 +113,26 @@ impl<G: Game> GameApplication<G> {
                 &wgpu::CommandEncoderDescriptor { label: Some("frame") },
             )
         };
-        let Some(render_context) = self.render_context.as_ref() else { return; };
-        let configuration: &wgpu::SurfaceConfiguration = render_context.configuration();
-        render_game(
-            &mut self.game,
-            &self.scene_renderer,
-            &mut self.user_interface_renderer,
+        let Some(configuration) = self.surface_configuration.as_ref() else { return; };
+        self.scene_renderer.render(
+            &self.accelerator,
+            self.game.scene(),
+            configuration.format,
+            [configuration.width, configuration.height],
+            self.camera_position,
+            [self.camera.width * self.camera.zoom, self.camera.height * self.camera.zoom],
+            &mut command_encoder,
+            &view,
+        );
+        self.user_interface_renderer.render(
+            self.game.user_interface_context(),
             &self.accelerator,
             configuration.format,
             [configuration.width, configuration.height],
             &mut command_encoder,
             &view,
         );
+
         self.accelerator.wgpu_queue().submit(Some(command_encoder.finish()));
         self.accelerator.wgpu_queue().present(frame);
     }
@@ -130,14 +140,18 @@ impl<G: Game> GameApplication<G> {
     /// Reconfigures the graphics surface for a new window size
     fn resize(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 { return; }
-        let Some(render_context) = self.render_context.as_mut() else { return; };
-        render_context.resize(&self.accelerator, width, height);
+        let (Some(surface), Some(configuration)) = (
+            self.surface.as_ref(),
+            self.surface_configuration.as_mut(),
+        ) else { return; };
+        configuration.width = width;
+        configuration.height = height;
+        surface.configure(self.accelerator.wgpu_device(), configuration);
     }
 
     /// Adds a widget to the game's user interface.
     pub fn add_widget(&mut self, widget: &mut impl Widget) {
-        let Some(render_context) = self.render_context.as_ref() else { return; };
-        let configuration = render_context.configuration();
+        let Some(configuration) = self.surface_configuration.as_ref() else { return; };
         self.game.user_interface_context().add_widget(
             widget,
             [configuration.width, configuration.height],
@@ -255,20 +269,18 @@ impl<G: Game> GameApplication<G> {
                     }
                 };
                 let size: winit::dpi::PhysicalSize<u32> = window.inner_size();
-                let render_context: RenderContext = match RenderContext::new(
-                    surface,
-                    &self.accelerator,
-                    size.width,
-                    size.height,
-                ) {
-                    Ok(render_context) => render_context,
-                    Err(error) => {
-                        self.error = Some(error);
-                        event_loop.exit();
-                        return;
-                    }
+                let Some(configuration) = surface.get_default_config(
+                    self.accelerator.wgpu_adapter(),
+                    size.width.max(1),
+                    size.height.max(1),
+                ) else {
+                    self.error = Some("The surface has no supported configuration".into());
+                    event_loop.exit();
+                    return;
                 };
-                self.render_context = Some(render_context);
+                surface.configure(self.accelerator.wgpu_device(), &configuration);
+                self.surface = Some(surface);
+                self.surface_configuration = Some(configuration);
                 self.update_camera(0.0);
                 self.window = Some(window);
             }

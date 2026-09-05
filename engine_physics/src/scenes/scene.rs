@@ -93,8 +93,6 @@ pub struct Scene {
     tiles: Box<[Tile]>,
     /// The streaming batch size for tiles
     tile_streaming_batch_size: u8,
-    /// The buffer containing `MaterialIdentifier`s for GPU-resident tiles
-    tile_material_identifier_buffer: AcceleratorBuffer,
     /// The tile downloads pending processing by `tick`
     tile_downloads: Mutex<Vec<Arc<Mutex<TileDownload>>>>,
     /// The tile uploads pending processing by `tick`
@@ -103,6 +101,8 @@ pub struct Scene {
     tiles_ring_offset_x: u16,
     /// The physical Y slot containing the buffered area's bottommost tile
     tiles_ring_offset_y: u16,
+    /// The buffer containing `MaterialIdentifier`s for GPU-resident tiles
+    cellular_material_identifiers: AcceleratorBuffer,
 }
 
 impl Scene {
@@ -126,7 +126,7 @@ impl Scene {
             (configuration.simulation_width + buffer_size) as usize *
             (configuration.simulation_height + buffer_size) as usize;
         let buffered_cell_count: usize = buffered_tile_count * 64;
-        let tile_material_identifier_buffer: AcceleratorBuffer =
+        let cellular_material_identifiers: AcceleratorBuffer =
             accelerator.allocate::<u32>(buffered_cell_count);
         let tile_count: u32 = buffered_tile_count as u32;
         let tiles: Box<[Tile]> = (0..tile_count).map(Tile).collect();
@@ -153,9 +153,9 @@ impl Scene {
             origin_target: TileCoordinates { x: 0, y: 0 },
             tiles_ring_offset_x: 0,
             tiles_ring_offset_y: 0,
-            tile_material_identifier_buffer,
             tile_downloads: Mutex::new(Vec::new()),
             tile_uploads: Mutex::new(Vec::new()),
+            cellular_material_identifiers,
         };
         for coordinates in scene.area_streaming().iterate_chunk_coordinates() {
             let chunk: Chunk = match scene.data.read_chunk(coordinates)? {
@@ -179,7 +179,21 @@ impl Scene {
 
     /// Returns graphics information for this scene
     pub fn graphics(&self) -> SceneGraphics<'_> {
-        SceneGraphics { material_graphics: &self.material_graphics }
+        let buffer_size: i32 = i32::from(self.simulation_buffer_size);
+        let dimensions: u32 = u32::from(self.simulation_buffer_size) * 2;
+        SceneGraphics {
+            material_graphics: &self.material_graphics,
+            cellular_material_identifiers: &self.cellular_material_identifiers,
+            buffered_origin: [self.origin.x - buffer_size, self.origin.y - buffer_size],
+            buffered_tile_size: [
+                u32::from(self.simulation_width) + dimensions,
+                u32::from(self.simulation_height) + dimensions,
+            ],
+            ring_offset: [
+                u32::from(self.tiles_ring_offset_x),
+                u32::from(self.tiles_ring_offset_y),
+            ],
+        }
     }
 
     /// Returns the `ActorRegistry` for this `Scene`
@@ -648,7 +662,7 @@ impl Scene {
                     )
                 );
                 command_encoder.copy_buffer_to_buffer(
-                    self.tile_material_identifier_buffer.wgpu_buffer(),
+                    self.cellular_material_identifiers.wgpu_buffer(),
                     tile.0 as u64 * TileData::SERIALIZED_SIZE as u64,
                     &state.buffer,
                     0,
@@ -714,7 +728,7 @@ impl Scene {
                 continue;
             };
             self.accelerator.wgpu_queue().write_buffer(
-                self.tile_material_identifier_buffer.wgpu_buffer(),
+                self.cellular_material_identifiers.wgpu_buffer(),
                 tile.0 as u64 * TileData::SERIALIZED_SIZE as u64,
                 &state.data,
             );
@@ -745,6 +759,6 @@ impl Scene {
 
 impl Drop for Scene {
 
-    fn drop(&mut self) { self.tile_material_identifier_buffer.free() }
+    fn drop(&mut self) { self.cellular_material_identifiers.free() }
 
 }
