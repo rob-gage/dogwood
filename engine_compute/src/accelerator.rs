@@ -41,20 +41,27 @@ impl Accelerator {
         })
     }
 
-    /// Returns a reference to the `Accelerator`'s `wgpu::Instance`
-    pub const fn wgpu_instance(&self) -> &wgpu::Instance { &self.wgpu_instance }
-
     /// Allocates an `AcceleratorBuffer`
     pub fn allocate<T>(&self, size: usize) -> AcceleratorBuffer {
         AcceleratorBuffer(self.wgpu_device.create_buffer(
             &wgpu::BufferDescriptor {
                 label: None,
                 size: (size as u64).into(),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST |
+                    wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             },
         ))
     }
+
+    /// Polls the accelerator for completed work
+    pub fn poll(&self) -> Result<(), wgpu::PollError> {
+        self.wgpu_device.poll(wgpu::PollType::Poll)?;
+        Ok(())
+    }
+
+    /// Returns a reference to the `Accelerator`'s `wgpu::Instance`
+    pub const fn wgpu_instance(&self) -> &wgpu::Instance { &self.wgpu_instance }
 
     /// Returns a reference to the `Accelerator`'s `wgpu::Adapter`
     pub const fn wgpu_adapter(&self) -> &wgpu::Adapter { &self.wgpu_adapter }
