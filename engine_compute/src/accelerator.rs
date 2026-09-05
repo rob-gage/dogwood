@@ -1,7 +1,10 @@
 // Copyright Rob Gage 2026
 
 use super::AcceleratorBuffer;
-use std::error::Error;
+use std::{
+    error::Error,
+    mem::size_of,
+};
 
 /// A WGPU accelerator shared by graphics and compute workloads.
 pub struct Accelerator {
@@ -46,7 +49,7 @@ impl Accelerator {
         AcceleratorBuffer(self.wgpu_device.create_buffer(
             &wgpu::BufferDescriptor {
                 label: None,
-                size: (size as u64).into(),
+                size: (size * size_of::<T>()) as u64,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST |
                     wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
