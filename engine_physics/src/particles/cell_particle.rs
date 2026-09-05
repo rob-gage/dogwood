@@ -3,7 +3,7 @@
 use crate::materials::MaterialIdentifier;
 
 /// A cellular particle
-pub struct CellularParticle {
+pub struct CellParticle {
     /// The `MaterialIdentifier` of this `CellularParticle`
     material_identifier: MaterialIdentifier
 }

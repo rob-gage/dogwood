@@ -1,5 +1,5 @@
 // Copyright Rob Gage 2026
 
-mod cellular_particle;
+mod cell_particle;
 
-pub use cellular_particle::CellularParticle;
+pub use cell_particle::CellParticle;

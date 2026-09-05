@@ -788,6 +788,7 @@ dependencies = [
  "bevy_ecs",
  "engine_compute",
  "engine_input",
+ "wgpu",
 ]
 
 [[package]]
