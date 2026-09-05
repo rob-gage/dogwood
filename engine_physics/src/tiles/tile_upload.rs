@@ -1,7 +1,7 @@
 // Copyright Rob Gage 2026
 
 use crate::tiles::{
-    Tile,
+    TileCoordinates,
     TileData,
 };
 use std::{
@@ -11,8 +11,8 @@ use std::{
 
 /// Tracks a nonblocking native-to-`Accelerator` tile upload
 pub struct TileUpload {
-    /// The GPU tile receiving the data
-    pub tile: Tile,
+    /// The world tile being uploaded
+    pub coordinates: TileCoordinates,
     /// The serialized tile data to upload
     pub data: Vec<u8>,
     /// Whether the upload has completed
@@ -26,11 +26,11 @@ pub struct TileUpload {
 impl TileUpload {
 
     /// Creates a pending tile upload with serialized `TileData`
-    pub fn new(tile: Tile, tile_data: &TileData) -> Self {
+    pub fn new(coordinates: TileCoordinates, tile_data: &TileData) -> Self {
         let mut data: Vec<u8> = Vec::with_capacity(TileData::SERIALIZED_SIZE);
         tile_data.serialize(&mut data).expect("Writing to a Vec cannot fail");
         Self {
-            tile,
+            coordinates,
             data,
             result: None,
             is_complete: false,

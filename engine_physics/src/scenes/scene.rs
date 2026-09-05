@@ -187,9 +187,9 @@ impl Scene {
         self.possessed_actor = None;
     }
 
-    /// Processes pending nonblocking GPU tile transfers
-    pub fn tick(&self) -> Result<(), io::Error> {
-        // process tile downloads and uploads
+    /// Processes chunk streaming and pending nonblocking GPU tile transfers
+    pub fn tick(&mut self) -> Result<(), io::Error> {
+        self.refresh_chunks()?;
         self.tile_downloads_submit()?;
         self.tile_uploads_submit()?;
         self.accelerator.poll().map_err(|error| io::Error::other(error.to_string()))?;
@@ -382,7 +382,7 @@ impl Scene {
         // move by at most one batch
         let batch_size: i64 = self.tile_streaming_batch_size as i64;
         let x_difference: i64 = self.origin_target.x as i64 - self.origin.x as i64;
-        let y_difference: i64 = self.origin.y as i64 - self.origin.y as i64;
+        let y_difference: i64 = self.origin_target.y as i64 - self.origin.y as i64;
         if x_difference >= batch_size { self.shift_right()?; }
         if x_difference <= -batch_size { self.shift_left()?; }
         if y_difference >= batch_size { self.shift_up()?; }
@@ -406,15 +406,22 @@ impl Scene {
                     x: origin.x + x,
                     y: origin.y + y,
                 };
-                let Some(tile) = self.tile_from_coordinates(coordinates) else {
+                if self.tile_from_coordinates(coordinates).is_none() {
                     return Err(io::Error::other("GPU tile buffer is inconsistent"));
-                };
-                let tile_data: &TileData = match self.chunks.get(&coordinates.chunk_coordinates()) {
-                    Some(ChunkEntry::Active { chunk, .. }) =>
-                        chunk.get_tile(coordinates).unwrap_or(&TileData::EMPTY),
-                    _ => &TileData::EMPTY,
-                };
-                drop(self.tile_upload(tile, tile_data));
+                }
+                match self.chunks.get(&coordinates.chunk_coordinates()) {
+                    Some(ChunkEntry::Active { chunk, .. }) if chunk.get_tile(coordinates).is_ok()
+                        => (),
+                    Some(ChunkEntry::Active { .. }) => return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "Tile is not in its active chunk",
+                    )),
+                    _ => return Err(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        "Tile chunk is not active",
+                    )),
+                }
+                drop(self.tile_upload(coordinates));
             }
         }
         Ok(())
@@ -483,21 +490,14 @@ impl Scene {
     /// Queues a GPU tile download and returns a future resolved
     pub fn tile_download(
         &self,
-        tile: Tile,
+        coordinates: TileCoordinates,
     ) -> impl Future<Output = Result<TileData, io::Error>> + 'static {
         // create the `TileDownload`
         let download: Arc<Mutex<TileDownload>> = Arc::new(Mutex::new(
-            TileDownload::new(self.accelerator.as_ref(), tile)
+            TileDownload::new(self.accelerator.as_ref(), coordinates)
         ));
         // return validation or queue failures
-        if tile.0 as usize >= self.tiles.len() {
-            let mut download: std::sync::MutexGuard<TileDownload> = download.lock().unwrap();
-            download.result = Some(Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "Invalid tile download",
-            )));
-            download.is_complete = true;
-        } else if let Err(_) = self.tile_downloads.lock().map(|mut downloads| {
+        if let Err(_) = self.tile_downloads.lock().map(|mut downloads| {
             downloads.push(download.clone());
         }) {
             let mut download: std::sync::MutexGuard<TileDownload> = download.lock().unwrap();
@@ -520,30 +520,47 @@ impl Scene {
     /// Queues a GPU tile upload and returns a future resolved
     pub fn tile_upload(
         &self,
-        tile: Tile,
-        tile_data: &TileData,
+        coordinates: TileCoordinates,
     ) -> impl Future<Output = Result<(), io::Error>> + 'static {
         // create the `TileUpload`
-        let upload: Arc<Mutex<TileUpload>> = Arc::new(Mutex::new(
-            TileUpload::new(tile, tile_data)
-        ));
+        let mut error: Option<io::Error> = None;
+        let upload: Option<Arc<Mutex<TileUpload>>> = match self.chunks.get(
+            &coordinates.chunk_coordinates()
+        ) {
+            Some(ChunkEntry::Active { chunk, .. }) => match chunk.get_tile(coordinates) {
+                Ok(tile_data) => Some(Arc::new(Mutex::new(
+                    TileUpload::new(coordinates, tile_data)
+                ))),
+                Err(()) => {
+                    error = Some(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "Tile is not in its active chunk",
+                    ));
+                    None
+                }
+            },
+            _ => {
+                error = Some(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "Tile chunk is not active",
+                ));
+                None
+            }
+        };
         // return validation or queue failures
-        if tile.0 as usize >= self.tiles.len() {
-            let mut upload: std::sync::MutexGuard<TileUpload> = upload.lock().unwrap();
-            upload.result = Some(Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "Invalid tile upload",
-            )));
-            upload.is_complete = true;
-        } else if let Err(_) = self.tile_uploads.lock().map(|mut uploads| {
-            uploads.push(upload.clone());
-        }) {
-            let mut upload: std::sync::MutexGuard<TileUpload> = upload.lock().unwrap();
-            upload.result = Some(Err(io::Error::other("Tile upload queue is unavailable")));
-            upload.is_complete = true;
+        if let Some(upload) = &upload {
+            if let Err(_) = self.tile_uploads.lock().map(|mut uploads| {
+                uploads.push(upload.clone());
+            }) {
+                let mut upload: std::sync::MutexGuard<TileUpload> = upload.lock().unwrap();
+                upload.result = Some(Err(io::Error::other("Tile upload queue is unavailable")));
+                upload.is_complete = true;
+            }
         }
         // poll until the result is ready
         poll_fn(move |context| {
+            if let Some(error) = error.take() { return std::task::Poll::Ready(Err(error)); }
+            let upload: &Arc<Mutex<TileUpload>> = upload.as_ref().unwrap();
             let mut upload: std::sync::MutexGuard<TileUpload> = upload.lock().unwrap();
             match upload.result.take() {
                 Some(result) => std::task::Poll::Ready(result),
@@ -569,6 +586,15 @@ impl Scene {
                 let mut state: std::sync::MutexGuard<TileDownload> = download.lock().unwrap();
                 if state.result.is_some() { continue; }
                 if state.is_started { continue; }
+                let Some(tile) = self.tile_from_coordinates(state.coordinates) else {
+                    state.result = Some(Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "Tile is outside the GPU buffer",
+                    )));
+                    state.is_complete = true;
+                    if let Some(waker) = state.waker.take() { waker.wake(); }
+                    continue;
+                };
                 let command_encoder: &mut wgpu::CommandEncoder = command_encoder.get_or_insert_with(
                     || self.accelerator.wgpu_device().create_command_encoder(
                         &wgpu::CommandEncoderDescriptor { label: Some("tile_downloads_submit") },
@@ -576,7 +602,7 @@ impl Scene {
                 );
                 command_encoder.copy_buffer_to_buffer(
                     self.tile_material_identifier_buffer.wgpu_buffer(),
-                    state.tile.0 as u64 * TileData::SERIALIZED_SIZE as u64,
+                    tile.0 as u64 * TileData::SERIALIZED_SIZE as u64,
                     &state.buffer,
                     0,
                     TileData::SERIALIZED_SIZE as u64,
@@ -631,9 +657,18 @@ impl Scene {
         for upload in uploads.iter() {
             let mut state: std::sync::MutexGuard<TileUpload> = upload.lock().unwrap();
             if state.result.is_some() { continue; }
+            let Some(tile) = self.tile_from_coordinates(state.coordinates) else {
+                state.result = Some(Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Tile is outside the GPU buffer",
+                )));
+                state.is_complete = true;
+                if let Some(waker) = state.waker.take() { waker.wake(); }
+                continue;
+            };
             self.accelerator.wgpu_queue().write_buffer(
                 self.tile_material_identifier_buffer.wgpu_buffer(),
-                state.tile.0 as u64 * TileData::SERIALIZED_SIZE as u64,
+                tile.0 as u64 * TileData::SERIALIZED_SIZE as u64,
                 &state.data,
             );
             state.result = Some(Ok(()));
