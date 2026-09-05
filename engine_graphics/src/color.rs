@@ -6,6 +6,9 @@ pub struct Color(u32);
 
 impl Color {
 
+    /// The color black
+    pub const BLACK: Self = Self::new_rgb(0, 0, 0);
+
     /// Creates a color from red, green, and blue components
     pub const fn new_rgb(red: u8, green: u8, blue: u8) -> Color
     { Self::new_rgba(red, green, blue, 255) }
