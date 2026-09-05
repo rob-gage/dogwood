@@ -1,11 +1,12 @@
 // Copyright Rob Gage 2026
 
 /// The form of a `Material`
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub enum MaterialForm {
-    /// A static `Material`
-    Static,
-    /// A cellular dynamic `Material`
-    Cellular,
-    /// A fluid dynamic `Material`
+    /// A static cellular `Material`
+    CellularStatic,
+    /// A dynamic cellular `Material`
+    CellularDynamic,
+    /// A fluid `Material`
     Fluid,
 }
