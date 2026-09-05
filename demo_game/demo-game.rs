@@ -8,6 +8,6 @@ use engine::{
 use std::sync::Arc;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let accelerator: Arc<Accelerator> = Arc::new(pollster::block_on(Accelerator::new())?);
+    let accelerator: Arc<Accelerator> = Arc::new(Accelerator::new()?);
     DemoGame::new(&accelerator)?.launch(accelerator)
 }

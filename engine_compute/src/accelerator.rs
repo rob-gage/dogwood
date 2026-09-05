@@ -21,18 +21,18 @@ pub struct Accelerator {
 impl Accelerator {
 
     /// Creates an `Accelerator`
-    pub async fn new() -> Result<Self, Box<dyn Error>> {
+    pub fn new() -> Result<Self, Box<dyn Error>> {
         let instance: wgpu::Instance = wgpu::Instance::default();
-        let adapter: wgpu::Adapter = instance.request_adapter(
+        let adapter: wgpu::Adapter = pollster::block_on(instance.request_adapter(
             &wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
                 compatible_surface: None,
                 force_fallback_adapter: false,
                 apply_limit_buckets: false,
             },
-        ).await?;
+        ))?;
         let (device, queue): (wgpu::Device, wgpu::Queue) =
-            adapter.request_device(&wgpu::DeviceDescriptor::default()).await?;
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))?;
 
         Ok(Self {
             wgpu_instance: instance,

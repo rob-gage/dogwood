@@ -560,7 +560,6 @@ version = "0.0.0"
 dependencies = [
  "editor",
  "engine",
- "pollster",
 ]
 
 [[package]]
@@ -763,6 +762,7 @@ version = "0.0.0"
 name = "engine_compute"
 version = "0.0.0"
 dependencies = [
+ "pollster",
  "wgpu",
 ]
 
