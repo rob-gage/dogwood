@@ -32,7 +32,7 @@ impl DemoGame {
         Ok(Self {
             user_interface_context: UserInterfaceContext::new(),
             scene: Some(Scene::new(accelerator, SceneConfiguration {
-                material_graphics: materials.build_material_graphics(),
+                material_graphics: materials.build_material_graphics(accelerator),
                 data_path: "demo_data".into(),
                 simulation_width: 16,
                 simulation_height: 9,

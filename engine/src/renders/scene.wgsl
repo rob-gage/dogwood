@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-// Per-frame camera and tile-ring metadata.
+// Per-frame camera and tile-ring metadata
 struct Uniforms {
     camera_position: vec2<f32>,
     window_size: vec2<f32>,
@@ -12,9 +12,22 @@ struct Uniforms {
     _padding2: vec2<u32>,
 }
 
+struct MaterialAppearance {
+    color_freezing: u32,
+    color_melting: u32,
+    radiance_freezing: u32,
+    radiance_melting: u32,
+}
+
 @group(0) @binding(0) var<storage, read> cellular_material_identifiers: array<u32>;
 
-@group(0) @binding(1) var<uniform> uniforms: Uniforms;
+@group(0) @binding(1) var<storage, read> cellular_statics: array<MaterialAppearance>;
+
+@group(0) @binding(2) var<storage, read> cellular_dynamics: array<MaterialAppearance>;
+
+@group(0) @binding(3) var<storage, read> fluids: array<MaterialAppearance>;
+
+@group(0) @binding(4) var<uniform> uniforms: Uniforms;
 
 // A fullscreen triangle delegates all scene lookup to the fragment shader
 @vertex
@@ -25,7 +38,7 @@ fn vertex(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
     return vec4<f32>(positions[index], 0.0, 1.0);
 }
 
-// Convert each pixel to a world cell, resolve it through the tile ring, then color its form
+// Convert each pixel to a world cell, then resolve it through the tile ring
 @fragment
 fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let normalized = vec2<f32>(
@@ -45,14 +58,25 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let local = vec2<u32>(cell - tile * 8);
     let material_identifier = cellular_material_identifiers[tile_index * 64u + local.y * 8u + local.x];
     if material_identifier == 0u { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }
-    // temporary form colors will be replaced by material graphics buffers
     let form = material_identifier >> 30u;
-    if form == 1u { return vec4<f32>(0.7, 0.7, 0.7, 1.0); }
-    if form == 2u { return vec4<f32>(0.8, 0.6, 0.2, 1.0); }
-    return vec4<f32>(0.2, 0.5, 0.9, 1.0);
+    let index = material_identifier & 0x3fffffffu;
+    var properties: MaterialAppearance;
+    switch form {
+        case 1u: { properties = cellular_statics[index]; }
+        case 2u: { properties = cellular_dynamics[index]; }
+        case 3u: { properties = fluids[index]; }
+        default: { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }
+    }
+    let color = properties.color_freezing;
+    return vec4<f32>(
+        f32(color & 0xffu) / 255.0,
+        f32((color >> 8u) & 0xffu) / 255.0,
+        f32((color >> 16u) & 0xffu) / 255.0,
+        f32(color >> 24u) / 255.0,
+    );
 }
 
-// Signed floor division keeps negative world coordinates in the correct tile.
+// Signed floor division keeps negative world coordinates in the correct tile
 fn floor_divide(value: i32, divisor: i32) -> i32 {
     if value < 0 { return (value - divisor + 1) / divisor; }
     return value / divisor;

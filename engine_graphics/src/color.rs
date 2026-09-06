@@ -29,6 +29,9 @@ impl Color {
     /// Returns the alpha component of this `Color`
     pub const fn alpha(self) -> u8 { (self.0 >> 24) as u8 }
 
+    /// Returns this `Color` as a packed RGBA `u32`
+    pub const fn as_u32(self) -> u32 { self.0 }
+
 }
 
 impl Into<egui::Color32> for &Color {

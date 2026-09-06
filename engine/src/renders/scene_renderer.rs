@@ -41,10 +41,11 @@ impl SceneRenderer {
     ) {
         if self.format != Some(format) {
             let device: &wgpu::Device = accelerator.wgpu_device();
-            let shader: wgpu::ShaderModule = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("Scene shader"),
-                source: wgpu::ShaderSource::Wgsl(include_str!("scene.wgsl").into()),
-            });
+            let shader: wgpu::ShaderModule = device.create_shader_module(
+                wgpu::ShaderModuleDescriptor {
+                    label: Some("Scene shader"),
+                    source: wgpu::ShaderSource::Wgsl(include_str!("scene.wgsl").into()),
+                });
             let bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
                 &wgpu::BindGroupLayoutDescriptor {
                     label: Some("Scene bind group layout"),
@@ -61,6 +62,36 @@ impl SceneRenderer {
                         },
                         wgpu::BindGroupLayoutEntry {
                             binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 3,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 4,
                             visibility: wgpu::ShaderStages::FRAGMENT,
                             ty: wgpu::BindingType::Buffer {
                                 ty: wgpu::BufferBindingType::Uniform,
@@ -143,6 +174,21 @@ impl SceneRenderer {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
+                        resource: graphics.material_graphics.cellular_statics
+                            .wgpu_buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: graphics.material_graphics.cellular_dynamics
+                            .wgpu_buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: graphics.material_graphics.fluids
+                            .wgpu_buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
                         resource: uniform_buffer.as_entire_binding(),
                     },
                 ],
