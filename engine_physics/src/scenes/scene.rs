@@ -115,12 +115,19 @@ impl Scene {
     pub fn new(
         accelerator: &Arc<Accelerator>,
         configuration: SceneConfiguration,
+    ) -> Result<Self, Box<dyn Error>> { Self::new_with_generator(accelerator, configuration, ()) }
+
+    /// Creates a `Scene` using a generator for chunks that are not already stored
+    pub fn new_with_generator(
+        accelerator: &Arc<Accelerator>,
+        configuration: SceneConfiguration,
+        generator: impl SceneGenerator + 'static,
     ) -> Result<Self, Box<dyn Error>> {
         configuration.validate()?;
         let material_graphics: MaterialGraphics = configuration.material_graphics;
         let accelerator: Arc<Accelerator> = accelerator.clone();
         let data: SceneData = SceneData::open(configuration.data_path.clone())?;
-        let generator: Arc<dyn SceneGenerator> = Arc::new(());
+        let generator: Arc<dyn SceneGenerator> = Arc::new(generator);
         let buffer_size: u16 = u16::from(configuration.simulation_buffer_size) * 2;
         let buffered_tile_count: usize =
             (configuration.simulation_width + buffer_size) as usize *

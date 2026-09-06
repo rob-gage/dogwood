@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
-mod game;
+mod demo_game;
+mod demo_scene_generator;
 
-pub use game::DemoGame;
+pub use demo_game::DemoGame;
+use demo_scene_generator::DemoSceneGenerator;

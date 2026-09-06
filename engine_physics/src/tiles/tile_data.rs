@@ -21,6 +21,11 @@ impl TileData {
         cell_material_identifiers: [[MaterialIdentifier::NULL; 8]; 8],
     };
 
+    /// Creates a tile filled with one material
+    pub const fn new_filled(material_identifier: MaterialIdentifier) -> Self {
+        Self { cell_material_identifiers: [[material_identifier; 8]; 8] }
+    }
+
     /// Deserializes binary data into a `TileData`
     pub fn deserialize<R: io::Read>(reader: &mut R) -> Result<TileData, io::Error> {
         let mut cell_material_identifiers: [[MaterialIdentifier; 8]; 8] =

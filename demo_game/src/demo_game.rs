@@ -1,11 +1,20 @@
 // Copyright Rob Gage 2026
 
+use super::DemoSceneGenerator;
 use engine::{
     Game,
     compute::Accelerator,
-    graphics::Camera,
+    graphics::{
+        Camera,
+        Color,
+        MaterialAppearance,
+    },
     physics::{
-        materials::MaterialRegistry,
+        materials::{
+            Material,
+            MaterialIdentifier,
+            MaterialRegistry,
+        },
         scenes::{
             Scene,
             SceneConfiguration,
@@ -13,12 +22,13 @@ use engine::{
     },
     user_interface::UserInterfaceContext,
 };
+
 use std::{
     error::Error,
     sync::Arc,
 };
 
-/// A minimal game used to exercise the engine.
+/// A minimal game used to test the engine
 pub struct DemoGame {
     user_interface_context: UserInterfaceContext,
     scene: Option<Scene>,
@@ -28,17 +38,21 @@ impl DemoGame {
 
     /// Creates a `DemoGame` with a GPU-backed scene
     pub fn new(accelerator: &Arc<Accelerator>) -> Result<Self, Box<dyn Error>> {
-        let materials: MaterialRegistry = MaterialRegistry::new();
+        let mut materials: MaterialRegistry = MaterialRegistry::new();
+        let stone: MaterialIdentifier = materials.register(Material::CellularStatic {
+            name: "Stone",
+            graphics: MaterialAppearance::from_color(Color::new_rgb(128, 128, 128)),
+        });
         Ok(Self {
             user_interface_context: UserInterfaceContext::new(),
-            scene: Some(Scene::new(accelerator, SceneConfiguration {
+            scene: Some(Scene::new_with_generator(accelerator, SceneConfiguration {
                 material_graphics: materials.build_material_graphics(accelerator),
                 data_path: "demo_data".into(),
                 simulation_width: 16,
                 simulation_height: 9,
-                simulation_buffer_size: 0,
+                simulation_buffer_size: 4,
                 tile_streaming_batch_size: 1,
-            })?),
+            }, DemoSceneGenerator { stone })?),
         })
     }
 

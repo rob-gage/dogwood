@@ -18,11 +18,17 @@ pub mod input {
 
 }
 pub mod graphics {
-    pub use engine_graphics::Camera;
+    pub use engine_graphics::{
+        Camera,
+        Color,
+        MaterialAppearance,
+    };
 }
 pub mod physics {
+    pub use engine_physics::chunks;
     pub use engine_physics::materials;
     pub use engine_physics::scenes;
+    pub use engine_physics::tiles;
 }
 pub mod user_interface {
     pub use engine_user_interface::UserInterface;
