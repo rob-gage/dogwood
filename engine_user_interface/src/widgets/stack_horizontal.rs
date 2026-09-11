@@ -14,13 +14,15 @@ pub struct StackHorizontal {
     spacing: f32,
     /// The background color of this `StackHorizontal`
     background_color: Option<egui::Color32>,
+    /// The fixed height of this stack within a vertical stack, if any
+    height: Option<f32>,
 }
 
 impl StackHorizontal {
 
     /// Creates an empty `StackHorizontal`
     pub const fn new() -> Self {
-        Self { children: Vec::new(), spacing: 0.0, background_color: None }
+        Self { children: Vec::new(), spacing: 0.0, background_color: None, height: None }
     }
 
     /// Adds a widget to the end of the `StackHorizontal`
@@ -38,6 +40,12 @@ impl StackHorizontal {
     /// Sets the background color of this `StackHorizontal`
     pub fn with_background_color(mut self, color: &Color) -> Self {
         self.background_color = Some(color.into());
+        self
+    }
+
+    /// Sets the stack height when it is contained in a vertical stack
+    pub const fn with_height(mut self, height: f32) -> Self {
+        self.height = Some(height);
         self
     }
 
@@ -71,5 +79,8 @@ impl Widget for StackHorizontal {
         }
         response
     }
+
+    /// Returns the configured height when this stack is contained vertically
+    fn desired_size(&self) -> Option<f32> { self.height }
 
 }

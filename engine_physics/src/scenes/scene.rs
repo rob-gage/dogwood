@@ -4,6 +4,7 @@ use super::{
     SceneConfiguration,
     SceneData,
     SceneGenerator,
+    ScenePosition,
 };
 use crate::simulation::CellularCollision;
 use crate::{
@@ -90,6 +91,8 @@ pub struct Scene {
     origin: TileCoordinates,
     /// The desired `origin` for the active tile area
     origin_target: TileCoordinates,
+    /// An explicit area-follow request to apply before automatic pawn following
+    area_request: Option<TileCoordinates>,
     /// The current GPU-resident tiles in this `Scene`
     tiles: Box<[Tile]>,
     /// The streaming batch size for tiles
@@ -167,6 +170,7 @@ impl Scene {
             simulation_buffer_size: configuration.simulation_buffer_size,
             origin: TileCoordinates { x: 0, y: 0 },
             origin_target: TileCoordinates { x: 0, y: 0 },
+            area_request: None,
             tiles_ring_offset_x: 0,
             tiles_ring_offset_y: 0,
             tile_downloads: Mutex::new(Vec::new()),
@@ -228,12 +232,32 @@ impl Scene {
     /// Possesses an actor if it exists in this `Scene`
     pub fn possess_actor(&mut self, identifier: Actor) -> bool {
         if !self.actor_registry.is_possessable(identifier) { return false; }
+        if self.possessed_actor != Some(identifier) && let Some(possessed) = self.possessed_actor {
+            self.actor_registry.clear_control_state(possessed);
+        }
         self.possessed_actor = Some(identifier);
         true
     }
 
     /// Releases the currently possessed actor
-    pub fn dispossess_actor(&mut self) { self.possessed_actor = None; }
+    pub fn dispossess_actor(&mut self) {
+        if let Some(possessed) = self.possessed_actor.take() {
+            self.actor_registry.clear_control_state(possessed);
+        }
+    }
+
+    /// Requests that the active scene area recenter around a world position
+    pub fn request_area_around(&mut self, position: ScenePosition) {
+        self.area_request = Some(TileCoordinates {
+            x: position.tile_coordinates.x - i32::from(self.simulation_width) / 2,
+            y: position.tile_coordinates.y - i32::from(self.simulation_height) / 2,
+        });
+    }
+
+    /// Returns whether a world position is currently resident in the GPU tile buffer
+    pub fn is_position_resident(&self, position: ScenePosition) -> bool {
+        self.area_buffered().contains(position.tile_coordinates)
+    }
 
     /// Handles `Scene` streaming and fixed-rate simulation
     pub fn update(
@@ -241,6 +265,13 @@ impl Scene {
         elapsed: Duration,
         is_simulation_active: bool,
     ) -> Result<(), io::Error> {
+        if let Some(origin_target) = self.area_request.take() {
+            self.origin_target = origin_target;
+        } else {
+            let possessed_position: Option<ScenePosition> = self.possessed_actor()
+                .and_then(|actor| self.actor_registry.get_position(actor)).copied();
+            if let Some(position) = possessed_position { self.follow_position(position); }
+        }
         self.chunks_refresh()?;
         self.tile_downloads_submit()?;
         self.tile_uploads_submit()?;
@@ -251,14 +282,19 @@ impl Scene {
         self.tick_time += elapsed;
         let tick_time: Duration = Duration::from_secs(1) / TICK_RATE;
         while self.tick_time >= tick_time {
-            if is_simulation_active { self.tick()?; }
+            self.tick(is_simulation_active)?;
             self.tick_time -= tick_time;
         }
         Ok(())
     }
 
     /// Runs one fixed-rate physics simulation tick
-    fn tick(&mut self) -> Result<(), io::Error> {
+    fn tick(&mut self, is_simulation_active: bool) -> Result<(), io::Error> {
+        self.actor_registry.simulate_pawns(1.0 / TICK_RATE as f32, is_simulation_active);
+        let possessed_position: Option<ScenePosition> = self.possessed_actor()
+            .and_then(|actor| self.actor_registry.get_position(actor)).copied();
+        if let Some(position) = possessed_position { self.follow_position(position); }
+        if !is_simulation_active { return Ok(()); }
         let buffer_size: i32 = i32::from(self.simulation_buffer_size);
         self.cellular_collision.extract(
             self.accelerator.as_ref(),
@@ -271,6 +307,14 @@ impl Scene {
             self.tiles_ring_offset_x,
             self.tiles_ring_offset_y,
         )
+    }
+
+    /// Sets the automatic active-area target around a world position
+    fn follow_position(&mut self, position: ScenePosition) {
+        self.origin_target = TileCoordinates {
+            x: position.tile_coordinates.x - i32::from(self.simulation_width) / 2,
+            y: position.tile_coordinates.y - i32::from(self.simulation_height) / 2,
+        };
     }
 
     /// Returns the exact tile area currently being simulated
@@ -799,11 +843,20 @@ mod tests {
 
     use super::*;
     use crate::{
+        actors::{
+            ActorControlState,
+            ActorPawn,
+            ActorPawnMovement,
+            ActorPawnNoclipConfiguration,
+        },
         materials::{
             MaterialForm,
             MaterialIdentifier,
         },
-        scenes::SceneGenerator,
+        scenes::{
+            SceneGenerator,
+            SceneVelocity,
+        },
     };
     use engine_graphics::MaterialGraphics;
     use std::time::{
@@ -889,6 +942,51 @@ mod tests {
             .expect("shifted collision occupancy readback did not complete");
         assert!(shifted_snapshot.origin == TileCoordinates { x: -3, y: -4 });
         assert_stone_ground(shifted_snapshot);
+
+        let mut moving_pawn: ActorPawn = ActorPawn::new();
+        moving_pawn.noclip = Some(ActorPawnNoclipConfiguration { speed: 1.0 });
+        moving_pawn.movement = Some(ActorPawnMovement::Noclip);
+        let moving_actor: Actor = scene.actor_registry_mutable().spawn_possessable_pawn(
+            moving_pawn,
+            ScenePosition {
+                tile_coordinates: TileCoordinates { x: 0, y: 1 },
+                x_offset: 0.5,
+                y_offset: 0.5,
+            },
+            SceneVelocity { x: 0.0, y: 0.0 },
+        );
+        let stationary_actor: Actor = scene.actor_registry_mutable().spawn_possessable_pawn(
+            ActorPawn::new(),
+            ScenePosition {
+                tile_coordinates: TileCoordinates { x: 0, y: 1 },
+                x_offset: 0.5,
+                y_offset: 0.5,
+            },
+            SceneVelocity { x: 0.0, y: 0.0 },
+        );
+        scene.possess_actor(moving_actor);
+        scene.actor_registry_mutable().set_control_state(
+            moving_actor,
+            ActorControlState(engine_input::ControlState {
+                locomotion_x: 1.0,
+                locomotion_y: 0.0,
+            }),
+        );
+        scene.possess_actor(stationary_actor);
+        scene.actor_registry_mutable().simulate_pawns(1.0, true);
+        let cleared_position: ScenePosition =
+            *scene.actor_registry().get_position(moving_actor).unwrap();
+        assert_eq!(cleared_position.tile_coordinates.x, 0);
+        assert_eq!(cleared_position.x_offset, 0.5);
+
+        let requested_position: ScenePosition = ScenePosition {
+            tile_coordinates: TileCoordinates { x: 30, y: 1 },
+            x_offset: 0.5,
+            y_offset: 0.5,
+        };
+        scene.request_area_around(requested_position);
+        scene.update(Duration::ZERO, false)?;
+        assert!(scene.origin_target == TileCoordinates { x: 22, y: -3 });
         Ok(())
     }
 }

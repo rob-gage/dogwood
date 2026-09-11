@@ -10,6 +10,7 @@ use engine::{
         MaterialAppearance,
     },
     physics::{
+        actors::ActorPawn,
         materials::{
             Material,
             MaterialIdentifier,
@@ -18,7 +19,10 @@ use engine::{
         scenes::{
             Scene,
             SceneConfiguration,
+            ScenePosition,
+            SceneVelocity,
         },
+        tiles::TileCoordinates,
     },
     user_interface::UserInterfaceContext,
 };
@@ -43,16 +47,28 @@ impl DemoGame {
             name: "Stone",
             graphics: MaterialAppearance::from_color(Color::new_rgb(128, 128, 128)),
         });
-        Ok(Self {
-            user_interface_context: UserInterfaceContext::new(),
-            scene: Some(Scene::new_with_generator(accelerator, SceneConfiguration {
+        let mut scene: Scene = Scene::new_with_generator(accelerator, SceneConfiguration {
                 material_graphics: materials.build_material_graphics(accelerator),
                 data_path: "demo_data".into(),
                 simulation_width: 16,
                 simulation_height: 9,
                 simulation_buffer_size: 4,
                 tile_streaming_batch_size: 1,
-            }, DemoSceneGenerator { stone })?),
+            }, DemoSceneGenerator { stone })?;
+        let pawn: engine::physics::actors::Actor =
+            scene.actor_registry_mutable().spawn_possessable_pawn(
+            ActorPawn::new(),
+            ScenePosition {
+                tile_coordinates: TileCoordinates { x: 0, y: 1 },
+                x_offset: 0.5,
+                y_offset: 0.5,
+            },
+            SceneVelocity { x: 0.0, y: 0.0 },
+        );
+        scene.possess_actor(pawn);
+        Ok(Self {
+            user_interface_context: UserInterfaceContext::new(),
+            scene: Some(scene),
         })
     }
 
@@ -73,7 +89,7 @@ impl Game for DemoGame {
         }
     }
 
-    fn is_paused(&self) -> bool { false }
+    fn is_paused(&self) -> bool { true }
 
     fn scene(&self) -> Option<&Scene> { self.scene.as_ref() }
 

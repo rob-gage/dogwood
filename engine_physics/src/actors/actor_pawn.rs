@@ -1,5 +1,42 @@
 // Copyright Rob Gage 2026
 
-/// Marks an actor as a pawn
+use super::{
+    ActorPawnFlyingConfiguration,
+    ActorPawnMovement,
+    ActorPawnNoclipConfiguration,
+    ActorPawnSwimmingConfiguration,
+    ActorPawnWalkingConfiguration,
+};
+
+/// Configures the movement capabilities and active movement of an actor pawn
 #[derive(bevy_ecs::component::Component)]
-pub struct ActorPawn;
+pub struct ActorPawn {
+    /// Walking capability configuration, if supported
+    pub walking: Option<ActorPawnWalkingConfiguration>,
+    /// Flying capability configuration, if supported
+    pub flying: Option<ActorPawnFlyingConfiguration>,
+    /// Swimming capability configuration, if supported
+    pub swimming: Option<ActorPawnSwimmingConfiguration>,
+    /// Noclip capability configuration, if supported
+    pub noclip: Option<ActorPawnNoclipConfiguration>,
+    /// The movement behavior currently used by this pawn
+    pub movement: Option<ActorPawnMovement>,
+    /// Whether this pawn continues movement simulation while gameplay is paused
+    pub simulate_when_paused: bool,
+}
+
+impl ActorPawn {
+
+    /// Creates a pawn with no movement capabilities or active movement
+    pub const fn new() -> Self {
+        Self {
+            walking: None,
+            flying: None,
+            swimming: None,
+            noclip: None,
+            movement: None,
+            simulate_when_paused: false,
+        }
+    }
+
+}

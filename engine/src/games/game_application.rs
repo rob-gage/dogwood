@@ -151,12 +151,22 @@ impl<G: Game> GameApplication<G> {
 
     /// Adds a widget to the game's user interface.
     pub fn add_widget(&mut self, widget: &mut impl Widget) {
-        let Some(configuration) = self.surface_configuration.as_ref() else { return; };
+        let (Some(configuration), Some(window)) = (
+            self.surface_configuration.as_ref(),
+            self.window.as_ref(),
+        ) else { return; };
         self.game.user_interface_context().add_widget(
             widget,
             [configuration.width, configuration.height],
+            window,
         );
     }
+
+    /// Returns the game run by this application
+    pub const fn game(&self) -> &G { &self.game }
+
+    /// Returns mutable access to the game run by this application
+    pub const fn game_mutable(&mut self) -> &mut G { &mut self.game }
 
     /// Updates the application systems
     fn update(&mut self) -> Result<(), std::io::Error> {
@@ -236,10 +246,14 @@ impl<G: Game> GameApplication<G> {
         event: winit::event::WindowEvent,
     ) {
         use winit::event::WindowEvent::*;
+        let ui_consumed: bool = self.window.as_ref().is_some_and(|window| {
+            self.game.user_interface_context().process_window_event(window, &event)
+        });
         match event {
             CloseRequested => event_loop.exit(),
             Resized(size) => self.resize(size.width, size.height),
-            KeyboardInput { event, .. } => self.keyboard_input_state.process_event(&event),
+            KeyboardInput { event, .. } if !ui_consumed =>
+                self.keyboard_input_state.process_event(&event),
             RedrawRequested => self.render(),
             _ => {}
         }
@@ -279,6 +293,10 @@ impl<G: Game> GameApplication<G> {
                     return;
                 };
                 surface.configure(self.accelerator.wgpu_device(), &configuration);
+                self.game.user_interface_context().initialize_window(
+                    window.as_ref(),
+                    self.accelerator.wgpu_device().limits().max_texture_dimension_2d as usize,
+                );
                 self.surface = Some(surface);
                 self.surface_configuration = Some(configuration);
                 self.update_camera(0.0);

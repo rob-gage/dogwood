@@ -25,6 +25,7 @@ pub mod graphics {
     };
 }
 pub mod physics {
+    pub use engine_physics::actors;
     pub use engine_physics::chunks;
     pub use engine_physics::materials;
     pub use engine_physics::scenes;
