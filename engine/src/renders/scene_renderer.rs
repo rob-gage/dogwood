@@ -153,7 +153,7 @@ impl SceneRenderer {
             let graphics = scene.graphics();
             let uniforms: [u32; 16] = [
                 camera_position[0].to_bits(), camera_position[1].to_bits(),
-                size[0], size[1],
+                (size[0] as f32).to_bits(), (size[1] as f32).to_bits(),
                 camera_size[0].to_bits(), camera_size[1].to_bits(),
                 0, 0,
                 graphics.buffered_origin[0] as u32, graphics.buffered_origin[1] as u32,
