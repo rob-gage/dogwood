@@ -10,7 +10,7 @@ use std::{
 };
 
 /// Captures the editor's central content rectangle in physical surface pixels
-pub(crate) struct ViewportArea(pub Rc<Cell<Option<[u32; 4]>>>);
+pub struct ViewportArea(pub Rc<Cell<Option<[u32; 4]>>>);
 
 impl Widget for ViewportArea {
     fn display(&mut self, user_interface: &mut UserInterface) -> egui::Response {

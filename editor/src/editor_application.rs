@@ -43,21 +43,26 @@ pub struct EditorApplication<G: Game> {
     original_pawn_position: Option<ScenePosition>,
     /// Whether streaming is currently returning to the original pawn
     is_return_pending: bool,
+    /// Whether ordinary hosted scene simulation is playing
+    is_playing: bool,
 }
 
 impl<G: Game> EditorApplication<G> {
 
     fn new(accelerator: Arc<engine::compute::Accelerator>, game: G) -> Self {
+        let mut application: GameApplication<G> = GameApplication::new_with_title(
+            accelerator,
+            game,
+            format!("Engine Editor: {}", G::TITLE)
+        );
+        application.set_simulation_enabled(false);
         Self {
-            application: GameApplication::new_with_title(
-                accelerator,
-                game,
-                format!("Engine Editor: {}", G::TITLE)
-            ),
+            application,
             editor_pawn: None,
             original_pawn: None,
             original_pawn_position: None,
             is_return_pending: false,
+            is_playing: false,
         }
     }
 
@@ -132,8 +137,10 @@ impl<G: Game> EditorApplication<G> {
         });
         let free_fly_requested: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         let return_requested: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+        let play_requested: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         let free_fly_action: Rc<Cell<bool>> = free_fly_requested.clone();
         let return_action: Rc<Cell<bool>> = return_requested.clone();
+        let play_action: Rc<Cell<bool>> = play_requested.clone();
         let background: Color = Color::new_rgba(47, 47, 47, 255);
         let background_dark: Color = Color::new_rgba(37, 37, 37, 255);
         let viewport_bounds: Rc<Cell<Option<[u32; 4]>>> = Rc::new(Cell::new(None));
@@ -141,6 +148,9 @@ impl<G: Game> EditorApplication<G> {
             .with_height(32.0)
             .with_spacing(4.0)
             .with_background_color(&background_dark)
+            .with_child(Button::new(if self.is_playing { "Pause" } else { "Play" }, move || {
+                play_action.set(true)
+            }))
             .with_child(Button::new("Free Fly", move || free_fly_action.set(true))
                 .with_enabled(free_fly_enabled))
             .with_child(Button::new("Return", move || return_action.set(true))
@@ -156,6 +166,10 @@ impl<G: Game> EditorApplication<G> {
             .with_child(Spacer::new(16.0).with_background_color(&background_dark));
         self.application.add_widget(&mut layout);
         self.application.set_scene_viewport_bounds(viewport_bounds.get());
+        if play_requested.get() {
+            self.is_playing = !self.is_playing;
+            self.application.set_simulation_enabled(self.is_playing);
+        }
         if free_fly_requested.get() { self.enter_free_fly(); }
         if return_requested.get() {
             self.is_return_pending = true;

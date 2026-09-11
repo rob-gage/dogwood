@@ -36,6 +36,8 @@ pub struct GameApplication<G: Game> {
     surface_configuration: Option<wgpu::SurfaceConfiguration>,
     /// The editor content rectangle to contain the scene in physical pixels
     scene_viewport_bounds: Option<[u32; 4]>,
+    /// Whether the application host permits ordinary scene simulation
+    is_simulation_enabled: bool,
     /// The renderer for the active scene
     scene_renderer: SceneRenderer,
     /// The renderer for the active user interface
@@ -78,6 +80,7 @@ impl<G: Game> GameApplication<G> {
             surface: None,
             surface_configuration: None,
             scene_viewport_bounds: None,
+            is_simulation_enabled: true,
             scene_renderer: SceneRenderer::new(),
             user_interface_renderer: UserInterfaceRenderer::new(),
             error: None,
@@ -117,30 +120,8 @@ impl<G: Game> GameApplication<G> {
             )
         };
         let Some(configuration) = self.surface_configuration.as_ref() else { return; };
-        let viewport: [u32; 4] = self.scene_viewport_bounds.map_or_else(
-            || [0, 0, configuration.width, configuration.height],
-            |bounds| {
-                let x: u32 = bounds[0].min(configuration.width - 1);
-                let y: u32 = bounds[1].min(configuration.height - 1);
-                Self::fit_aspect_ratio([
-                    x,
-                    y,
-                    bounds[2].min(configuration.width - x).max(1),
-                    bounds[3].min(configuration.height - y).max(1),
-                ], self.camera.width / self.camera.height)
-            },
-        );
-        let mut camera_size: [f32; 2] = [
-            self.camera.width * self.camera.zoom,
-            self.camera.height * self.camera.zoom,
-        ];
-        let surface_aspect: f32 = viewport[2] as f32 / viewport[3] as f32;
-        let camera_aspect: f32 = camera_size[0] / camera_size[1];
-        if surface_aspect > camera_aspect {
-            camera_size[0] = camera_size[1] * surface_aspect;
-        } else {
-            camera_size[1] = camera_size[0] / surface_aspect;
-        }
+        let viewport: [u32; 4] = self.scene_viewport(configuration);
+        let camera_size: [f32; 2] = self.scene_camera_size(viewport);
         self.scene_renderer.render(
             &self.accelerator,
             self.game.scene(),
@@ -200,12 +181,33 @@ impl<G: Game> GameApplication<G> {
         self.scene_viewport_bounds = bounds.filter(|bounds| bounds[2] > 0 && bounds[3] > 0);
     }
 
+    /// Enables or disables ordinary scene simulation for this application host
+    pub fn set_simulation_enabled(&mut self, is_enabled: bool) {
+        self.is_simulation_enabled = is_enabled;
+    }
+
+    /// Returns the world position rendered at a physical surface pixel
+    pub fn scene_world_position(&self, position: [f32; 2]) -> Option<[f32; 2]> {
+        let configuration: &wgpu::SurfaceConfiguration = self.surface_configuration.as_ref()?;
+        let viewport: [u32; 4] = self.scene_viewport(configuration);
+        let x: f32 = position[0] - viewport[0] as f32;
+        let y: f32 = position[1] - viewport[1] as f32;
+        if x < 0.0 || y < 0.0 || x >= viewport[2] as f32 || y >= viewport[3] as f32 {
+            return None;
+        }
+        let camera_size: [f32; 2] = self.scene_camera_size(viewport);
+        Some([
+            self.camera_position[0] + (x / viewport[2] as f32 - 0.5) * camera_size[0],
+            self.camera_position[1] + (0.5 - y / viewport[3] as f32) * camera_size[1],
+        ])
+    }
+
     /// Updates the application systems
     fn update(&mut self) -> Result<(), std::io::Error> {
         let update_time: std::time::Instant = std::time::Instant::now();
         let elapsed: std::time::Duration = update_time.duration_since(self.update_time);
         self.update_time = update_time;
-        let simulation_active: bool = !self.game.is_paused();
+        let simulation_active: bool = self.is_simulation_enabled && !self.game.is_paused();
         if let Some(scene) = self.game.scene_mutable() {
             scene.update(elapsed, simulation_active)?;
         }
@@ -352,6 +354,39 @@ impl<G: Game> GameApplication<G> {
             let viewport_height: u32 = (width as f32 / aspect_ratio).round() as u32;
             [x, y + (height - viewport_height) / 2, width, viewport_height]
         }
+    }
+
+    /// Returns the exact physical viewport used by scene rendering
+    fn scene_viewport(&self, configuration: &wgpu::SurfaceConfiguration) -> [u32; 4] {
+        self.scene_viewport_bounds.map_or_else(
+            || [0, 0, configuration.width, configuration.height],
+            |bounds| {
+                let x: u32 = bounds[0].min(configuration.width - 1);
+                let y: u32 = bounds[1].min(configuration.height - 1);
+                Self::fit_aspect_ratio([
+                    x,
+                    y,
+                    bounds[2].min(configuration.width - x).max(1),
+                    bounds[3].min(configuration.height - y).max(1),
+                ], self.camera.width / self.camera.height)
+            },
+        )
+    }
+
+    /// Returns the exact world-space camera size used by scene rendering
+    fn scene_camera_size(&self, viewport: [u32; 4]) -> [f32; 2] {
+        let mut camera_size: [f32; 2] = [
+            self.camera.width * self.camera.zoom,
+            self.camera.height * self.camera.zoom,
+        ];
+        let viewport_aspect: f32 = viewport[2] as f32 / viewport[3] as f32;
+        let camera_aspect: f32 = camera_size[0] / camera_size[1];
+        if viewport_aspect > camera_aspect {
+            camera_size[0] = camera_size[1] * viewport_aspect;
+        } else {
+            camera_size[1] = camera_size[0] / viewport_aspect;
+        }
+        camera_size
     }
 
 }
