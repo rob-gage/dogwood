@@ -111,6 +111,8 @@ pub struct Scene {
     tiles_ring_offset_y: u16,
     /// The buffer containing `MaterialIdentifier`s for GPU-resident tiles
     cellular_material_identifiers: AcceleratorBuffer,
+    /// The parallel buffer containing persistent cell appearance samples
+    cellular_appearances: AcceleratorBuffer,
     /// Compact CPU-readable occupancy derived from the authoritative cellular GPU buffer
     cellular_collision: CellularCollision,
     /// Scene gravity acceleration in tiles per second squared
@@ -181,6 +183,8 @@ impl Scene {
         let buffered_cell_count: usize = buffered_tile_count * 64;
         let cellular_material_identifiers: AcceleratorBuffer =
             accelerator.allocate::<u32>(buffered_cell_count);
+        let cellular_appearances: AcceleratorBuffer =
+            accelerator.allocate::<u32>(buffered_cell_count);
         let cellular_collision: CellularCollision = CellularCollision::new(
             accelerator.as_ref(),
             &cellular_material_identifiers,
@@ -216,6 +220,7 @@ impl Scene {
             tile_downloads: Mutex::new(Vec::new()),
             tile_uploads: Mutex::new(Vec::new()),
             cellular_material_identifiers,
+            cellular_appearances,
             cellular_collision,
             gravity: simulation.gravity,
             physics_world: ScenePhysicsWorld::new(),
@@ -249,6 +254,7 @@ impl Scene {
         SceneGraphics {
             material_graphics: &self.material_graphics,
             cellular_material_identifiers: &self.cellular_material_identifiers,
+            cellular_appearances: &self.cellular_appearances,
             buffered_origin: [self.origin.x - buffer_size, self.origin.y - buffer_size],
             buffered_tile_size: [
                 u32::from(self.simulation_width) + dimensions,
@@ -797,10 +803,17 @@ impl Scene {
                 );
                 command_encoder.copy_buffer_to_buffer(
                     self.cellular_material_identifiers.wgpu_buffer(),
-                    tile.0 as u64 * TileData::SERIALIZED_SIZE as u64,
+                    tile.0 as u64 * TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
                     &state.buffer,
                     0,
-                    TileData::SERIALIZED_SIZE as u64,
+                    TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
+                );
+                command_encoder.copy_buffer_to_buffer(
+                    self.cellular_appearances.wgpu_buffer(),
+                    tile.0 as u64 * TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
+                    &state.buffer,
+                    TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
+                    TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
                 );
                 state.is_started = true;
                 downloads_started.push((download.clone(), state.buffer.clone()));
@@ -816,9 +829,12 @@ impl Scene {
                         Ok(()) => {
                             match mapped_buffer.slice(..).get_mapped_range() {
                                 Ok(mapped_data) => {
-                                    let mut data: &[u8] = &mapped_data;
+                                    let mut material_data: &[u8] = &mapped_data[..
+                                        TileData::CELL_FIELD_SERIALIZED_SIZE];
+                                    let mut appearance_data: &[u8] = &mapped_data[
+                                        TileData::CELL_FIELD_SERIALIZED_SIZE..];
                                     let tile_data: Result<TileData, io::Error> =
-                                        TileData::deserialize(&mut data);
+                                        TileData::deserialize_fields(&mut material_data, &mut appearance_data);
                                     drop(mapped_data);
                                     mapped_buffer.unmap();
                                     tile_data
@@ -863,8 +879,13 @@ impl Scene {
             };
             self.accelerator.wgpu_queue().write_buffer(
                 self.cellular_material_identifiers.wgpu_buffer(),
-                tile.0 as u64 * TileData::SERIALIZED_SIZE as u64,
-                &state.data,
+                tile.0 as u64 * TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
+                &state.material_identifiers,
+            );
+            self.accelerator.wgpu_queue().write_buffer(
+                self.cellular_appearances.wgpu_buffer(),
+                tile.0 as u64 * TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
+                &state.appearances,
             );
             state.result = Some(Ok(()));
             state.is_complete = true;
@@ -893,6 +914,9 @@ impl Scene {
 
 impl Drop for Scene {
 
-    fn drop(&mut self) { self.cellular_material_identifiers.free() }
+    fn drop(&mut self) {
+        self.cellular_material_identifiers.free();
+        self.cellular_appearances.free();
+    }
 
 }

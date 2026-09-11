@@ -9,6 +9,8 @@ pub struct SceneGraphics<'a> {
     pub material_graphics: &'a MaterialGraphics,
     /// The `Accelerator` buffer containing material identifiers
     pub cellular_material_identifiers: &'a AcceleratorBuffer,
+    /// The parallel `Accelerator` buffer containing persistent cell appearances
+    pub cellular_appearances: &'a AcceleratorBuffer,
     /// The tile coordinates of the buffered area's bottom-left corner
     pub buffered_origin: [i32; 2],
     /// The dimensions of the buffered tile area

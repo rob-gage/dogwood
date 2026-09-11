@@ -13,8 +13,10 @@ use std::{
 pub struct TileUpload {
     /// The world tile being uploaded
     pub coordinates: TileCoordinates,
-    /// The serialized tile data to upload
-    pub data: Vec<u8>,
+    /// Material identifiers in GPU cell order
+    pub material_identifiers: Vec<u8>,
+    /// Persistent appearances in matching GPU cell order
+    pub appearances: Vec<u8>,
     /// Whether the upload has completed
     pub is_complete: bool,
     /// The completed upload result
@@ -27,11 +29,17 @@ impl TileUpload {
 
     /// Creates a pending tile upload with serialized `TileData`
     pub fn new(coordinates: TileCoordinates, tile_data: &TileData) -> Self {
-        let mut data: Vec<u8> = Vec::with_capacity(TileData::SERIALIZED_SIZE);
-        tile_data.serialize(&mut data).expect("Writing to a Vec cannot fail");
+        let mut material_identifiers: Vec<u8> =
+            Vec::with_capacity(TileData::CELL_FIELD_SERIALIZED_SIZE);
+        tile_data.serialize_material_identifiers(&mut material_identifiers)
+            .expect("Writing to a Vec cannot fail");
+        let mut appearances: Vec<u8> = Vec::with_capacity(TileData::CELL_FIELD_SERIALIZED_SIZE);
+        tile_data.serialize_appearances(&mut appearances)
+            .expect("Writing to a Vec cannot fail");
         Self {
             coordinates,
-            data,
+            material_identifiers,
+            appearances,
             result: None,
             is_complete: false,
             waker: None,

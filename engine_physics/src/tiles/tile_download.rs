@@ -14,7 +14,7 @@ use std::{
 pub struct TileDownload {
     /// The world tile being downloaded
     pub coordinates: TileCoordinates,
-    /// The staging buffer receiving the tile data
+    /// The staging buffer receiving both parallel tile fields
     pub buffer: wgpu::Buffer,
     /// Whether the GPU copy has been submitted
     pub is_started: bool,

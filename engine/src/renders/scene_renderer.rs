@@ -94,6 +94,16 @@ impl SceneRenderer {
                             binding: 4,
                             visibility: wgpu::ShaderStages::FRAGMENT,
                             ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 5,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
                                 ty: wgpu::BufferBindingType::Uniform,
                                 has_dynamic_offset: false,
                                 min_binding_size: None,
@@ -176,21 +186,25 @@ impl SceneRenderer {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
+                        resource: graphics.cellular_appearances.wgpu_buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
                         resource: graphics.material_graphics.cellular_statics
                             .wgpu_buffer().as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
-                        binding: 2,
+                        binding: 3,
                         resource: graphics.material_graphics.cellular_dynamics
                             .wgpu_buffer().as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
-                        binding: 3,
+                        binding: 4,
                         resource: graphics.material_graphics.fluids
                             .wgpu_buffer().as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
-                        binding: 4,
+                        binding: 5,
                         resource: uniform_buffer.as_entire_binding(),
                     },
                 ],

@@ -5,6 +5,7 @@ use engine::physics::{
     materials::MaterialIdentifier,
     scenes::SceneGenerator,
     tiles::{
+        CellularAppearance,
         TileCoordinates,
         TileData,
     },
@@ -13,6 +14,7 @@ use engine::physics::{
 /// Generates flat stone ground extending infinitely along the horizontal axis
 pub(super) struct DemoSceneGenerator {
     pub(super) stone: MaterialIdentifier,
+    pub(super) stone_variation: [f32; 4],
 }
 
 impl SceneGenerator for DemoSceneGenerator {
@@ -24,10 +26,22 @@ impl SceneGenerator for DemoSceneGenerator {
             for x in 0..Chunk::WIDTH {
                 let tile_x: i32 = coordinates.x + i32::from(x);
                 if tile_y >= 0 { continue; }
-                chunk.set_tile_unchecked(TileCoordinates {
-                    x: tile_x,
-                    y: tile_y,
-                }, TileData::new_filled(self.stone));
+                let mut tile: TileData = TileData::EMPTY;
+                for cell_y in 0..8 {
+                    for cell_x in 0..8 {
+                        let world_cell_x: i32 = tile_x * 8 + cell_x;
+                        let world_cell_y: i32 = tile_y * 8 + cell_y;
+                        let seed: u32 = (world_cell_x as u32).wrapping_mul(0x9e37_79b9) ^
+                            (world_cell_y as u32).wrapping_mul(0x85eb_ca6b);
+                        tile.set_cell(
+                            cell_x as usize,
+                            cell_y as usize,
+                            self.stone,
+                            CellularAppearance::from_seed(seed, self.stone_variation),
+                        );
+                    }
+                }
+                chunk.set_tile_unchecked(TileCoordinates { x: tile_x, y: tile_y }, tile);
             }
         }
         chunk

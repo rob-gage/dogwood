@@ -48,15 +48,18 @@ impl DemoGame {
     /// Creates a `DemoGame` with a GPU-backed scene
     pub fn new(accelerator: &Arc<Accelerator>) -> Result<Self, Box<dyn Error>> {
         let mut materials: MaterialRegistry = MaterialRegistry::new();
+        let stone_graphics: MaterialAppearance = MaterialAppearance::from_color(
+            Color::new_rgb(128, 128, 128),
+        ).with_variation([0.5, 0.5, 0.5, 0.0])
+            .with_color_influence([0.25, 0.25, 0.25, 0.0]);
         let stone: MaterialIdentifier = materials.register(Material::CellularStatic {
             name: "Stone".into(),
-            graphics: MaterialAppearance::from_color(Color::new_rgb(128, 128, 128)),
+            graphics: stone_graphics,
         });
         let data: SceneData = SceneData::new_temporary(materials)?;
         let mut scene: Scene = Scene::load_with_generator(
             accelerator,
             SceneSimulationConfiguration {
-                // Reverse the sign to test walking and jumping on the ceiling platform.
                 gravity: [0.0, -18.0],
                 width: 16,
                 height: 9,
@@ -64,7 +67,7 @@ impl DemoGame {
                 streaming_batch_size: 1,
             },
             data,
-            DemoSceneGenerator { stone },
+            DemoSceneGenerator { stone, stone_variation: stone_graphics.variation() },
         )?;
         let mut pawn_configuration: ActorPawn = ActorPawn::new();
         pawn_configuration.walking = Some(ActorPawnWalkingConfiguration {

@@ -41,7 +41,8 @@ impl MaterialGraphics {
         let data: Vec<u32> = properties.into_iter().flat_map(
             MaterialAppearance::accelerator_data
         ).collect();
-        let buffer: AcceleratorBuffer = accelerator.allocate::<u32>(data.len().max(4));
+        // Keep empty material-form buffers large enough for one WGSL element.
+        let buffer: AcceleratorBuffer = accelerator.allocate::<u32>(data.len().max(16));
         if !data.is_empty() {
             let mut bytes: Vec<u8> = Vec::with_capacity(data.len() * size_of::<u32>());
             for value in data { bytes.extend_from_slice(&value.to_le_bytes()); }

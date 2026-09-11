@@ -1,6 +1,5 @@
 // Copyright Rob Gage 2026
 
-// Per-frame camera and tile-ring metadata
 struct Uniforms {
     camera_position: vec2<f32>,
     window_size: vec2<f32>,
@@ -17,17 +16,21 @@ struct MaterialAppearance {
     color_melting: u32,
     radiance_freezing: u32,
     radiance_melting: u32,
+    variation: vec4<f32>,
+    color_influence: vec4<f32>,
+    radiance_influence: vec4<f32>,
 }
 
 @group(0) @binding(0) var<storage, read> cellular_material_identifiers: array<u32>;
+@group(0) @binding(1) var<storage, read> cellular_appearances: array<u32>;
 
-@group(0) @binding(1) var<storage, read> cellular_statics: array<MaterialAppearance>;
+@group(0) @binding(2) var<storage, read> cellular_statics: array<MaterialAppearance>;
 
-@group(0) @binding(2) var<storage, read> cellular_dynamics: array<MaterialAppearance>;
+@group(0) @binding(3) var<storage, read> cellular_dynamics: array<MaterialAppearance>;
 
-@group(0) @binding(3) var<storage, read> fluids: array<MaterialAppearance>;
+@group(0) @binding(4) var<storage, read> fluids: array<MaterialAppearance>;
 
-@group(0) @binding(4) var<uniform> uniforms: Uniforms;
+@group(0) @binding(5) var<uniform> uniforms: Uniforms;
 
 // A fullscreen triangle delegates all scene lookup to the fragment shader
 @vertex
@@ -38,17 +41,20 @@ fn vertex(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
     return vec4<f32>(positions[index], 0.0, 1.0);
 }
 
-// Convert each pixel to a world cell, then resolve it through the tile ring
+// convert each pixel to a world cell, then resolve it through the tile ring
 @fragment
 fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    // convert the screen pixel into camera/world coordinates
     let normalized = vec2<f32>(
         position.x / uniforms.window_size.x,
         1.0 - position.y / uniforms.window_size.y,
     );
     let world = uniforms.camera_position + (normalized - vec2<f32>(0.5)) * uniforms.camera_size;
+    // TEMPORARY: draw the possessed walking pawn over the cellular scene
     if all(abs(world - uniforms.walking_pawn_position) < uniforms.walking_pawn_size * 0.5) {
         return vec4<f32>(1.0);
     }
+    // resolve the world cell through the streamed tile ring
     let cell = vec2<i32>(floor(world * 8.0));
     let tile = vec2<i32>(floor_divide(cell.x, 8), floor_divide(cell.y, 8));
     let relative = tile - uniforms.buffered_origin;
@@ -61,6 +67,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let local = vec2<u32>(cell - tile * 8);
     let material_identifier = cellular_material_identifiers[tile_index * 64u + local.y * 8u + local.x];
     if material_identifier == 0u { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }
+    // select the material form and its base appearance
     let form = material_identifier >> 30u;
     let index = material_identifier & 0x3fffffffu;
     var properties: MaterialAppearance;
@@ -71,15 +78,26 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         default: { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }
     }
     let color = properties.color_freezing;
-    return vec4<f32>(
+    // decode the persistent cell sample and apply material color influence
+    let packed_appearance = cellular_appearances[tile_index * 64u + local.y * 8u + local.x];
+    var sample = vec4<f32>(0.0);
+    for (var channel = 0u; channel < 4u; channel++) {
+        let byte = (packed_appearance >> (channel * 8u)) & 0xffu;
+        let signed_byte = select(i32(byte), i32(byte) - 256, byte >= 128u);
+        sample[channel] = max(f32(signed_byte), -127.0) / 127.0;
+    }
+    let base = vec4<f32>(
         f32(color & 0xffu) / 255.0,
         f32((color >> 8u) & 0xffu) / 255.0,
         f32((color >> 16u) & 0xffu) / 255.0,
         f32(color >> 24u) / 255.0,
     );
+    let result = clamp(base * (vec4<f32>(1.0) + sample * properties.color_influence),
+        vec4<f32>(0.0), vec4<f32>(1.0));
+    return result;
 }
 
-// Signed floor division keeps negative world coordinates in the correct tile
+// signed floor division keeps negative world coordinates in the correct tile
 fn floor_divide(value: i32, divisor: i32) -> i32 {
     if value < 0 { return (value - divisor + 1) / divisor; }
     return value / divisor;

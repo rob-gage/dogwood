@@ -78,8 +78,7 @@ impl MaterialRegistry {
                 "Invalid material registry header",
             ));
         }
-
-        // Read each material form in identifier-index order.
+        // read each material form in identifier-index order.
         let cellular_statics: Vec<Material> = Self::deserialize_form(
             reader,
             |name: String, graphics: MaterialAppearance| Material::CellularStatic {
@@ -117,25 +116,29 @@ impl MaterialRegistry {
         let count: u32 = Self::read_u32(reader)?;
         let mut materials: Vec<Material> = Vec::with_capacity(count as usize);
         for _ in 0..count {
-            // Decode the owned name first so registries can be loaded from disk.
+            // decode the owned name first so registries can be loaded from disk.
             let name_length: u32 = Self::read_u32(reader)?;
             let mut name_bytes: Vec<u8> = vec![0; name_length as usize];
             reader.read_exact(&mut name_bytes)?;
             let name: String = String::from_utf8(name_bytes).map_err(|error| {
                 io::Error::new(io::ErrorKind::InvalidData, error)
             })?;
-
-            // Decode the four packed RGBA colors comprising the appearance.
+            // decode the four packed RGBA colors comprising the appearance.
             let color_freezing: Color = Self::read_color(reader)?;
             let color_melting: Color = Self::read_color(reader)?;
             let radiance_freezing: Color = Self::read_color(reader)?;
             let radiance_melting: Color = Self::read_color(reader)?;
+            let variation: [f32; 4] = Self::read_f32_array(reader)?;
+            let color_influence: [f32; 4] = Self::read_f32_array(reader)?;
+            let radiance_influence: [f32; 4] = Self::read_f32_array(reader)?;
             let graphics: MaterialAppearance = MaterialAppearance::new(
                 color_freezing,
                 color_melting,
                 radiance_freezing,
                 radiance_melting,
-            );
+            ).with_variation(variation)
+                .with_color_influence(color_influence)
+                .with_radiance_influence(radiance_influence);
             materials.push(material(name, graphics));
         }
         Ok(materials)
@@ -151,17 +154,25 @@ impl MaterialRegistry {
         })?;
         writer.write_all(&count.to_le_bytes())?;
         for material in materials {
-            // Store the name as length-prefixed UTF-8.
+            // store the name as length-prefixed UTF-8.
             let name: &[u8] = material.name().as_bytes();
             let name_length: u32 = name.len().try_into().map_err(|_| {
                 io::Error::new(io::ErrorKind::InvalidInput, "Material name is too long")
             })?;
             writer.write_all(&name_length.to_le_bytes())?;
             writer.write_all(name)?;
-
-            // Preserve the appearance's exact packed GPU values.
-            let graphics: [u32; 4] = material.appearance().accelerator_data();
-            for value in graphics { writer.write_all(&value.to_le_bytes())?; }
+            // preserve the appearance's exact packed GPU values.
+            let graphics: MaterialAppearance = *material.appearance();
+            for value in graphics.accelerator_data()[..4].iter() {
+                writer.write_all(&value.to_le_bytes())?;
+            }
+            for value in [
+                graphics.variation(),
+                graphics.color_influence(),
+                graphics.radiance_influence(),
+            ].into_iter().flatten() {
+                writer.write_all(&value.to_bits().to_le_bytes())?;
+            }
         }
         Ok(())
     }
@@ -177,6 +188,15 @@ impl MaterialRegistry {
     fn read_color<R: io::Read>(reader: &mut R) -> Result<Color, io::Error> {
         let bytes: [u8; 4] = Self::read_u32(reader)?.to_le_bytes();
         Ok(Color::new_rgba(bytes[0], bytes[1], bytes[2], bytes[3]))
+    }
+
+    /// Reads four little-endian `f32` values
+    fn read_f32_array<R: io::Read>(reader: &mut R) -> Result<[f32; 4], io::Error> {
+        let mut values: [f32; 4] = [0.0; 4];
+        for value in &mut values {
+            *value = f32::from_bits(Self::read_u32(reader)?);
+        }
+        Ok(values)
     }
 
 }
