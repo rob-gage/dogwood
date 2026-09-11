@@ -2,6 +2,8 @@
 
 use super::{
     SceneData,
+    SceneEdit,
+    SceneEditBatch,
     SceneGenerator,
     ScenePosition,
 };
@@ -20,8 +22,14 @@ use crate::{
         ChunkEntry,
         ChunkStreamingResponse,
     },
-    materials::MaterialRegistry,
+    materials::{
+        Material,
+        MaterialIdentifier,
+        MaterialRegistry,
+    },
     tiles::{
+        CellCoordinates,
+        CellularAppearance,
         Tile,
         TileArea,
         TileCoordinates,
@@ -115,6 +123,8 @@ pub struct Scene {
     cellular_appearances: AcceleratorBuffer,
     /// Compact CPU-readable occupancy derived from the authoritative cellular GPU buffer
     cellular_collision: CellularCollision,
+    /// Whether CPU-authored cellular edits need a replacement collision extraction
+    cellular_collision_dirty: bool,
     /// Scene gravity acceleration in tiles per second squared
     gravity: [f32; 2],
     /// CPU collision and rigid-body world, including terrain derived from cellular occupancy
@@ -222,6 +232,7 @@ impl Scene {
             cellular_material_identifiers,
             cellular_appearances,
             cellular_collision,
+            cellular_collision_dirty: false,
             gravity: simulation.gravity,
             physics_world: ScenePhysicsWorld::new(),
         };
@@ -310,6 +321,67 @@ impl Scene {
         self.area_buffered().contains(position.tile_coordinates)
     }
 
+    /// Applies queued material edits to resident cellular world state
+    pub fn apply_edits(&mut self, edits: &mut SceneEditBatch) -> Result<(), io::Error> {
+        let mut cell_edits: HashMap<usize, (CellCoordinates, MaterialIdentifier, CellularAppearance)> =
+            HashMap::new();
+        for edit in edits.drain() {
+            match edit {
+                SceneEdit::PlaceMaterial { material_identifier, appearance, cells } => {
+                    if !matches!(
+                        self.data.materials().get(material_identifier),
+                        Some(Material::CellularStatic { .. } | Material::CellularDynamic { .. }),
+                    ) { continue; }
+                    for coordinates in cells {
+                        if let Some(physical_index) = self.cell_edit_index(coordinates) {
+                            cell_edits.insert(physical_index, (
+                                coordinates,
+                                material_identifier,
+                                appearance,
+                            ));
+                        }
+                    }
+                }
+                SceneEdit::Erase { cells } => {
+                    for coordinates in cells {
+                        if let Some(physical_index) = self.cell_edit_index(coordinates) {
+                            cell_edits.insert(physical_index, (
+                                coordinates,
+                                MaterialIdentifier::NULL,
+                                CellularAppearance::NEUTRAL,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        let mut cell_edits: Vec<(usize, CellCoordinates, MaterialIdentifier, CellularAppearance)> =
+            cell_edits.into_iter().map(|(index, (coordinates, material_identifier, appearance))| {
+                (index, coordinates, material_identifier, appearance)
+            }).collect();
+        cell_edits.sort_unstable_by_key(|(physical_index, ..)| *physical_index);
+        for (_, coordinates, material_identifier, appearance) in &cell_edits {
+            let tile_coordinates: TileCoordinates = coordinates.tile_coordinates();
+            let [x, y]: [usize; 2] = coordinates.local_tile_coordinates();
+            let Some(ChunkEntry::Active { chunk, is_dirty }) =
+                self.chunks.get_mut(&tile_coordinates.chunk_coordinates())
+            else { return Err(io::Error::other("Resident tile chunk is not active")); };
+            chunk.set_cell(
+                tile_coordinates,
+                x,
+                y,
+                *material_identifier,
+                *appearance,
+            ).map_err(|_| io::Error::other("Resident tile is not in its active chunk"))?;
+            *is_dirty = true;
+        }
+        if !cell_edits.is_empty() {
+            self.cellular_collision_dirty = true;
+            self.write_cell_edits(&cell_edits);
+        }
+        Ok(())
+    }
+
     /// Handles `Scene` streaming and fixed-rate simulation
     pub fn update(
         &mut self,
@@ -356,9 +428,9 @@ impl Scene {
         let possessed_position: Option<ScenePosition> = self.possessed_actor()
             .and_then(|actor| self.actor_registry.get_position(actor)).copied();
         if let Some(position) = possessed_position { self.follow_position(position); }
-        if !is_simulation_active { return Ok(()); }
+        if !is_simulation_active && !self.cellular_collision_dirty { return Ok(()); }
         let buffer_size: i32 = i32::from(self.simulation_buffer_size);
-        self.cellular_collision.extract(
+        if self.cellular_collision.extract(
             self.accelerator.as_ref(),
             TileCoordinates {
                 x: self.origin.x - buffer_size,
@@ -368,7 +440,53 @@ impl Scene {
             self.simulation_height + u16::from(self.simulation_buffer_size) * 2,
             self.tiles_ring_offset_x,
             self.tiles_ring_offset_y,
-        )
+        )? { self.cellular_collision_dirty = false; }
+        Ok(())
+    }
+
+    /// Resolves one world cell to a resident physical GPU cell
+    fn cell_edit_index(&self, coordinates: CellCoordinates) -> Option<usize> {
+        let tile_coordinates: TileCoordinates = coordinates.tile_coordinates();
+        let tile: Tile = self.tile_at(tile_coordinates)?;
+        let [x, y]: [usize; 2] = coordinates.local_tile_coordinates();
+        if !matches!(
+            self.chunks.get(&tile_coordinates.chunk_coordinates()),
+            Some(ChunkEntry::Active { chunk, .. }) if chunk.get_tile(tile_coordinates).is_ok()
+        ) { return None; }
+        Some(tile.0 as usize * 64 + y * 8 + x)
+    }
+
+    /// Writes final contiguous cellular edits to the two authoritative GPU buffers
+    fn write_cell_edits(
+        &self,
+        edits: &[(usize, CellCoordinates, MaterialIdentifier, CellularAppearance)],
+    ) {
+        let mut start: usize = 0;
+        while start < edits.len() {
+            let mut end: usize = start + 1;
+            while end < edits.len() &&
+                    edits[end].0 == edits[end - 1].0 + 1 {
+                end += 1;
+            }
+            let mut material_identifiers: Vec<u8> = Vec::with_capacity((end - start) * 4);
+            let mut appearances: Vec<u8> = Vec::with_capacity((end - start) * 4);
+            for edit in &edits[start..end] {
+                material_identifiers.extend_from_slice(&edit.2.as_u32().to_le_bytes());
+                appearances.extend_from_slice(&edit.3.0.to_le_bytes());
+            }
+            let offset: u64 = edits[start].0 as u64 * 4;
+            self.accelerator.wgpu_queue().write_buffer(
+                self.cellular_material_identifiers.wgpu_buffer(),
+                offset,
+                &material_identifiers,
+            );
+            self.accelerator.wgpu_queue().write_buffer(
+                self.cellular_appearances.wgpu_buffer(),
+                offset,
+                &appearances,
+            );
+            start = end;
+        }
     }
 
     /// Sets the automatic active-area target around a world position
@@ -919,6 +1037,176 @@ impl Drop for Scene {
     fn drop(&mut self) {
         self.cellular_material_identifiers.free();
         self.cellular_appearances.free();
+    }
+
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+    use crate::{
+        materials::{
+            Material,
+            MaterialForm,
+        },
+        simulation::SceneSimulationConfiguration,
+    };
+
+    #[test]
+    fn applies_resident_cellular_edits() {
+        let accelerator: Arc<Accelerator> = Arc::new(Accelerator::new().unwrap());
+        let mut materials: MaterialRegistry = MaterialRegistry::new();
+        let static_material: MaterialIdentifier = materials.register(Material::CellularStatic {
+            name: "Static".into(),
+            graphics: engine_graphics::MaterialAppearance::from_color(
+                engine_graphics::Color::new_rgb(1, 2, 3),
+            ).with_variation([0.25, 0.0, 0.0, 0.0]),
+        });
+        let dynamic_material: MaterialIdentifier = materials.register(Material::CellularDynamic {
+            name: "Dynamic".into(),
+            graphics: engine_graphics::MaterialAppearance::from_color(
+                engine_graphics::Color::new_rgb(4, 5, 6),
+            ),
+        });
+        let fluid_material: MaterialIdentifier = materials.register(Material::Fluid {
+            name: "Fluid".into(),
+            graphics: engine_graphics::MaterialAppearance::from_color(
+                engine_graphics::Color::new_rgb(7, 8, 9),
+            ),
+        });
+        let mut scene: Scene = Scene::new(
+            &accelerator,
+            materials,
+            SceneSimulationConfiguration {
+                gravity: [0.0, 0.0],
+                width: 2,
+                height: 2,
+                buffer_size: 1,
+                streaming_batch_size: 1,
+            },
+        ).unwrap();
+        let mut edits: SceneEditBatch = SceneEditBatch::new();
+        edits.place_material(
+            static_material,
+            CellularAppearance::from_seed(
+                CellCoordinates { x: 8, y: 0 }.appearance_seed(),
+                [0.25, 0.0, 0.0, 0.0],
+            ),
+            vec![
+                CellCoordinates { x: 7, y: 0 },
+                CellCoordinates { x: 8, y: 0 },
+                CellCoordinates { x: -1, y: -1 },
+            ],
+        );
+        edits.place_material(
+            fluid_material,
+            CellularAppearance::NEUTRAL,
+            vec![CellCoordinates { x: 0, y: 0 }],
+        );
+        edits.place_material(
+            MaterialIdentifier::from_u32(u32::MAX),
+            CellularAppearance::NEUTRAL,
+            vec![CellCoordinates { x: 0, y: 0 }],
+        );
+        edits.place_material(
+            static_material,
+            CellularAppearance::NEUTRAL,
+            vec![CellCoordinates { x: 100, y: 100 }],
+        );
+        edits.erase(vec![CellCoordinates { x: 7, y: 0 }]);
+        scene.apply_edits(&mut edits).unwrap();
+
+        let negative_tile: TileCoordinates = TileCoordinates { x: -1, y: -1 };
+        let positive_tile: TileCoordinates = TileCoordinates { x: 1, y: 0 };
+        let chunk: &Chunk = match scene.chunks.get(&TileCoordinates { x: 0, y: 0 }).unwrap() {
+            ChunkEntry::Active { chunk, is_dirty } => {
+                assert!(*is_dirty);
+                chunk
+            }
+            _ => panic!("initial chunk must be active"),
+        };
+        assert!(chunk.get_tile(TileCoordinates { x: 0, y: 0 }).unwrap()
+            .cell_material_identifier(7, 0).as_u32() == MaterialIdentifier::NULL.as_u32());
+        assert!(chunk.get_tile(TileCoordinates { x: 0, y: 0 }).unwrap()
+            .cell_appearance(7, 0).0 == CellularAppearance::NEUTRAL.0);
+        assert!(chunk.get_tile(positive_tile).unwrap()
+            .cell_material_identifier(0, 0).form() == MaterialForm::CellularStatic);
+        assert!(chunk.get_tile(positive_tile).unwrap().cell_appearance(0, 0).0 ==
+            CellularAppearance::from_seed(
+                CellCoordinates { x: 8, y: 0 }.appearance_seed(),
+                [0.25, 0.0, 0.0, 0.0],
+            ).0);
+        assert!(chunk.get_tile(TileCoordinates { x: 0, y: 0 }).unwrap()
+            .cell_material_identifier(0, 0).as_u32() == MaterialIdentifier::NULL.as_u32());
+        let negative_chunk: &Chunk = match scene.chunks.get(&negative_tile.chunk_coordinates()).unwrap() {
+            ChunkEntry::Active { chunk, is_dirty } => {
+                assert!(*is_dirty);
+                chunk
+            }
+            _ => panic!("negative chunk must be active"),
+        };
+        assert!(negative_chunk.get_tile(negative_tile).unwrap()
+            .cell_material_identifier(7, 7).form() == MaterialForm::CellularStatic);
+        assert!(scene.cellular_collision_dirty);
+
+        scene.shift_right().unwrap();
+        scene.shift_right().unwrap();
+        scene.shift_right().unwrap();
+        let wrapped_cell: CellCoordinates = CellCoordinates { x: 47, y: 0 };
+        let mut wrapped_edits: SceneEditBatch = SceneEditBatch::new();
+        wrapped_edits.place_material(
+            dynamic_material,
+            CellularAppearance::NEUTRAL,
+            vec![wrapped_cell],
+        );
+        scene.apply_edits(&mut wrapped_edits).unwrap();
+        let wrapped_tile: TileCoordinates = wrapped_cell.tile_coordinates();
+        let physical_tile: Tile = scene.tile_at(wrapped_tile).unwrap();
+        assert!(physical_tile.0 == 6);
+        let chunk: &Chunk = match scene.chunks.get(&wrapped_tile.chunk_coordinates()).unwrap() {
+            ChunkEntry::Active { chunk, is_dirty } => {
+                assert!(*is_dirty);
+                chunk
+            }
+            _ => panic!("wrapped chunk must be active"),
+        };
+        assert!(chunk.get_tile(wrapped_tile).unwrap()
+            .cell_material_identifier(7, 0).form() == MaterialForm::CellularDynamic);
+
+        let buffer: wgpu::Buffer = accelerator.wgpu_device().create_buffer(&wgpu::BufferDescriptor {
+            label: Some("scene edit test readback"),
+            size: 4,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
+            &wgpu::CommandEncoderDescriptor { label: Some("scene edit test copy") },
+        );
+        encoder.copy_buffer_to_buffer(
+            scene.cellular_material_identifiers.wgpu_buffer(),
+            u64::from(physical_tile.0) * 64 * 4 + 7 * 4,
+            &buffer,
+            0,
+            4,
+        );
+        accelerator.wgpu_queue().submit(Some(encoder.finish()));
+        let (sender, receiver) = std::sync::mpsc::channel();
+        buffer.slice(..).map_async(wgpu::MapMode::Read, move |result| sender.send(result).unwrap());
+        let result: Result<(), wgpu::BufferAsyncError> = loop {
+            accelerator.poll().unwrap();
+            if let Ok(result) = receiver.try_recv() { break result; }
+            std::thread::yield_now();
+        };
+        result.unwrap();
+        let mapped = buffer.slice(..).get_mapped_range().unwrap();
+        let identifier: u32 = u32::from_le_bytes(mapped[..4].try_into().unwrap());
+        drop(mapped);
+        buffer.unmap();
+        assert!(identifier == dynamic_material.as_u32());
+
+        scene.tick(false).unwrap();
+        assert!(!scene.cellular_collision_dirty);
     }
 
 }

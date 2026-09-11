@@ -33,11 +33,16 @@ impl MaterialIdentifier {
 
     /// Returns the `MaterialForm` of the `Material` represented by this `MaterialIdentifier`
     pub const fn form(self) -> MaterialForm {
+        match self.form_checked() { Some(form) => form, None => unreachable!(), }
+    }
+
+    /// Returns the `MaterialForm`, or `None` for an invalid identifier
+    pub const fn form_checked(self) -> Option<MaterialForm> {
         match self.0 >> 30 {
-            Self::CELLULAR_STATIC_TAG => MaterialForm::CellularStatic,
-            Self::CELLULAR_DYNAMIC_TAG => MaterialForm::CellularDynamic,
-            Self::FLUID_TAG => MaterialForm::Fluid,
-            _ => unreachable!(),
+            Self::CELLULAR_STATIC_TAG => Some(MaterialForm::CellularStatic),
+            Self::CELLULAR_DYNAMIC_TAG => Some(MaterialForm::CellularDynamic),
+            Self::FLUID_TAG => Some(MaterialForm::Fluid),
+            _ => None,
         }
     }
 
@@ -45,9 +50,9 @@ impl MaterialIdentifier {
     pub const fn index(self) -> u32 { self.0 & 0b00111111_11111111_11111111_11111111 }
 
     /// Creates a `MaterialIdentifier` from a `u32`
-    pub(crate) const fn from_u32(u32: u32) -> MaterialIdentifier { Self(u32) }
+    pub const fn from_u32(u32: u32) -> MaterialIdentifier { Self(u32) }
 
     /// Returns a `MaterialIdentifier` as a `u32`
-    pub(crate) const fn as_u32(self) -> u32 { self.0 }
+    pub const fn as_u32(self) -> u32 { self.0 }
 
 }

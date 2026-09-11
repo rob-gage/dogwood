@@ -57,6 +57,18 @@ impl TileData {
         self.cell_appearances[y][x] = appearance;
     }
 
+    /// Returns one local cell's material identifier
+    #[cfg(test)]
+    pub const fn cell_material_identifier(&self, x: usize, y: usize) -> MaterialIdentifier {
+        self.cell_material_identifiers[y][x]
+    }
+
+    /// Returns one local cell's persistent appearance
+    #[cfg(test)]
+    pub const fn cell_appearance(&self, x: usize, y: usize) -> CellularAppearance {
+        self.cell_appearances[y][x]
+    }
+
     /// Writes material identifiers in row-major GPU order
     pub fn serialize_material_identifiers<W: io::Write>(&self, writer: &mut W) -> Result<(), io::Error> {
         for row in &self.cell_material_identifiers {

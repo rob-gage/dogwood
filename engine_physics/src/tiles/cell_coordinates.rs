@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+use super::TileCoordinates;
+
 /// The position of a cell within a `Scene`
 ///
 /// Positions move higher up as Y increases, and they move further right as X increases.
@@ -7,4 +9,24 @@
 pub struct CellCoordinates {
     pub x: i32,
     pub y: i32,
+}
+
+impl CellCoordinates {
+
+    /// Returns the tile containing these cell coordinates
+    pub const fn tile_coordinates(self) -> TileCoordinates {
+        TileCoordinates { x: self.x.div_euclid(8), y: self.y.div_euclid(8) }
+    }
+
+    /// Returns these cell coordinates relative to their containing tile
+    pub const fn local_tile_coordinates(self) -> [usize; 2] {
+        [self.x.rem_euclid(8) as usize, self.y.rem_euclid(8) as usize]
+    }
+
+    /// Returns the deterministic persistent-appearance seed for these coordinates
+    pub const fn appearance_seed(self) -> u32 {
+        (self.x as u32).wrapping_mul(0x9e37_79b9) ^
+            (self.y as u32).wrapping_mul(0x85eb_ca6b)
+    }
+
 }

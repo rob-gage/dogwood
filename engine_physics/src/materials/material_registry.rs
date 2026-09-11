@@ -58,6 +58,16 @@ impl MaterialRegistry {
         }
     }
 
+    /// Returns the material represented by a valid registered identifier
+    pub fn get(&self, identifier: MaterialIdentifier) -> Option<&Material> {
+        let index: usize = identifier.index() as usize;
+        match identifier.form_checked()? {
+            MaterialForm::CellularStatic => self.cellular_statics.get(index),
+            MaterialForm::CellularDynamic => self.cellular_dynamics.get(index),
+            MaterialForm::Fluid => self.fluids.get(index),
+        }
+    }
+
     /// Builds graphics properties for all registered materials
     pub fn build_material_graphics(&self, accelerator: &Accelerator) -> MaterialGraphics {
         MaterialGraphics::new(

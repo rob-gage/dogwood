@@ -6,6 +6,7 @@ use engine::physics::{
     scenes::SceneGenerator,
     tiles::{
         CellularAppearance,
+        CellCoordinates,
         TileCoordinates,
         TileData,
     },
@@ -31,13 +32,15 @@ impl SceneGenerator for DemoSceneGenerator {
                     for cell_x in 0..8 {
                         let world_cell_x: i32 = tile_x * 8 + cell_x;
                         let world_cell_y: i32 = tile_y * 8 + cell_y;
-                        let seed: u32 = (world_cell_x as u32).wrapping_mul(0x9e37_79b9) ^
-                            (world_cell_y as u32).wrapping_mul(0x85eb_ca6b);
                         tile.set_cell(
                             cell_x as usize,
                             cell_y as usize,
                             self.stone,
-                            CellularAppearance::from_seed(seed, self.stone_variation),
+                            CellularAppearance::from_seed(
+                                CellCoordinates { x: world_cell_x, y: world_cell_y }
+                                    .appearance_seed(),
+                                self.stone_variation,
+                            ),
                         );
                     }
                 }

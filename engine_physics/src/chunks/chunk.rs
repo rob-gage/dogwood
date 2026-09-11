@@ -1,8 +1,12 @@
 // Copyright Rob Gage 2026
 
-use crate::tiles::{
-    TileCoordinates,
-    TileData,
+use crate::{
+    materials::MaterialIdentifier,
+    tiles::{
+        CellularAppearance,
+        TileCoordinates,
+        TileData,
+    },
 };
 use std::io;
 
@@ -86,6 +90,33 @@ impl Chunk {
     /// Sets a provided `TileData` at a given position in this `Chunk`, panicking if it is out of bounds
     pub fn set_tile_unchecked(&mut self, position: TileCoordinates, tile: TileData) {
         self.set_tile(position, tile).unwrap()
+    }
+
+    /// Sets one cell in a tile in this `Chunk` if the tile is not out of bounds
+    pub fn set_cell(
+        &mut self,
+        position: TileCoordinates,
+        x: usize,
+        y: usize,
+        material_identifier: MaterialIdentifier,
+        appearance: CellularAppearance,
+    ) -> Result<(), ()> {
+        let tile_x: usize = usize::try_from(
+            position.x.checked_sub(self.tile_coordinates.x).ok_or(())?
+        ).map_err(|_| ())?;
+        let tile_y: usize = usize::try_from(
+            position.y.checked_sub(self.tile_coordinates.y).ok_or(())?
+        ).map_err(|_| ())?;
+        if tile_x >= usize::from(Self::WIDTH) || tile_y >= usize::from(Self::WIDTH) {
+            return Err(());
+        }
+        self.tiles[tile_y * usize::from(Self::WIDTH) + tile_x].set_cell(
+            x,
+            y,
+            material_identifier,
+            appearance,
+        );
+        Ok(())
     }
 
 }

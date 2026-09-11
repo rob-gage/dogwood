@@ -3,7 +3,10 @@
 use super::SceneEdit;
 use crate::{
     materials::MaterialIdentifier,
-    tiles::CellCoordinates,
+    tiles::{
+        CellCoordinates,
+        CellularAppearance,
+    },
 };
 
 /// Pending requested material mutations of a `Scene`
@@ -20,9 +23,10 @@ impl SceneEditBatch {
     pub fn place_material(
         &mut self,
         material_identifier: MaterialIdentifier,
+        appearance: CellularAppearance,
         cells: Vec<CellCoordinates>,
     ) {
-        self.edits.push(SceneEdit::PlaceMaterial { material_identifier, cells });
+        self.edits.push(SceneEdit::PlaceMaterial { material_identifier, appearance, cells });
     }
 
     /// Adds a request to erase material from cells
@@ -31,6 +35,8 @@ impl SceneEditBatch {
     }
 
     /// Drains the pending edits
-    pub fn drain(&mut self) -> impl Iterator<Item = SceneEdit> + '_ { self.edits.drain(..) }
+    pub fn drain(&mut self) -> impl Iterator<Item = SceneEdit> + '_ {
+        self.edits.drain(..)
+    }
 
 }

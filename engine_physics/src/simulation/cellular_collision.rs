@@ -188,18 +188,18 @@ impl CellularCollision {
         height: u16,
         ring_offset_x: u16,
         ring_offset_y: u16,
-    ) -> Result<(), io::Error> {
+    ) -> Result<bool, io::Error> {
         // claim a free staging slot or skip this snapshot without waiting
         let Some(slot): Option<&CollisionReadbackSlot> = self.readback_slots.iter().find(|slot| {
             slot.status.lock().is_ok_and(|status| {
                 matches!(*status, CollisionReadbackStatus::Available)
             })
-        }) else { return Ok(()); };
+        }) else { return Ok(false); };
         let mut status: std::sync::MutexGuard<'_, CollisionReadbackStatus> =
             slot.status.lock().map_err(|_| {
                 io::Error::other("Cellular collision readback state is unavailable")
             })?;
-        if !matches!(*status, CollisionReadbackStatus::Available) { return Ok(()); }
+        if !matches!(*status, CollisionReadbackStatus::Available) { return Ok(false); }
         *status = CollisionReadbackStatus::Mapping;
         drop(status);
         let sequence: u64 = self.sequence_next;
@@ -262,7 +262,7 @@ impl CellularCollision {
                 *status = CollisionReadbackStatus::Complete(result);
             }
         });
-        Ok(())
+        Ok(true)
     }
 
 }
