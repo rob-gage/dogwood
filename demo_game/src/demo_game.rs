@@ -18,10 +18,11 @@ use engine::{
         },
         scenes::{
             Scene,
-            SceneConfiguration,
+            SceneData,
             ScenePosition,
             SceneVelocity,
         },
+        simulation::SimulationConfiguration,
         tiles::TileCoordinates,
     },
     user_interface::UserInterfaceContext,
@@ -44,17 +45,21 @@ impl DemoGame {
     pub fn new(accelerator: &Arc<Accelerator>) -> Result<Self, Box<dyn Error>> {
         let mut materials: MaterialRegistry = MaterialRegistry::new();
         let stone: MaterialIdentifier = materials.register(Material::CellularStatic {
-            name: "Stone",
+            name: "Stone".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(128, 128, 128)),
         });
-        let mut scene: Scene = Scene::new_with_generator(accelerator, SceneConfiguration {
-                material_graphics: materials.build_material_graphics(accelerator),
-                data_path: "demo_data".into(),
-                simulation_width: 16,
-                simulation_height: 9,
-                simulation_buffer_size: 4,
-                tile_streaming_batch_size: 1,
-            }, DemoSceneGenerator { stone })?;
+        let data: SceneData = SceneData::new_temporary(materials)?;
+        let mut scene: Scene = Scene::load_with_generator(
+            accelerator,
+            SimulationConfiguration {
+                width: 16,
+                height: 9,
+                buffer_size: 4,
+                streaming_batch_size: 1,
+            },
+            data,
+            DemoSceneGenerator { stone },
+        )?;
         let pawn: engine::physics::actors::Actor =
             scene.actor_registry_mutable().spawn_possessable_pawn(
             ActorPawn::new(),

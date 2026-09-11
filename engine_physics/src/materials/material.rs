@@ -7,21 +7,21 @@ pub enum Material {
     /// A static cellular material
     CellularStatic {
         /// The name of this `Material`
-        name: &'static str,
+        name: String,
         /// The graphics information for this `Material`
         graphics: MaterialAppearance,
     },
     /// A dynamic cellular material
     CellularDynamic {
         /// The name of this `Material`
-        name: &'static str,
+        name: String,
         /// The graphics information for this `Material`
         graphics: MaterialAppearance,
     },
     /// A fluid material
     Fluid {
         /// The name of this `Material`
-        name: &'static str,
+        name: String,
         /// The graphics information for this `Material`
         graphics: MaterialAppearance,
     }
@@ -39,7 +39,7 @@ impl Material {
     }
 
     /// Returns the name of this `Material`
-    pub const fn name(&self) -> &'static str {
+    pub fn name(&self) -> &str {
         match self {
             Material::CellularStatic { name, .. } => name,
             Material::CellularDynamic { name, .. } => name,

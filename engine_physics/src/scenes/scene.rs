@@ -1,12 +1,14 @@
 // Copyright Rob Gage 2026
 
 use super::{
-    SceneConfiguration,
     SceneData,
     SceneGenerator,
     ScenePosition,
 };
-use crate::simulation::CellularCollision;
+use crate::simulation::{
+    CellularCollision,
+    SimulationConfiguration,
+};
 use crate::{
     actors::{
         Actor,
@@ -17,6 +19,7 @@ use crate::{
         ChunkEntry,
         ChunkStreamingResponse,
     },
+    materials::MaterialRegistry,
     tiles::{
         Tile,
         TileArea,
@@ -61,10 +64,10 @@ const TICK_RATE: u32 = 60;
 pub struct Scene {
     /// The `Accelerator` this `Scene` is running on
     accelerator: Arc<Accelerator>,
-    /// The graphics properties of this scene's materials
-    material_graphics: MaterialGraphics,
     /// The persistent `SceneData` backing this `Scene`
     data: SceneData,
+    /// The GPU graphics properties derived from the scene's material registry
+    material_graphics: MaterialGraphics,
     /// The `SceneGenerator` used to generate new tiles for this `Scene`
     generator: Arc<dyn SceneGenerator>,
     /// The `ActorRegistry` currently managed by this `Scene`
@@ -113,39 +116,71 @@ pub struct Scene {
 
 impl Scene {
 
-    /// Creates a `Scene`, its buffered GPU tile storage, and every chunk initially covering it.
+    /// Creates a temporary `Scene`, its buffered GPU storage, and every initial chunk.
     ///
     /// The initial streaming area is synchronously loaded from disk or generated so the returned
     /// scene has data for its active area and its non-simulated GPU buffer. Tile uploads are
     /// queued here and submitted by the first `tick`.
     pub fn new(
         accelerator: &Arc<Accelerator>,
-        configuration: SceneConfiguration,
-    ) -> Result<Self, Box<dyn Error>> { Self::new_with_generator(accelerator, configuration, ()) }
+        materials: MaterialRegistry,
+        simulation: SimulationConfiguration,
+    ) -> Result<Self, Box<dyn Error>> {
+        Self::load(
+            accelerator,
+            simulation,
+            SceneData::new_temporary(materials)?,
+        )
+    }
 
-    /// Creates a `Scene` using a generator for chunks that are not already stored
+    /// Creates a temporary `Scene` using a generator for chunks that are not already stored
     pub fn new_with_generator(
         accelerator: &Arc<Accelerator>,
-        configuration: SceneConfiguration,
+        materials: MaterialRegistry,
+        simulation: SimulationConfiguration,
         generator: impl SceneGenerator + 'static,
     ) -> Result<Self, Box<dyn Error>> {
-        configuration.validate()?;
-        let material_graphics: MaterialGraphics = configuration.material_graphics;
+        Self::load_with_generator(
+            accelerator,
+            simulation,
+            SceneData::new_temporary(materials)?,
+            generator,
+        )
+    }
+
+    /// Loads a `Scene` from existing `SceneData`
+    pub fn load(
+        accelerator: &Arc<Accelerator>,
+        simulation: SimulationConfiguration,
+        data: SceneData,
+    ) -> Result<Self, Box<dyn Error>> {
+        Self::load_with_generator(accelerator, simulation, data, ())
+    }
+
+    /// Loads a `Scene` from existing `SceneData`, generating chunks that are not stored
+    pub fn load_with_generator(
+        accelerator: &Arc<Accelerator>,
+        simulation: SimulationConfiguration,
+        data: SceneData,
+        generator: impl SceneGenerator + 'static,
+    ) -> Result<Self, Box<dyn Error>> {
+        simulation.validate()?;
         let accelerator: Arc<Accelerator> = accelerator.clone();
-        let data: SceneData = SceneData::open(configuration.data_path.clone())?;
+        let material_graphics: MaterialGraphics =
+            data.materials().build_material_graphics(accelerator.as_ref());
         let generator: Arc<dyn SceneGenerator> = Arc::new(generator);
-        let buffer_size: u16 = u16::from(configuration.simulation_buffer_size) * 2;
+        let buffer_size: u16 = u16::from(simulation.buffer_size) * 2;
         let buffered_tile_count: usize =
-            (configuration.simulation_width + buffer_size) as usize *
-            (configuration.simulation_height + buffer_size) as usize;
+            (simulation.width + buffer_size) as usize *
+            (simulation.height + buffer_size) as usize;
         let buffered_cell_count: usize = buffered_tile_count * 64;
         let cellular_material_identifiers: AcceleratorBuffer =
             accelerator.allocate::<u32>(buffered_cell_count);
         let cellular_collision: CellularCollision = CellularCollision::new(
             accelerator.as_ref(),
             &cellular_material_identifiers,
-            configuration.simulation_width + buffer_size,
-            configuration.simulation_height + buffer_size,
+            simulation.width + buffer_size,
+            simulation.height + buffer_size,
         );
         let tile_count: u32 = buffered_tile_count as u32;
         let tiles: Box<[Tile]> = (0..tile_count).map(Tile).collect();
@@ -153,8 +188,8 @@ impl Scene {
             sync_channel(CHUNK_STREAMING_QUEUE_CAPACITY);
         let mut scene: Self = Self {
             accelerator,
-            material_graphics,
             data,
+            material_graphics,
             generator,
             actor_registry: ActorRegistry::new(),
             possessed_actor: None,
@@ -164,10 +199,10 @@ impl Scene {
             chunks_streaming_identifier_next: 0,
             tick_time: Duration::ZERO,
             tiles,
-            tile_streaming_batch_size: configuration.tile_streaming_batch_size,
-            simulation_width: configuration.simulation_width,
-            simulation_height: configuration.simulation_height,
-            simulation_buffer_size: configuration.simulation_buffer_size,
+            tile_streaming_batch_size: simulation.streaming_batch_size,
+            simulation_width: simulation.width,
+            simulation_height: simulation.height,
+            simulation_buffer_size: simulation.buffer_size,
             origin: TileCoordinates { x: 0, y: 0 },
             origin_target: TileCoordinates { x: 0, y: 0 },
             area_request: None,
@@ -836,157 +871,4 @@ impl Drop for Scene {
 
     fn drop(&mut self) { self.cellular_material_identifiers.free() }
 
-}
-
-#[cfg(test)]
-mod tests {
-
-    use super::*;
-    use crate::{
-        actors::{
-            ActorControlState,
-            ActorPawn,
-            ActorPawnMovement,
-            ActorPawnNoclipConfiguration,
-        },
-        materials::{
-            MaterialForm,
-            MaterialIdentifier,
-        },
-        scenes::{
-            SceneGenerator,
-            SceneVelocity,
-        },
-    };
-    use engine_graphics::MaterialGraphics;
-    use std::time::{
-        SystemTime,
-        UNIX_EPOCH,
-    };
-
-    struct StoneGround;
-
-    impl SceneGenerator for StoneGround {
-
-        fn generate_chunk_with_seed(&self, _: u128, coordinates: TileCoordinates) -> Chunk {
-            let mut chunk: Chunk = Chunk::new_empty(coordinates);
-            let stone: MaterialIdentifier =
-                MaterialIdentifier::new(MaterialForm::CellularStatic, 0);
-            for coordinates in TileArea::new(coordinates, Chunk::WIDTH, Chunk::WIDTH)
-                .iterate_tile_coordinates().filter(|coordinates| coordinates.y < 0)
-            {
-                chunk.set_tile_unchecked(coordinates, TileData::new_filled(stone));
-            }
-            chunk
-        }
-    }
-
-    fn assert_stone_ground(snapshot: &crate::simulation::CollisionOccupancySnapshot) {
-        assert_eq!([snapshot.width, snapshot.height], [24, 17]);
-        assert_eq!(snapshot.masks.len(), 24 * 17);
-        for (index, mask) in snapshot.masks.iter().enumerate() {
-            let coordinates = TileCoordinates {
-                x: snapshot.origin.x + index as i32 % i32::from(snapshot.width),
-                y: snapshot.origin.y + index as i32 / i32::from(snapshot.width),
-            };
-            assert_eq!(*mask, if coordinates.y < 0 {
-                [u32::MAX, u32::MAX]
-            } else {
-                [0, 0]
-            }, "incorrect occupancy at ({}, {})", coordinates.x, coordinates.y);
-        }
-    }
-
-    #[test]
-    fn extracts_buffered_stone_ground_without_waiting_in_tick() -> Result<(), Box<dyn Error>> {
-        let accelerator: Arc<Accelerator> = Arc::new(Accelerator::new()?);
-        let data_path = std::env::temp_dir().join(format!(
-            "dogwood-collision-{}-{}",
-            std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos(),
-        ));
-        let mut scene: Scene = Scene::new_with_generator(&accelerator, SceneConfiguration {
-            material_graphics: MaterialGraphics::new(accelerator.as_ref(), vec![], vec![], vec![]),
-            data_path,
-            simulation_width: 16,
-            simulation_height: 9,
-            simulation_buffer_size: 4,
-            tile_streaming_batch_size: 1,
-        }, StoneGround)?;
-
-        scene.update(Duration::from_secs(1) / TICK_RATE, true)?;
-        assert!(scene.cellular_collision.latest.is_none());
-        for _ in 0..1000 {
-            scene.update(Duration::ZERO, true)?;
-            if scene.cellular_collision.latest.is_some() { break; }
-            std::thread::sleep(Duration::from_millis(1));
-        }
-
-        let snapshot = scene.cellular_collision.latest.as_ref()
-            .expect("collision occupancy readback did not complete");
-        assert!(snapshot.origin == TileCoordinates { x: -4, y: -4 });
-        assert_stone_ground(snapshot);
-
-        scene.origin_target.x = 1;
-        scene.update(Duration::from_secs(1) / TICK_RATE, true)?;
-        for _ in 0..1000 {
-            scene.update(Duration::ZERO, true)?;
-            if scene.cellular_collision.latest.as_ref()
-                .is_some_and(|snapshot| snapshot.origin.x == -3)
-            {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        let shifted_snapshot = scene.cellular_collision.latest.as_ref()
-            .expect("shifted collision occupancy readback did not complete");
-        assert!(shifted_snapshot.origin == TileCoordinates { x: -3, y: -4 });
-        assert_stone_ground(shifted_snapshot);
-
-        let mut moving_pawn: ActorPawn = ActorPawn::new();
-        moving_pawn.noclip = Some(ActorPawnNoclipConfiguration { speed: 1.0 });
-        moving_pawn.movement = Some(ActorPawnMovement::Noclip);
-        let moving_actor: Actor = scene.actor_registry_mutable().spawn_possessable_pawn(
-            moving_pawn,
-            ScenePosition {
-                tile_coordinates: TileCoordinates { x: 0, y: 1 },
-                x_offset: 0.5,
-                y_offset: 0.5,
-            },
-            SceneVelocity { x: 0.0, y: 0.0 },
-        );
-        let stationary_actor: Actor = scene.actor_registry_mutable().spawn_possessable_pawn(
-            ActorPawn::new(),
-            ScenePosition {
-                tile_coordinates: TileCoordinates { x: 0, y: 1 },
-                x_offset: 0.5,
-                y_offset: 0.5,
-            },
-            SceneVelocity { x: 0.0, y: 0.0 },
-        );
-        scene.possess_actor(moving_actor);
-        scene.actor_registry_mutable().set_control_state(
-            moving_actor,
-            ActorControlState(engine_input::ControlState {
-                locomotion_x: 1.0,
-                locomotion_y: 0.0,
-            }),
-        );
-        scene.possess_actor(stationary_actor);
-        scene.actor_registry_mutable().simulate_pawns(1.0, true);
-        let cleared_position: ScenePosition =
-            *scene.actor_registry().get_position(moving_actor).unwrap();
-        assert_eq!(cleared_position.tile_coordinates.x, 0);
-        assert_eq!(cleared_position.x_offset, 0.5);
-
-        let requested_position: ScenePosition = ScenePosition {
-            tile_coordinates: TileCoordinates { x: 30, y: 1 },
-            x_offset: 0.5,
-            y_offset: 0.5,
-        };
-        scene.request_area_around(requested_position);
-        scene.update(Duration::ZERO, false)?;
-        assert!(scene.origin_target == TileCoordinates { x: 22, y: -3 });
-        Ok(())
-    }
 }

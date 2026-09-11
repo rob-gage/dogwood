@@ -10,7 +10,7 @@ use engine::physics::{
     },
 };
 
-/// Generates empty sky above a stone ground
+/// Generates an infinite world of stone
 pub(super) struct DemoSceneGenerator {
     pub(super) stone: MaterialIdentifier,
 }
@@ -19,7 +19,6 @@ impl SceneGenerator for DemoSceneGenerator {
 
     fn generate_chunk_with_seed(&self, _: u128, coordinates: TileCoordinates) -> Chunk {
         let mut chunk: Chunk = Chunk::new_empty(coordinates);
-        if coordinates.y >= 0 { return chunk; }
         for y in 0..Chunk::WIDTH {
             for x in 0..Chunk::WIDTH {
                 chunk.set_tile_unchecked(TileCoordinates {

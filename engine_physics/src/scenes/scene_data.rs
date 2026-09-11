@@ -2,32 +2,88 @@
 
 use crate::{
     chunks::Chunk,
+    materials::MaterialRegistry,
     tiles::TileCoordinates,
 };
 use std::{
     fs::{
+        create_dir,
         create_dir_all,
+        metadata,
+        remove_dir_all,
         File,
     },
     io,
     path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{
+            AtomicU64,
+            Ordering,
+        },
+    },
 };
 
-/// A source of persistent `Scene` data on the filesystem
+/// The identifier assigned to the next temporary scene-data directory
+static TEMPORARY_IDENTIFIER: AtomicU64 = AtomicU64::new(0);
+
+/// A source of filesystem-backed `Scene` data
 #[derive(Clone)]
 pub struct SceneData {
+    /// The CPU-side materials registered for this scene
+    materials: Arc<MaterialRegistry>,
     /// The path of the directory containing the data
-    path: PathBuf,
+    path: Arc<PathBuf>,
+    /// Whether the directory should be removed after its last owner is dropped
+    is_temporary: bool,
 }
 
 impl SceneData {
 
-    /// Opens a directory as `SceneData`, failing if the directory is not accessible, creating it
-    /// if it does not exist
-    pub fn open(path: PathBuf) -> Result<Self, io::Error> {
-        create_dir_all(&path)?;
-        Ok(Self { path })
+    /// Loads scene data from an existing directory
+    pub fn load(path: PathBuf) -> Result<Self, io::Error> {
+        if !metadata(&path)?.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Scene data path is not a directory",
+            ));
+        }
+        let mut materials_file: File = File::open(path.join("materials"))?;
+        let materials: MaterialRegistry = MaterialRegistry::deserialize(&mut materials_file)?;
+        Ok(Self {
+            materials: Arc::new(materials),
+            path: Arc::new(path),
+            is_temporary: false,
+        })
     }
+
+    /// Creates empty scene data in a new temporary directory
+    pub fn new_temporary(materials: MaterialRegistry) -> Result<Self, io::Error> {
+        let materials: Arc<MaterialRegistry> = Arc::new(materials);
+        loop {
+            let identifier: u64 = TEMPORARY_IDENTIFIER.fetch_add(1, Ordering::Relaxed);
+            let path: PathBuf = std::env::temp_dir().join(format!(
+                "dogwood-scene-{}-{identifier}",
+                std::process::id(),
+            ));
+            match create_dir(&path) {
+                Ok(()) => {
+                    let mut materials_file: File = File::create(path.join("materials"))?;
+                    materials.serialize(&mut materials_file)?;
+                    return Ok(Self {
+                        materials,
+                        path: Arc::new(path),
+                        is_temporary: true,
+                    });
+                }
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    /// Returns the CPU-side materials stored with this scene data
+    pub fn materials(&self) -> &MaterialRegistry { &self.materials }
 
     /// Reads a `Chunk` from the `SceneData`, returning `None` if the chunk does not exist
     pub fn read_chunk(&self, position: TileCoordinates) -> Result<Option<Chunk>, io::Error> {

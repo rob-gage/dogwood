@@ -29,6 +29,7 @@ pub mod physics {
     pub use engine_physics::chunks;
     pub use engine_physics::materials;
     pub use engine_physics::scenes;
+    pub use engine_physics::simulation;
     pub use engine_physics::tiles;
 }
 pub mod user_interface {
