@@ -244,18 +244,8 @@ impl Scene {
     pub fn graphics(&self) -> SceneGraphics<'_> {
         let buffer_size: i32 = i32::from(self.simulation_buffer_size);
         let dimensions: u32 = u32::from(self.simulation_buffer_size) * 2;
-        let walking_pawn: Option<([f32; 2], [f32; 2])> = self.possessed_actor()
-            .and_then(|actor| Some((
-                self.actor_registry.get_position(actor)?,
-                self.actor_registry.get_pawn(actor)?.walking?,
-            )))
-            .map(|(position, walking)| (
-                [
-                    position.tile_coordinates.x as f32 + position.x_offset,
-                    position.tile_coordinates.y as f32 + position.y_offset,
-                ],
-                [walking.collider_width, walking.collider_height],
-            ));
+        let walking_pawn: Option<([f32; 2], [f32; 2])> =
+            self.actor_registry.first_walking_pawn_graphics();
         SceneGraphics {
             material_graphics: &self.material_graphics,
             cellular_material_identifiers: &self.cellular_material_identifiers,

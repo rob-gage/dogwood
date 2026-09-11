@@ -4,6 +4,7 @@ use super::{
     Actor,
     ActorControlState,
     ActorPawn,
+    ActorPawnWalkingConfiguration,
     ActorPossessable,
     ActorPawnWalkingState,
 };
@@ -90,6 +91,22 @@ impl ActorRegistry {
     /// Returns an actor's pawn configuration
     pub fn get_pawn(&self, identifier: Actor) -> Option<&ActorPawn> {
         self.world.get::<ActorPawn>(identifier.bevy_entity())
+    }
+
+    /// Returns the first walking pawn's position and collider dimensions for scene rendering
+    pub fn first_walking_pawn_graphics(&self) -> Option<([f32; 2], [f32; 2])> {
+        self.world.iter_entities().find_map(|entity| {
+            let pawn: &ActorPawn = entity.get::<ActorPawn>()?;
+            let walking: ActorPawnWalkingConfiguration = pawn.walking?;
+            let position: &ScenePosition = entity.get::<ScenePosition>()?;
+            Some((
+                [
+                    position.tile_coordinates.x as f32 + position.x_offset,
+                    position.tile_coordinates.y as f32 + position.y_offset,
+                ],
+                [walking.collider_width, walking.collider_height],
+            ))
+        })
     }
 
     /// Sets an actor's position

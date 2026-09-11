@@ -38,6 +38,8 @@ pub struct EditorApplication<G: Game> {
     editor_pawn: Option<Actor>,
     /// The pawn possessed before entering free-fly
     original_pawn: Option<Actor>,
+    /// The exact position to restore when returning from free-fly
+    original_pawn_position: Option<ScenePosition>,
     /// Whether streaming is currently returning to the original pawn
     is_return_pending: bool,
 }
@@ -53,6 +55,7 @@ impl<G: Game> EditorApplication<G> {
             ),
             editor_pawn: None,
             original_pawn: None,
+            original_pawn_position: None,
             is_return_pending: false,
         }
     }
@@ -63,6 +66,9 @@ impl<G: Game> EditorApplication<G> {
         let Some(scene) = self.application.game_mutable().scene_mutable() else { return; };
         if scene.possessed_actor() == self.editor_pawn { return; }
         self.original_pawn = scene.possessed_actor();
+        self.original_pawn_position = self.original_pawn.and_then(|actor| {
+            scene.actor_registry().get_position(actor).copied()
+        });
         let editor_pawn: Actor = match self.editor_pawn.filter(|actor| {
             scene.actor_registry().contains(*actor)
         }) {
@@ -96,15 +102,15 @@ impl<G: Game> EditorApplication<G> {
         if !scene.actor_registry().contains(original_pawn) ||
                 !scene.actor_registry().is_possessable(original_pawn) {
             self.original_pawn = None;
+            self.original_pawn_position = None;
             self.is_return_pending = false;
             return;
         }
         if !self.is_return_pending { return; }
-        let Some(position): Option<ScenePosition> =
-            scene.actor_registry().get_position(original_pawn).copied()
-            else { return; };
+        let Some(position): Option<ScenePosition> = self.original_pawn_position else { return; };
         scene.request_area_around(position);
         if scene.is_position_resident(position) {
+            scene.actor_registry_mutable().set_position(original_pawn, position);
             scene.possess_actor(original_pawn);
             self.is_return_pending = false;
         }
