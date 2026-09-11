@@ -57,7 +57,7 @@ Chunks are 64x64 tiles, or 512x512 cells.
 
 Only the active region and its buffer are intended to remain GPU-resident. Chunks are much larger persistence/streaming units and must not become simulation units.
 
-The actual fixed-rate `Scene::tick()` currently contains no physics simulation. Therefore most simulation behavior is greenfield even though world residency and rendering infrastructure already exist.
+The fixed-rate `Scene::tick()` already advances scene gravity, the CPU collision/physics world, and actor pawn movement. Granular and fluid simulation behavior remains greenfield even though world residency, collision, and rendering infrastructure already exist.
 
 ### Materials
 
@@ -105,6 +105,22 @@ Existing infrastructure includes:
 * input forwarding to a possessed pawn.
 
 This actor model should be extended rather than replaced.
+
+## CPU-Controlled Scene Editing
+
+Editor tools and gameplay systems such as emitters, weapons, and scripts need a common CPU-authored boundary for mutating a `Scene`. That boundary should be a narrow, concrete `SceneEdit`-style interface owned by `Scene`.
+
+It is not a trait, command framework, reflection system, property bag, undo framework, or generic editing system. Callers request placement or erasure using world-cell coordinates and a `MaterialIdentifier`. Callers do not construct `CellularAppearance` or other per-cell physics state.
+
+Scene and material ownership initialize all concrete fields. Current placement initialization includes the `MaterialIdentifier` and persistent `CellularAppearance`. Future concrete fields, such as temperature, enter this placement path only when those fields actually exist.
+
+An active edit updates resident GPU state immediately and keeps resident CPU chunk persistence synchronized and dirty. World-cell addressing must respect the existing tile ring, tile boundaries, negative coordinates, and ring wrapping. Future fluid placement should resolve internally to authoritative fluid-particle creation without requiring editor or gameplay callers to know fluid internals. Granular simulation moves existing matter internally and does not use `SceneEdit` for every simulated movement.
+
+## Editor Architecture
+
+Editor pause is independent from `Game::is_paused()`. Paused editor mode still permits rendering, UI, Free Fly, streaming, and explicit edits while suppressing ordinary gameplay, cellular, and fluid simulation.
+
+The editor palette comes from the loaded `Scene`'s real `MaterialRegistry`. Brush preview and painting use the same discrete world-cell rasterization.
 
 ## Core Development Principles
 

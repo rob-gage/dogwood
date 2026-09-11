@@ -22,16 +22,27 @@ Every implementation task should leave Dogwood closer to an executable game-jam-
 
 * Do not modify unrelated files or unrelated portions of files.
 * Preserve existing code style and formatting conventions.
+* Normally place exactly one primary named `struct`, `enum`, or `trait` in each source file.
+* Every new primary type MUST get its own appropriately named source file and MUST follow the existing module declaration and re-export structure.
+* Do not place unrelated structs, enums, or traits in an existing file merely because that file is already being edited.
+* Avoid module-level free functions when behavior naturally belongs to an owning type.
+* Private helper behavior normally MUST be implemented as methods on the appropriate type.
+* Before writing code, inspect neighboring source files and imitate their organization, naming, visibility, imports, comments, line wrapping, indentation, brace placement, and vertical whitespace.
+* Preserve the existing blank-line style inside `impl` blocks, including blank lines after the opening brace and before the closing brace wherever surrounding Dogwood files use them.
+* Do not place a final method directly against an `impl` closing brace when the surrounding project convention leaves a blank line there.
 * NEVER RUN `rustfmt`.
 * Reuse existing infrastructure before creating new infrastructure.
 * Preserve working module boundaries unless they concretely block the current task.
 * Prefer private/internal implementation over new public API.
 * Do not perform opportunistic cleanup during feature tasks.
+* Do not opportunistically reorganize imports, move methods or types between files, rename modules, or perform unrelated cleanup.
 * Do not redesign functioning infrastructure merely because an isolated subsystem could be cleaner another way.
 * Do not add dependencies without a concrete need.
 * Keep authoritative state and derived state explicitly distinguished.
 * Avoid unnecessary CPU/GPU synchronization or readback.
 * Make concurrency assumptions explicit.
+* Before handoff, reread every changed source file specifically for structural and style consistency.
+* Source-organization and style violations are implementation defects, not optional cleanup.
 
 ## Anti-Overengineering Rule
 
