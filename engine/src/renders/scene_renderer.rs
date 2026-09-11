@@ -151,15 +151,17 @@ impl SceneRenderer {
         ) else { return; };
         let bind_group: Option<wgpu::BindGroup> = scene.map(|scene| {
             let graphics = scene.graphics();
+            let (walking_pawn_position, walking_pawn_size): ([f32; 2], [f32; 2]) =
+                graphics.walking_pawn.unwrap_or(([0.0; 2], [0.0; 2]));
             let uniforms: [u32; 16] = [
                 camera_position[0].to_bits(), camera_position[1].to_bits(),
                 (size[0] as f32).to_bits(), (size[1] as f32).to_bits(),
                 camera_size[0].to_bits(), camera_size[1].to_bits(),
-                0, 0,
+                walking_pawn_position[0].to_bits(), walking_pawn_position[1].to_bits(),
                 graphics.buffered_origin[0] as u32, graphics.buffered_origin[1] as u32,
                 graphics.buffered_tile_size[0], graphics.buffered_tile_size[1],
                 graphics.ring_offset[0], graphics.ring_offset[1],
-                0, 0,
+                walking_pawn_size[0].to_bits(), walking_pawn_size[1].to_bits(),
             ];
             let mut uniform_data: Vec<u8> = Vec::with_capacity(64);
             for value in uniforms { uniform_data.extend_from_slice(&value.to_le_bytes()); }

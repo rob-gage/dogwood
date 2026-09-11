@@ -15,4 +15,6 @@ pub struct SceneGraphics<'a> {
     pub buffered_tile_size: [u32; 2],
     /// The ring-buffer offset of the buffered area's bottom-left tile
     pub ring_offset: [u32; 2],
+    /// The center and size of the possessed walking pawn, if one is active
+    pub walking_pawn: Option<([f32; 2], [f32; 2])>,
 }

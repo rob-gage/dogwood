@@ -8,6 +8,7 @@ mod actor_pawn_movement;
 mod actor_pawn_noclip_configuration;
 mod actor_pawn_swimming_configuration;
 mod actor_pawn_walking_configuration;
+mod actor_pawn_walking_state;
 mod actor_possessable;
 mod actor_registry;
 
@@ -19,5 +20,6 @@ pub use actor_pawn_movement::ActorPawnMovement;
 pub use actor_pawn_noclip_configuration::ActorPawnNoclipConfiguration;
 pub use actor_pawn_swimming_configuration::ActorPawnSwimmingConfiguration;
 pub use actor_pawn_walking_configuration::ActorPawnWalkingConfiguration;
+pub use actor_pawn_walking_state::ActorPawnWalkingState;
 pub use actor_possessable::ActorPossessable;
 pub use actor_registry::ActorRegistry;

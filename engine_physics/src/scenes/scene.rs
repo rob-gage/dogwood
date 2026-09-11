@@ -7,7 +7,8 @@ use super::{
 };
 use crate::simulation::{
     CellularCollision,
-    SimulationConfiguration,
+    SceneSimulationConfiguration,
+    ScenePhysicsWorld,
 };
 use crate::{
     actors::{
@@ -112,6 +113,10 @@ pub struct Scene {
     cellular_material_identifiers: AcceleratorBuffer,
     /// Compact CPU-readable occupancy derived from the authoritative cellular GPU buffer
     cellular_collision: CellularCollision,
+    /// Scene gravity acceleration in tiles per second squared
+    gravity: [f32; 2],
+    /// CPU collision and rigid-body world, including terrain derived from cellular occupancy
+    physics_world: ScenePhysicsWorld,
 }
 
 impl Scene {
@@ -124,7 +129,7 @@ impl Scene {
     pub fn new(
         accelerator: &Arc<Accelerator>,
         materials: MaterialRegistry,
-        simulation: SimulationConfiguration,
+        simulation: SceneSimulationConfiguration,
     ) -> Result<Self, Box<dyn Error>> {
         Self::load(
             accelerator,
@@ -137,7 +142,7 @@ impl Scene {
     pub fn new_with_generator(
         accelerator: &Arc<Accelerator>,
         materials: MaterialRegistry,
-        simulation: SimulationConfiguration,
+        simulation: SceneSimulationConfiguration,
         generator: impl SceneGenerator + 'static,
     ) -> Result<Self, Box<dyn Error>> {
         Self::load_with_generator(
@@ -151,7 +156,7 @@ impl Scene {
     /// Loads a `Scene` from existing `SceneData`
     pub fn load(
         accelerator: &Arc<Accelerator>,
-        simulation: SimulationConfiguration,
+        simulation: SceneSimulationConfiguration,
         data: SceneData,
     ) -> Result<Self, Box<dyn Error>> {
         Self::load_with_generator(accelerator, simulation, data, ())
@@ -160,7 +165,7 @@ impl Scene {
     /// Loads a `Scene` from existing `SceneData`, generating chunks that are not stored
     pub fn load_with_generator(
         accelerator: &Arc<Accelerator>,
-        simulation: SimulationConfiguration,
+        simulation: SceneSimulationConfiguration,
         data: SceneData,
         generator: impl SceneGenerator + 'static,
     ) -> Result<Self, Box<dyn Error>> {
@@ -212,6 +217,8 @@ impl Scene {
             tile_uploads: Mutex::new(Vec::new()),
             cellular_material_identifiers,
             cellular_collision,
+            gravity: simulation.gravity,
+            physics_world: ScenePhysicsWorld::new(),
         };
         for coordinates in scene.area_streaming().iterate_chunk_coordinates() {
             let chunk: Chunk = match scene.data.read_chunk(coordinates)? {
@@ -237,6 +244,18 @@ impl Scene {
     pub fn graphics(&self) -> SceneGraphics<'_> {
         let buffer_size: i32 = i32::from(self.simulation_buffer_size);
         let dimensions: u32 = u32::from(self.simulation_buffer_size) * 2;
+        let walking_pawn: Option<([f32; 2], [f32; 2])> = self.possessed_actor()
+            .and_then(|actor| Some((
+                self.actor_registry.get_position(actor)?,
+                self.actor_registry.get_pawn(actor)?.walking?,
+            )))
+            .map(|(position, walking)| (
+                [
+                    position.tile_coordinates.x as f32 + position.x_offset,
+                    position.tile_coordinates.y as f32 + position.y_offset,
+                ],
+                [walking.collider_width, walking.collider_height],
+            ));
         SceneGraphics {
             material_graphics: &self.material_graphics,
             cellular_material_identifiers: &self.cellular_material_identifiers,
@@ -249,6 +268,7 @@ impl Scene {
                 u32::from(self.tiles_ring_offset_x),
                 u32::from(self.tiles_ring_offset_y),
             ],
+            walking_pawn,
         }
     }
 
@@ -325,7 +345,16 @@ impl Scene {
 
     /// Runs one fixed-rate physics simulation tick
     fn tick(&mut self, is_simulation_active: bool) -> Result<(), io::Error> {
-        self.actor_registry.simulate_pawns(1.0 / TICK_RATE as f32, is_simulation_active);
+        self.physics_world.update_cellular_terrain(self.cellular_collision.latest.as_ref());
+        if is_simulation_active {
+            self.physics_world.step(self.gravity, 1.0 / TICK_RATE as f32);
+        }
+        self.actor_registry.simulate_actor_pawns(
+            1.0 / TICK_RATE as f32,
+            is_simulation_active,
+            self.gravity,
+            &self.physics_world,
+        );
         let possessed_position: Option<ScenePosition> = self.possessed_actor()
             .and_then(|actor| self.actor_registry.get_position(actor)).copied();
         if let Some(position) = possessed_position { self.follow_position(position); }

@@ -4,13 +4,19 @@ use super::{
     Actor,
     ActorControlState,
     ActorPawn,
-    ActorPawnMovement,
-    ActorPawnNoclipConfiguration,
     ActorPossessable,
+    ActorPawnWalkingState,
 };
-use crate::scenes::{
-    ScenePosition,
-    SceneVelocity,
+use crate::{
+    scenes::{
+        Scene,
+        ScenePosition,
+        SceneVelocity
+    },
+    simulation::{
+        ScenePhysicsWorld,
+        SceneSimulation
+    }
 };
 
 /// Owns the ECS world and provides the engine's actor-facing API
@@ -35,14 +41,13 @@ impl ActorRegistry {
         position: ScenePosition,
         velocity: SceneVelocity,
     ) -> Actor {
-        Actor::from_bevy_entity(
-            self.world.spawn((
-                pawn,
-                ActorControlState::default(),
-                position,
-                velocity,
-            )).id()
-        )
+        Actor::from_bevy_entity(self.world.spawn((
+            pawn,
+            ActorControlState::default(),
+            ActorPawnWalkingState::default(),
+            position,
+            velocity,
+        )).id())
     }
 
     /// Creates a pawn that is eligible for possession
@@ -52,15 +57,14 @@ impl ActorRegistry {
         position: ScenePosition,
         velocity: SceneVelocity,
     ) -> Actor {
-        Actor::from_bevy_entity(
-            self.world.spawn((
-                pawn,
-                ActorPossessable,
-                ActorControlState::default(),
-                position,
-                velocity,
-            )).id()
-        )
+        Actor::from_bevy_entity(self.world.spawn((
+            pawn,
+            ActorPossessable,
+            ActorControlState::default(),
+            ActorPawnWalkingState::default(),
+            position,
+            velocity,
+        )).id())
     }
 
     /// Removes an actor from the registry, returning true if successful
@@ -83,26 +87,21 @@ impl ActorRegistry {
         self.world.get::<SceneVelocity>(identifier.bevy_entity())
     }
 
+    /// Returns an actor's pawn configuration
+    pub fn get_pawn(&self, identifier: Actor) -> Option<&ActorPawn> {
+        self.world.get::<ActorPawn>(identifier.bevy_entity())
+    }
+
     /// Sets an actor's position
-    pub fn set_position(
-        &mut self,
-        identifier: Actor,
-        position: ScenePosition,
-    ) -> bool {
+    pub fn set_position(&mut self, identifier: Actor, position: ScenePosition) -> bool {
         self.world.get_mut::<ScenePosition>(identifier.bevy_entity())
-            .map(|mut current| *current = position)
-            .is_some()
+            .map(|mut current| *current = position).is_some()
     }
 
     /// Sets an actor's velocity
-    pub fn set_velocity(
-        &mut self,
-        identifier: Actor,
-        velocity: SceneVelocity,
-    ) -> bool {
+    pub fn set_velocity(&mut self, identifier: Actor, velocity: SceneVelocity) -> bool {
         self.world.get_mut::<SceneVelocity>(identifier.bevy_entity())
-            .map(|mut current| *current = velocity)
-            .is_some()
+            .map(|mut current| *current = velocity).is_some()
     }
 
     /// Passes universal controls to a pawn
@@ -111,11 +110,8 @@ impl ActorRegistry {
         identifier: Actor,
         control_state: ActorControlState,
     ) -> bool {
-        if self.world.get::<ActorPawn>(identifier.bevy_entity()).is_none() {
-            return false;
-        }
-        self.world.entity_mut(identifier.bevy_entity())
-            .insert(control_state);
+        if self.world.get::<ActorPawn>(identifier.bevy_entity()).is_none() { return false; }
+        self.world.entity_mut(identifier.bevy_entity()).insert(control_state);
         true
     }
 
@@ -125,41 +121,20 @@ impl ActorRegistry {
     }
 
     /// Advances configured pawn movement by one fixed simulation step
-    pub fn simulate_pawns(&mut self, delta_time: f32, is_simulation_active: bool) {
-        let mut query: bevy_ecs::query::QueryState<(
-            &ActorPawn,
-            &ActorControlState,
-            &mut ScenePosition,
-            &mut SceneVelocity,
-        )> = self.world.query();
-        for (pawn, control, mut position, mut velocity) in query.iter_mut(&mut self.world) {
-            if !is_simulation_active && !pawn.simulate_when_paused { continue; }
-            let Some(ActorPawnMovement::Noclip): Option<ActorPawnMovement> = pawn.movement
-                else { continue; };
-            let Some(configuration): Option<ActorPawnNoclipConfiguration> = pawn.noclip
-                else { continue; };
-            velocity.x = control.0.locomotion_x * configuration.speed;
-            velocity.y = control.0.locomotion_y * configuration.speed;
-            Self::move_position(&mut position, &velocity, delta_time);
-        }
-    }
-
-    /// Applies continuous velocity while keeping a position normalized to its containing tile
-    fn move_position(
-        position: &mut ScenePosition,
-        velocity: &SceneVelocity,
+    pub fn simulate_actor_pawns(
+        &mut self,
         delta_time: f32,
+        is_simulation_active: bool,
+        gravity: [f32; 2],
+        physics_world: &ScenePhysicsWorld,
     ) {
-        let x: f32 = position.tile_coordinates.x as f32 + position.x_offset +
-            velocity.x * delta_time;
-        let y: f32 = position.tile_coordinates.y as f32 + position.y_offset +
-            velocity.y * delta_time;
-        let tile_x: f32 = x.floor();
-        let tile_y: f32 = y.floor();
-        position.tile_coordinates.x = tile_x as i32;
-        position.tile_coordinates.y = tile_y as i32;
-        position.x_offset = x - tile_x;
-        position.y_offset = y - tile_y;
+        Scene::simulate_actor_pawns(
+            &mut self.world,
+            delta_time,
+            is_simulation_active,
+            gravity,
+            physics_world,
+        );
     }
 
     /// Returns whether an actor is eligible for possession

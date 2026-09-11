@@ -21,10 +21,11 @@ impl SceneGenerator for DemoSceneGenerator {
         let mut chunk: Chunk = Chunk::new_empty(coordinates);
         for y in 0..Chunk::WIDTH {
             let tile_y: i32 = coordinates.y + i32::from(y);
-            if tile_y >= 0 { continue; }
             for x in 0..Chunk::WIDTH {
+                let tile_x: i32 = coordinates.x + i32::from(x);
+                if tile_y >= 0 { continue; }
                 chunk.set_tile_unchecked(TileCoordinates {
-                    x: coordinates.x + i32::from(x),
+                    x: tile_x,
                     y: tile_y,
                 }, TileData::new_filled(self.stone));
             }

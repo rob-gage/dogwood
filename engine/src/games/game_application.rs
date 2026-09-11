@@ -114,13 +114,24 @@ impl<G: Game> GameApplication<G> {
             )
         };
         let Some(configuration) = self.surface_configuration.as_ref() else { return; };
+        let mut camera_size: [f32; 2] = [
+            self.camera.width * self.camera.zoom,
+            self.camera.height * self.camera.zoom,
+        ];
+        let surface_aspect: f32 = configuration.width as f32 / configuration.height as f32;
+        let camera_aspect: f32 = camera_size[0] / camera_size[1];
+        if surface_aspect > camera_aspect {
+            camera_size[0] = camera_size[1] * surface_aspect;
+        } else {
+            camera_size[1] = camera_size[0] / surface_aspect;
+        }
         self.scene_renderer.render(
             &self.accelerator,
             self.game.scene(),
             configuration.format,
             [configuration.width, configuration.height],
             self.camera_position,
-            [self.camera.width * self.camera.zoom, self.camera.height * self.camera.zoom],
+            camera_size,
             &mut command_encoder,
             &view,
         );

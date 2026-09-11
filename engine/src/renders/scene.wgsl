@@ -5,11 +5,11 @@ struct Uniforms {
     camera_position: vec2<f32>,
     window_size: vec2<f32>,
     camera_size: vec2<f32>,
-    _padding: vec2<f32>,
+    walking_pawn_position: vec2<f32>,
     buffered_origin: vec2<i32>,
     buffered_tile_size: vec2<u32>,
     ring_offset: vec2<u32>,
-    _padding2: vec2<u32>,
+    walking_pawn_size: vec2<f32>,
 }
 
 struct MaterialAppearance {
@@ -46,6 +46,9 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         1.0 - position.y / uniforms.window_size.y,
     );
     let world = uniforms.camera_position + (normalized - vec2<f32>(0.5)) * uniforms.camera_size;
+    if all(abs(world - uniforms.walking_pawn_position) < uniforms.walking_pawn_size * 0.5) {
+        return vec4<f32>(1.0);
+    }
     let cell = vec2<i32>(floor(world * 8.0));
     let tile = vec2<i32>(floor_divide(cell.x, 8), floor_divide(cell.y, 8));
     let relative = tile - uniforms.buffered_origin;

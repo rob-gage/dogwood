@@ -3,7 +3,9 @@
 use std::io;
 
 /// Configures the active and buffered simulation area of a `Scene`
-pub struct SimulationConfiguration {
+pub struct SceneSimulationConfiguration {
+    /// Scene gravity acceleration in tiles per second squared
+    pub gravity: [f32; 2],
     /// The width of the active simulation area in tiles
     pub width: u16,
     /// The height of the active simulation area in tiles
@@ -14,10 +16,16 @@ pub struct SimulationConfiguration {
     pub streaming_batch_size: u8,
 }
 
-impl SimulationConfiguration {
+impl SceneSimulationConfiguration {
 
     /// Validates that this configuration can create a streaming tile buffer
     pub fn validate(&self) -> Result<(), io::Error> {
+        if !self.gravity.into_iter().all(f32::is_finite) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Simulation gravity must be finite",
+            ));
+        }
         if self.width == 0 || self.height == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,

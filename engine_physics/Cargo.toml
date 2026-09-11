@@ -11,4 +11,5 @@ bevy_ecs = "0.19.1"
 engine_compute = { version = "0.0.0", path = "../engine_compute" }
 engine_graphics = { version = "0.0.0", path = "../engine_graphics" }
 engine_input = { version = "0.0.0", path = "../engine_input" }
+rapier2d = "0.35.3"
 wgpu.workspace = true

@@ -10,7 +10,11 @@ use engine::{
         MaterialAppearance,
     },
     physics::{
-        actors::ActorPawn,
+        actors::{
+            ActorPawn,
+            ActorPawnMovement,
+            ActorPawnWalkingConfiguration,
+        },
         materials::{
             Material,
             MaterialIdentifier,
@@ -22,7 +26,7 @@ use engine::{
             ScenePosition,
             SceneVelocity,
         },
-        simulation::SimulationConfiguration,
+        simulation::SceneSimulationConfiguration,
         tiles::TileCoordinates,
     },
     user_interface::UserInterfaceContext,
@@ -51,7 +55,9 @@ impl DemoGame {
         let data: SceneData = SceneData::new_temporary(materials)?;
         let mut scene: Scene = Scene::load_with_generator(
             accelerator,
-            SimulationConfiguration {
+            SceneSimulationConfiguration {
+                // Reverse the sign to test walking and jumping on the ceiling platform.
+                gravity: [0.0, -18.0],
                 width: 16,
                 height: 9,
                 buffer_size: 4,
@@ -60,13 +66,22 @@ impl DemoGame {
             data,
             DemoSceneGenerator { stone },
         )?;
+        let mut pawn_configuration: ActorPawn = ActorPawn::new();
+        pawn_configuration.walking = Some(ActorPawnWalkingConfiguration {
+            speed: 4.0,
+            acceleration: 24.0,
+            jump_velocity: 7.0,
+            collider_width: 0.75,
+            collider_height: 0.75,
+        });
+        pawn_configuration.movement = Some(ActorPawnMovement::Walking);
         let pawn: engine::physics::actors::Actor =
             scene.actor_registry_mutable().spawn_possessable_pawn(
-            ActorPawn::new(),
+            pawn_configuration,
             ScenePosition {
                 tile_coordinates: TileCoordinates { x: 0, y: 1 },
                 x_offset: 0.5,
-                y_offset: 0.5,
+                y_offset: 0.75,
             },
             SceneVelocity { x: 0.0, y: 0.0 },
         );
@@ -94,7 +109,7 @@ impl Game for DemoGame {
         }
     }
 
-    fn is_paused(&self) -> bool { true }
+    fn is_paused(&self) -> bool { false }
 
     fn scene(&self) -> Option<&Scene> { self.scene.as_ref() }
 
