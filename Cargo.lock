@@ -666,6 +666,7 @@ dependencies = [
 name = "editor"
 version = "0.0.0"
 dependencies = [
+ "egui",
  "engine",
  "engine_compute",
  "engine_graphics",

@@ -33,7 +33,7 @@ impl SceneRenderer {
         accelerator: &Accelerator,
         scene: Option<&Scene>,
         format: wgpu::TextureFormat,
-        size: [u32; 2],
+        viewport: [u32; 4],
         camera_position: [f32; 2],
         camera_size: [f32; 2],
         command_encoder: &mut wgpu::CommandEncoder,
@@ -148,7 +148,7 @@ impl SceneRenderer {
             self.bind_group_layout = Some(bind_group_layout);
             self.uniform_buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Scene uniforms"),
-                size: 64,
+                size: 72,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }));
@@ -163,17 +163,18 @@ impl SceneRenderer {
             let graphics = scene.graphics();
             let (walking_pawn_position, walking_pawn_size): ([f32; 2], [f32; 2]) =
                 graphics.walking_pawn.unwrap_or(([0.0; 2], [0.0; 2]));
-            let uniforms: [u32; 16] = [
+            let uniforms: [u32; 18] = [
                 camera_position[0].to_bits(), camera_position[1].to_bits(),
-                (size[0] as f32).to_bits(), (size[1] as f32).to_bits(),
+                (viewport[2] as f32).to_bits(), (viewport[3] as f32).to_bits(),
                 camera_size[0].to_bits(), camera_size[1].to_bits(),
                 walking_pawn_position[0].to_bits(), walking_pawn_position[1].to_bits(),
                 graphics.buffered_origin[0] as u32, graphics.buffered_origin[1] as u32,
                 graphics.buffered_tile_size[0], graphics.buffered_tile_size[1],
                 graphics.ring_offset[0], graphics.ring_offset[1],
                 walking_pawn_size[0].to_bits(), walking_pawn_size[1].to_bits(),
+                (viewport[0] as f32).to_bits(), (viewport[1] as f32).to_bits(),
             ];
-            let mut uniform_data: Vec<u8> = Vec::with_capacity(64);
+            let mut uniform_data: Vec<u8> = Vec::with_capacity(72);
             for value in uniforms { uniform_data.extend_from_slice(&value.to_le_bytes()); }
             accelerator.wgpu_queue().write_buffer(uniform_buffer, 0, &uniform_data);
             accelerator.wgpu_device().create_bind_group(&wgpu::BindGroupDescriptor {
@@ -231,6 +232,11 @@ impl SceneRenderer {
         if let Some(bind_group) = bind_group.as_ref() {
             render_pass.set_pipeline(pipeline);
             render_pass.set_bind_group(0, bind_group, &[]);
+            render_pass.set_viewport(
+                viewport[0] as f32, viewport[1] as f32,
+                viewport[2] as f32, viewport[3] as f32, 0.0, 1.0,
+            );
+            render_pass.set_scissor_rect(viewport[0], viewport[1], viewport[2], viewport[3]);
             render_pass.draw(0..3, 0..1);
         }
     }

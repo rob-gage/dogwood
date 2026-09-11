@@ -29,6 +29,7 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
+use crate::viewport_area::ViewportArea;
 
 /// A windowed editor application for a `Game`
 pub struct EditorApplication<G: Game> {
@@ -135,6 +136,7 @@ impl<G: Game> EditorApplication<G> {
         let return_action: Rc<Cell<bool>> = return_requested.clone();
         let background: Color = Color::new_rgba(47, 47, 47, 255);
         let background_dark: Color = Color::new_rgba(37, 37, 37, 255);
+        let viewport_bounds: Rc<Cell<Option<[u32; 4]>>> = Rc::new(Cell::new(None));
         let top_bar: StackHorizontal = StackHorizontal::new()
             .with_height(32.0)
             .with_spacing(4.0)
@@ -146,13 +148,14 @@ impl<G: Game> EditorApplication<G> {
             .with_child(Spacer::new_flexible());
         let content: StackHorizontal = StackHorizontal::new()
             .with_child(Spacer::new(128.0).with_background_color(&background))
-            .with_child(Spacer::new_flexible())
+            .with_child(ViewportArea(viewport_bounds.clone()))
             .with_child(Spacer::new(32.0).with_background_color(&background));
         let mut layout: StackVertical = StackVertical::new()
             .with_child(top_bar)
             .with_child(content)
             .with_child(Spacer::new(16.0).with_background_color(&background_dark));
         self.application.add_widget(&mut layout);
+        self.application.set_scene_viewport_bounds(viewport_bounds.get());
         if free_fly_requested.get() { self.enter_free_fly(); }
         if return_requested.get() {
             self.is_return_pending = true;

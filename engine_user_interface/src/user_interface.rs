@@ -18,6 +18,9 @@ impl<'a> UserInterface<'a> {
     /// Returns the available area before the UI wraps its contents.
     pub fn available_rect(&self) -> egui::Rect { self.0.available_rect_before_wrap() }
 
+    /// Returns the scale from interface points to physical surface pixels.
+    pub fn pixels_per_point(&self) -> f32 { self.0.ctx().pixels_per_point() }
+
     /// Allocates an area for a widget.
     pub fn allocate_rect(&mut self, rect: egui::Rect, sense: egui::Sense) -> egui::Response {
         self.0.allocate_rect(rect, sense)

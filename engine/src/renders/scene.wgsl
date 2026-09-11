@@ -9,6 +9,7 @@ struct Uniforms {
     buffered_tile_size: vec2<u32>,
     ring_offset: vec2<u32>,
     walking_pawn_size: vec2<f32>,
+    viewport_origin: vec2<f32>,
 }
 
 struct MaterialAppearance {
@@ -46,8 +47,8 @@ fn vertex(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
 fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     // convert the screen pixel into camera/world coordinates
     let normalized = vec2<f32>(
-        position.x / uniforms.window_size.x,
-        1.0 - position.y / uniforms.window_size.y,
+        (position.x - uniforms.viewport_origin.x) / uniforms.window_size.x,
+        1.0 - (position.y - uniforms.viewport_origin.y) / uniforms.window_size.y,
     );
     let world = uniforms.camera_position + (normalized - vec2<f32>(0.5)) * uniforms.camera_size;
     // TEMPORARY: draw the possessed walking pawn over the cellular scene
