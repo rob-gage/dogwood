@@ -5,6 +5,7 @@ use super::{
     SceneData,
     SceneGenerator,
 };
+use crate::simulation::CellularCollision;
 use crate::{
     actors::{
         Actor,
@@ -103,6 +104,8 @@ pub struct Scene {
     tiles_ring_offset_y: u16,
     /// The buffer containing `MaterialIdentifier`s for GPU-resident tiles
     cellular_material_identifiers: AcceleratorBuffer,
+    /// Compact CPU-readable occupancy derived from the authoritative cellular GPU buffer
+    cellular_collision: CellularCollision,
 }
 
 impl Scene {
@@ -135,6 +138,12 @@ impl Scene {
         let buffered_cell_count: usize = buffered_tile_count * 64;
         let cellular_material_identifiers: AcceleratorBuffer =
             accelerator.allocate::<u32>(buffered_cell_count);
+        let cellular_collision: CellularCollision = CellularCollision::new(
+            accelerator.as_ref(),
+            &cellular_material_identifiers,
+            configuration.simulation_width + buffer_size,
+            configuration.simulation_height + buffer_size,
+        );
         let tile_count: u32 = buffered_tile_count as u32;
         let tiles: Box<[Tile]> = (0..tile_count).map(Tile).collect();
         let (chunk_streaming_response_sender, chunk_streaming_responses) =
@@ -163,6 +172,7 @@ impl Scene {
             tile_downloads: Mutex::new(Vec::new()),
             tile_uploads: Mutex::new(Vec::new()),
             cellular_material_identifiers,
+            cellular_collision,
         };
         for coordinates in scene.area_streaming().iterate_chunk_coordinates() {
             let chunk: Chunk = match scene.data.read_chunk(coordinates)? {
@@ -235,6 +245,7 @@ impl Scene {
         self.tile_downloads_submit()?;
         self.tile_uploads_submit()?;
         self.accelerator.poll().map_err(|error| io::Error::other(error.to_string()))?;
+        self.cellular_collision.collect_completed()?;
         self.tile_download_clean()?;
         self.tile_upload_clean()?;
         self.tick_time += elapsed;
@@ -247,7 +258,20 @@ impl Scene {
     }
 
     /// Runs one fixed-rate physics simulation tick
-    fn tick(&mut self) -> Result<(), io::Error> { Ok(()) }
+    fn tick(&mut self) -> Result<(), io::Error> {
+        let buffer_size: i32 = i32::from(self.simulation_buffer_size);
+        self.cellular_collision.extract(
+            self.accelerator.as_ref(),
+            TileCoordinates {
+                x: self.origin.x - buffer_size,
+                y: self.origin.y - buffer_size,
+            },
+            self.simulation_width + u16::from(self.simulation_buffer_size) * 2,
+            self.simulation_height + u16::from(self.simulation_buffer_size) * 2,
+            self.tiles_ring_offset_x,
+            self.tiles_ring_offset_y,
+        )
+    }
 
     /// Returns the exact tile area currently being simulated
     const fn area_active(&self) -> TileArea {
@@ -768,4 +792,103 @@ impl Drop for Scene {
 
     fn drop(&mut self) { self.cellular_material_identifiers.free() }
 
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+    use crate::{
+        materials::{
+            MaterialForm,
+            MaterialIdentifier,
+        },
+        scenes::SceneGenerator,
+    };
+    use engine_graphics::MaterialGraphics;
+    use std::time::{
+        SystemTime,
+        UNIX_EPOCH,
+    };
+
+    struct StoneGround;
+
+    impl SceneGenerator for StoneGround {
+
+        fn generate_chunk_with_seed(&self, _: u128, coordinates: TileCoordinates) -> Chunk {
+            let mut chunk: Chunk = Chunk::new_empty(coordinates);
+            let stone: MaterialIdentifier =
+                MaterialIdentifier::new(MaterialForm::CellularStatic, 0);
+            for coordinates in TileArea::new(coordinates, Chunk::WIDTH, Chunk::WIDTH)
+                .iterate_tile_coordinates().filter(|coordinates| coordinates.y < 0)
+            {
+                chunk.set_tile_unchecked(coordinates, TileData::new_filled(stone));
+            }
+            chunk
+        }
+    }
+
+    fn assert_stone_ground(snapshot: &crate::simulation::CollisionOccupancySnapshot) {
+        assert_eq!([snapshot.width, snapshot.height], [24, 17]);
+        assert_eq!(snapshot.masks.len(), 24 * 17);
+        for (index, mask) in snapshot.masks.iter().enumerate() {
+            let coordinates = TileCoordinates {
+                x: snapshot.origin.x + index as i32 % i32::from(snapshot.width),
+                y: snapshot.origin.y + index as i32 / i32::from(snapshot.width),
+            };
+            assert_eq!(*mask, if coordinates.y < 0 {
+                [u32::MAX, u32::MAX]
+            } else {
+                [0, 0]
+            }, "incorrect occupancy at ({}, {})", coordinates.x, coordinates.y);
+        }
+    }
+
+    #[test]
+    fn extracts_buffered_stone_ground_without_waiting_in_tick() -> Result<(), Box<dyn Error>> {
+        let accelerator: Arc<Accelerator> = Arc::new(Accelerator::new()?);
+        let data_path = std::env::temp_dir().join(format!(
+            "dogwood-collision-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos(),
+        ));
+        let mut scene: Scene = Scene::new_with_generator(&accelerator, SceneConfiguration {
+            material_graphics: MaterialGraphics::new(accelerator.as_ref(), vec![], vec![], vec![]),
+            data_path,
+            simulation_width: 16,
+            simulation_height: 9,
+            simulation_buffer_size: 4,
+            tile_streaming_batch_size: 1,
+        }, StoneGround)?;
+
+        scene.update(Duration::from_secs(1) / TICK_RATE, true)?;
+        assert!(scene.cellular_collision.latest.is_none());
+        for _ in 0..1000 {
+            scene.update(Duration::ZERO, true)?;
+            if scene.cellular_collision.latest.is_some() { break; }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+
+        let snapshot = scene.cellular_collision.latest.as_ref()
+            .expect("collision occupancy readback did not complete");
+        assert!(snapshot.origin == TileCoordinates { x: -4, y: -4 });
+        assert_stone_ground(snapshot);
+
+        scene.origin_target.x = 1;
+        scene.update(Duration::from_secs(1) / TICK_RATE, true)?;
+        for _ in 0..1000 {
+            scene.update(Duration::ZERO, true)?;
+            if scene.cellular_collision.latest.as_ref()
+                .is_some_and(|snapshot| snapshot.origin.x == -3)
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let shifted_snapshot = scene.cellular_collision.latest.as_ref()
+            .expect("shifted collision occupancy readback did not complete");
+        assert!(shifted_snapshot.origin == TileCoordinates { x: -3, y: -4 });
+        assert_stone_ground(shifted_snapshot);
+        Ok(())
+    }
 }

@@ -73,7 +73,7 @@ impl Game for DemoGame {
         }
     }
 
-    fn is_paused(&self) -> bool { true }
+    fn is_paused(&self) -> bool { false }
 
     fn scene(&self) -> Option<&Scene> { self.scene.as_ref() }
 
