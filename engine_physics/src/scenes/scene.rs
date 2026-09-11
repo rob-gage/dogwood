@@ -461,9 +461,14 @@ impl Scene {
     fn chunks_save(&mut self) -> Result<(), io::Error> {
         // get streaming `TileArea` so all chunks not in it can be pruned
         let streaming_area: TileArea = self.area_streaming();
-        let coordinates: Vec<TileCoordinates> = self.chunks.keys().copied().filter(|coordinates| {
-            !streaming_area.contains(*coordinates)
-        }).collect();
+        let coordinates: Vec<TileCoordinates> = self.chunks.iter().filter_map(
+            |(coordinates, entry)| {
+                if streaming_area.contains(*coordinates) || matches!(
+                    entry,
+                    ChunkEntry::Loading { .. } | ChunkEntry::Generating { .. },
+                ) { None } else { Some(*coordinates) }
+            }
+        ).collect();
         for coordinates in coordinates {
             // save dirty active chunks before removing them from the resident map.
             if let Some(ChunkEntry::Active { chunk, is_dirty: true }) =
