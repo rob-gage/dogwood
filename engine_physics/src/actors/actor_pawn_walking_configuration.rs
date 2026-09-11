@@ -9,6 +9,8 @@ pub struct ActorPawnWalkingConfiguration {
     pub acceleration: f32,
     /// Jump speed opposite gravity in tiles per second
     pub jump_velocity: f32,
+    /// Maximum walkable surface angle from gravity-relative up, in radians
+    pub maximum_slope_angle: f32,
     /// Axis-aligned collider width in tiles
     pub collider_width: f32,
     /// Axis-aligned collider height in tiles

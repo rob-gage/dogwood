@@ -74,6 +74,7 @@ impl DemoGame {
             speed: 4.0,
             acceleration: 24.0,
             jump_velocity: 7.0,
+            maximum_slope_angle: 50.0_f32.to_radians(),
             collider_width: 0.75,
             collider_height: 0.75,
         });

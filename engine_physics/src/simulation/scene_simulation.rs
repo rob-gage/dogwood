@@ -106,20 +106,30 @@ pub trait SceneSimulation {
         ));
         let controller: KinematicCharacterController = KinematicCharacterController {
             up,
-            offset: CharacterLength::Absolute(1.0 / 4096.0),
+            // a cell is 1/8 tile; this is large enough for stable contact without
+            // visibly separating the pawn from cellular terrain
+            offset: CharacterLength::Absolute(1.0 / 1024.0),
+            max_slope_climb_angle: configuration.maximum_slope_angle,
+            min_slope_slide_angle: configuration.maximum_slope_angle,
             snap_to_ground: None,
             autostep: None,
             ..Default::default()
         };
         let world_x: f32 = position.tile_coordinates.x as f32 + position.x_offset;
         let world_y: f32 = position.tile_coordinates.y as f32 + position.y_offset;
+        let mut resolved_velocity: Vector = Vector::new(velocity.x, velocity.y);
         let movement = physics_world.move_character(
             &controller,
             delta_time,
             &character_shape,
             &Pose::translation(world_x, world_y),
-            Vector::new(velocity.x, velocity.y) * delta_time,
-            |_| { },
+            resolved_velocity * delta_time,
+            |collision| {
+                let velocity_into_terrain: f32 = resolved_velocity.dot(collision.hit.normal1);
+                if velocity_into_terrain < 0.0 {
+                    resolved_velocity -= collision.hit.normal1 * velocity_into_terrain;
+                }
+            },
         );
         Self::integrate_actor_position(
             position,
@@ -129,9 +139,9 @@ pub trait SceneSimulation {
             },
             1.0,
         );
-        velocity.x = movement.translation.x / delta_time;
-        velocity.y = movement.translation.y / delta_time;
         state.grounded = movement.grounded;
+        velocity.x = resolved_velocity.x;
+        velocity.y = resolved_velocity.y;
     }
 
     /// Integrates an actor's continuous velocity and normalizes its tile-relative position

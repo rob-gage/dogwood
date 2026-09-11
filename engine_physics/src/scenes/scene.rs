@@ -341,7 +341,9 @@ impl Scene {
 
     /// Runs one fixed-rate physics simulation tick
     fn tick(&mut self, is_simulation_active: bool) -> Result<(), io::Error> {
-        self.physics_world.update_cellular_terrain(self.cellular_collision.latest.as_ref());
+        if let Some(snapshot) = self.cellular_collision.latest.take() {
+            self.physics_world.update_cellular_terrain(snapshot);
+        }
         if is_simulation_active {
             self.physics_world.step(self.gravity, 1.0 / TICK_RATE as f32);
         }
