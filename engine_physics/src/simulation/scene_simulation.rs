@@ -15,7 +15,7 @@ use crate::{
 use rapier2d::{
     control::{CharacterLength, KinematicCharacterController},
     prelude::{
-        Cuboid,
+        Capsule,
         Pose,
         Vector,
     },
@@ -80,6 +80,12 @@ pub trait SceneSimulation {
         physics_world: &ScenePhysicsWorld,
         delta_time: f32,
     ) {
+        if !configuration.collider_width.is_finite() ||
+                !configuration.collider_height.is_finite() ||
+                configuration.collider_width <= 0.0 ||
+                configuration.collider_height <= 0.0 {
+            return;
+        }
         let gravity_magnitude: f32 = gravity[0].hypot(gravity[1]);
         let up: Vector = if gravity_magnitude > 0.0 {
             Vector::new(-gravity[0] / gravity_magnitude, -gravity[1] / gravity_magnitude)
@@ -100,10 +106,15 @@ pub trait SceneSimulation {
             velocity.x += up.x * (configuration.jump_velocity - up_velocity);
             velocity.y += up.y * (configuration.jump_velocity - up_velocity);
         }
-        let character_shape: Cuboid = Cuboid::new(Vector::new(
-            configuration.collider_width * 0.5,
-            configuration.collider_height * 0.5,
-        ));
+        // capsule cannot be shorter along up than its diameter, so an
+        // incompatible configuration safely collapses to a circular capsule.
+        let radius: f32 = configuration.collider_width.min(configuration.collider_height) * 0.5;
+        let half_segment_length: f32 = (configuration.collider_height - radius * 2.0) * 0.5;
+        let character_shape: Capsule = Capsule::new(
+            -up * half_segment_length,
+            up * half_segment_length,
+            radius,
+        );
         let controller: KinematicCharacterController = KinematicCharacterController {
             up,
             // a cell is 1/8 tile; this is large enough for stable contact without
@@ -111,7 +122,7 @@ pub trait SceneSimulation {
             offset: CharacterLength::Absolute(1.0 / 1024.0),
             max_slope_climb_angle: configuration.maximum_slope_angle,
             min_slope_slide_angle: configuration.maximum_slope_angle,
-            snap_to_ground: None,
+            snap_to_ground: Some(CharacterLength::Absolute(1.0 / 8.0)),
             autostep: None,
             ..Default::default()
         };
