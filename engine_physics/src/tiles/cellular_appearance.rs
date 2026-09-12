@@ -1,10 +1,6 @@
 // Copyright Rob Gage 2026
 
 /// Persistent per-cell appearance variation packed as four signed normalized bytes.
-///
-/// Each byte stores a signed value in `-127..=127` using two's-complement bits;
-/// decoding divides by `127.0`, so zero is exactly neutral and the representable
-/// normalized range is `-1.0..=1.0`. The unused `-128` value is decoded as `-1.0`.
 #[derive(Copy, Clone, Default)]
 pub struct CellularAppearance(pub u32);
 

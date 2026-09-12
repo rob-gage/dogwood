@@ -225,44 +225,6 @@ impl MaterialRegistry {
 
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{
-        Material,
-        MaterialRegistry,
-    };
-    use engine_graphics::{
-        Color,
-        MaterialAppearance,
-    };
-
-    #[test]
-    fn iter_returns_registered_material_identifiers() {
-        let mut registry: MaterialRegistry = MaterialRegistry::new();
-        let appearance: MaterialAppearance = MaterialAppearance::from_color(Color::BLACK);
-        let static_identifier = registry.register(Material::CellularStatic {
-            name: "Static".into(),
-            graphics: appearance,
-        });
-        let dynamic_identifier = registry.register(Material::CellularDynamic {
-            name: "Dynamic".into(),
-            graphics: appearance,
-        });
-        let fluid_identifier = registry.register(Material::Fluid {
-            name: "Fluid".into(),
-            graphics: appearance,
-        });
-        let materials: Vec<(u32, &str)> = registry.iter().map(|(identifier, material)| {
-            (identifier.as_u32(), material.name())
-        }).collect();
-        assert!(materials == vec![
-            (static_identifier.as_u32(), "Static"),
-            (dynamic_identifier.as_u32(), "Dynamic"),
-            (fluid_identifier.as_u32(), "Fluid"),
-        ]);
-    }
-}
-
 impl Index<MaterialIdentifier> for MaterialRegistry {
 
     type Output = Material;

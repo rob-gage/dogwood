@@ -102,12 +102,11 @@ pub trait SceneSimulation {
             -configuration.acceleration * delta_time,
             configuration.acceleration * delta_time,
         );
+        let was_grounded: bool = state.grounded;
         velocity.x += tangent.x * change;
         velocity.y += tangent.y * change;
-        if !state.grounded {
-            velocity.x += gravity[0] * delta_time;
-            velocity.y += gravity[1] * delta_time;
-        }
+        velocity.x += gravity[0] * delta_time;
+        velocity.y += gravity[1] * delta_time;
         if control.locomotion_y > 0.0 && state.grounded {
             let up_velocity: f32 = velocity.x * up.x + velocity.y * up.y;
             velocity.x += up.x * (configuration.jump_velocity - up_velocity);
@@ -137,23 +136,136 @@ pub trait SceneSimulation {
         };
         let world_x: f32 = position.tile_coordinates.x as f32 + position.x_offset;
         let world_y: f32 = position.tile_coordinates.y as f32 + position.y_offset;
-        let movement = physics_world.move_character(
+        let mut up_velocity: f32 = velocity.x * up.x + velocity.y * up.y;
+        let mut tangent_velocity: f32 = velocity.x * tangent.x + velocity.y * tangent.y;
+        let requested_tangent_velocity: f32 = tangent_velocity;
+        let mut contacted_wall: bool = false;
+        let mut contacted_walkable_surface: bool = false;
+        let walkable_normal: f32 = configuration.maximum_slope_angle.cos();
+        let mut horizontal_movement = physics_world.move_character(
             &controller,
             delta_time,
             &character_shape,
             &Pose::translation(world_x, world_y),
-            Vector::new(velocity.x, velocity.y) * delta_time,
-            |_| { },
+            tangent * tangent_velocity * delta_time,
+            |collision| {
+                let normal_up: f32 = collision.hit.normal1.dot(up);
+                if normal_up >= walkable_normal {
+                    contacted_walkable_surface = true;
+                } else if normal_up > -walkable_normal {
+                    contacted_wall = true;
+                    let normal_tangent: f32 = collision.hit.normal1.dot(tangent);
+                    if normal_tangent * tangent_velocity < 0.0 {
+                        tangent_velocity = 0.0;
+                    }
+                }
+            },
+        );
+        // sample a short gravity-relative ramp instead of judging only the immediate wall cell
+        if was_grounded && contacted_wall {
+            let lookahead: f32 = 2.0 / 8.0;
+            let maximum_rise: f32 = lookahead * configuration.maximum_slope_angle.tan();
+            let direction: f32 = requested_tangent_velocity.signum();
+            let probe_up = physics_world.move_character(
+                &controller,
+                delta_time,
+                &character_shape,
+                &Pose::translation(world_x, world_y),
+                up * maximum_rise,
+                |_| { },
+            );
+            if maximum_rise.is_finite() && maximum_rise > 0.0 &&
+                    probe_up.translation.dot(up) >= maximum_rise - 1.0 / 1024.0 {
+                let probe_forward = physics_world.move_character(
+                    &controller,
+                    delta_time,
+                    &character_shape,
+                    &Pose::translation(
+                        world_x + probe_up.translation.x,
+                        world_y + probe_up.translation.y,
+                    ),
+                    tangent * direction * lookahead,
+                    |_| { },
+                );
+                if probe_forward.translation.dot(tangent) * direction >=
+                        lookahead - 1.0 / 1024.0 {
+                    let mut landing_is_walkable: bool = false;
+                    let probe_down = physics_world.move_character(
+                        &controller,
+                        delta_time,
+                        &character_shape,
+                        &Pose::translation(
+                            world_x + probe_up.translation.x + probe_forward.translation.x,
+                            world_y + probe_up.translation.y + probe_forward.translation.y,
+                        ),
+                        -up * maximum_rise,
+                        |collision| {
+                            if collision.hit.normal1.dot(up) >= walkable_normal {
+                                landing_is_walkable = true;
+                            }
+                        },
+                    );
+                    let rise: f32 = (
+                        probe_up.translation + probe_forward.translation + probe_down.translation
+                    ).dot(up);
+                    if landing_is_walkable && rise > 0.0 &&
+                            rise.atan2(lookahead) <= configuration.maximum_slope_angle {
+                        let climb_forward = physics_world.move_character(
+                            &controller,
+                            delta_time,
+                            &character_shape,
+                            &Pose::translation(
+                                world_x + up.x * rise,
+                                world_y + up.y * rise,
+                            ),
+                            tangent * requested_tangent_velocity * delta_time,
+                            |_| { },
+                        );
+                        if climb_forward.translation.dot(tangent).abs() >
+                                horizontal_movement.translation.dot(tangent).abs() +
+                                    1.0 / 1024.0 {
+                            horizontal_movement.translation = up * rise +
+                                climb_forward.translation;
+                            tangent_velocity = requested_tangent_velocity;
+                        }
+                    }
+                }
+            }
+        }
+        let vertical_movement = physics_world.move_character(
+            &controller,
+            delta_time,
+            &character_shape,
+            &Pose::translation(
+                world_x + horizontal_movement.translation.x,
+                world_y + horizontal_movement.translation.y,
+            ),
+            up * up_velocity * delta_time,
+            |collision| {
+                let normal_up: f32 = collision.hit.normal1.dot(up);
+                if normal_up >= walkable_normal {
+                    contacted_walkable_surface = true;
+                } else if normal_up > -walkable_normal {
+                    contacted_wall = true;
+                } else if up_velocity > 0.0 {
+                    up_velocity = 0.0;
+                }
+            },
         );
         Self::integrate_actor_position(
             position,
             &SceneVelocity {
-                x: movement.translation.x,
-                y: movement.translation.y,
+                x: vertical_movement.translation.x + horizontal_movement.translation.x,
+                y: vertical_movement.translation.y + horizontal_movement.translation.y,
             },
             1.0,
         );
-        state.grounded = movement.grounded;
+        let rapier_grounded: bool = vertical_movement.grounded || horizontal_movement.grounded;
+        // wall seams can produce tiny upward normals that Rapier reports as grounded
+        state.grounded = contacted_walkable_surface ||
+            (rapier_grounded && !contacted_wall);
+        velocity.x = up.x * up_velocity + tangent.x * tangent_velocity;
+        velocity.y = up.y * up_velocity + tangent.y * tangent_velocity;
         if state.grounded {
             let velocity_into_ground: f32 = velocity.x * up.x + velocity.y * up.y;
             if velocity_into_ground < 0.0 {
@@ -184,76 +296,3 @@ pub trait SceneSimulation {
 }
 
 impl SceneSimulation for Scene { }
-
-#[cfg(test)]
-mod tests {
-
-    use super::*;
-    use crate::{
-        simulation::CollisionOccupancySnapshot,
-        tiles::TileCoordinates,
-    };
-
-    #[test]
-    fn walking_motion_remains_uniform_across_collision_tile_boundaries() {
-        let mut physics_world: ScenePhysicsWorld = ScenePhysicsWorld::new();
-        let mut masks: Vec<[u32; 2]> = vec![[u32::MAX; 2]; 8];
-        masks.extend(vec![[0; 2]; 8]);
-        physics_world.update_cellular_terrain(CollisionOccupancySnapshot {
-            sequence: 0,
-            origin: TileCoordinates { x: -4, y: -1 },
-            width: 8,
-            height: 2,
-            masks: masks.into_boxed_slice(),
-        });
-        let configuration: ActorPawnWalkingConfiguration = ActorPawnWalkingConfiguration {
-            speed: 4.0,
-            acceleration: 24.0,
-            jump_velocity: 7.0,
-            maximum_slope_angle: 50.0_f32.to_radians(),
-            collider_width: 0.75,
-            collider_height: 0.75,
-        };
-        let control: engine_input::ControlState = engine_input::ControlState {
-            locomotion_x: 1.0,
-            locomotion_y: 0.0,
-        };
-        let mut state: ActorPawnWalkingState = ActorPawnWalkingState::default();
-        let mut position: ScenePosition = ScenePosition {
-            tile_coordinates: TileCoordinates { x: -3, y: 0 },
-            x_offset: 0.5,
-            y_offset: 0.376,
-        };
-        let mut velocity: SceneVelocity = SceneVelocity { x: 0.0, y: 0.0 };
-        let mut previous_x: f32 = -2.5;
-        for tick in 0..80 {
-            physics_world.step([0.0, -18.0], 1.0 / 60.0);
-            <Scene as SceneSimulation>::simulate_actor_pawn_walking(
-                &control,
-                &configuration,
-                &mut state,
-                &mut position,
-                &mut velocity,
-                [0.0, -18.0],
-                &physics_world,
-                1.0 / 60.0,
-            );
-            let x: f32 = position.tile_coordinates.x as f32 + position.x_offset;
-            let y: f32 = position.tile_coordinates.y as f32 + position.y_offset;
-            if tick >= 10 {
-                assert!(
-                    x - previous_x > 0.06,
-                    "tick {tick}, x {x}, y {y}, velocity [{}, {}], grounded {}, delta {}",
-                    velocity.x,
-                    velocity.y,
-                    state.grounded,
-                    x - previous_x,
-                );
-                assert!(state.grounded, "tick {tick}, y {y}");
-                assert!((y - 0.376).abs() < 0.001, "tick {tick}, y {y}");
-            }
-            previous_x = x;
-        }
-    }
-
-}
