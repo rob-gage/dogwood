@@ -34,6 +34,26 @@ impl TileArea {
         }
     }
 
+    /// Expands this area by the provided tile distances
+    pub(crate) fn expanded(
+        self,
+        left: u16,
+        bottom: u16,
+        right: u16,
+        top: u16,
+    ) -> Self {
+        Self {
+            minimum: TileCoordinates {
+                x: self.minimum.x.checked_sub(left as i32).unwrap_or(self.minimum.x),
+                y: self.minimum.y.checked_sub(bottom as i32).unwrap_or(self.minimum.y),
+            },
+            maximum: TileCoordinates {
+                x: self.maximum.x.checked_add(right as i32).unwrap_or(self.maximum.x),
+                y: self.maximum.y.checked_add(top as i32).unwrap_or(self.maximum.y),
+            },
+        }
+    }
+
     /// Returns whether the area contains the provided tile coordinates
     pub const fn contains(self, coordinates: TileCoordinates) -> bool {
         coordinates.x >= self.minimum.x && coordinates.x <= self.maximum.x &&
@@ -52,6 +72,25 @@ impl TileArea {
         (self.minimum.y..=self.maximum.y).step_by(64).flat_map(move |y| {
             (self.minimum.x..=self.maximum.x).step_by(64).map(move |x| TileCoordinates { x, y })
         })
+    }
+
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    #[test]
+    fn expands_a_chunk_area_toward_streaming_direction() {
+        let area: TileArea = TileArea::new(TileCoordinates { x: 0, y: 0 }, 64, 64)
+            .chunk_area().expanded(0, 0, 64, 0);
+        let chunks: Vec<TileCoordinates> = area.iterate_chunk_coordinates().collect();
+
+        assert!(chunks.len() == 2);
+        assert!(area.contains(TileCoordinates { x: 0, y: 0 }));
+        assert!(area.contains(TileCoordinates { x: 64, y: 0 }));
+        assert!(!area.contains(TileCoordinates { x: -64, y: 0 }));
     }
 
 }

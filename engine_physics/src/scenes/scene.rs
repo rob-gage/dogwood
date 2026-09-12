@@ -7,6 +7,7 @@ use super::{
     SceneEditBatch,
     SceneGenerator,
     ScenePosition,
+    SceneVelocity,
 };
 use crate::simulation::{
     CellularCollision,
@@ -528,8 +529,28 @@ impl Scene {
         )
     }
 
-    /// Returns the chunk-aligned area currently resident for prefetching
+    /// Returns the chunk-aligned area required by the current GPU buffer
     fn area_streaming(&self) -> TileArea { self.area_buffered().chunk_area() }
+
+    /// Returns the current chunk area plus one chunk in each movement direction
+    fn area_prefetching(&self) -> TileArea {
+        let velocity: Option<SceneVelocity> = self.possessed_actor()
+            .and_then(|actor| self.actor_registry.get_velocity(actor)).copied();
+        let left: bool = self.origin_target.x < self.origin.x ||
+            velocity.is_some_and(|velocity| velocity.x < 0.0);
+        let bottom: bool = self.origin_target.y < self.origin.y ||
+            velocity.is_some_and(|velocity| velocity.y < 0.0);
+        let right: bool = self.origin_target.x > self.origin.x ||
+            velocity.is_some_and(|velocity| velocity.x > 0.0);
+        let top: bool = self.origin_target.y > self.origin.y ||
+            velocity.is_some_and(|velocity| velocity.y > 0.0);
+        self.area_streaming().expanded(
+            if left { Chunk::WIDTH } else { 0 },
+            if bottom { Chunk::WIDTH } else { 0 },
+            if right { Chunk::WIDTH } else { 0 },
+            if top { Chunk::WIDTH } else { 0 },
+        )
+    }
 
     /// Requests every chunk in a chunk-aligned streaming area
     fn chunks_fetch(&mut self, streaming_area: TileArea) -> Result<(), io::Error> {
@@ -610,13 +631,17 @@ impl Scene {
         Ok(())
     }
 
-    /// Saves dirty chunks and removes entries outside the current prefetch region
+    /// Saves dirty chunks and removes entries outside the one-chunk retention region
     fn chunks_save(&mut self) -> Result<(), io::Error> {
-        // get streaming `TileArea` so all chunks not in it can be pruned
-        let streaming_area: TileArea = self.area_streaming();
+        let retention_area: TileArea = self.area_streaming().expanded(
+            Chunk::WIDTH,
+            Chunk::WIDTH,
+            Chunk::WIDTH,
+            Chunk::WIDTH,
+        );
         let coordinates: Vec<TileCoordinates> = self.chunks.iter().filter_map(
             |(coordinates, entry)| {
-                if streaming_area.contains(*coordinates) || matches!(
+                if retention_area.contains(*coordinates) || matches!(
                     entry,
                     ChunkEntry::Loading { .. } | ChunkEntry::Generating { .. },
                 ) { None } else { Some(*coordinates) }
@@ -692,7 +717,7 @@ impl Scene {
                 }
             }
         }
-        self.chunks_fetch(self.area_streaming())?;
+        self.chunks_fetch(self.area_prefetching())?;
         // move by at most one batch
         let batch_size: i64 = self.tile_streaming_batch_size as i64;
         let x_difference: i64 = self.origin_target.x as i64 - self.origin.x as i64;
