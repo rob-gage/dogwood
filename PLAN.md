@@ -16,7 +16,7 @@ The target demonstration should contain:
 
 * A streamed GPU-resident cellular world.
 * Static cellular materials.
-* Granular cellular materials.
+* Cellular dynamic materials.
 * Fluid particles using PBF or a closely related SPH-family method.
 * A cellular/density double representation of those fluid particles for interaction with other systems.
 * A controllable dummy player character.
@@ -57,7 +57,7 @@ Chunks are 64x64 tiles, or 512x512 cells.
 
 Only the active region and its buffer are intended to remain GPU-resident. Chunks are much larger persistence/streaming units and must not become simulation units.
 
-The fixed-rate `Scene::tick()` already advances scene gravity, the CPU collision/physics world, and actor pawn movement. Granular and fluid simulation behavior remains greenfield even though world residency, collision, and rendering infrastructure already exist.
+The fixed-rate `Scene::tick()` already advances scene gravity, the CPU collision/physics world, and actor pawn movement. Cellular dynamic and fluid simulation behavior remains greenfield even though world residency, collision, and rendering infrastructure already exist.
 
 ### Materials
 
@@ -114,7 +114,7 @@ It is not a trait, command framework, reflection system, property bag, undo fram
 
 Scene and material ownership initialize all concrete fields. Current placement initialization includes the `MaterialIdentifier` and persistent `CellularAppearance`. Future concrete fields, such as temperature, enter this placement path only when those fields actually exist.
 
-An active edit updates resident GPU state immediately and keeps resident CPU chunk persistence synchronized and dirty. World-cell addressing must respect the existing tile ring, tile boundaries, negative coordinates, and ring wrapping. Future fluid placement should resolve internally to authoritative fluid-particle creation without requiring editor or gameplay callers to know fluid internals. Granular simulation moves existing matter internally and does not use `SceneEdit` for every simulated movement.
+An active edit updates resident GPU state immediately and keeps resident CPU chunk persistence synchronized and dirty. World-cell addressing must respect the existing tile ring, tile boundaries, negative coordinates, and ring wrapping. Future fluid placement should resolve internally to authoritative fluid-particle creation without requiring editor or gameplay callers to know fluid internals. Cellular dynamic simulation moves existing matter internally and does not use `SceneEdit` for every simulated movement.
 
 ## Editor Architecture
 
@@ -215,9 +215,9 @@ Only create fields that an implemented behavior needs.
 
 Pressure should not automatically become a persistent universal per-cell value. Fluid density, PBF lambdas, and similar quantities are solver-specific scratch state unless another system requires a derived pressure field.
 
-## Granular Materials
+## Cellular Dynamic Materials
 
-Granular materials are grid-bound cellular materials.
+Cellular dynamic materials are grid-bound cellular materials.
 
 The first implementation should prioritize:
 
@@ -401,9 +401,9 @@ The planning chat should request references when observed behavior or developer 
 
 High-value reference gates include:
 
-* granular GPU concurrency/update scheduling;
+* cellular dynamic GPU concurrency/update scheduling;
 * fluid-cellular double representation;
-* two-way fluid/granular interaction;
+* two-way fluid/cellular dynamic interaction;
 * fluid collision against cellular terrain;
 * rigid bodies composed of cellular material;
 * rasterization of moving rigid cellular bodies;
@@ -568,7 +568,7 @@ Do not begin by designing a general compute framework.
 
 Add only the private WGPU machinery required by the first simulation task.
 
-### Phase 2 — Granular cellular behavior
+### Phase 2 — Cellular dynamic behavior
 
 Get a dynamic cellular material visibly moving safely.
 
@@ -588,7 +588,7 @@ Standalone water behavior must work before complicated coupling is added.
 
 Rasterize fluid state into cellular interaction data.
 
-Demonstrate water interacting coherently with cellular terrain and at least basic granular material.
+Demonstrate water interacting coherently with cellular terrain and at least basic cellular dynamic material.
 
 ### Phase 6 — Thermal state and transformations
 

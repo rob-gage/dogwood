@@ -11,7 +11,7 @@ This file is deliberately volatile. Update it as implementation reality changes.
 The sprint succeeds when Dogwood can run one coherent demonstration in which most of the following happen in the same world:
 
 * static cellular terrain renders;
-* granular material moves;
+* cellular dynamic material moves;
 * PBF/SPH-family fluid particles move;
 * fluid is represented to the cellular interaction system;
 * a possessed dummy player can move and collide;
@@ -51,7 +51,7 @@ A stable subset is preferable to nominally checking every item with broken integ
 * Independent editor pause, mouse/view plumbing, material palette, and brush painting.
 * GPU-simulated `CellularDynamic` Sand.
 * Authoritative fluid particle storage, PBF simulation, and derived fluid-cellular representation.
-* Granular/fluid coupling.
+* Cellular dynamic/fluid coupling.
 * Temperature, ice/water phase transitions, force/impulse infrastructure, destruction, rigid bodies, lighting, thermal material rendering, and significant automated simulation validation.
 
 ## Immediate Work Tracks
@@ -78,7 +78,7 @@ Add editor play/pause independent from `Game::is_paused()`, plus mouse and view 
 
 Use the loaded `Scene`'s real `MaterialRegistry`. Add material palette, Eraser, Square/Circle brush modes, wheel sizing, and exact preview/painting. Preview and painting must share the same discrete world-cell rasterization.
 
-### Track B — granular Sand
+### Track B — CellularDynamic Sand
 
 Still required:
 
@@ -98,7 +98,7 @@ Still required:
 * support-radius-based spatial indexing independent of tile size;
 * the PBF solver;
 * a derived fluid-cellular representation;
-* granular/fluid coupling.
+* cellular dynamic/fluid coupling.
 
 ## Coordination Constraint
 
@@ -160,7 +160,7 @@ After Tracks A–C, preserve the planned work for:
 * the rigid-body insertion path;
 * stabilization, demo scenes, visual/debug tools, performance, and game-jam usability.
 
-Resolve granular conflict handling, exact fluid-cellular raster format, cross-form transition allocation, and rigid interaction overlays immediately before their implementations rather than guessing them now.
+Resolve cellular dynamic conflict handling, exact fluid-cellular raster format, cross-form transition allocation, and rigid interaction overlays immediately before their implementations rather than guessing them now.
 
 ## Codex Session Ledger
 
@@ -221,7 +221,7 @@ None recorded yet.
 
 If schedule pressure requires cuts, prefer no Holographic RC, minimal rigid-body work, simple destruction only, no generalized fracture, no elaborate thermodynamics, no chemistry system, no persistent inactive fluid simulation, and a simple player controller.
 
-Preserve the core integrated cellular + granular + fluid-double-representation experiment if possible.
+Preserve the core integrated cellular + cellular dynamic + fluid-double-representation experiment if possible.
 
 ## Next Immediate Action
 

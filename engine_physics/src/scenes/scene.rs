@@ -11,6 +11,7 @@ use super::{
 };
 use crate::simulation::{
     CellularCollision,
+    CellularDynamic,
     SceneSimulationConfiguration,
     ScenePhysicsWorld,
 };
@@ -123,6 +124,8 @@ pub struct Scene {
     cellular_material_identifiers: AcceleratorBuffer,
     /// The parallel buffer containing persistent cell appearance samples
     cellular_appearances: AcceleratorBuffer,
+    /// GPU simulation of dynamic cells in the canonical cellular buffers
+    cellular_dynamic: CellularDynamic,
     /// Compact CPU-readable occupancy derived from the authoritative cellular GPU buffer
     cellular_collision: CellularCollision,
     /// Whether cellular data or its ring mapping needs a replacement collision extraction
@@ -197,6 +200,12 @@ impl Scene {
             accelerator.allocate::<u32>(buffered_cell_count);
         let cellular_appearances: AcceleratorBuffer =
             accelerator.allocate::<u32>(buffered_cell_count);
+        let cellular_dynamic: CellularDynamic = CellularDynamic::new(
+            accelerator.as_ref(),
+            &cellular_material_identifiers,
+            &cellular_appearances,
+            buffered_tile_count,
+        );
         let cellular_collision: CellularCollision = CellularCollision::new(
             accelerator.as_ref(),
             &cellular_material_identifiers,
@@ -233,6 +242,7 @@ impl Scene {
             tile_uploads: Mutex::new(Vec::new()),
             cellular_material_identifiers,
             cellular_appearances,
+            cellular_dynamic,
             cellular_collision,
             cellular_collision_dirty: true,
             gravity: simulation.gravity,
@@ -447,6 +457,29 @@ impl Scene {
         let possessed_position: Option<ScenePosition> = self.possessed_actor()
             .and_then(|actor| self.actor_registry.get_position(actor)).copied();
         if let Some(position) = possessed_position { self.follow_position(position); }
+        if is_simulation_active {
+            let buffer_size: i32 = i32::from(self.simulation_buffer_size);
+            let dimensions: u16 = u16::from(self.simulation_buffer_size) * 2;
+            self.cellular_dynamic.simulate_cellular_dynamic_tick(
+                self.accelerator.as_ref(),
+                &self.cellular_material_identifiers,
+                &self.cellular_appearances,
+                TileCoordinates {
+                    x: self.origin.x - buffer_size,
+                    y: self.origin.y - buffer_size,
+                },
+                self.simulation_width + dimensions,
+                self.simulation_height + dimensions,
+                self.origin,
+                self.simulation_width,
+                self.simulation_height,
+                self.tiles_ring_offset_x,
+                self.tiles_ring_offset_y,
+                self.gravity,
+                1.0 / TICK_RATE as f32,
+            );
+            self.cellular_collision_dirty = true;
+        }
         if !self.cellular_collision_dirty { return Ok(()); }
         let buffer_size: i32 = i32::from(self.simulation_buffer_size);
         if self.cellular_collision.extract(
@@ -503,6 +536,11 @@ impl Scene {
                 self.cellular_appearances.wgpu_buffer(),
                 offset,
                 &appearances,
+            );
+            self.cellular_dynamic.clear_cellular_dynamic_kinematics(
+                self.accelerator.as_ref(),
+                edits[start].0,
+                end - start,
             );
             start = end;
         }
@@ -1050,6 +1088,11 @@ impl Scene {
                 self.cellular_appearances.wgpu_buffer(),
                 tile.0 as u64 * TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
                 &state.appearances,
+            );
+            self.cellular_dynamic.clear_cellular_dynamic_kinematics(
+                self.accelerator.as_ref(),
+                tile.0 as usize * 64,
+                64,
             );
             state.result = Some(Ok(()));
             state.is_complete = true;

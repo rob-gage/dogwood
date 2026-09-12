@@ -362,9 +362,9 @@ Ask for a reference only when it could materially resolve a concrete question.
 
 Useful reference topics include:
 
-* granular update/conflict algorithms;
+* cellular dynamic update/conflict algorithms;
 * fluid-cellular coupling;
-* fluid/granular interaction;
+* fluid/cellular dynamic interaction;
 * rigid cellular body representation;
 * destruction and cell detachment;
 * thermal transitions;
