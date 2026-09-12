@@ -14,6 +14,7 @@ use engine::{
             ScenePosition,
             SceneVelocity,
         },
+        tiles::CellCoordinates,
     },
 };
 use engine_user_interface::widgets::{
@@ -45,6 +46,10 @@ pub struct EditorApplication<G: Game> {
     is_return_pending: bool,
     /// Whether ordinary hosted scene simulation is playing
     is_playing: bool,
+    /// The latest physical cursor position, if the cursor is inside the window
+    cursor_position: Option<[f32; 2]>,
+    /// Whether the primary button is held for future Scene interaction
+    is_primary_scene_interaction_held: bool,
 }
 
 impl<G: Game> EditorApplication<G> {
@@ -63,6 +68,43 @@ impl<G: Game> EditorApplication<G> {
             original_pawn_position: None,
             is_return_pending: false,
             is_playing: false,
+            cursor_position: None,
+            is_primary_scene_interaction_held: false,
+        }
+    }
+
+    /// Returns the cell currently beneath the cursor in the rendered Scene viewport
+    fn hovered_cell(&self) -> Option<CellCoordinates> {
+        self.application.scene_world_position(self.cursor_position?)
+            .map(CellCoordinates::from_world_position)
+    }
+
+    /// Updates the editor's pointer state after the user interface handles an event
+    fn handle_pointer_event(&mut self, event: &winit::event::WindowEvent, ui_consumed: bool) {
+        use winit::event::{
+            ElementState,
+            MouseButton,
+            WindowEvent::*,
+        };
+        match event {
+            CursorMoved { position, .. } => {
+                self.cursor_position = Some([position.x as f32, position.y as f32]);
+            }
+            CursorLeft { .. } => self.cursor_position = None,
+            MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
+                if !self.is_primary_scene_interaction_held {
+                    self.is_primary_scene_interaction_held =
+                        !ui_consumed && self.hovered_cell().is_some();
+                }
+            }
+            MouseInput { state: ElementState::Released, button: MouseButton::Left, .. } => {
+                self.is_primary_scene_interaction_held = false;
+            }
+            Focused(false) => {
+                self.cursor_position = None;
+                self.is_primary_scene_interaction_held = false;
+            }
+            _ => {}
         }
     }
 
@@ -199,7 +241,10 @@ impl<G: Game> winit::application::ApplicationHandler for EditorApplication<G> {
         event_loop: &winit::event_loop::ActiveEventLoop,
         _window_id: winit::window::WindowId,
         event: winit::event::WindowEvent,
-    ) { self.application.handle_window_event(event_loop, event); }
+    ) {
+        let ui_consumed: bool = self.application.handle_window_event(event_loop, &event);
+        self.handle_pointer_event(&event, ui_consumed);
+    }
 
     fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         self.display();

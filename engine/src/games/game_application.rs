@@ -278,20 +278,21 @@ impl<G: Game> GameApplication<G> {
     pub fn handle_window_event(
         &mut self,
         event_loop: &winit::event_loop::ActiveEventLoop,
-        event: winit::event::WindowEvent,
-    ) {
+        event: &winit::event::WindowEvent,
+    ) -> bool {
         use winit::event::WindowEvent::*;
         let ui_consumed: bool = self.window.as_ref().is_some_and(|window| {
-            self.game.user_interface_context().process_window_event(window, &event)
+            self.game.user_interface_context().process_window_event(window, event)
         });
         match event {
             CloseRequested => event_loop.exit(),
             Resized(size) => self.resize(size.width, size.height),
             KeyboardInput { event, .. } if !ui_consumed =>
-                self.keyboard_input_state.process_event(&event),
+                self.keyboard_input_state.process_event(event),
             RedrawRequested => self.render(),
             _ => {}
         }
+        ui_consumed
     }
 
     /// Requests another redraw when the event loop is idle
@@ -403,7 +404,7 @@ impl<G: Game> winit::application::ApplicationHandler for GameApplication<G> {
         _window_id: winit::window::WindowId,
         event: winit::event::WindowEvent,
     ) {
-        self.handle_window_event(event_loop, event);
+        self.handle_window_event(event_loop, &event);
     }
 
     fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {

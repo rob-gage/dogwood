@@ -13,6 +13,14 @@ pub struct CellCoordinates {
 
 impl CellCoordinates {
 
+    /// Returns the cell containing a continuous world position in tile units
+    pub fn from_world_position(position: [f32; 2]) -> Self {
+        Self {
+            x: (position[0] * 8.0).floor() as i32,
+            y: (position[1] * 8.0).floor() as i32,
+        }
+    }
+
     /// Returns the tile containing these cell coordinates
     pub const fn tile_coordinates(self) -> TileCoordinates {
         TileCoordinates { x: self.x.div_euclid(8), y: self.y.div_euclid(8) }
@@ -29,4 +37,23 @@ impl CellCoordinates {
             (self.y as u32).wrapping_mul(0x85eb_ca6b)
     }
 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CellCoordinates;
+
+    #[test]
+    fn from_world_position_floors_cell_coordinates() {
+        assert!(CellCoordinates::from_world_position([0.01, 0.0]) ==
+            CellCoordinates { x: 0, y: 0 });
+        assert!(CellCoordinates::from_world_position([0.99, 0.0]) ==
+            CellCoordinates { x: 7, y: 0 });
+        assert!(CellCoordinates::from_world_position([1.0, 0.0]) ==
+            CellCoordinates { x: 8, y: 0 });
+        assert!(CellCoordinates::from_world_position([-0.01, 0.0]) ==
+            CellCoordinates { x: -1, y: 0 });
+        assert!(CellCoordinates::from_world_position([-1.0, -0.01]) ==
+            CellCoordinates { x: -8, y: -1 });
+    }
 }
