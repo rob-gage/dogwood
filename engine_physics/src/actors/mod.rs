@@ -9,6 +9,7 @@ mod actor_pawn_noclip_configuration;
 mod actor_pawn_swimming_configuration;
 mod actor_pawn_walking_configuration;
 mod actor_pawn_walking_state;
+mod actor_previous_position;
 mod actor_possessable;
 mod actor_registry;
 
@@ -21,5 +22,6 @@ pub use actor_pawn_noclip_configuration::ActorPawnNoclipConfiguration;
 pub use actor_pawn_swimming_configuration::ActorPawnSwimmingConfiguration;
 pub use actor_pawn_walking_configuration::ActorPawnWalkingConfiguration;
 pub use actor_pawn_walking_state::ActorPawnWalkingState;
+pub(crate) use actor_previous_position::ActorPreviousPosition;
 pub use actor_possessable::ActorPossessable;
 pub use actor_registry::ActorRegistry;

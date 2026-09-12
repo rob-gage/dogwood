@@ -125,7 +125,7 @@ pub struct Scene {
     cellular_appearances: AcceleratorBuffer,
     /// Compact CPU-readable occupancy derived from the authoritative cellular GPU buffer
     cellular_collision: CellularCollision,
-    /// Whether CPU-authored cellular edits need a replacement collision extraction
+    /// Whether cellular data or its ring mapping needs a replacement collision extraction
     cellular_collision_dirty: bool,
     /// Scene gravity acceleration in tiles per second squared
     gravity: [f32; 2],
@@ -234,7 +234,7 @@ impl Scene {
             cellular_material_identifiers,
             cellular_appearances,
             cellular_collision,
-            cellular_collision_dirty: false,
+            cellular_collision_dirty: true,
             gravity: simulation.gravity,
             physics_world: ScenePhysicsWorld::new(),
         };
@@ -262,8 +262,8 @@ impl Scene {
     pub fn graphics(&self) -> SceneGraphics<'_> {
         let buffer_size: i32 = i32::from(self.simulation_buffer_size);
         let dimensions: u32 = u32::from(self.simulation_buffer_size) * 2;
-        let walking_pawn: Option<([f32; 2], [f32; 2])> =
-            self.actor_registry.first_walking_pawn_graphics();
+        let walking_pawn: Option<([f32; 2], [f32; 2])> = self.actor_registry
+            .first_walking_pawn_graphics(self.tick_interpolation());
         SceneGraphics {
             material_graphics: &self.material_graphics,
             cellular_material_identifiers: &self.cellular_material_identifiers,
@@ -294,6 +294,11 @@ impl Scene {
     /// Returns the currently possessed actor if one exists
     pub fn possessed_actor(&self) -> Option<Actor> {
         self.possessed_actor.filter(|actor| self.actor_registry.contains(*actor))
+    }
+
+    /// Returns an actor's position interpolated between its latest fixed ticks
+    pub fn actor_render_position(&self, actor: Actor) -> Option<ScenePosition> {
+        self.actor_registry.get_render_position(actor, self.tick_interpolation())
     }
 
     /// Possesses an actor if it exists in this `Scene`
@@ -420,6 +425,11 @@ impl Scene {
         Ok(())
     }
 
+    /// Returns progress from the previous fixed tick to the current fixed tick
+    fn tick_interpolation(&self) -> f32 {
+        (self.tick_time.as_secs_f32() * TICK_RATE as f32).clamp(0.0, 1.0)
+    }
+
     /// Runs one fixed-rate physics simulation tick
     fn tick(&mut self, is_simulation_active: bool) -> Result<(), io::Error> {
         if let Some(snapshot) = self.cellular_collision.latest.take() {
@@ -437,7 +447,7 @@ impl Scene {
         let possessed_position: Option<ScenePosition> = self.possessed_actor()
             .and_then(|actor| self.actor_registry.get_position(actor)).copied();
         if let Some(position) = possessed_position { self.follow_position(position); }
-        if !is_simulation_active && !self.cellular_collision_dirty { return Ok(()); }
+        if !self.cellular_collision_dirty { return Ok(()); }
         let buffer_size: i32 = i32::from(self.simulation_buffer_size);
         if self.cellular_collision.extract(
             self.accelerator.as_ref(),
@@ -815,6 +825,7 @@ impl Scene {
             }, width, batch_size);
         }
         self.origin = new_origin;
+        self.cellular_collision_dirty = true;
         let _ = self.tiles_upload(tiles_upload_area);
         Ok(())
     }

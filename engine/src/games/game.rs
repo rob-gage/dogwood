@@ -39,7 +39,7 @@ pub trait Game {
         };
         let Some(scene) = self.scene() else { return static_position; };
         let Some(actor) = scene.possessed_actor() else { return static_position; };
-        scene.actor_registry().get_position(actor).copied().unwrap_or(static_position)
+        scene.actor_render_position(actor).unwrap_or(static_position)
     }
 
     /// Returns the input translator used by this `Game`

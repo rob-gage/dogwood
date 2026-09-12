@@ -1,7 +1,6 @@
 // Copyright Rob Gage 2026
 
 use super::CollisionOccupancySnapshot;
-use crate::tiles::TileCoordinates;
 use rapier2d::{
     control::{
         CharacterCollision,
@@ -17,13 +16,12 @@ use rapier2d::{
         Vector,
     },
 };
-use std::collections::HashMap;
 
 /// Owns the Rapier collision world and its derived cellular terrain
 pub struct ScenePhysicsWorld {
     rapier: PhysicsWorld,
-    cellular_terrain: HashMap<TileCoordinates, Vec<ColliderHandle>>,
-    cellular_terrain_masks: HashMap<TileCoordinates, [u32; 2]>,
+    cellular_terrain: Vec<ColliderHandle>,
+    cellular_terrain_snapshot: Option<CollisionOccupancySnapshot>,
 }
 
 impl ScenePhysicsWorld {
@@ -32,88 +30,70 @@ impl ScenePhysicsWorld {
     pub fn new() -> Self {
         Self {
             rapier: PhysicsWorld::new(),
-            cellular_terrain: HashMap::new(),
-            cellular_terrain_masks: HashMap::new(),
+            cellular_terrain: Vec::new(),
+            cellular_terrain_snapshot: None,
         }
     }
 
-    /// Updates only fixed Rapier terrain tiles whose occupancy or residency changed
+    /// Replaces fixed Rapier terrain when cellular occupancy or its logical layout changes
     pub fn update_cellular_terrain(
         &mut self,
         snapshot: CollisionOccupancySnapshot,
     ) {
-        let maximum_x: i32 = snapshot.origin.x + i32::from(snapshot.width);
-        let maximum_y: i32 = snapshot.origin.y + i32::from(snapshot.height);
-        let removed: Vec<TileCoordinates> = self.cellular_terrain.keys()
-            .filter(|coordinates| {
-                coordinates.x < snapshot.origin.x || coordinates.x >= maximum_x ||
-                    coordinates.y < snapshot.origin.y || coordinates.y >= maximum_y
-            }).copied().collect();
-        for coordinates in removed { self.remove_cellular_terrain_tile(coordinates); }
-        self.cellular_terrain_masks.retain(|coordinates, _| {
-            coordinates.x >= snapshot.origin.x && coordinates.x < maximum_x &&
-                coordinates.y >= snapshot.origin.y && coordinates.y < maximum_y
-        });
-        let width: usize = usize::from(snapshot.width);
-        for (index, masks) in snapshot.masks.into_vec().into_iter().enumerate() {
-            let coordinates: TileCoordinates = TileCoordinates {
-                x: snapshot.origin.x + (index % width) as i32,
-                y: snapshot.origin.y + (index / width) as i32,
-            };
-            if self.cellular_terrain_masks.get(&coordinates) == Some(&masks) { continue; }
-            self.remove_cellular_terrain_tile(coordinates);
-            self.cellular_terrain_masks.insert(coordinates, masks);
-            self.insert_cellular_terrain_tile(coordinates, masks);
+        if self.cellular_terrain_snapshot.as_ref().is_some_and(|current| {
+            current.origin == snapshot.origin && current.width == snapshot.width &&
+                current.height == snapshot.height && current.masks == snapshot.masks
+        }) { return; }
+        for handle in self.cellular_terrain.drain(..) {
+            self.rapier.remove_collider(handle);
         }
-    }
-
-    /// Removes every collider derived from one world tile
-    fn remove_cellular_terrain_tile(&mut self, coordinates: TileCoordinates) {
-        if let Some(handles) = self.cellular_terrain.remove(&coordinates) {
-            for handle in handles { self.rapier.remove_collider(handle); }
-        }
-    }
-
-    /// Builds fixed colliders for one occupied 8x8 world tile
-    fn insert_cellular_terrain_tile(
-        &mut self,
-        coordinates: TileCoordinates,
-        masks: [u32; 2],
-    ) {
-        if masks == [0; 2] { return; }
-        let mut handles: Vec<ColliderHandle> = Vec::new();
-        let mut consumed: [bool; 64] = [false; 64];
-        for relative_y in 0..8 {
-            let mut relative_x: usize = 0;
-            while relative_x < 8 {
-                let index: usize = relative_y * 8 + relative_x;
-                if consumed[index] || masks[index / 32] & (1 << (index % 32)) == 0 {
+        let cell_width: i32 = i32::from(snapshot.width) * 8;
+        let cell_height: i32 = i32::from(snapshot.height) * 8;
+        let origin_x: i32 = snapshot.origin.x * 8;
+        let origin_y: i32 = snapshot.origin.y * 8;
+        let mut consumed: Vec<bool> = vec![false; (cell_width * cell_height) as usize];
+        for relative_y in 0..cell_height {
+            let mut relative_x: i32 = 0;
+            while relative_x < cell_width {
+                let index: usize = (relative_y * cell_width + relative_x) as usize;
+                if consumed[index] || snapshot.is_cell_occupied(
+                    origin_x + relative_x,
+                    origin_y + relative_y,
+                ) != Some(true) {
                     relative_x += 1;
                     continue;
                 }
-                let rectangle_x: usize = relative_x;
-                let mut rectangle_width: usize = 1;
-                while rectangle_x + rectangle_width < 8 {
-                    let index: usize = relative_y * 8 + rectangle_x + rectangle_width;
-                    if consumed[index] || masks[index / 32] & (1 << (index % 32)) == 0 { break; }
+                let rectangle_x: i32 = relative_x;
+                let mut rectangle_width: i32 = 1;
+                while rectangle_x + rectangle_width < cell_width {
+                    let next_x: i32 = rectangle_x + rectangle_width;
+                    let next_index: usize = (relative_y * cell_width + next_x) as usize;
+                    if consumed[next_index] || snapshot.is_cell_occupied(
+                        origin_x + next_x,
+                        origin_y + relative_y,
+                    ) != Some(true) { break; }
                     rectangle_width += 1;
                 }
-                let mut rectangle_height: usize = 1;
-                while relative_y + rectangle_height < 8 &&
+                let mut rectangle_height: i32 = 1;
+                while relative_y + rectangle_height < cell_height &&
                         (rectangle_x..rectangle_x + rectangle_width).all(|x| {
-                            let index: usize = (relative_y + rectangle_height) * 8 + x;
-                            !consumed[index] && masks[index / 32] & (1 << (index % 32)) != 0
+                            let index: usize =
+                                ((relative_y + rectangle_height) * cell_width + x) as usize;
+                            !consumed[index] && snapshot.is_cell_occupied(
+                                origin_x + x,
+                                origin_y + relative_y + rectangle_height,
+                            ) == Some(true)
                         }) {
                     rectangle_height += 1;
                 }
                 for y in relative_y..relative_y + rectangle_height {
                     for x in rectangle_x..rectangle_x + rectangle_width {
-                        consumed[y * 8 + x] = true;
+                        consumed[(y * cell_width + x) as usize] = true;
                     }
                 }
-                let world_x: i32 = coordinates.x * 8 + rectangle_x as i32;
-                let world_y: i32 = coordinates.y * 8 + relative_y as i32;
-                handles.push(self.rapier.insert_collider(
+                let world_x: i32 = origin_x + rectangle_x;
+                let world_y: i32 = origin_y + relative_y;
+                self.cellular_terrain.push(self.rapier.insert_collider(
                     ColliderBuilder::cuboid(
                         rectangle_width as f32 / 16.0,
                         rectangle_height as f32 / 16.0,
@@ -128,7 +108,7 @@ impl ScenePhysicsWorld {
                 relative_x += rectangle_width;
             }
         }
-        self.cellular_terrain.insert(coordinates, handles);
+        self.cellular_terrain_snapshot = Some(snapshot);
     }
 
     /// Advances Rapier's collision world by one fixed scene step

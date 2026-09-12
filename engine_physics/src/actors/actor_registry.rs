@@ -7,6 +7,7 @@ use super::{
     ActorPawnWalkingConfiguration,
     ActorPossessable,
     ActorPawnWalkingState,
+    ActorPreviousPosition,
 };
 use crate::{
     scenes::{
@@ -32,7 +33,10 @@ impl ActorRegistry {
 
     /// Creates an actor with a `ScenePosition`
     pub fn spawn(&mut self, position: ScenePosition) -> Actor {
-        Actor::from_bevy_entity(self.world.spawn(position).id())
+        Actor::from_bevy_entity(self.world.spawn((
+            ActorPreviousPosition(position),
+            position,
+        )).id())
     }
 
     /// Creates a pawn with a position and velocity
@@ -46,6 +50,7 @@ impl ActorRegistry {
             pawn,
             ActorControlState::default(),
             ActorPawnWalkingState::default(),
+            ActorPreviousPosition(position),
             position,
             velocity,
         )).id())
@@ -63,6 +68,7 @@ impl ActorRegistry {
             ActorPossessable,
             ActorControlState::default(),
             ActorPawnWalkingState::default(),
+            ActorPreviousPosition(position),
             position,
             velocity,
         )).id())
@@ -93,12 +99,31 @@ impl ActorRegistry {
         self.world.get::<ActorPawn>(identifier.bevy_entity())
     }
 
+    /// Returns an actor position interpolated between its latest fixed ticks
+    pub(crate) fn get_render_position(
+        &self,
+        identifier: Actor,
+        interpolation: f32,
+    ) -> Option<ScenePosition> {
+        let position: ScenePosition = *self.get_position(identifier)?;
+        let previous: ScenePosition = self.world.get::<ActorPreviousPosition>(
+            identifier.bevy_entity(),
+        ).map_or(position, |previous| previous.0);
+        Some(position.interpolated(previous, interpolation))
+    }
+
     /// Returns the first walking pawn's position and collider dimensions for scene rendering
-    pub fn first_walking_pawn_graphics(&self) -> Option<([f32; 2], [f32; 2])> {
+    pub fn first_walking_pawn_graphics(
+        &self,
+        interpolation: f32,
+    ) -> Option<([f32; 2], [f32; 2])> {
         self.world.iter_entities().find_map(|entity| {
             let pawn: &ActorPawn = entity.get::<ActorPawn>()?;
             let walking: ActorPawnWalkingConfiguration = pawn.walking?;
-            let position: &ScenePosition = entity.get::<ScenePosition>()?;
+            let position: ScenePosition = *entity.get::<ScenePosition>()?;
+            let previous: ScenePosition = entity.get::<ActorPreviousPosition>()
+                .map_or(position, |previous| previous.0);
+            let position: ScenePosition = position.interpolated(previous, interpolation);
             Some((
                 [
                     position.tile_coordinates.x as f32 + position.x_offset,
@@ -111,8 +136,13 @@ impl ActorRegistry {
 
     /// Sets an actor's position
     pub fn set_position(&mut self, identifier: Actor, position: ScenePosition) -> bool {
-        self.world.get_mut::<ScenePosition>(identifier.bevy_entity())
-            .map(|mut current| *current = position).is_some()
+        let entity: bevy_ecs::entity::Entity = identifier.bevy_entity();
+        let is_set: bool = self.world.get_mut::<ScenePosition>(entity)
+            .map(|mut current| *current = position).is_some();
+        if is_set && let Some(mut previous) = self.world.get_mut::<ActorPreviousPosition>(entity) {
+            previous.0 = position;
+        }
+        is_set
     }
 
     /// Sets an actor's velocity
@@ -157,6 +187,56 @@ impl ActorRegistry {
     /// Returns whether an actor is eligible for possession
     pub fn is_possessable(&self, identifier: Actor) -> bool {
         self.world.get::<ActorPossessable>(identifier.bevy_entity()).is_some()
+    }
+
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+    use crate::actors::{ActorPawnMovement, ActorPawnNoclipConfiguration};
+    use crate::tiles::TileCoordinates;
+
+    #[test]
+    fn interpolates_fixed_tick_movement_and_does_not_smear_teleports() {
+        let mut registry: ActorRegistry = ActorRegistry::new();
+        let mut pawn: ActorPawn = ActorPawn::new();
+        pawn.noclip = Some(ActorPawnNoclipConfiguration { speed: 6.0 });
+        pawn.movement = Some(ActorPawnMovement::Noclip);
+        let actor: Actor = registry.spawn_pawn(
+            pawn,
+            ScenePosition {
+                tile_coordinates: TileCoordinates { x: 0, y: 0 },
+                x_offset: 0.0,
+                y_offset: 0.0,
+            },
+            SceneVelocity { x: 0.0, y: 0.0 },
+        );
+        registry.set_control_state(actor, ActorControlState(engine_input::ControlState {
+            locomotion_x: 1.0,
+            locomotion_y: 0.0,
+        }));
+        registry.simulate_actor_pawns(
+            1.0 / 60.0,
+            true,
+            [0.0, 0.0],
+            &ScenePhysicsWorld::new(),
+        );
+
+        let position: ScenePosition = registry.get_render_position(actor, 0.5).unwrap();
+        assert!((position.x_offset - 0.05).abs() < f32::EPSILON * 4.0);
+
+        let teleported: ScenePosition = ScenePosition {
+            tile_coordinates: TileCoordinates { x: 10, y: 0 },
+            x_offset: 0.25,
+            y_offset: 0.5,
+        };
+        assert!(registry.set_position(actor, teleported));
+        let position: ScenePosition = registry.get_render_position(actor, 0.5).unwrap();
+        assert!(position.tile_coordinates == teleported.tile_coordinates);
+        assert!(position.x_offset == teleported.x_offset);
+        assert!(position.y_offset == teleported.y_offset);
     }
 
 }

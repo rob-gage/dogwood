@@ -64,7 +64,7 @@ impl DemoGame {
                 width: 16,
                 height: 9,
                 buffer_size: 4,
-                streaming_batch_size: 1,
+                streaming_batch_size: 4,
             },
             data,
             DemoSceneGenerator { stone, stone_variation: stone_graphics.variation() },
