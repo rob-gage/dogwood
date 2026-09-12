@@ -1,20 +1,13 @@
 // Copyright Rob Gage 2026
 
-use crate::{
-    materials::MaterialIdentifier,
-    tiles::{
-        CellCoordinates,
-        CellularAppearance,
-    },
-};
+use super::SceneEditCellPlacement;
+use crate::tiles::CellCoordinates;
 
 /// A requested material mutation of cells in a `Scene`
 pub enum SceneEdit {
-    /// Places a material in cells
-    PlaceMaterial {
-        material_identifier: MaterialIdentifier,
-        appearance: CellularAppearance,
-        cells: Vec<CellCoordinates>,
+    /// Places explicit state in cells
+    PlaceCells {
+        cells: Vec<SceneEditCellPlacement>,
     },
     /// Erases material from cells
     Erase {

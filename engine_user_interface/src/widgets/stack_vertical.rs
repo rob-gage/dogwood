@@ -14,13 +14,15 @@ pub struct StackVertical {
     spacing: f32,
     /// The background color of this `StackVertical`
     background_color: Option<egui::Color32>,
+    /// The fixed width of this stack within a horizontal stack, if any
+    width: Option<f32>,
 }
 
 impl StackVertical {
 
     /// Creates an empty `StackVertical`
     pub const fn new() -> Self {
-        Self { children: Vec::new(), spacing: 0.0, background_color: None }
+        Self { children: Vec::new(), spacing: 0.0, background_color: None, width: None }
     }
 
     /// Adds a widget to the end of the `StackVertical`
@@ -41,6 +43,12 @@ impl StackVertical {
         self
     }
 
+    /// Sets the stack width when it is contained in a horizontal stack
+    pub const fn with_width(mut self, width: f32) -> Self {
+        self.width = Some(width);
+        self
+    }
+
 }
 
 impl Widget for StackVertical {
@@ -51,17 +59,17 @@ impl Widget for StackVertical {
             user_interface.painter().rect_filled(available, 0.0, background);
         }
         let spacing: f32 = self.spacing * self.children.len().saturating_sub(1) as f32;
-        let fixed: f32 = self.children.iter().filter_map(|child| child.desired_size())
+        let fixed: f32 = self.children.iter().filter_map(|child| child.desired_height())
             .sum::<f32>();
         let flexible: usize =
-            self.children.iter().filter(|child| child.desired_size().is_none()).count();
+            self.children.iter().filter(|child| child.desired_height().is_none()).count();
         let flexible_height: f32 =
             ((available.height() - spacing - fixed).max(0.0)) / flexible.max(1) as f32;
         let mut y: f32 = available.min.y;
         let mut response: egui::Response =
             user_interface.allocate_rect(available, egui::Sense::hover());
         for child in &mut self.children {
-            let height: f32 = child.desired_size().map_or(flexible_height, |size| size);
+            let height: f32 = child.desired_height().map_or(flexible_height, |size| size);
             let rect: egui::Rect = egui::Rect::from_min_max(
                 egui::pos2(available.min.x, y),
                 egui::pos2(available.max.x, y + height),
@@ -71,5 +79,7 @@ impl Widget for StackVertical {
         }
         response
     }
+
+    fn desired_width(&self) -> Option<f32> { self.width }
 
 }

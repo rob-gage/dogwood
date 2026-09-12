@@ -44,6 +44,8 @@ impl Widget for Spacer {
         user_interface.allocate_rect(rect, egui::Sense::hover())
     }
 
-    fn desired_size(&self) -> Option<f32> { self.size }
+    fn desired_width(&self) -> Option<f32> { self.size }
+
+    fn desired_height(&self) -> Option<f32> { self.size }
 
 }

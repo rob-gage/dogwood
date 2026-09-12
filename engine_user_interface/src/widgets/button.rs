@@ -13,6 +13,8 @@ pub struct Button {
     enabled: bool,
     /// The button width within a horizontal stack
     width: f32,
+    /// The button height within a vertical stack
+    height: f32,
     /// The action invoked when this button is clicked
     on_click: Box<dyn FnMut()>,
 }
@@ -25,6 +27,7 @@ impl Button {
             text: text.into(),
             enabled: true,
             width: 96.0,
+            height: 32.0,
             on_click: Box::new(on_click),
         }
     }
@@ -48,6 +51,8 @@ impl Widget for Button {
         response
     }
 
-    fn desired_size(&self) -> Option<f32> { Some(self.width) }
+    fn desired_width(&self) -> Option<f32> { Some(self.width) }
+
+    fn desired_height(&self) -> Option<f32> { Some(self.height) }
 
 }

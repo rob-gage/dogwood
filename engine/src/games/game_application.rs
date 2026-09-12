@@ -202,6 +202,30 @@ impl<G: Game> GameApplication<G> {
         ])
     }
 
+    /// Returns a clipped physical surface rectangle for a world-space rectangle
+    pub fn scene_surface_rectangle(&self, rectangle: [f32; 4]) -> Option<[f32; 4]> {
+        let configuration: &wgpu::SurfaceConfiguration = self.surface_configuration.as_ref()?;
+        let viewport: [u32; 4] = self.scene_viewport(configuration);
+        let camera_size: [f32; 2] = self.scene_camera_size(viewport);
+        let left: f32 = viewport[0] as f32 + (
+            (rectangle[0] - self.camera_position[0]) / camera_size[0] + 0.5
+        ) * viewport[2] as f32;
+        let right: f32 = viewport[0] as f32 + (
+            (rectangle[2] - self.camera_position[0]) / camera_size[0] + 0.5
+        ) * viewport[2] as f32;
+        let top: f32 = viewport[1] as f32 + (
+            0.5 - (rectangle[3] - self.camera_position[1]) / camera_size[1]
+        ) * viewport[3] as f32;
+        let bottom: f32 = viewport[1] as f32 + (
+            0.5 - (rectangle[1] - self.camera_position[1]) / camera_size[1]
+        ) * viewport[3] as f32;
+        let left: f32 = left.max(viewport[0] as f32);
+        let top: f32 = top.max(viewport[1] as f32);
+        let right: f32 = right.min((viewport[0] + viewport[2]) as f32);
+        let bottom: f32 = bottom.min((viewport[1] + viewport[3]) as f32);
+        (left < right && top < bottom).then_some([left, top, right, bottom])
+    }
+
     /// Updates the application systems
     fn update(&mut self) -> Result<(), std::io::Error> {
         let update_time: std::time::Instant = std::time::Instant::now();

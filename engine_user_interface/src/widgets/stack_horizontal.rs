@@ -59,17 +59,17 @@ impl Widget for StackHorizontal {
             user_interface.painter().rect_filled(available, 0.0, background);
         }
         let spacing: f32 = self.spacing * self.children.len().saturating_sub(1) as f32;
-        let fixed: f32 = self.children.iter().filter_map(|child| child.desired_size())
+        let fixed: f32 = self.children.iter().filter_map(|child| child.desired_width())
             .sum::<f32>();
         let flexible: usize =
-            self.children.iter().filter(|child| child.desired_size().is_none()).count();
+            self.children.iter().filter(|child| child.desired_width().is_none()).count();
         let flexible_width: f32 =
             ((available.width() - spacing - fixed).max(0.0)) / flexible.max(1) as f32;
         let mut x: f32 = available.min.x;
         let mut response: egui::Response =
             user_interface.allocate_rect(available, egui::Sense::hover());
         for child in &mut self.children {
-            let width: f32 = child.desired_size().map_or(flexible_width, |size| size);
+            let width: f32 = child.desired_width().map_or(flexible_width, |size| size);
             let rect: egui::Rect = egui::Rect::from_min_max(
                 egui::pos2(x, available.min.y),
                 egui::pos2(x + width, available.max.y),
@@ -81,6 +81,6 @@ impl Widget for StackHorizontal {
     }
 
     /// Returns the configured height when this stack is contained vertically
-    fn desired_size(&self) -> Option<f32> { self.height }
+    fn desired_height(&self) -> Option<f32> { self.height }
 
 }

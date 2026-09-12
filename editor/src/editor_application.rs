@@ -10,11 +10,17 @@ use engine::{
             ActorPawnMovement,
             ActorPawnNoclipConfiguration,
         },
+        materials::MaterialIdentifier,
         scenes::{
+            SceneEditCellPlacement,
+            SceneEditBatch,
             ScenePosition,
             SceneVelocity,
         },
-        tiles::CellCoordinates,
+        tiles::{
+            CellularAppearance,
+            CellCoordinates,
+        },
     },
 };
 use engine_user_interface::widgets::{
@@ -26,11 +32,15 @@ use engine_user_interface::widgets::{
 use engine_graphics::Color;
 use std::{
     cell::Cell,
+    collections::HashSet,
     error::Error,
     rc::Rc,
     sync::Arc,
 };
-use crate::viewport_area::ViewportArea;
+use crate::{
+    editor_brush::EditorBrush,
+    viewport_area::ViewportArea,
+};
 
 /// A windowed editor application for a `Game`
 pub struct EditorApplication<G: Game> {
@@ -50,6 +60,14 @@ pub struct EditorApplication<G: Game> {
     cursor_position: Option<[f32; 2]>,
     /// Whether the primary button is held for future Scene interaction
     is_primary_scene_interaction_held: bool,
+    /// The brush used for Scene interaction
+    brush: EditorBrush,
+    /// The preceding anchor of the current primary Scene interaction
+    stroke_anchor: Option<CellCoordinates>,
+    /// Unconsumed high-resolution wheel movement in physical pixels
+    pixel_scroll_y: f64,
+    /// The material selected for painting, or `None` for Eraser
+    selected_material: Option<MaterialIdentifier>,
 }
 
 impl<G: Game> EditorApplication<G> {
@@ -70,6 +88,10 @@ impl<G: Game> EditorApplication<G> {
             is_playing: false,
             cursor_position: None,
             is_primary_scene_interaction_held: false,
+            brush: EditorBrush::new(),
+            stroke_anchor: None,
+            pixel_scroll_y: 0.0,
+            selected_material: None,
         }
     }
 
@@ -79,8 +101,77 @@ impl<G: Game> EditorApplication<G> {
             .map(CellCoordinates::from_world_position)
     }
 
+    /// Returns the clipped physical preview rectangles for the current brush footprint
+    fn brush_preview(&self) -> (Vec<[f32; 4]>, Color) {
+        let Some(anchor): Option<CellCoordinates> = self.hovered_cell() else {
+            return (Vec::new(), Color::new_rgba(255, 80, 80, 96));
+        };
+        let color: Color = self.selected_material.and_then(|material_identifier| {
+            self.application.game().scene().and_then(|scene| {
+                scene.materials().get(material_identifier).map(|material| {
+                    let color: Color = material.appearance().base_color();
+                    Color::new_rgba(color.red(), color.green(), color.blue(), 96)
+                })
+            })
+        }).unwrap_or(Color::new_rgba(255, 80, 80, 96));
+        let cells: Vec<[f32; 4]> = self.brush.cells(anchor).into_iter().filter_map(|coordinates| {
+            self.application.scene_surface_rectangle([
+                coordinates.x as f32 / 8.0,
+                coordinates.y as f32 / 8.0,
+                (coordinates.x as f32 + 1.0) / 8.0,
+                (coordinates.y as f32 + 1.0) / 8.0,
+            ])
+        }).collect();
+        (cells, color)
+    }
+
+    /// Applies the current brush stroke through the scene edit boundary
+    fn paint_hovered_cells(&mut self) {
+        if !self.is_primary_scene_interaction_held { return; }
+        let Some(anchor): Option<CellCoordinates> = self.hovered_cell() else {
+            self.stroke_anchor = None;
+            return;
+        };
+        let anchors: Vec<CellCoordinates> = match self.stroke_anchor {
+            None => vec![anchor],
+            Some(previous) if previous == anchor => return,
+            Some(previous) => EditorBrush::stroke_anchors(previous, anchor)
+                .into_iter().skip(1).collect(),
+        };
+        let mut cells: HashSet<CellCoordinates> = HashSet::new();
+        for anchor in anchors {
+            cells.extend(self.brush.cells(anchor));
+        }
+        let selected_material: Option<MaterialIdentifier> = self.selected_material;
+        let Some(scene) = self.application.game_mutable().scene_mutable() else { return; };
+        let mut edits: SceneEditBatch = SceneEditBatch::new();
+        match selected_material {
+            Some(material_identifier) => {
+                let Some(material) = scene.materials().get(material_identifier) else { return; };
+                let variation: [f32; 4] = material.appearance().variation();
+                edits.place_cells(cells.into_iter().map(|coordinates| SceneEditCellPlacement {
+                    coordinates,
+                    material_identifier,
+                    appearance: CellularAppearance::from_seed(
+                        coordinates.appearance_seed(),
+                        variation,
+                    ),
+                }).collect());
+            }
+            None => edits.erase(cells.into_iter().collect()),
+        }
+        if scene.apply_edits(&mut edits).is_ok() {
+            self.stroke_anchor = Some(anchor);
+        }
+    }
+
+    /// Adjusts the brush size and restarts the current stamp when it changes
+    fn adjust_brush_size(&mut self, adjustment: i32) {
+        if self.brush.adjust_size(adjustment) { self.stroke_anchor = None; }
+    }
+
     /// Updates the editor's pointer state after the user interface handles an event
-    fn handle_pointer_event(&mut self, event: &winit::event::WindowEvent, ui_consumed: bool) {
+    fn handle_pointer_event(&mut self, event: &winit::event::WindowEvent, _ui_consumed: bool) {
         use winit::event::{
             ElementState,
             MouseButton,
@@ -90,19 +181,45 @@ impl<G: Game> EditorApplication<G> {
             CursorMoved { position, .. } => {
                 self.cursor_position = Some([position.x as f32, position.y as f32]);
             }
-            CursorLeft { .. } => self.cursor_position = None,
+            CursorLeft { .. } => {
+                self.cursor_position = None;
+                self.stroke_anchor = None;
+            }
             MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
                 if !self.is_primary_scene_interaction_held {
                     self.is_primary_scene_interaction_held =
-                        !ui_consumed && self.hovered_cell().is_some();
+                        self.hovered_cell().is_some();
+                    if self.is_primary_scene_interaction_held {
+                        self.stroke_anchor = None;
+                    }
                 }
             }
             MouseInput { state: ElementState::Released, button: MouseButton::Left, .. } => {
                 self.is_primary_scene_interaction_held = false;
+                self.stroke_anchor = None;
+            }
+            MouseWheel { delta, .. } => {
+                if self.hovered_cell().is_none() {
+                    self.pixel_scroll_y = 0.0;
+                    return;
+                }
+                use winit::event::MouseScrollDelta::*;
+                match delta {
+                    LineDelta(_, y) => self.adjust_brush_size(y.round() as i32),
+                    PixelDelta(position) => {
+                        self.pixel_scroll_y += position.y;
+                        let adjustment: i32 = (self.pixel_scroll_y / 40.0).trunc() as i32;
+                        if adjustment != 0 {
+                            self.pixel_scroll_y -= f64::from(adjustment) * 40.0;
+                            self.adjust_brush_size(adjustment);
+                        }
+                    }
+                }
             }
             Focused(false) => {
                 self.cursor_position = None;
                 self.is_primary_scene_interaction_held = false;
+                self.stroke_anchor = None;
             }
             _ => {}
         }
@@ -180,9 +297,21 @@ impl<G: Game> EditorApplication<G> {
         let free_fly_requested: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         let return_requested: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         let play_requested: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+        let square_requested: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+        let circle_requested: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+        let eraser_requested: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+        let material_requested: Rc<Cell<Option<MaterialIdentifier>>> = Rc::new(Cell::new(None));
         let free_fly_action: Rc<Cell<bool>> = free_fly_requested.clone();
         let return_action: Rc<Cell<bool>> = return_requested.clone();
         let play_action: Rc<Cell<bool>> = play_requested.clone();
+        let square_action: Rc<Cell<bool>> = square_requested.clone();
+        let circle_action: Rc<Cell<bool>> = circle_requested.clone();
+        let eraser_action: Rc<Cell<bool>> = eraser_requested.clone();
+        let material_entries: Vec<(MaterialIdentifier, String)> = self.application.game().scene()
+            .map_or_else(Vec::new, |scene| scene.materials().iter().map(|(
+                material_identifier,
+                material,
+            )| (material_identifier, material.name().into())).collect());
         let background: Color = Color::new_rgba(47, 47, 47, 255);
         let background_dark: Color = Color::new_rgba(37, 37, 37, 255);
         let viewport_bounds: Rc<Cell<Option<[u32; 4]>>> = Rc::new(Cell::new(None));
@@ -193,14 +322,39 @@ impl<G: Game> EditorApplication<G> {
             .with_child(Button::new(if self.is_playing { "Pause" } else { "Play" }, move || {
                 play_action.set(true)
             }))
+            .with_child(Button::new("Square", move || square_action.set(true))
+                .with_enabled(!self.brush.is_square()))
+            .with_child(Button::new("Circle", move || circle_action.set(true))
+                .with_enabled(self.brush.is_square()))
+            .with_child(Button::new(format!("Size: {}", self.brush.size()), || {})
+                .with_enabled(false))
             .with_child(Button::new("Free Fly", move || free_fly_action.set(true))
                 .with_enabled(free_fly_enabled))
             .with_child(Button::new("Return", move || return_action.set(true))
                 .with_enabled(return_enabled))
             .with_child(Spacer::new_flexible());
+        let mut palette: StackVertical = StackVertical::new()
+            .with_width(128.0)
+            .with_background_color(&background)
+            .with_child(Button::new(if self.selected_material.is_none() {
+                "> Eraser"
+            } else {
+                "Eraser"
+            }, move || eraser_action.set(true)));
+        for (material_identifier, material_name) in material_entries {
+            let material_action: Rc<Cell<Option<MaterialIdentifier>>> = material_requested.clone();
+            let is_selected: bool = self.selected_material.map(MaterialIdentifier::as_u32) ==
+                Some(material_identifier.as_u32());
+            palette = palette.with_child(Button::new(if is_selected {
+                format!("> {material_name}")
+            } else {
+                material_name
+            }, move || material_action.set(Some(material_identifier))));
+        }
+        let (preview_cells, preview_color): (Vec<[f32; 4]>, Color) = self.brush_preview();
         let content: StackHorizontal = StackHorizontal::new()
-            .with_child(Spacer::new(128.0).with_background_color(&background))
-            .with_child(ViewportArea(viewport_bounds.clone()))
+            .with_child(palette)
+            .with_child(ViewportArea::new(viewport_bounds.clone(), preview_cells, preview_color))
             .with_child(Spacer::new(32.0).with_background_color(&background));
         let mut layout: StackVertical = StackVertical::new()
             .with_child(top_bar)
@@ -208,6 +362,16 @@ impl<G: Game> EditorApplication<G> {
             .with_child(Spacer::new(16.0).with_background_color(&background_dark));
         self.application.add_widget(&mut layout);
         self.application.set_scene_viewport_bounds(viewport_bounds.get());
+        if eraser_requested.get() {
+            self.selected_material = None;
+            self.stroke_anchor = None;
+        }
+        if let Some(material_identifier) = material_requested.get() {
+            self.selected_material = Some(material_identifier);
+            self.stroke_anchor = None;
+        }
+        if square_requested.get() && self.brush.select_square() { self.stroke_anchor = None; }
+        if circle_requested.get() && self.brush.select_circle() { self.stroke_anchor = None; }
         if play_requested.get() {
             self.is_playing = !self.is_playing;
             self.application.set_simulation_enabled(self.is_playing);
@@ -217,6 +381,7 @@ impl<G: Game> EditorApplication<G> {
             self.is_return_pending = true;
             self.update_return();
         }
+        self.paint_hovered_cells();
     }
     pub fn launch(
         accelerator: Arc<engine::compute::Accelerator>,

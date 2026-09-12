@@ -1,6 +1,9 @@
 // Copyright Rob Gage 2026
 
-use super::SceneEdit;
+use super::{
+    SceneEditCellPlacement,
+    SceneEdit,
+};
 use crate::{
     materials::MaterialIdentifier,
     tiles::{
@@ -26,7 +29,16 @@ impl SceneEditBatch {
         appearance: CellularAppearance,
         cells: Vec<CellCoordinates>,
     ) {
-        self.edits.push(SceneEdit::PlaceMaterial { material_identifier, appearance, cells });
+        self.place_cells(cells.into_iter().map(|coordinates| SceneEditCellPlacement {
+            coordinates,
+            material_identifier,
+            appearance,
+        }).collect());
+    }
+
+    /// Adds a request to place explicit state in cells
+    pub fn place_cells(&mut self, cells: Vec<SceneEditCellPlacement>) {
+        self.edits.push(SceneEdit::PlaceCells { cells });
     }
 
     /// Adds a request to erase material from cells

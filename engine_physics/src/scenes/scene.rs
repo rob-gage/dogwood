@@ -2,6 +2,7 @@
 
 use super::{
     SceneData,
+    SceneEditCellPlacement,
     SceneEdit,
     SceneEditBatch,
     SceneGenerator,
@@ -279,6 +280,9 @@ impl Scene {
         }
     }
 
+    /// Returns the materials registered for this scene
+    pub fn materials(&self) -> &MaterialRegistry { self.data.materials() }
+
     /// Returns the `ActorRegistry` for this `Scene`
     pub const fn actor_registry(&self) -> &ActorRegistry { &self.actor_registry }
 
@@ -327,12 +331,16 @@ impl Scene {
             HashMap::new();
         for edit in edits.drain() {
             match edit {
-                SceneEdit::PlaceMaterial { material_identifier, appearance, cells } => {
-                    if !matches!(
-                        self.data.materials().get(material_identifier),
-                        Some(Material::CellularStatic { .. } | Material::CellularDynamic { .. }),
-                    ) { continue; }
-                    for coordinates in cells {
+                SceneEdit::PlaceCells { cells } => {
+                    for SceneEditCellPlacement {
+                        coordinates,
+                        material_identifier,
+                        appearance,
+                    } in cells {
+                        if !matches!(
+                            self.data.materials().get(material_identifier),
+                            Some(Material::CellularStatic { .. } | Material::CellularDynamic { .. }),
+                        ) { continue; }
                         if let Some(physical_index) = self.cell_edit_index(coordinates) {
                             cell_edits.insert(physical_index, (
                                 coordinates,
@@ -1114,6 +1122,18 @@ mod tests {
             CellularAppearance::NEUTRAL,
             vec![CellCoordinates { x: 100, y: 100 }],
         );
+        edits.place_cells(vec![
+            SceneEditCellPlacement {
+                coordinates: CellCoordinates { x: 1, y: 1 },
+                material_identifier: static_material,
+                appearance: CellularAppearance::from_channels([0.25, 0.0, 0.0, 0.0]),
+            },
+            SceneEditCellPlacement {
+                coordinates: CellCoordinates { x: 2, y: 1 },
+                material_identifier: dynamic_material,
+                appearance: CellularAppearance::from_channels([-0.25, 0.0, 0.0, 0.0]),
+            },
+        ]);
         edits.erase(vec![CellCoordinates { x: 7, y: 0 }]);
         scene.apply_edits(&mut edits).unwrap();
 
@@ -1139,6 +1159,14 @@ mod tests {
             ).0);
         assert!(chunk.get_tile(TileCoordinates { x: 0, y: 0 }).unwrap()
             .cell_material_identifier(0, 0).as_u32() == MaterialIdentifier::NULL.as_u32());
+        assert!(chunk.get_tile(TileCoordinates { x: 0, y: 0 }).unwrap()
+            .cell_material_identifier(1, 1).form() == MaterialForm::CellularStatic);
+        assert!(chunk.get_tile(TileCoordinates { x: 0, y: 0 }).unwrap()
+            .cell_appearance(1, 1).channels()[0] > 0.0);
+        assert!(chunk.get_tile(TileCoordinates { x: 0, y: 0 }).unwrap()
+            .cell_material_identifier(2, 1).form() == MaterialForm::CellularDynamic);
+        assert!(chunk.get_tile(TileCoordinates { x: 0, y: 0 }).unwrap()
+            .cell_appearance(2, 1).channels()[0] < 0.0);
         let negative_chunk: &Chunk = match scene.chunks.get(&negative_tile.chunk_coordinates()).unwrap() {
             ChunkEntry::Active { chunk, is_dirty } => {
                 assert!(*is_dirty);
