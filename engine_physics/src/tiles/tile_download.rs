@@ -1,6 +1,7 @@
 // Copyright Rob Gage 2026
 
 use crate::tiles::{
+    Tile,
     TileCoordinates,
     TileData,
 };
@@ -14,6 +15,8 @@ use std::{
 pub struct TileDownload {
     /// The world tile being downloaded
     pub coordinates: TileCoordinates,
+    /// The physical ring slot captured when the download was queued
+    pub physical_tile: Tile,
     /// The staging buffer receiving both parallel tile fields
     pub buffer: wgpu::Buffer,
     /// Whether the GPU copy has been submitted
@@ -29,9 +32,14 @@ pub struct TileDownload {
 impl TileDownload {
 
     /// Creates a pending tile download with a staging buffer sized for one `TileData`
-    pub fn new(accelerator: &Accelerator, coordinates: TileCoordinates) -> Self {
+    pub fn new(
+        accelerator: &Accelerator,
+        coordinates: TileCoordinates,
+        physical_tile: Tile,
+    ) -> Self {
         Self {
             coordinates,
+            physical_tile,
             buffer: accelerator.wgpu_device().create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Tile download buffer"),
                 size: TileData::SERIALIZED_SIZE as u64,

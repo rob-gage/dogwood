@@ -114,6 +114,8 @@ pub struct Scene {
     tile_streaming_batch_size: u8,
     /// The tile downloads pending processing by `tick`
     tile_downloads: Mutex<Vec<Arc<Mutex<TileDownload>>>>,
+    /// Mandatory outgoing downloads awaiting application to their CPU chunks
+    outgoing_tile_downloads: Vec<Arc<Mutex<TileDownload>>>,
     /// The tile uploads pending processing by `tick`
     tile_uploads: Mutex<Vec<Arc<Mutex<TileUpload>>>>,
     /// The physical X slot containing the buffered area's leftmost tile
@@ -239,6 +241,7 @@ impl Scene {
             tiles_ring_offset_x: 0,
             tiles_ring_offset_y: 0,
             tile_downloads: Mutex::new(Vec::new()),
+            outgoing_tile_downloads: Vec::new(),
             tile_uploads: Mutex::new(Vec::new()),
             cellular_material_identifiers,
             cellular_appearances,
@@ -424,8 +427,9 @@ impl Scene {
         self.tile_uploads_submit()?;
         self.accelerator.poll().map_err(|error| io::Error::other(error.to_string()))?;
         self.cellular_collision.collect_completed()?;
-        self.tile_download_clean()?;
-        self.tile_upload_clean()?;
+        self.tile_downloads_apply_completed()?;
+        self.tile_downlaods_clean()?;
+        self.tile_uploads_clean()?;
         self.tick_time += elapsed;
         let tick_time: Duration = Duration::from_secs(1) / TICK_RATE;
         while self.tick_time >= tick_time {
@@ -696,6 +700,8 @@ impl Scene {
             }
         ).collect();
         for coordinates in coordinates {
+            // keep stale CPU chunks unavailable to save or removal until downloads are applied
+            if self.tile_download_pending_for_chunk(coordinates)? { continue; }
             // save dirty active chunks before removing them from the resident map.
             if let Some(ChunkEntry::Active { chunk, is_dirty: true }) =
                 self.chunks.get(&coordinates)
@@ -770,10 +776,15 @@ impl Scene {
         let batch_size: i64 = self.tile_streaming_batch_size as i64;
         let x_difference: i64 = self.origin_target.x as i64 - self.origin.x as i64;
         let y_difference: i64 = self.origin_target.y as i64 - self.origin.y as i64;
-        if x_difference >= batch_size { self.shift_right()?; }
-        if x_difference <= -batch_size { self.shift_left()?; }
-        if y_difference >= batch_size { self.shift_up()?; }
-        if y_difference <= -batch_size { self.shift_down()?; }
+        if x_difference >= batch_size {
+            self.shift_right()?;
+        } else if x_difference <= -batch_size {
+            self.shift_left()?;
+        } else if y_difference >= batch_size {
+            self.shift_up()?;
+        } else if y_difference <= -batch_size {
+            self.shift_down()?;
+        }
         self.chunks_save()?;
         // queue upload only newly available chunks
         for coordinates in chunks_available {
@@ -816,7 +827,7 @@ impl Scene {
 
     /// Moves the origin, remaps ring slots, and streams tiles
     fn shift_to(&mut self, new_origin: TileCoordinates) -> Result<(), io::Error> {
-        // return early if chunks are not available
+        // verify the incoming CPU state before reserving outgoing GPU state
         let buffer_size: i32 = i32::from(self.simulation_buffer_size);
         let dimensions: u16 = u16::from(self.simulation_buffer_size) * 2;
         let width: u16 = self.simulation_width + dimensions;
@@ -831,36 +842,76 @@ impl Scene {
             self.chunks.get(&coordinates),
             Some(ChunkEntry::Active { .. })
         ) }) { return Ok(()); }
-        self.tile_downloads_submit()?; // streaming out must happen before streaming in
-        // reuse the outgoing tiles' slots for incoming tiles
         let batch_size: u16 = u16::from(self.tile_streaming_batch_size);
+        let old_buffered_origin: TileCoordinates = TileCoordinates {
+            x: self.origin.x - buffer_size,
+            y: self.origin.y - buffer_size,
+        };
+        let tiles_download_area: TileArea;
         let tiles_upload_area: TileArea;
         if new_origin.x > self.origin.x {
-            self.tiles_ring_offset_x = (self.tiles_ring_offset_x + batch_size) % width;
+            tiles_download_area = TileArea::new(
+                old_buffered_origin,
+                batch_size,
+                height,
+            );
             tiles_upload_area = TileArea::new(TileCoordinates {
                 x: new_origin.x - buffer_size + width as i32 - batch_size as i32,
                 y: new_origin.y - buffer_size,
             }, batch_size, height);
         } else if new_origin.x < self.origin.x {
-            self.tiles_ring_offset_x =
-                (self.tiles_ring_offset_x + width - batch_size) % width;
+            tiles_download_area = TileArea::new(TileCoordinates {
+                x: old_buffered_origin.x + width as i32 - batch_size as i32,
+                y: old_buffered_origin.y,
+            }, batch_size, height);
             tiles_upload_area = TileArea::new(TileCoordinates {
                 x: new_origin.x - buffer_size,
                 y: new_origin.y - buffer_size,
             }, batch_size, height);
         } else if new_origin.y > self.origin.y {
-            self.tiles_ring_offset_y = (self.tiles_ring_offset_y + batch_size) % height;
+            tiles_download_area = TileArea::new(
+                old_buffered_origin,
+                width,
+                batch_size,
+            );
             tiles_upload_area = TileArea::new(TileCoordinates {
                 x: new_origin.x - buffer_size,
                 y: new_origin.y - buffer_size + height as i32 - batch_size as i32,
             }, width, batch_size);
-        } else {
-            self.tiles_ring_offset_y =
-                (self.tiles_ring_offset_y + height - batch_size) % height;
+        } else if new_origin.y < self.origin.y {
+            tiles_download_area = TileArea::new(TileCoordinates {
+                x: old_buffered_origin.x,
+                y: old_buffered_origin.y + height as i32 - batch_size as i32,
+            }, width, batch_size);
             tiles_upload_area = TileArea::new(TileCoordinates {
                 x: new_origin.x - buffer_size,
                 y: new_origin.y - buffer_size,
             }, width, batch_size);
+        } else {
+            return Ok(());
+        }
+
+        // defer rapid re-entry until the prior download has reached its CPU chunk
+        if self.tile_download_pending_in(tiles_upload_area)? { return Ok(()); }
+
+        // materialize queued CPU state before capturing the old physical slots
+        self.tile_uploads_submit()?;
+
+        // capture and submit old physical slots before changing their world interpretation
+        self.tile_downloads_queue(tiles_download_area)?;
+        self.tile_downloads_submit()?;
+
+        // remap only the reused edge; retained tiles keep their physical kinematic slots
+        if new_origin.x > self.origin.x {
+            self.tiles_ring_offset_x = (self.tiles_ring_offset_x + batch_size) % width;
+        } else if new_origin.x < self.origin.x {
+            self.tiles_ring_offset_x =
+                (self.tiles_ring_offset_x + width - batch_size) % width;
+        } else if new_origin.y > self.origin.y {
+            self.tiles_ring_offset_y = (self.tiles_ring_offset_y + batch_size) % height;
+        } else {
+            self.tiles_ring_offset_y =
+                (self.tiles_ring_offset_y + height - batch_size) % height;
         }
         self.origin = new_origin;
         self.cellular_collision_dirty = true;
@@ -887,11 +938,13 @@ impl Scene {
         area: TileArea,
     ) -> impl Future<Output = Result<HashMap<TileCoordinates, TileData>, io::Error>> + 'static {
         let downloads: Vec<Arc<Mutex<TileDownload>>> = area.iterate_tile_coordinates()
-            .filter(|coordinates| self.tile_at(*coordinates).is_some())
-            .map(|coordinates| Arc::new(Mutex::new(TileDownload::new(
-                self.accelerator.as_ref(),
-                coordinates,
-            )))).collect();
+            .filter_map(|coordinates| self.tile_at(coordinates).map(|tile| {
+                Arc::new(Mutex::new(TileDownload::new(
+                    self.accelerator.as_ref(),
+                    coordinates,
+                    tile,
+                )))
+            })).collect();
         let mut error: Option<io::Error> = None;
         if let Err(_) = self.tile_downloads.lock().map(|mut tile_downloads| {
             tile_downloads.extend(downloads.iter().cloned());
@@ -975,6 +1028,92 @@ impl Scene {
         })
     }
 
+    /// Queues mandatory downloads for tiles leaving GPU residency
+    fn tile_downloads_queue(&mut self, area: TileArea) -> Result<(), io::Error> {
+        // bind every world coordinate to its physical slot under the old ring mapping
+        let mut downloads: Vec<Arc<Mutex<TileDownload>>> = Vec::new();
+        for coordinates in area.iterate_tile_coordinates() {
+            let tile: Tile = self.tile_at(coordinates).ok_or_else(|| {
+                io::Error::other("Outgoing tile is outside the old GPU buffer")
+            })?;
+            downloads.push(Arc::new(Mutex::new(TileDownload::new(
+                self.accelerator.as_ref(),
+                coordinates,
+                tile,
+            ))));
+        }
+        // share the existing copy and deserialization path while retaining internal ownership
+        self.tile_downloads.lock().map_err(|_| {
+            io::Error::other("Tile download queue is unavailable")
+        })?.extend(downloads.iter().cloned());
+        self.outgoing_tile_downloads.extend(downloads);
+        Ok(())
+    }
+
+    /// Returns whether an area contains an outgoing tile awaiting download
+    fn tile_download_pending_in(&self, area: TileArea) -> Result<bool, io::Error> {
+        for download in &self.outgoing_tile_downloads {
+            let coordinates: TileCoordinates = download.lock().map_err(|_| {
+                io::Error::other("Outgoing tile download is unavailable")
+            })?.coordinates;
+            if area.contains(coordinates) { return Ok(true); }
+        }
+        Ok(false)
+    }
+
+    /// Returns whether a chunk contains an outgoing tile awaiting download
+    fn tile_download_pending_for_chunk(
+        &self,
+        coordinates: TileCoordinates,
+    ) -> Result<bool, io::Error> {
+        for download in &self.outgoing_tile_downloads {
+            let tile_coordinates: TileCoordinates = download.lock().map_err(|_| {
+                io::Error::other("Outgoing tile download is unavailable")
+            })?.coordinates;
+            if tile_coordinates.chunk_coordinates() == coordinates { return Ok(true); }
+        }
+        Ok(false)
+    }
+
+    /// Applies completed outgoing tile downloads to persistent CPU chunks
+    fn tile_downloads_apply_completed(&mut self) -> Result<(), io::Error> {
+        let mut index: usize = 0;
+        while index < self.outgoing_tile_downloads.len() {
+            // leave unfinished and failed jobs pinned so stale chunks cannot be saved
+            let mut download: std::sync::MutexGuard<TileDownload> =
+                self.outgoing_tile_downloads[index].lock().map_err(|_| {
+                    io::Error::other("Outgoing tile download is unavailable")
+                })?;
+            let Some(result) = download.result.as_ref() else {
+                index += 1;
+                continue;
+            };
+            if let Err(error) = result {
+                return Err(io::Error::other(format!("Outgoing tile download failed: {error}")));
+            }
+            let coordinates: TileCoordinates = download.coordinates;
+            if !matches!(
+                self.chunks.get(&coordinates.chunk_coordinates()),
+                Some(ChunkEntry::Active { .. }),
+            ) {
+                return Err(io::Error::other("Outgoing tile download chunk is not active"));
+            }
+            let tile_data: TileData = download.result.take().unwrap().unwrap();
+            drop(download);
+
+            // replace the stale persistence copy and route saving through normal dirty handling
+            let Some(ChunkEntry::Active { chunk, is_dirty }) =
+                self.chunks.get_mut(&coordinates.chunk_coordinates())
+            else { unreachable!(); };
+            chunk.set_tile(coordinates, tile_data).map_err(|_| {
+                io::Error::other("Outgoing tile download is outside its active chunk")
+            })?;
+            *is_dirty = true;
+            self.outgoing_tile_downloads.swap_remove(index);
+        }
+        Ok(())
+    }
+
     /// Submits queued GPU tile downloads
     fn tile_downloads_submit(&self) -> Result<(), io::Error> {
         // acquire the download queue
@@ -989,15 +1128,7 @@ impl Scene {
                 let mut state: std::sync::MutexGuard<TileDownload> = download.lock().unwrap();
                 if state.result.is_some() { continue; }
                 if state.is_started { continue; }
-                let Some(tile) = self.tile_at(state.coordinates) else {
-                    state.result = Some(Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "Tile is outside the GPU buffer",
-                    )));
-                    state.is_complete = true;
-                    if let Some(waker) = state.waker.take() { waker.wake(); }
-                    continue;
-                };
+                let tile: Tile = state.physical_tile;
                 let command_encoder: &mut wgpu::CommandEncoder = command_encoder.get_or_insert_with(
                     || self.accelerator.wgpu_device().create_command_encoder(
                         &wgpu::CommandEncoderDescriptor { label: Some("tile_downloads_submit") },
@@ -1060,6 +1191,14 @@ impl Scene {
         Ok(())
     }
 
+    /// Removes completed GPU tile downloads
+    fn tile_downlaods_clean(&self) -> Result<(), io::Error> {
+        self.tile_downloads.lock().map_err(|_| {
+            io::Error::other("Tile download queue is unavailable")
+        })?.retain(|download| !download.lock().unwrap().is_complete);
+        Ok(())
+    }
+
     /// Submits queued GPU tile uploads
     fn tile_uploads_submit(&self) -> Result<(), io::Error> {
         // acquire the pending upload queue
@@ -1101,16 +1240,8 @@ impl Scene {
         Ok(())
     }
 
-    /// Removes completed GPU tile downloads
-    fn tile_download_clean(&self) -> Result<(), io::Error> {
-        self.tile_downloads.lock().map_err(|_| {
-            io::Error::other("Tile download queue is unavailable")
-        })?.retain(|download| !download.lock().unwrap().is_complete);
-        Ok(())
-    }
-
     /// Removes completed GPU tile uploads
-    fn tile_upload_clean(&self) -> Result<(), io::Error> {
+    fn tile_uploads_clean(&self) -> Result<(), io::Error> {
         self.tile_uploads.lock().map_err(|_| {
             io::Error::other("Tile upload queue is unavailable")
         })?.retain(|upload| !upload.lock().unwrap().is_complete);
