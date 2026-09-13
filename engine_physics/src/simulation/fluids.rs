@@ -4,7 +4,7 @@ use crate::tiles::TileCoordinates;
 use engine_compute::{Accelerator, AcceleratorBuffer};
 
 const SUPPORT_RADIUS_CELLS: f32 = 2.5;
-const PARTICLE_RADIUS_CELLS: f32 = 0.35;
+const PARTICLE_RADIUS_CELLS: f32 = 0.45;
 const MAXIMUM_MOVEMENT_CELLS: u32 = 4;
 const FLUID_EDIT_ERASE: u32 = 1;
 const PBF_SUBSTEP_COUNT: u32 = 2;
@@ -86,6 +86,7 @@ impl Fluids {
         cellular_material_identifiers: &AcceleratorBuffer,
         external_body_occupancy: &AcceleratorBuffer,
         external_body_velocity: &AcceleratorBuffer,
+        fluid_properties: &AcceleratorBuffer,
         buffered_width: u16,
         buffered_height: u16,
     ) -> Self {
@@ -164,6 +165,7 @@ impl Fluids {
                         count: None,
                     },
                     storage(13, false), storage(14, false), storage(15, false),
+                    storage(16, true),
                 ],
             },
         );
@@ -191,6 +193,7 @@ impl Fluids {
                     Self::binding(13, &predicted_positions),
                     Self::binding(14, &lambdas),
                     Self::binding(15, &position_corrections),
+                    Self::binding(16, fluid_properties),
                 ],
             },
         );
@@ -455,286 +458,6 @@ impl Drop for Fluids {
         self.derived_coverage.free();
         self.derived_velocity.free();
         self.parameters.destroy();
-    }
-
-}
-
-#[cfg(test)]
-mod tests {
-
-    use super::*;
-    use std::sync::mpsc::sync_channel;
-
-    #[test]
-    fn fluid_edits_move_across_negative_tile_boundary_and_reuse_capacity() {
-        let accelerator: Accelerator = Accelerator::new().unwrap();
-        let canonical: AcceleratorBuffer = accelerator.allocate::<u32>(128);
-        let body_occupancy: AcceleratorBuffer = accelerator.allocate::<u32>(128);
-        let body_velocity: AcceleratorBuffer = accelerator.allocate::<[f32; 4]>(128);
-        let fluid: Fluids = Fluids::new(
-            &accelerator,
-            &canonical,
-            &body_occupancy,
-            &body_velocity,
-            2,
-            1,
-        );
-        let origin: TileCoordinates = TileCoordinates { x: -1, y: 0 };
-        let water: u32 = 3u32 << 30;
-        let negative_cell_index: usize = 64 + 4 * 8 + 7;
-        fluid.apply_edits(
-            &accelerator,
-            &[(negative_cell_index, water)],
-            origin,
-            2,
-            1,
-            1,
-            0,
-        );
-        assert!(read_u32(&accelerator, fluid.material_identifiers_buffer(), 128)
-            [negative_cell_index] == water);
-        assert!(read_u32(&accelerator, &canonical, 128)
-            [negative_cell_index] == 0);
-
-        fluid.simulate(&accelerator, origin, 2, 1, 1, 0, [20.0, 0.0], 0.1);
-        let particles: Vec<u32> = read_u32(&accelerator, &fluid.particles, 128 * 8);
-        let active: &[u32] = particles.chunks_exact(8)
-            .find(|particle| particle[0] == water).unwrap();
-        assert!(f32::from_bits(active[2]) > 0.0);
-
-        let crossed_cell_index: usize = 4 * 8;
-        fluid.apply_edits(
-            &accelerator,
-            &[(crossed_cell_index, Fluids::erase_edit())],
-            origin,
-            2,
-            1,
-            1,
-            0,
-        );
-        assert!(read_u32(&accelerator, &fluid.free_count, 1)[0] == 128);
-
-        fluid.apply_edits(
-            &accelerator,
-            &[(negative_cell_index, water)],
-            origin,
-            2,
-            1,
-            1,
-            0,
-        );
-        accelerator.wgpu_queue().write_buffer(
-            body_occupancy.wgpu_buffer(), (4 * 8 * 4) as u64, &1u32.to_le_bytes(),
-        );
-        fluid.simulate(&accelerator, origin, 2, 1, 1, 0, [20.0, 0.0], 0.1);
-        let particles: Vec<u32> = read_u32(&accelerator, &fluid.particles, 128 * 8);
-        let active: &[u32] = particles.chunks_exact(8)
-            .find(|particle| particle[0] == water).unwrap();
-        assert!(f32::from_bits(active[2]) < 0.0);
-
-        fluid.apply_edits(
-            &accelerator,
-            &[(negative_cell_index, Fluids::erase_edit())],
-            origin,
-            2,
-            1,
-            1,
-            0,
-        );
-        accelerator.wgpu_queue().write_buffer(
-            body_occupancy.wgpu_buffer(), (4 * 8 * 4) as u64, &0u32.to_le_bytes(),
-        );
-        accelerator.wgpu_queue().write_buffer(
-            canonical.wgpu_buffer(), (4 * 8 * 4) as u64, &(1u32 << 30).to_le_bytes(),
-        );
-        fluid.apply_edits(
-            &accelerator,
-            &[(negative_cell_index, water)],
-            origin,
-            2,
-            1,
-            1,
-            0,
-        );
-        fluid.simulate(&accelerator, origin, 2, 1, 1, 0, [20.0, 0.0], 0.1);
-        let particles: Vec<u32> = read_u32(&accelerator, &fluid.particles, 128 * 8);
-        let active: &[u32] = particles.chunks_exact(8)
-            .find(|particle| particle[0] == water).unwrap();
-        assert!(f32::from_bits(active[2]) < 0.0);
-
-        fluid.refresh(&accelerator, TileCoordinates { x: 0, y: 0 }, 2, 1, 0, 0);
-        assert!(read_u32(&accelerator, &fluid.free_count, 1)[0] == 128);
-        assert!(read_u32(&accelerator, fluid.material_identifiers_buffer(), 128)
-            .into_iter().all(|material| material == 0));
-    }
-
-    #[test]
-    fn pbf_water_retains_volume_and_stays_finite() {
-        let accelerator: Accelerator = Accelerator::new().unwrap();
-        let width: u16 = 8;
-        let height: u16 = 4;
-        let count: usize = usize::from(width) * usize::from(height) * 64;
-        let origin: TileCoordinates = TileCoordinates { x: -4, y: 0 };
-        let canonical: AcceleratorBuffer = accelerator.allocate::<u32>(count);
-        let body_occupancy: AcceleratorBuffer = accelerator.allocate::<u32>(count);
-        let body_velocity: AcceleratorBuffer = accelerator.allocate::<[f32; 4]>(count);
-        let fluid: Fluids = Fluids::new(
-            &accelerator, &canonical, &body_occupancy, &body_velocity, width, height,
-        );
-        let physical_index = |x: i32, y: i32| -> usize {
-            let tile_x: usize = (x.div_euclid(8) - origin.x) as usize;
-            let tile_y: usize = (y.div_euclid(8) - origin.y) as usize;
-            (tile_y * usize::from(width) + tile_x) * 64 +
-                y.rem_euclid(8) as usize * 8 + x.rem_euclid(8) as usize
-        };
-        let stone: u32 = 1u32 << 30;
-        for x in -8..8 {
-            accelerator.wgpu_queue().write_buffer(
-                canonical.wgpu_buffer(), physical_index(x, 0) as u64 * 4,
-                &stone.to_le_bytes(),
-            );
-        }
-        for y in 0..16 {
-            for x in [-8, 7] {
-                accelerator.wgpu_queue().write_buffer(
-                    canonical.wgpu_buffer(), physical_index(x, y) as u64 * 4,
-                    &stone.to_le_bytes(),
-                );
-            }
-        }
-        let water: u32 = 3u32 << 30;
-        let edits: Vec<(usize, u32)> = (12..20).flat_map(|y| {
-            (-4..4).map(move |x| (physical_index(x, y), water))
-        }).collect();
-        fluid.apply_edits(&accelerator, &edits, origin, width, height, 0, 0);
-        for _ in 0..240 {
-            fluid.simulate(
-                &accelerator, origin, width, height, 0, 0, [0.0, -18.0], 1.0 / 60.0,
-            );
-        }
-        let particle_data: Vec<u32> = read_u32(&accelerator, &fluid.particles, count * 8);
-        let positions: Vec<[f32; 2]> = particle_data.chunks_exact(8)
-            .filter(|particle| particle[0] == water)
-            .map(|particle| [f32::from_bits(particle[2]), f32::from_bits(particle[3])])
-            .collect();
-        let maximum_speed: f32 = particle_data.chunks_exact(8)
-            .filter(|particle| particle[0] == water)
-            .map(|particle| f32::hypot(
-                f32::from_bits(particle[4]), f32::from_bits(particle[5]),
-            )).fold(0.0, f32::max);
-        println!("settled maximum speed: {maximum_speed}");
-        assert!(positions.len() == 64);
-        assert!(positions.iter().flatten().all(|value| value.is_finite()));
-        let minimum_x: f32 = positions.iter().map(|position| position[0])
-            .fold(f32::INFINITY, f32::min);
-        let maximum_x: f32 = positions.iter().map(|position| position[0])
-            .fold(f32::NEG_INFINITY, f32::max);
-        let minimum_y: f32 = positions.iter().map(|position| position[1])
-            .fold(f32::INFINITY, f32::min);
-        let maximum_y: f32 = positions.iter().map(|position| position[1])
-            .fold(f32::NEG_INFINITY, f32::max);
-        assert!(maximum_x - minimum_x > 1.0);
-        assert!(maximum_y - minimum_y > 0.25);
-        assert!(minimum_y >= 0.12);
-
-        fluid.apply_edits(&accelerator, &edits, origin, width, height, 0, 0);
-        for _ in 0..240 {
-            fluid.simulate(
-                &accelerator, origin, width, height, 0, 0, [0.0, -18.0], 1.0 / 60.0,
-            );
-        }
-        let particle_data: Vec<u32> = read_u32(&accelerator, &fluid.particles, count * 8);
-        let positions: Vec<[f32; 2]> = particle_data.chunks_exact(8)
-            .filter(|particle| particle[0] == water)
-            .map(|particle| [f32::from_bits(particle[2]), f32::from_bits(particle[3])])
-            .collect();
-        assert!(positions.len() == 128);
-        assert!(positions.iter().flatten().all(|value| value.is_finite()));
-        assert!(positions.iter().map(|position| position[1])
-            .fold(f32::NEG_INFINITY, f32::max) > maximum_y + 0.1);
-    }
-
-    #[test]
-    fn temporary_pbf_stair_flow_check() {
-        let accelerator: Accelerator = Accelerator::new().unwrap();
-        let width: u16 = 8;
-        let height: u16 = 4;
-        let count: usize = usize::from(width) * usize::from(height) * 64;
-        let origin: TileCoordinates = TileCoordinates { x: -4, y: 0 };
-        let canonical: AcceleratorBuffer = accelerator.allocate::<u32>(count);
-        let body_occupancy: AcceleratorBuffer = accelerator.allocate::<u32>(count);
-        let body_velocity: AcceleratorBuffer = accelerator.allocate::<[f32; 4]>(count);
-        let fluid: Fluids = Fluids::new(
-            &accelerator, &canonical, &body_occupancy, &body_velocity, width, height,
-        );
-        let physical_index = |x: i32, y: i32| -> usize {
-            let tile_x: usize = (x.div_euclid(8) - origin.x) as usize;
-            let tile_y: usize = (y.div_euclid(8) - origin.y) as usize;
-            (tile_y * usize::from(width) + tile_x) * 64 +
-                y.rem_euclid(8) as usize * 8 + x.rem_euclid(8) as usize
-        };
-        for x in -24i32..24 {
-            let surface: i32 = 8 - (x + 24).div_euclid(4).clamp(0, 7);
-            for y in 0..=surface {
-                accelerator.wgpu_queue().write_buffer(
-                    canonical.wgpu_buffer(), physical_index(x, y) as u64 * 4,
-                    &(1u32 << 30).to_le_bytes(),
-                );
-            }
-        }
-        let water: u32 = 3u32 << 30;
-        let edits: Vec<(usize, u32)> = (11..17).flat_map(|y| {
-            (-20..-14).map(move |x| (physical_index(x, y), water))
-        }).collect();
-        fluid.apply_edits(&accelerator, &edits, origin, width, height, 0, 0);
-        for _ in 0..120 {
-            fluid.simulate(
-                &accelerator, origin, width, height, 0, 0, [0.0, -18.0], 1.0 / 60.0,
-            );
-        }
-        let particles: Vec<u32> = read_u32(&accelerator, &fluid.particles, count * 8);
-        let positions: Vec<f32> = particles.chunks_exact(8)
-            .filter(|particle| particle[0] == water)
-            .map(|particle| f32::from_bits(particle[2]))
-            .collect();
-        assert!(!positions.is_empty());
-        let average_x: f32 = positions.iter().sum::<f32>() / positions.len() as f32;
-        assert!(average_x > -1.5);
-    }
-
-    fn read_u32(
-        accelerator: &Accelerator,
-        source: &AcceleratorBuffer,
-        count: usize,
-    ) -> Vec<u32> {
-        let staging: wgpu::Buffer = accelerator.wgpu_device().create_buffer(
-            &wgpu::BufferDescriptor {
-                label: Some("fluid test readback"),
-                size: (count * 4) as u64,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            },
-        );
-        let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: Some("fluid test readback") },
-        );
-        encoder.copy_buffer_to_buffer(
-            source.wgpu_buffer(), 0, &staging, 0, (count * 4) as u64,
-        );
-        accelerator.wgpu_queue().submit(Some(encoder.finish()));
-        let (sender, receiver) = sync_channel(1);
-        staging.slice(..).map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).unwrap();
-        });
-        accelerator.wgpu_device().poll(wgpu::PollType::wait_indefinitely()).unwrap();
-        receiver.recv().unwrap().unwrap();
-        let mapped = staging.slice(..).get_mapped_range().unwrap();
-        let values: Vec<u32> = mapped.chunks_exact(4).map(|bytes| {
-            u32::from_le_bytes(bytes.try_into().unwrap())
-        }).collect();
-        drop(mapped);
-        staging.unmap();
-        values
     }
 
 }

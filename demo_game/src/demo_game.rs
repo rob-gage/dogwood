@@ -93,6 +93,10 @@ impl DemoGame {
             pressure_transmission: 0.95,
             friction: 0.05,
             restitution: 0.0,
+            rest_density: 1.0,
+            artificial_pressure: 0.02,
+            xsph_smoothing: 0.08,
+            body_push_speed: 4.0,
         });
         let data: SceneData = SceneData::new_temporary(materials)?;
         let mut scene: Scene = Scene::load_with_generator(

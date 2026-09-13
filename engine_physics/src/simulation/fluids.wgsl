@@ -41,6 +41,7 @@ struct Parameters {
 @group(0) @binding(13) var<storage, read_write> predicted_positions: array<vec2<f32>>;
 @group(0) @binding(14) var<storage, read_write> lambdas: array<f32>;
 @group(0) @binding(15) var<storage, read_write> position_corrections: array<vec2<f32>>;
+@group(0) @binding(16) var<storage, read> fluid_material_properties: array<vec4<f32>>;
 
 const EMPTY: u32 = 0u;
 const INVALID_INDEX: u32 = 0xffffffffu;
@@ -48,12 +49,9 @@ const FLUID_FORM: u32 = 3u;
 const CELLS_PER_TILE: f32 = 8.0;
 const PI: f32 = 3.141592653589793;
 const PBF_SUBSTEP_COUNT: f32 = 2.0;
-const REST_DENSITY: f32 = 1.0;
 const CONSTRAINT_EPSILON: f32 = 0.01;
 const ARTIFICIAL_PRESSURE_DELTA_Q_RATIO: f32 = 0.3;
-const ARTIFICIAL_PRESSURE_K: f32 = 0.1;
 const MAXIMUM_CORRECTION_CELLS: f32 = 0.25;
-const XSPH_SMOOTHING: f32 = 0.25;
 
 // Removes every authoritative particle whose current world cell was edited
 @compute @workgroup_size(64)
@@ -115,6 +113,7 @@ fn predict_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>)
         let resolved: vec4<f32> = resolve_particle_collisions(
             position,
             particle.velocity,
+            particle.material_identifier,
         );
         position = resolved.xy;
         particle.velocity = resolved.zw;
@@ -161,6 +160,7 @@ fn calculate_fluid_lambdas(@builtin(global_invocation_id) invocation: vec3<u32>)
     if particle_index >= parameters.particle_capacity ||
             particles[particle_index].material_identifier == EMPTY { return; }
     let position: vec2<f32> = predicted_positions[particle_index];
+    let rest_density: f32 = fluid_properties_for(particles[particle_index].material_identifier).x;
     let base_bucket: vec2<i32> = bucket_coordinates(position);
     var density: f32 = poly6_kernel(0.0);
     var self_gradient: vec2<f32> = vec2<f32>(0.0);
@@ -182,7 +182,7 @@ fn calculate_fluid_lambdas(@builtin(global_invocation_id) invocation: vec3<u32>)
                     if distance < parameters.support_radius_cells {
                         density += poly6_kernel(distance);
                         let gradient: vec2<f32> = spiky_gradient(separation, distance) /
-                            REST_DENSITY;
+                            rest_density;
                         self_gradient += gradient;
                         gradient_squared_sum += dot(gradient, gradient);
                     }
@@ -192,7 +192,7 @@ fn calculate_fluid_lambdas(@builtin(global_invocation_id) invocation: vec3<u32>)
         }
     }
     gradient_squared_sum += dot(self_gradient, self_gradient);
-    let constraint: f32 = density / REST_DENSITY - 1.0;
+    let constraint: f32 = density / rest_density - 1.0;
     lambdas[particle_index] = -constraint /
         (gradient_squared_sum + CONSTRAINT_EPSILON);
 }
@@ -222,8 +222,8 @@ fn calculate_fluid_position_corrections(@builtin(global_invocation_id) invocatio
                     let distance: f32 = length(separation);
                     if distance > 0.000001 && distance < parameters.support_radius_cells {
                         correction_cells += (lambdas[particle_index] + lambdas[neighbor_index] +
-                            artificial_pressure(distance)) * spiky_gradient(separation, distance) /
-                            REST_DENSITY;
+                            artificial_pressure(distance, particles[particle_index].material_identifier)) * spiky_gradient(separation, distance) /
+                            fluid_properties_for(particles[particle_index].material_identifier).x;
                     }
                 }
                 neighbor_index = next_particle[neighbor_index];
@@ -248,6 +248,7 @@ fn apply_fluid_position_corrections(@builtin(global_invocation_id) invocation: v
     predicted_positions[particle_index] = resolve_particle_collisions(
         corrected,
         particles[particle_index].velocity,
+        particles[particle_index].material_identifier,
     ).xy;
 }
 
@@ -305,7 +306,7 @@ fn calculate_fluid_velocity_smoothing(@builtin(global_invocation_id) invocation:
             }
         }
     }
-    position_corrections[particle_index] = XSPH_SMOOTHING * difference_sum /
+    position_corrections[particle_index] = fluid_properties_for(particle.material_identifier).z * difference_sum /
         max(weight_sum, 0.000001);
 }
 
@@ -342,7 +343,9 @@ fn rasterize_fluid_cells(@builtin(global_invocation_id) invocation: vec3<u32>) {
                     chain_length++) {
                 let particle: Particle = particles[particle_index];
                 let distance_cells: f32 = length(particle.position * CELLS_PER_TILE - center);
-                let weight: f32 = max(0.0, 1.0 - distance_cells / parameters.support_radius_cells);
+                // Support radius is for PBF neighbors; one particle should render as about one cell.
+                let particle_diameter: f32 = parameters.particle_radius_cells * 2.0;
+                let weight: f32 = max(0.0, 1.0 - distance_cells / particle_diameter);
                 if weight > 0.0 {
                     weight_sum += weight;
                     velocity_sum += particle.velocity * weight;
@@ -380,18 +383,27 @@ fn spiky_gradient(separation: vec2<f32>, distance: f32) -> vec2<f32> {
         separation / distance;
 }
 
-fn artificial_pressure(distance: f32) -> f32 {
+fn artificial_pressure(distance: f32, material_identifier: u32) -> f32 {
     let reference: f32 = poly6_kernel(
         ARTIFICIAL_PRESSURE_DELTA_Q_RATIO * parameters.support_radius_cells,
     );
     let ratio: f32 = poly6_kernel(distance) / max(reference, 0.000001);
     let squared: f32 = ratio * ratio;
-    return -ARTIFICIAL_PRESSURE_K * squared * squared;
+    return -fluid_properties_for(material_identifier).y * squared * squared;
+}
+
+fn fluid_properties_for(material_identifier: u32) -> vec4<f32> {
+    return fluid_material_properties[(material_identifier & 0x3fffffffu) * 2u];
+}
+
+fn fluid_contact_properties_for(material_identifier: u32) -> vec2<f32> {
+    return fluid_material_properties[(material_identifier & 0x3fffffffu) * 2u + 1u].xy;
 }
 
 fn resolve_particle_collisions(
     initial_position: vec2<f32>,
     initial_velocity: vec2<f32>,
+    material_identifier: u32,
 ) -> vec4<f32> {
     var position: vec2<f32> = initial_position;
     var velocity: vec2<f32> = initial_velocity;
@@ -430,12 +442,25 @@ fn resolve_particle_collisions(
                     penetration = radius + side;
                 }
                 position += normal * penetration;
-                let boundary_velocity: vec2<f32> = select(
+                var boundary_velocity: vec2<f32> = select(
                     vec2<f32>(0.0), external_body_velocity[index].xy,
                     external_body_occupancy[index] != EMPTY,
                 );
-                let inward_speed: f32 = dot(velocity - boundary_velocity, normal);
-                if inward_speed < 0.0 { velocity -= normal * inward_speed; }
+                let boundary_speed: f32 = length(boundary_velocity) * CELLS_PER_TILE;
+                let body_push_speed: f32 = fluid_properties_for(material_identifier).w;
+                if boundary_speed > body_push_speed {
+                    boundary_velocity *= body_push_speed / boundary_speed;
+                }
+                var relative_velocity: vec2<f32> = velocity - boundary_velocity;
+                let inward_speed: f32 = dot(relative_velocity, normal);
+                if inward_speed < 0.0 {
+                    relative_velocity -= normal * inward_speed *
+                        (1.0 + fluid_contact_properties_for(material_identifier).y);
+                }
+                let normal_velocity: vec2<f32> = normal * dot(relative_velocity, normal);
+                relative_velocity -= (relative_velocity - normal_velocity) *
+                    fluid_contact_properties_for(material_identifier).x;
+                velocity = boundary_velocity + relative_velocity;
                 resolved = true;
                 break;
             }

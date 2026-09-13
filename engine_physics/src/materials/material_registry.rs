@@ -40,8 +40,7 @@ impl MaterialRegistry {
     /// Registers a `Material` and returns its `MaterialIdentifier`
     pub fn register(&mut self, material: Material) -> MaterialIdentifier {
         match &material {
-            Material::CellularStatic { pressure_transmission, friction, restitution, .. } |
-            Material::Fluid { pressure_transmission, friction, restitution, .. } => assert!(
+            Material::CellularStatic { pressure_transmission, friction, restitution, .. } => assert!(
                 pressure_transmission.is_finite() && (0.0..=1.0).contains(pressure_transmission) &&
                 friction.is_finite() && (0.0..=1.0).contains(friction) &&
                 restitution.is_finite() && (0.0..=1.0).contains(restitution)
@@ -51,6 +50,13 @@ impl MaterialRegistry {
                     (0.0..=1.0).contains(pressure_transmission) && friction.is_finite() &&
                     (0.0..=1.0).contains(friction) && restitution.is_finite() &&
                     (0.0..=1.0).contains(restitution)
+            ),
+            Material::Fluid { rest_density, artificial_pressure, xsph_smoothing,
+                body_push_speed, .. } => assert!(
+                rest_density.is_finite() && *rest_density > 0.0 &&
+                artificial_pressure.is_finite() && *artificial_pressure >= 0.0 &&
+                xsph_smoothing.is_finite() && (0.0..=1.0).contains(xsph_smoothing) &&
+                body_push_speed.is_finite() && *body_push_speed >= 0.0
             ),
         }
         match material {
@@ -103,6 +109,13 @@ impl MaterialRegistry {
             self.cellular_statics.iter().map(|material| *material.appearance()).collect(),
             self.cellular_dynamics.iter().map(|material| *material.appearance()).collect(),
             self.fluids.iter().map(|material| *material.appearance()).collect(),
+            self.fluids.iter().map(|material| match material {
+                Material::Fluid { rest_density, artificial_pressure, xsph_smoothing,
+                    body_push_speed, friction, restitution, .. } => [*rest_density,
+                    *artificial_pressure, *xsph_smoothing, *body_push_speed, *friction,
+                    *restitution, 0.0, 0.0],
+                _ => unreachable!(),
+            }).collect(),
         )
     }
 
@@ -199,6 +212,10 @@ impl MaterialRegistry {
                     pressure_transmission: f32::from_bits(Self::read_u32(reader)?),
                     friction: f32::from_bits(Self::read_u32(reader)?),
                     restitution: f32::from_bits(Self::read_u32(reader)?),
+                    rest_density: f32::from_bits(Self::read_u32(reader)?),
+                    artificial_pressure: f32::from_bits(Self::read_u32(reader)?),
+                    xsph_smoothing: f32::from_bits(Self::read_u32(reader)?),
+                    body_push_speed: f32::from_bits(Self::read_u32(reader)?),
                 },
             };
             materials.push(material);
@@ -252,10 +269,15 @@ impl MaterialRegistry {
                     writer.write_all(&friction.to_bits().to_le_bytes())?;
                     writer.write_all(&restitution.to_bits().to_le_bytes())?;
                 }
-                Material::Fluid { pressure_transmission, friction, restitution, .. } => {
+                Material::Fluid { pressure_transmission, friction, restitution,
+                    rest_density, artificial_pressure, xsph_smoothing, body_push_speed, .. } => {
                     writer.write_all(&pressure_transmission.to_bits().to_le_bytes())?;
                     writer.write_all(&friction.to_bits().to_le_bytes())?;
                     writer.write_all(&restitution.to_bits().to_le_bytes())?;
+                    writer.write_all(&rest_density.to_bits().to_le_bytes())?;
+                    writer.write_all(&artificial_pressure.to_bits().to_le_bytes())?;
+                    writer.write_all(&xsph_smoothing.to_bits().to_le_bytes())?;
+                    writer.write_all(&body_push_speed.to_bits().to_le_bytes())?;
                 }
             }
         }

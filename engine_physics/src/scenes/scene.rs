@@ -221,6 +221,7 @@ impl Scene {
             &cellular_material_identifiers,
             cellular_physics_body_proxy.occupancy_buffer(),
             cellular_physics_body_proxy.velocity_buffer(),
+            &material_graphics.fluid_properties,
             simulation.width + buffer_size,
             simulation.height + buffer_size,
         );

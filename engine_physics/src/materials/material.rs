@@ -53,6 +53,14 @@ pub enum Material {
         friction: f32,
         /// Normal contact bounce retained by cellular mechanics
         restitution: f32,
+        /// PBF rest density in normalized particle units
+        rest_density: f32,
+        /// Tensile-instability correction strength
+        artificial_pressure: f32,
+        /// Small neighbor velocity smoothing coefficient
+        xsph_smoothing: f32,
+        /// Maximum normal velocity imparted by a moving body, in cells/sec
+        body_push_speed: f32,
     }
 }
 
