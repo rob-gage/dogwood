@@ -1,0 +1,10 @@
+# Copyright Rob Gage 2026
+
+[package]
+name = "cli"
+version = "0.0.0"
+edition = "2024"
+license.workspace = true
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
