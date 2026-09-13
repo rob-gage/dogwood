@@ -15,6 +15,8 @@ pub struct SceneGraphics<'a> {
     pub fluid_material_identifiers: &'a AcceleratorBuffer,
     /// The transient fluid coverage derived for each physical cell
     pub fluid_coverage: &'a AcceleratorBuffer,
+    /// The transient directional pressure retained by each physical cell
+    pub cellular_pressure: &'a AcceleratorBuffer,
     /// The tile coordinates of the buffered area's bottom-left corner
     pub buffered_origin: [i32; 2],
     /// The dimensions of the buffered tile area

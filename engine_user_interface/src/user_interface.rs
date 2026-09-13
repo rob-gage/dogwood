@@ -7,6 +7,9 @@ pub struct UserInterface<'a>(pub(crate) &'a mut egui::Ui);
 
 impl<'a> UserInterface<'a> {
 
+    /// Returns the underlying `egui` user interface for application-specific composition.
+    pub fn egui(&mut self) -> &mut egui::Ui { self.0 }
+
     /// Adds a `Widget` and returns its response.
     pub fn add_widget(&mut self, widget: &mut impl Widget) -> egui::Response {
         widget.display(self)

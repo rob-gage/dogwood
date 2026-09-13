@@ -38,6 +38,12 @@ pub struct GameApplication<G: Game> {
     scene_viewport_bounds: Option<[u32; 4]>,
     /// Whether the application host permits ordinary scene simulation
     is_simulation_enabled: bool,
+    /// Editor-selected scene visualization mode
+    scene_view_mode: u32,
+    /// Whether the scene renderer draws tile boundaries
+    show_tile_borders: bool,
+    /// Whether the scene renderer draws chunk boundaries
+    show_chunk_borders: bool,
     /// The renderer for the active scene
     scene_renderer: SceneRenderer,
     /// The renderer for the active user interface
@@ -81,6 +87,9 @@ impl<G: Game> GameApplication<G> {
             surface_configuration: None,
             scene_viewport_bounds: None,
             is_simulation_enabled: true,
+            scene_view_mode: 0,
+            show_tile_borders: false,
+            show_chunk_borders: false,
             scene_renderer: SceneRenderer::new(),
             user_interface_renderer: UserInterfaceRenderer::new(),
             error: None,
@@ -129,6 +138,9 @@ impl<G: Game> GameApplication<G> {
             viewport,
             self.camera_position,
             camera_size,
+            self.scene_view_mode,
+            self.show_tile_borders,
+            self.show_chunk_borders,
             &mut command_encoder,
             &view,
         );
@@ -184,6 +196,18 @@ impl<G: Game> GameApplication<G> {
     /// Enables or disables ordinary scene simulation for this application host
     pub fn set_simulation_enabled(&mut self, is_enabled: bool) {
         self.is_simulation_enabled = is_enabled;
+    }
+
+    /// Configures editor-only scene visualization without changing scene state
+    pub fn set_scene_view_settings(
+        &mut self,
+        mode: u32,
+        show_tile_borders: bool,
+        show_chunk_borders: bool,
+    ) {
+        self.scene_view_mode = mode;
+        self.show_tile_borders = show_tile_borders;
+        self.show_chunk_borders = show_chunk_borders;
     }
 
     /// Returns the world position rendered at a physical surface pixel

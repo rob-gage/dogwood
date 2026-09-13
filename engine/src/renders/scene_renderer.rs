@@ -36,6 +36,9 @@ impl SceneRenderer {
         viewport: [u32; 4],
         camera_position: [f32; 2],
         camera_size: [f32; 2],
+        view_mode: u32,
+        show_tile_borders: bool,
+        show_chunk_borders: bool,
         command_encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
     ) {
@@ -130,6 +133,16 @@ impl SceneRenderer {
                             },
                             count: None,
                         },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 8,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
                     ],
                 },
             );
@@ -168,7 +181,7 @@ impl SceneRenderer {
             self.bind_group_layout = Some(bind_group_layout);
             self.uniform_buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Scene uniforms"),
-                size: 72,
+                size: 96,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }));
@@ -183,7 +196,7 @@ impl SceneRenderer {
             let graphics = scene.graphics();
             let (walking_pawn_position, walking_pawn_size): ([f32; 2], [f32; 2]) =
                 graphics.walking_pawn.unwrap_or(([0.0; 2], [0.0; 2]));
-            let uniforms: [u32; 18] = [
+            let uniforms: [u32; 24] = [
                 camera_position[0].to_bits(), camera_position[1].to_bits(),
                 (viewport[2] as f32).to_bits(), (viewport[3] as f32).to_bits(),
                 camera_size[0].to_bits(), camera_size[1].to_bits(),
@@ -193,8 +206,9 @@ impl SceneRenderer {
                 graphics.ring_offset[0], graphics.ring_offset[1],
                 walking_pawn_size[0].to_bits(), walking_pawn_size[1].to_bits(),
                 (viewport[0] as f32).to_bits(), (viewport[1] as f32).to_bits(),
+                view_mode, show_tile_borders.into(), show_chunk_borders.into(), 0, 0, 0,
             ];
-            let mut uniform_data: Vec<u8> = Vec::with_capacity(72);
+            let mut uniform_data: Vec<u8> = Vec::with_capacity(96);
             for value in uniforms { uniform_data.extend_from_slice(&value.to_le_bytes()); }
             accelerator.wgpu_queue().write_buffer(uniform_buffer, 0, &uniform_data);
             accelerator.wgpu_device().create_bind_group(&wgpu::BindGroupDescriptor {
@@ -236,6 +250,10 @@ impl SceneRenderer {
                     wgpu::BindGroupEntry {
                         binding: 7,
                         resource: graphics.fluid_coverage.wgpu_buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 8,
+                        resource: graphics.cellular_pressure.wgpu_buffer().as_entire_binding(),
                     },
                 ],
             })

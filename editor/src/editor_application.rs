@@ -23,12 +23,6 @@ use engine::{
         },
     },
 };
-use engine_user_interface::widgets::{
-    Button,
-    Spacer,
-    StackHorizontal,
-    StackVertical,
-};
 use engine_graphics::Color;
 use std::{
     cell::Cell,
@@ -39,8 +33,9 @@ use std::{
 };
 use crate::{
     editor_brush::EditorBrush,
+    editor_interface::EditorInterface,
     editor_tool::EditorTool,
-    viewport_area::ViewportArea,
+    editor_view_mode::EditorViewMode,
 };
 
 /// A windowed editor application for a `Game`
@@ -69,6 +64,12 @@ pub struct EditorApplication<G: Game> {
     pixel_scroll_y: f64,
     /// The concrete editor action selected for the primary interaction
     tool: EditorTool,
+    /// The visualization used by the scene viewport
+    view_mode: EditorViewMode,
+    /// Whether boundaries between streamed tiles are visible
+    show_tile_borders: bool,
+    /// Whether boundaries between persistent chunks are visible
+    show_chunk_borders: bool,
 }
 
 impl<G: Game> EditorApplication<G> {
@@ -93,6 +94,9 @@ impl<G: Game> EditorApplication<G> {
             stroke_anchor: None,
             pixel_scroll_y: 0.0,
             tool: EditorTool::Eraser,
+            view_mode: EditorViewMode::Normal,
+            show_tile_borders: false,
+            show_chunk_borders: false,
         }
     }
 
@@ -192,7 +196,7 @@ impl<G: Game> EditorApplication<G> {
     }
 
     /// Updates the editor's pointer state after the user interface handles an event
-    fn handle_pointer_event(&mut self, event: &winit::event::WindowEvent, _ui_consumed: bool) {
+    fn handle_pointer_event(&mut self, event: &winit::event::WindowEvent, ui_consumed: bool) {
         use winit::event::{
             ElementState,
             MouseButton,
@@ -207,6 +211,7 @@ impl<G: Game> EditorApplication<G> {
                 self.stroke_anchor = None;
             }
             MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
+                if ui_consumed && self.hovered_cell().is_none() { return; }
                 if !self.is_primary_scene_interaction_held {
                     self.is_primary_scene_interaction_held =
                         self.hovered_cell().is_some();
@@ -220,6 +225,7 @@ impl<G: Game> EditorApplication<G> {
                 self.stroke_anchor = None;
             }
             MouseWheel { delta, .. } => {
+                if ui_consumed && self.hovered_cell().is_none() { return; }
                 if self.hovered_cell().is_none() {
                     self.pixel_scroll_y = 0.0;
                     return;
@@ -329,63 +335,45 @@ impl<G: Game> EditorApplication<G> {
         let square_action: Rc<Cell<bool>> = square_requested.clone();
         let circle_action: Rc<Cell<bool>> = circle_requested.clone();
         let eraser_action: Rc<Cell<bool>> = eraser_requested.clone();
-        let impulse_action: Rc<Cell<bool>> = impulse_requested.clone();
-        let material_entries: Vec<(MaterialIdentifier, String)> = self.application.game().scene()
+        let material_entries: Vec<(MaterialIdentifier, String, Color)> = self.application.game().scene()
             .map_or_else(Vec::new, |scene| scene.materials().iter().map(|(
                 material_identifier,
                 material,
-            )| (material_identifier, material.name().into())).collect());
-        let background: Color = Color::new_rgba(47, 47, 47, 255);
-        let background_dark: Color = Color::new_rgba(37, 37, 37, 255);
+            )| (material_identifier, material.name().into(), material.appearance().base_color()))
+                .collect());
         let viewport_bounds: Rc<Cell<Option<[u32; 4]>>> = Rc::new(Cell::new(None));
-        let top_bar: StackHorizontal = StackHorizontal::new()
-            .with_height(32.0)
-            .with_spacing(4.0)
-            .with_background_color(&background_dark)
-            .with_child(Button::new(if self.is_playing { "Pause" } else { "Play" }, move || {
-                play_action.set(true)
-            }))
-            .with_child(Button::new("Square", move || square_action.set(true))
-                .with_enabled(!self.brush.is_square()))
-            .with_child(Button::new("Circle", move || circle_action.set(true))
-                .with_enabled(self.brush.is_square()))
-            .with_child(Button::new(format!("Size: {}", self.brush.size()), || {})
-                .with_enabled(false))
-            .with_child(Button::new("Free Fly", move || free_fly_action.set(true))
-                .with_enabled(free_fly_enabled))
-            .with_child(Button::new("Return", move || return_action.set(true))
-                .with_enabled(return_enabled))
-            .with_child(Spacer::new_flexible());
-        let mut palette: StackVertical = StackVertical::new()
-            .with_width(128.0)
-            .with_background_color(&background)
-            .with_child(Button::new(if matches!(self.tool, EditorTool::Eraser) {
-                "> Eraser"
-            } else {
-                "Eraser"
-            }, move || eraser_action.set(true)));
-        palette = palette.with_child(Button::new(if matches!(self.tool, EditorTool::Impulse) {
-            "> Impulse"
-        } else { "Impulse" }, move || impulse_action.set(true)));
-        for (material_identifier, material_name) in material_entries {
-            let material_action: Rc<Cell<Option<MaterialIdentifier>>> = material_requested.clone();
-            let is_selected: bool = matches!(self.tool, EditorTool::Material(selected)
-                if selected.as_u32() == material_identifier.as_u32());
-            palette = palette.with_child(Button::new(if is_selected {
-                format!("> {material_name}")
-            } else {
-                material_name
-            }, move || material_action.set(Some(material_identifier))));
-        }
         let (preview_cells, preview_color): (Vec<[f32; 4]>, Color) = self.brush_preview();
-        let content: StackHorizontal = StackHorizontal::new()
-            .with_child(palette)
-            .with_child(ViewportArea::new(viewport_bounds.clone(), preview_cells, preview_color))
-            .with_child(Spacer::new(32.0).with_background_color(&background));
-        let mut layout: StackVertical = StackVertical::new()
-            .with_child(top_bar)
-            .with_child(content)
-            .with_child(Spacer::new(16.0).with_background_color(&background_dark));
+        let view_mode_requested = Rc::new(Cell::new(self.view_mode));
+        let tile_borders_requested = Rc::new(Cell::new(self.show_tile_borders));
+        let chunk_borders_requested = Rc::new(Cell::new(self.show_chunk_borders));
+        let mut layout = EditorInterface {
+            is_playing: self.is_playing,
+            free_fly_enabled,
+            return_enabled,
+            brush_is_square: self.brush.is_square(),
+            brush_size: self.brush.size(),
+            selected_tool: match self.tool { EditorTool::Material(identifier) => Some(identifier), _ => None },
+            eraser_selected: matches!(self.tool, EditorTool::Eraser),
+            impulse_selected: matches!(self.tool, EditorTool::Impulse),
+            view_mode: self.view_mode,
+            show_tile_borders: self.show_tile_borders,
+            show_chunk_borders: self.show_chunk_borders,
+            materials: material_entries,
+            preview_cells,
+            preview_color,
+            viewport_bounds: viewport_bounds.clone(),
+            play_requested: play_action,
+            free_fly_requested: free_fly_action,
+            return_requested: return_action,
+            square_requested: square_action,
+            circle_requested: circle_action,
+            eraser_requested: eraser_action,
+            impulse_requested: impulse_requested.clone(),
+            material_requested: material_requested.clone(),
+            view_mode_requested: view_mode_requested.clone(),
+            tile_borders_requested: tile_borders_requested.clone(),
+            chunk_borders_requested: chunk_borders_requested.clone(),
+        };
         self.application.add_widget(&mut layout);
         self.application.set_scene_viewport_bounds(viewport_bounds.get());
         if eraser_requested.get() {
@@ -402,6 +390,14 @@ impl<G: Game> EditorApplication<G> {
         }
         if square_requested.get() && self.brush.select_square() { self.stroke_anchor = None; }
         if circle_requested.get() && self.brush.select_circle() { self.stroke_anchor = None; }
+        self.view_mode = view_mode_requested.get();
+        self.show_tile_borders = tile_borders_requested.get();
+        self.show_chunk_borders = chunk_borders_requested.get();
+        self.application.set_scene_view_settings(
+            self.view_mode.shader_value(),
+            self.show_tile_borders,
+            self.show_chunk_borders,
+        );
         if play_requested.get() {
             self.is_playing = !self.is_playing;
             self.application.set_simulation_enabled(self.is_playing);

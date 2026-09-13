@@ -28,6 +28,11 @@ pub struct CellularPressure {
 
 impl CellularPressure {
 
+    /// Returns the transient retained-pressure field for viewport visualization
+    pub(crate) const fn retained_pressure(&self) -> &AcceleratorBuffer {
+        &self.retained_pressure
+    }
+
     pub fn new(
         accelerator: &Accelerator,
         materials: &MaterialRegistry,

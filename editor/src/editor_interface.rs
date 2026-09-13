@@ -1,0 +1,174 @@
+// Copyright Rob Gage 2026
+
+use crate::editor_view_mode::EditorViewMode;
+use engine::physics::materials::MaterialIdentifier;
+use engine_graphics::Color;
+use engine_user_interface::{UserInterface, Widget};
+use std::{cell::Cell, rc::Rc};
+
+/// The docked editor chrome displayed around the scene viewport
+pub(crate) struct EditorInterface {
+    pub is_playing: bool,
+    pub free_fly_enabled: bool,
+    pub return_enabled: bool,
+    pub brush_is_square: bool,
+    pub brush_size: u16,
+    pub selected_tool: Option<MaterialIdentifier>,
+    pub eraser_selected: bool,
+    pub impulse_selected: bool,
+    pub view_mode: EditorViewMode,
+    pub show_tile_borders: bool,
+    pub show_chunk_borders: bool,
+    pub materials: Vec<(MaterialIdentifier, String, Color)>,
+    pub preview_cells: Vec<[f32; 4]>,
+    pub preview_color: Color,
+    pub viewport_bounds: Rc<Cell<Option<[u32; 4]>>>,
+    pub play_requested: Rc<Cell<bool>>,
+    pub free_fly_requested: Rc<Cell<bool>>,
+    pub return_requested: Rc<Cell<bool>>,
+    pub square_requested: Rc<Cell<bool>>,
+    pub circle_requested: Rc<Cell<bool>>,
+    pub eraser_requested: Rc<Cell<bool>>,
+    pub impulse_requested: Rc<Cell<bool>>,
+    pub material_requested: Rc<Cell<Option<MaterialIdentifier>>>,
+    pub view_mode_requested: Rc<Cell<EditorViewMode>>,
+    pub tile_borders_requested: Rc<Cell<bool>>,
+    pub chunk_borders_requested: Rc<Cell<bool>>,
+}
+
+impl EditorInterface {
+
+    fn tool_button(ui: &mut egui::Ui, selected: bool, text: &str) -> bool {
+        ui.add_sized(
+            [ui.available_width(), 28.0],
+            egui::Button::new(text).selected(selected),
+        ).clicked()
+    }
+
+    fn material_button(
+        ui: &mut egui::Ui,
+        selected: bool,
+        name: &str,
+        color: Color,
+    ) -> bool {
+        let response = ui.horizontal(|ui| {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
+            ui.painter().rect_filled(rect, 3.0, egui::Color32::from_rgb(
+                color.red(), color.green(), color.blue(),
+            ));
+            ui.add_sized(
+                [ui.available_width(), 28.0],
+                egui::Button::new(name).selected(selected),
+            ).clicked()
+        });
+        response.inner
+    }
+
+}
+
+impl Widget for EditorInterface {
+
+    fn display(&mut self, user_interface: &mut UserInterface) -> egui::Response {
+        let ui = user_interface.egui();
+        ui.style_mut().spacing.item_spacing = egui::vec2(6.0, 6.0);
+        ui.style_mut().visuals.panel_fill = egui::Color32::from_rgb(30, 32, 36);
+        ui.style_mut().visuals.window_fill = egui::Color32::from_rgb(36, 38, 43);
+        ui.style_mut().visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(3);
+        ui.style_mut().visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(3);
+        ui.style_mut().visuals.widgets.active.corner_radius = egui::CornerRadius::same(3);
+        egui::Panel::top("editor_top_bar").exact_size(32.0).show(ui, |ui| {
+            ui.horizontal_centered(|ui| {
+                if ui.button(if self.is_playing { "Pause" } else { "Play" }).clicked() {
+                    self.play_requested.set(true);
+                }
+                ui.menu_button("View", |ui| {
+                    ui.label(egui::RichText::new("View mode").strong());
+                    for (mode, label) in [
+                        (EditorViewMode::Normal, "Normal"),
+                        (EditorViewMode::MaterialForm, "Material form"),
+                        (EditorViewMode::Pressure, "Pressure"),
+                        (EditorViewMode::Temperature, "Temperature"),
+                    ] {
+                        if ui.radio(self.view_mode == mode, label).clicked() {
+                            self.view_mode_requested.set(mode);
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
+                    let mut tile_borders = self.show_tile_borders;
+                    if ui.checkbox(&mut tile_borders, "Tile borders").changed() {
+                        self.tile_borders_requested.set(tile_borders);
+                    }
+                    let mut chunk_borders = self.show_chunk_borders;
+                    if ui.checkbox(&mut chunk_borders, "Chunk borders").changed() {
+                        self.chunk_borders_requested.set(chunk_borders);
+                    }
+                });
+                if self.free_fly_enabled {
+                    if ui.button("Detach").clicked() { self.free_fly_requested.set(true); }
+                } else if ui.add_enabled(self.return_enabled, egui::Button::new("Attach")).clicked() {
+                    self.return_requested.set(true);
+                }
+                if ui.selectable_label(self.brush_is_square, "Square").clicked() {
+                    self.square_requested.set(true);
+                }
+                if ui.selectable_label(!self.brush_is_square, "Circle").clicked() {
+                    self.circle_requested.set(true);
+                }
+                ui.label(format!("Brush {}", self.brush_size));
+            });
+        });
+        egui::Panel::bottom("editor_status_bar").exact_size(22.0).show(ui, |ui| {
+            ui.horizontal_centered(|ui| {
+                ui.label(egui::RichText::new("DOGWOOD").small().strong());
+                ui.separator();
+                ui.label(egui::RichText::new(if self.is_playing { "SIMULATING" } else { "PAUSED" }).small());
+            });
+        });
+        egui::Panel::left("editor_tools").exact_size(190.0).resizable(false).show(ui, |ui| {
+            ui.add_space(6.0);
+            ui.heading("Tools");
+            ui.separator();
+            egui::CollapsingHeader::new("General").default_open(true).show(ui, |ui| {
+                if Self::tool_button(ui, self.eraser_selected, "Eraser") {
+                    self.eraser_requested.set(true);
+                }
+            });
+            egui::CollapsingHeader::new("Materials").default_open(true).show(ui, |ui| {
+                for (identifier, name, color) in &self.materials {
+                    if Self::material_button(ui, self.selected_tool == Some(*identifier), name, *color) {
+                        self.material_requested.set(Some(*identifier));
+                    }
+                }
+            });
+            egui::CollapsingHeader::new("Pressure").show(ui, |ui| {
+                if Self::tool_button(ui, self.impulse_selected, "Impulse") {
+                    self.impulse_requested.set(true);
+                }
+            });
+            egui::CollapsingHeader::new("Temperature").show(ui, |_| {});
+        });
+        egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
+            let rect = ui.available_rect_before_wrap();
+            let scale = ui.ctx().pixels_per_point();
+            self.viewport_bounds.set(Some([
+                (rect.min.x * scale).round() as u32,
+                (rect.min.y * scale).round() as u32,
+                (rect.width() * scale).round() as u32,
+                (rect.height() * scale).round() as u32,
+            ]));
+            let painter = ui.painter().with_clip_rect(rect);
+            let preview_color: egui::Color32 = (&self.preview_color).into();
+            for [left, top, right, bottom] in &self.preview_cells {
+                let cell = egui::Rect::from_min_max(
+                    egui::pos2(left / scale, top / scale),
+                    egui::pos2(right / scale, bottom / scale),
+                );
+                painter.rect_filled(cell, 0.0, preview_color);
+                painter.rect_stroke(cell, 0.0, egui::Stroke::new(1.0, egui::Color32::WHITE), egui::StrokeKind::Inside);
+            }
+            ui.allocate_rect(rect, egui::Sense::hover());
+        }).response
+    }
+
+}

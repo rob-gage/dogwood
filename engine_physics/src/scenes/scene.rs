@@ -324,6 +324,7 @@ impl Scene {
             cellular_appearances: &self.cellular_appearances,
             fluid_material_identifiers: self.fluids.material_identifiers_buffer(),
             fluid_coverage: self.fluids.coverage_buffer(),
+            cellular_pressure: self.cellular_pressure.retained_pressure(),
             buffered_origin: [self.origin.x - buffer_size, self.origin.y - buffer_size],
             buffered_tile_size: [
                 u32::from(self.simulation_width) + dimensions,

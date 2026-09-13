@@ -10,6 +10,10 @@ struct Uniforms {
     ring_offset: vec2<u32>,
     walking_pawn_size: vec2<f32>,
     viewport_origin: vec2<f32>,
+    view_mode: u32,
+    show_tile_borders: u32,
+    show_chunk_borders: u32,
+    _padding: u32,
 }
 
 struct MaterialAppearance {
@@ -36,6 +40,8 @@ struct MaterialAppearance {
 @group(0) @binding(6) var<storage, read> fluid_material_identifiers: array<u32>;
 
 @group(0) @binding(7) var<storage, read> fluid_coverage: array<f32>;
+
+@group(0) @binding(8) var<storage, read> cellular_pressure: array<vec4<f32>>;
 
 const INVALID_INDEX: u32 = 0xffffffffu;
 
@@ -106,7 +112,18 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     }
     let is_fluid = material_identifier == 0u && coverage > 0.0;
     if is_fluid { material_identifier = fluid_material_identifier; }
-    if material_identifier == 0u { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }
+    if uniforms.view_mode == 2u {
+        let pressure = length(cellular_pressure[cell_index].xy);
+        let heat = clamp(log2(1.0 + pressure) * 0.2, 0.0, 1.0);
+        return apply_borders(vec4<f32>(heat, heat * heat * 0.55, 1.0 - heat, 1.0), cell, world);
+    }
+    // Temperature is selectable now but remains neutral until temperature state exists.
+    if uniforms.view_mode == 3u {
+        return apply_borders(vec4<f32>(0.12, 0.14, 0.18, 1.0), cell, world);
+    }
+    if material_identifier == 0u {
+        return apply_borders(vec4<f32>(0.0, 0.0, 0.0, 1.0), cell, world);
+    }
     // select the material form and its base appearance
     let form = material_identifier >> 30u;
     let index = material_identifier & 0x3fffffffu;
@@ -116,6 +133,15 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         case 2u: { properties = cellular_dynamics[index]; }
         case 3u: { properties = fluids[index]; }
         default: { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }
+    }
+    if uniforms.view_mode == 1u {
+        let form_color = array<vec3<f32>, 4>(
+            vec3<f32>(0.0),
+            vec3<f32>(0.35, 0.58, 0.88),
+            vec3<f32>(0.90, 0.62, 0.20),
+            vec3<f32>(0.22, 0.72, 0.82),
+        );
+        return apply_borders(vec4<f32>(form_color[form], 1.0), cell, world);
     }
     let color = properties.color_freezing;
     // decode the persistent cell sample and apply material color influence
@@ -134,7 +160,24 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     );
     let result = clamp(base * (vec4<f32>(1.0) + sample * properties.color_influence),
         vec4<f32>(0.0), vec4<f32>(1.0));
-    return select(result, vec4<f32>(result.rgb * coverage, 1.0), is_fluid);
+    return apply_borders(select(result, vec4<f32>(result.rgb * coverage, 1.0), is_fluid), cell, world);
+}
+
+fn apply_borders(color: vec4<f32>, cell: vec2<i32>, world: vec2<f32>) -> vec4<f32> {
+    let cell_position = world * 8.0;
+    let distance_to_edge = min(fract(cell_position.x), fract(cell_position.y));
+    let pixel_width = max(fwidth(cell_position.x), fwidth(cell_position.y));
+    if uniforms.show_chunk_borders != 0u &&
+            (floor_modulo(cell.x, 512) == 0 || floor_modulo(cell.y, 512) == 0) &&
+            distance_to_edge < pixel_width * 1.5 {
+        return mix(color, vec4<f32>(0.95, 0.45, 0.12, 1.0), 0.85);
+    }
+    if uniforms.show_tile_borders != 0u &&
+            (floor_modulo(cell.x, 8) == 0 || floor_modulo(cell.y, 8) == 0) &&
+            distance_to_edge < pixel_width {
+        return mix(color, vec4<f32>(0.35, 0.72, 1.0, 1.0), 0.65);
+    }
+    return color;
 }
 
 fn physical_cell_index(cell: vec2<i32>) -> u32 {
@@ -151,4 +194,8 @@ fn physical_cell_index(cell: vec2<i32>) -> u32 {
 fn floor_divide(value: i32, divisor: i32) -> i32 {
     if value < 0 { return (value - divisor + 1) / divisor; }
     return value / divisor;
+}
+
+fn floor_modulo(value: i32, divisor: i32) -> i32 {
+    return value - floor_divide(value, divisor) * divisor;
 }
