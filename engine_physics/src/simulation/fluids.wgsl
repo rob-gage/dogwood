@@ -1,0 +1,305 @@
+// Copyright Rob Gage 2026
+
+struct Particle {
+    material_identifier: u32,
+    padding: u32,
+    position: vec2<f32>,
+    velocity: vec2<f32>,
+    padding_2: vec2<u32>,
+}
+
+struct Parameters {
+    buffered_origin: vec2<i32>,
+    buffered_tile_size: vec2<u32>,
+    ring_offset: vec2<u32>,
+    bucket_dimensions: vec2<u32>,
+    gravity: vec2<f32>,
+    delta_time: f32,
+    particle_capacity: u32,
+    buffered_cell_count: u32,
+    bucket_count: u32,
+    support_radius_cells: f32,
+    particle_radius_cells: f32,
+    maximum_movement_cells: u32,
+    padding_0: u32,
+    padding_1: vec2<u32>,
+}
+
+@group(0) @binding(0) var<storage, read_write> particles: array<Particle>;
+@group(0) @binding(1) var<storage, read_write> free_indices: array<u32>;
+@group(0) @binding(2) var<storage, read_write> free_count: array<atomic<u32>>;
+@group(0) @binding(3) var<storage, read_write> edit_cells: array<u32>;
+@group(0) @binding(4) var<storage, read_write> bucket_heads: array<atomic<u32>>;
+@group(0) @binding(5) var<storage, read_write> next_particle: array<u32>;
+@group(0) @binding(6) var<storage, read_write> derived_material_identifiers: array<u32>;
+@group(0) @binding(7) var<storage, read_write> derived_coverage: array<f32>;
+@group(0) @binding(8) var<storage, read_write> derived_velocity: array<vec4<f32>>;
+@group(0) @binding(9) var<storage, read> cellular_material_identifiers: array<u32>;
+@group(0) @binding(10) var<storage, read> external_body_occupancy: array<u32>;
+@group(0) @binding(11) var<storage, read> external_body_velocity: array<vec4<f32>>;
+@group(0) @binding(12) var<uniform> parameters: Parameters;
+
+const EMPTY: u32 = 0u;
+const INVALID_INDEX: u32 = 0xffffffffu;
+const FLUID_FORM: u32 = 3u;
+const CELLS_PER_TILE: f32 = 8.0;
+
+// Removes every authoritative particle whose current world cell was edited
+@compute @workgroup_size(64)
+fn remove_edited_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let particle_index: u32 = invocation.x;
+    if particle_index >= parameters.particle_capacity ||
+            particles[particle_index].material_identifier == EMPTY { return; }
+    let cell: vec2<i32> = vec2<i32>(floor(particles[particle_index].position * CELLS_PER_TILE));
+    let cell_index: u32 = physical_cell_index(cell);
+    if cell_index == INVALID_INDEX || edit_cells[cell_index] == EMPTY { return; }
+    release_particle(particle_index);
+}
+
+// Creates at most one particle at each edited world-cell center
+@compute @workgroup_size(64)
+fn spawn_edited_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let logical_index: u32 = invocation.x;
+    if logical_index >= parameters.buffered_cell_count { return; }
+    let cell: vec2<i32> = world_cell_from_logical_index(logical_index);
+    let cell_index: u32 = physical_cell_index(cell);
+    let material_identifier: u32 = edit_cells[cell_index];
+    if material_identifier >> 30u != FLUID_FORM ||
+            cellular_material_identifiers[cell_index] != EMPTY { return; }
+    let particle_index: u32 = claim_free_particle();
+    if particle_index == INVALID_INDEX { return; }
+    particles[particle_index] = Particle(
+        material_identifier,
+        0u,
+        (vec2<f32>(cell) + vec2<f32>(0.5)) / CELLS_PER_TILE,
+        vec2<f32>(0.0),
+        vec2<u32>(0u),
+    );
+}
+
+@compute @workgroup_size(64)
+fn clear_fluid_edits(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    if invocation.x < parameters.buffered_cell_count { edit_cells[invocation.x] = EMPTY; }
+}
+
+// Integrates gravity and resolves a small swept sequence against cellular and body occupancy
+@compute @workgroup_size(64)
+fn move_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let particle_index: u32 = invocation.x;
+    if particle_index >= parameters.particle_capacity ||
+            particles[particle_index].material_identifier == EMPTY { return; }
+    var particle: Particle = particles[particle_index];
+    particle.velocity += parameters.gravity * parameters.delta_time;
+    let maximum_speed: f32 = f32(parameters.maximum_movement_cells) /
+        (CELLS_PER_TILE * parameters.delta_time);
+    let speed: f32 = length(particle.velocity);
+    if speed > maximum_speed { particle.velocity *= maximum_speed / speed; }
+    let movement_cells: f32 = length(particle.velocity) * parameters.delta_time * CELLS_PER_TILE;
+    let step_count: u32 = clamp(u32(ceil(movement_cells * 2.0)), 1u,
+        parameters.maximum_movement_cells * 2u);
+    let step: vec2<f32> = particle.velocity * parameters.delta_time / f32(step_count);
+    for (var movement_step: u32 = 0u; movement_step < step_count; movement_step++) {
+        particle.position += step;
+        let resolved: vec4<f32> = resolve_particle_collisions(
+            particle.position,
+            particle.velocity,
+        );
+        particle.position = resolved.xy;
+        particle.velocity = resolved.zw;
+    }
+    if !position_is_resident(particle.position) {
+        particles[particle_index] = particle;
+        release_particle(particle_index);
+        return;
+    }
+    particles[particle_index] = particle;
+}
+
+@compute @workgroup_size(64)
+fn clear_fluid_buckets(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    if invocation.x < parameters.bucket_count {
+        atomicStore(&bucket_heads[invocation.x], INVALID_INDEX);
+    }
+}
+
+@compute @workgroup_size(64)
+fn insert_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let particle_index: u32 = invocation.x;
+    if particle_index >= parameters.particle_capacity ||
+            particles[particle_index].material_identifier == EMPTY { return; }
+    let bucket: u32 = bucket_index(particles[particle_index].position);
+    if bucket == INVALID_INDEX {
+        release_particle(particle_index);
+        return;
+    }
+    next_particle[particle_index] = atomicExchange(&bucket_heads[bucket], particle_index);
+}
+
+// Each cell gathers its own result, so particles never contend for derived-cell writes
+@compute @workgroup_size(64)
+fn rasterize_fluid_cells(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let logical_index: u32 = invocation.x;
+    if logical_index >= parameters.buffered_cell_count { return; }
+    let cell: vec2<i32> = world_cell_from_logical_index(logical_index);
+    let physical_index: u32 = physical_cell_index(cell);
+    let center: vec2<f32> = vec2<f32>(cell) + vec2<f32>(0.5);
+    let base_bucket: vec2<i32> = bucket_coordinates(center / CELLS_PER_TILE);
+    var weight_sum: f32 = 0.0;
+    var velocity_sum: vec2<f32> = vec2<f32>(0.0);
+    var strongest_weight: f32 = 0.0;
+    var material_identifier: u32 = EMPTY;
+    for (var bucket_y: i32 = -1; bucket_y <= 1; bucket_y++) {
+        for (var bucket_x: i32 = -1; bucket_x <= 1; bucket_x++) {
+            let bucket: u32 = bucket_index_from_coordinates(
+                base_bucket + vec2<i32>(bucket_x, bucket_y),
+            );
+            if bucket == INVALID_INDEX { continue; }
+            var particle_index: u32 = atomicLoad(&bucket_heads[bucket]);
+            for (var chain_length: u32 = 0u;
+                    particle_index != INVALID_INDEX && chain_length < parameters.particle_capacity;
+                    chain_length++) {
+                let particle: Particle = particles[particle_index];
+                let distance_cells: f32 = length(particle.position * CELLS_PER_TILE - center);
+                let weight: f32 = max(0.0, 1.0 - distance_cells / parameters.support_radius_cells);
+                if weight > 0.0 {
+                    weight_sum += weight;
+                    velocity_sum += particle.velocity * weight;
+                    if weight > strongest_weight {
+                        strongest_weight = weight;
+                        material_identifier = particle.material_identifier;
+                    }
+                }
+                particle_index = next_particle[particle_index];
+            }
+        }
+    }
+    derived_material_identifiers[physical_index] = material_identifier;
+    derived_coverage[physical_index] = min(weight_sum, 1.0);
+    derived_velocity[physical_index] = vec4<f32>(
+        select(vec2<f32>(0.0), velocity_sum / max(weight_sum, 0.000001), weight_sum > 0.0),
+        0.0,
+        0.0,
+    );
+}
+
+fn resolve_particle_collisions(
+    initial_position: vec2<f32>,
+    initial_velocity: vec2<f32>,
+) -> vec4<f32> {
+    var position: vec2<f32> = initial_position;
+    var velocity: vec2<f32> = initial_velocity;
+    let radius: f32 = parameters.particle_radius_cells / CELLS_PER_TILE;
+    for (var iteration: u32 = 0u; iteration < 2u; iteration++) {
+        let center_cell: vec2<i32> = vec2<i32>(floor(position * CELLS_PER_TILE));
+        var resolved: bool = false;
+        for (var offset_y: i32 = -1; offset_y <= 1 && !resolved; offset_y++) {
+            for (var offset_x: i32 = -1; offset_x <= 1; offset_x++) {
+                let cell: vec2<i32> = center_cell + vec2<i32>(offset_x, offset_y);
+                let index: u32 = physical_cell_index(cell);
+                if index == INVALID_INDEX || (cellular_material_identifiers[index] == EMPTY &&
+                        external_body_occupancy[index] == EMPTY) { continue; }
+                let minimum: vec2<f32> = vec2<f32>(cell) / CELLS_PER_TILE;
+                let maximum: vec2<f32> = vec2<f32>(cell + vec2<i32>(1)) / CELLS_PER_TILE;
+                let nearest: vec2<f32> = clamp(position, minimum, maximum);
+                let delta: vec2<f32> = position - nearest;
+                let distance: f32 = length(delta);
+                if distance >= radius { continue; }
+                var normal: vec2<f32>;
+                var penetration: f32;
+                if distance > 0.000001 {
+                    normal = delta / distance;
+                    penetration = radius - distance;
+                } else {
+                    let distances: vec4<f32> = vec4<f32>(
+                        position.x - minimum.x,
+                        maximum.x - position.x,
+                        position.y - minimum.y,
+                        maximum.y - position.y,
+                    );
+                    let side: f32 = min(min(distances.x, distances.y), min(distances.z, distances.w));
+                    normal = select(select(vec2<f32>(-1.0, 0.0), vec2<f32>(1.0, 0.0), side == distances.y),
+                        select(vec2<f32>(0.0, -1.0), vec2<f32>(0.0, 1.0), side == distances.w),
+                        side == distances.z || side == distances.w);
+                    penetration = radius + side;
+                }
+                position += normal * penetration;
+                let boundary_velocity: vec2<f32> = select(
+                    vec2<f32>(0.0), external_body_velocity[index].xy,
+                    external_body_occupancy[index] != EMPTY,
+                );
+                let inward_speed: f32 = dot(velocity - boundary_velocity, normal);
+                if inward_speed < 0.0 { velocity -= normal * inward_speed; }
+                resolved = true;
+                break;
+            }
+        }
+        if !resolved { break; }
+    }
+    return vec4<f32>(position, velocity);
+}
+
+fn claim_free_particle() -> u32 {
+    var available: u32 = atomicLoad(&free_count[0]);
+    loop {
+        if available == 0u { return INVALID_INDEX; }
+        let result = atomicCompareExchangeWeak(&free_count[0], available, available - 1u);
+        if result.exchanged { return free_indices[available - 1u]; }
+        available = result.old_value;
+    }
+    return INVALID_INDEX;
+}
+
+fn release_particle(particle_index: u32) {
+    particles[particle_index].material_identifier = EMPTY;
+    let free_index: u32 = atomicAdd(&free_count[0], 1u);
+    free_indices[free_index] = particle_index;
+}
+
+fn position_is_resident(position: vec2<f32>) -> bool {
+    let relative: vec2<f32> = position - vec2<f32>(parameters.buffered_origin);
+    return all(relative >= vec2<f32>(0.0)) &&
+        relative.x < f32(parameters.buffered_tile_size.x) &&
+        relative.y < f32(parameters.buffered_tile_size.y);
+}
+
+fn bucket_coordinates(position: vec2<f32>) -> vec2<i32> {
+    let origin: vec2<f32> = vec2<f32>(parameters.buffered_origin);
+    let bucket_size: f32 = parameters.support_radius_cells / CELLS_PER_TILE;
+    return vec2<i32>(floor((position - origin) / bucket_size));
+}
+
+fn bucket_index(position: vec2<f32>) -> u32 {
+    return bucket_index_from_coordinates(bucket_coordinates(position));
+}
+
+fn bucket_index_from_coordinates(bucket: vec2<i32>) -> u32 {
+    if any(bucket < vec2<i32>(0)) || bucket.x >= i32(parameters.bucket_dimensions.x) ||
+            bucket.y >= i32(parameters.bucket_dimensions.y) { return INVALID_INDEX; }
+    return u32(bucket.y) * parameters.bucket_dimensions.x + u32(bucket.x);
+}
+
+fn physical_cell_index(cell: vec2<i32>) -> u32 {
+    let tile: vec2<i32> = vec2<i32>(floor_divide(cell.x, 8), floor_divide(cell.y, 8));
+    let relative: vec2<i32> = tile - parameters.buffered_origin;
+    if any(relative < vec2<i32>(0)) || relative.x >= i32(parameters.buffered_tile_size.x) ||
+            relative.y >= i32(parameters.buffered_tile_size.y) { return INVALID_INDEX; }
+    let physical: vec2<u32> =
+        (vec2<u32>(relative) + parameters.ring_offset) % parameters.buffered_tile_size;
+    let local: vec2<u32> = vec2<u32>(cell - tile * 8);
+    return (physical.y * parameters.buffered_tile_size.x + physical.x) * 64u +
+        local.y * 8u + local.x;
+}
+
+fn world_cell_from_logical_index(index: u32) -> vec2<i32> {
+    let tile_index: u32 = index / 64u;
+    let local_index: u32 = index % 64u;
+    return (parameters.buffered_origin + vec2<i32>(
+        i32(tile_index % parameters.buffered_tile_size.x),
+        i32(tile_index / parameters.buffered_tile_size.x),
+    )) * 8 + vec2<i32>(i32(local_index % 8u), i32(local_index / 8u));
+}
+
+fn floor_divide(value: i32, divisor: i32) -> i32 {
+    if value < 0 { return (value - divisor + 1) / divisor; }
+    return value / divisor;
+}

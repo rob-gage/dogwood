@@ -14,6 +14,7 @@ use crate::simulation::{
     CellularPhysicsBodyProxy,
     CellularDynamic,
     CellularPressure,
+    Fluids,
     SceneSimulationConfiguration,
     ScenePhysicsWorld,
 };
@@ -132,6 +133,8 @@ pub struct Scene {
     cellular_integrities: AcceleratorBuffer,
     /// Transient rasterized possessed-pawn interaction geometry
     cellular_physics_body_proxy: CellularPhysicsBodyProxy,
+    /// GPU-authoritative fluid particles and their transient cellular representation
+    fluids: Fluids,
     /// GPU simulation of dynamic cells in the canonical cellular buffers
     cellular_dynamic: CellularDynamic,
     /// GPU impulse, pressure, integrity, and fracture subsystem
@@ -213,6 +216,14 @@ impl Scene {
         let cellular_integrities: AcceleratorBuffer =
             accelerator.allocate::<f32>(buffered_cell_count);
         let cellular_physics_body_proxy = CellularPhysicsBodyProxy::new(accelerator.as_ref(), buffered_cell_count);
+        let fluids: Fluids = Fluids::new(
+            accelerator.as_ref(),
+            &cellular_material_identifiers,
+            cellular_physics_body_proxy.occupancy_buffer(),
+            cellular_physics_body_proxy.velocity_buffer(),
+            simulation.width + buffer_size,
+            simulation.height + buffer_size,
+        );
         let cellular_dynamic: CellularDynamic = CellularDynamic::new(
             accelerator.as_ref(),
             &cellular_material_identifiers,
@@ -272,6 +283,7 @@ impl Scene {
             cellular_appearances,
             cellular_integrities,
             cellular_physics_body_proxy,
+            fluids,
             cellular_dynamic,
             cellular_pressure,
             cellular_collision,
@@ -309,6 +321,8 @@ impl Scene {
             material_graphics: &self.material_graphics,
             cellular_material_identifiers: &self.cellular_material_identifiers,
             cellular_appearances: &self.cellular_appearances,
+            fluid_material_identifiers: self.fluids.material_identifiers_buffer(),
+            fluid_coverage: self.fluids.coverage_buffer(),
             buffered_origin: [self.origin.x - buffer_size, self.origin.y - buffer_size],
             buffered_tile_size: [
                 u32::from(self.simulation_width) + dimensions,
@@ -376,6 +390,7 @@ impl Scene {
     pub fn apply_edits(&mut self, edits: &mut SceneEditBatch) -> Result<(), io::Error> {
         let mut cell_edits: HashMap<usize, (CellCoordinates, MaterialIdentifier, CellularAppearance, f32)> =
             HashMap::new();
+        let mut fluid_edits: HashMap<usize, u32> = HashMap::new();
         for edit in edits.drain() {
             match edit {
                 SceneEdit::PlaceCells { cells } => {
@@ -384,20 +399,29 @@ impl Scene {
                         material_identifier,
                         appearance,
                     } in cells {
-                        if !matches!(
-                            self.data.materials().get(material_identifier),
-                            Some(Material::CellularStatic { .. } | Material::CellularDynamic { .. }),
-                        ) { continue; }
                         if let Some(physical_index) = self.cell_edit_index(coordinates) {
-                            cell_edits.insert(physical_index, (
-                                coordinates,
-                                material_identifier,
-                                appearance,
-                                match self.data.materials().get(material_identifier) {
-                                    Some(Material::CellularStatic { default_integrity, .. }) => *default_integrity,
-                                    _ => 0.0,
-                                },
-                            ));
+                            match self.data.materials().get(material_identifier) {
+                                Some(Material::CellularStatic { default_integrity, .. }) => {
+                                    cell_edits.insert(physical_index, (
+                                        coordinates, material_identifier, appearance, *default_integrity,
+                                    ));
+                                    fluid_edits.insert(physical_index, Fluids::erase_edit());
+                                }
+                                Some(Material::CellularDynamic { .. }) => {
+                                    cell_edits.insert(physical_index, (
+                                        coordinates, material_identifier, appearance, 0.0,
+                                    ));
+                                    fluid_edits.insert(physical_index, Fluids::erase_edit());
+                                }
+                                Some(Material::Fluid { .. }) => {
+                                    cell_edits.insert(physical_index, (
+                                        coordinates, MaterialIdentifier::NULL,
+                                        CellularAppearance::NEUTRAL, 0.0,
+                                    ));
+                                    fluid_edits.insert(physical_index, material_identifier.as_u32());
+                                }
+                                None => { }
+                            }
                         }
                     }
                 }
@@ -410,6 +434,7 @@ impl Scene {
                                 CellularAppearance::NEUTRAL,
                                 0.0,
                             ));
+                            fluid_edits.insert(physical_index, Fluids::erase_edit());
                         }
                     }
                 }
@@ -439,6 +464,18 @@ impl Scene {
         if !cell_edits.is_empty() {
             self.cellular_collision_dirty = true;
             self.write_cell_edits(&cell_edits);
+        }
+        if !fluid_edits.is_empty() {
+            let mut fluid_edits: Vec<(usize, u32)> = fluid_edits.into_iter().collect();
+            fluid_edits.sort_unstable_by_key(|(physical_index, _)| *physical_index);
+            let buffer_size: i32 = i32::from(self.simulation_buffer_size);
+            let dimensions: u16 = u16::from(self.simulation_buffer_size) * 2;
+            self.fluids.apply_edits(
+                self.accelerator.as_ref(), &fluid_edits,
+                TileCoordinates { x: self.origin.x - buffer_size, y: self.origin.y - buffer_size },
+                self.simulation_width + dimensions, self.simulation_height + dimensions,
+                self.tiles_ring_offset_x, self.tiles_ring_offset_y,
+            );
         }
         Ok(())
     }
@@ -538,6 +575,19 @@ impl Scene {
                 self.accelerator.as_ref(),
                 &self.cellular_material_identifiers,
                 &self.cellular_appearances,
+                TileCoordinates {
+                    x: self.origin.x - buffer_size,
+                    y: self.origin.y - buffer_size,
+                },
+                self.simulation_width + dimensions,
+                self.simulation_height + dimensions,
+                self.tiles_ring_offset_x,
+                self.tiles_ring_offset_y,
+                self.gravity,
+                1.0 / TICK_RATE as f32,
+            );
+            self.fluids.simulate(
+                self.accelerator.as_ref(),
                 TileCoordinates {
                     x: self.origin.x - buffer_size,
                     y: self.origin.y - buffer_size,
@@ -994,6 +1044,14 @@ impl Scene {
         }
         self.origin = new_origin;
         self.cellular_collision_dirty = true;
+        self.fluids.refresh(
+            self.accelerator.as_ref(),
+            TileCoordinates { x: new_origin.x - buffer_size, y: new_origin.y - buffer_size },
+            width,
+            height,
+            self.tiles_ring_offset_x,
+            self.tiles_ring_offset_y,
+        );
         let _ = self.tiles_upload(tiles_upload_area);
         Ok(())
     }

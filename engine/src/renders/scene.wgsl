@@ -33,6 +33,10 @@ struct MaterialAppearance {
 
 @group(0) @binding(5) var<uniform> uniforms: Uniforms;
 
+@group(0) @binding(6) var<storage, read> fluid_material_identifiers: array<u32>;
+
+@group(0) @binding(7) var<storage, read> fluid_coverage: array<f32>;
+
 // A fullscreen triangle delegates all scene lookup to the fragment shader
 @vertex
 fn vertex(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
@@ -66,7 +70,10 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let physical = (vec2<u32>(relative) + uniforms.ring_offset) % uniforms.buffered_tile_size;
     let tile_index = physical.y * uniforms.buffered_tile_size.x + physical.x;
     let local = vec2<u32>(cell - tile * 8);
-    let material_identifier = cellular_material_identifiers[tile_index * 64u + local.y * 8u + local.x];
+    let cell_index = tile_index * 64u + local.y * 8u + local.x;
+    var material_identifier = cellular_material_identifiers[cell_index];
+    let is_fluid = material_identifier == 0u && fluid_coverage[cell_index] > 0.0;
+    if is_fluid { material_identifier = fluid_material_identifiers[cell_index]; }
     if material_identifier == 0u { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }
     // select the material form and its base appearance
     let form = material_identifier >> 30u;
@@ -80,7 +87,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     }
     let color = properties.color_freezing;
     // decode the persistent cell sample and apply material color influence
-    let packed_appearance = cellular_appearances[tile_index * 64u + local.y * 8u + local.x];
+    let packed_appearance = select(cellular_appearances[cell_index], 0u, is_fluid);
     var sample = vec4<f32>(0.0);
     for (var channel = 0u; channel < 4u; channel++) {
         let byte = (packed_appearance >> (channel * 8u)) & 0xffu;
@@ -95,7 +102,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     );
     let result = clamp(base * (vec4<f32>(1.0) + sample * properties.color_influence),
         vec4<f32>(0.0), vec4<f32>(1.0));
-    return result;
+    return select(result, vec4<f32>(result.rgb * fluid_coverage[cell_index], 1.0), is_fluid);
 }
 
 // signed floor division keeps negative world coordinates in the correct tile

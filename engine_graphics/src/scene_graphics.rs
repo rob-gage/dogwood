@@ -11,6 +11,10 @@ pub struct SceneGraphics<'a> {
     pub cellular_material_identifiers: &'a AcceleratorBuffer,
     /// The parallel `Accelerator` buffer containing persistent cell appearances
     pub cellular_appearances: &'a AcceleratorBuffer,
+    /// The transient fluid material identifier derived for each physical cell
+    pub fluid_material_identifiers: &'a AcceleratorBuffer,
+    /// The transient fluid coverage derived for each physical cell
+    pub fluid_coverage: &'a AcceleratorBuffer,
     /// The tile coordinates of the buffered area's bottom-left corner
     pub buffered_origin: [i32; 2],
     /// The dimensions of the buffered tile area

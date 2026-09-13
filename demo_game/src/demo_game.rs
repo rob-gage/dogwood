@@ -87,6 +87,13 @@ impl DemoGame {
             friction: 0.8,
             restitution: 0.02,
         });
+        materials.register(Material::Fluid {
+            name: "Water".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(45, 125, 210)),
+            pressure_transmission: 0.95,
+            friction: 0.05,
+            restitution: 0.0,
+        });
         let data: SceneData = SceneData::new_temporary(materials)?;
         let mut scene: Scene = Scene::load_with_generator(
             accelerator,
