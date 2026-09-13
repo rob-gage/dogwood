@@ -1,5 +1,6 @@
 // Copyright Rob Gage 2026
 
+use super::Fluids;
 use std::io;
 
 /// Configures the active and buffered simulation area of a `Scene`
@@ -49,6 +50,13 @@ impl SceneSimulationConfiguration {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "Simulation buffer size must be a multiple of streaming batch size",
+            ));
+        }
+        if u16::from(self.buffer_size) < u16::from(self.streaming_batch_size) +
+                u16::from(Fluids::minimum_buffer_tiles()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Simulation buffer cannot contain fluid motion and boundary support",
             ));
         }
         let buffer_size: u16 = u16::from(self.buffer_size) * 2;

@@ -1,11 +1,22 @@
 // Copyright Rob Gage 2026
 
-use crate::tiles::TileCoordinates;
+use crate::scenes::{
+    FluidDownload,
+    FluidUpload,
+};
+use crate::{
+    chunks::ChunkFluidParticle,
+    tiles::{
+        TileArea,
+        TileCoordinates,
+    },
+};
 use engine_compute::{Accelerator, AcceleratorBuffer};
 
 const SUPPORT_RADIUS_CELLS: f32 = 2.5;
 const PARTICLE_RADIUS_CELLS: f32 = 0.45;
 const MAXIMUM_MOVEMENT_CELLS: u32 = 4;
+const MAXIMUM_CORRECTION_CELLS: f32 = 0.25;
 const FLUID_EDIT_ERASE: u32 = 1;
 const PBF_SUBSTEP_COUNT: u32 = 2;
 const PBF_CONSTRAINT_ITERATION_COUNT: u32 = 4;
@@ -36,6 +47,12 @@ pub struct Fluids {
     derived_coverage: AcceleratorBuffer,
     /// Ring-aligned weighted average velocity derived from nearby particles
     derived_velocity: AcceleratorBuffer,
+    /// Fixed-capacity records used only during residency ownership transfers
+    streaming_particles: AcceleratorBuffer,
+    /// Atomic export count or immutable import count for the current transfer
+    streaming_count: AcceleratorBuffer,
+    /// Per-record success flags for a fluid import
+    streaming_results: AcceleratorBuffer,
     /// Current ring mapping, spatial dimensions, gravity, and fixed-step values
     parameters: wgpu::Buffer,
     /// All concrete particle, edit, collision, bucket, and derived-cell bindings
@@ -48,6 +65,8 @@ pub struct Fluids {
     edit_clear_pipeline: wgpu::ComputePipeline,
     /// Integrates gravity into predicted positions without replacing authoritative positions
     predict_pipeline: wgpu::ComputePipeline,
+    /// Snapshots active-area membership once for the entire fixed tick
+    classify_active_pipeline: wgpu::ComputePipeline,
     /// Clears linked-list bucket heads before rebuilding the spatial grid
     clear_buckets_pipeline: wgpu::ComputePipeline,
     /// Inserts active resident particles into support-radius-sized buckets
@@ -68,6 +87,10 @@ pub struct Fluids {
     apply_velocity_smoothing_pipeline: wgpu::ComputePipeline,
     /// Gathers nearby particles into ring-aligned derived cell fields
     raster_pipeline: wgpu::ComputePipeline,
+    /// Compacts and removes particles belonging to an outgoing tile strip
+    export_pipeline: wgpu::ComputePipeline,
+    /// Reconstructs imported records through the existing free-particle stack
+    import_pipeline: wgpu::ComputePipeline,
     /// Fixed number of authoritative particle slots
     particle_capacity: u32,
     /// Number of physical cells in the buffered tile ring
@@ -122,6 +145,11 @@ impl Fluids {
             accelerator.allocate::<f32>(buffered_cell_count as usize);
         let derived_velocity: AcceleratorBuffer =
             accelerator.allocate::<[f32; 4]>(buffered_cell_count as usize);
+        let streaming_particles: AcceleratorBuffer =
+            accelerator.allocate::<[u32; 8]>(particle_capacity as usize);
+        let streaming_count: AcceleratorBuffer = accelerator.allocate::<u32>(1);
+        let streaming_results: AcceleratorBuffer =
+            accelerator.allocate::<u32>(particle_capacity as usize);
         let free_indices_data: Vec<u8> = (0..particle_capacity)
             .flat_map(u32::to_le_bytes).collect();
         accelerator.wgpu_queue().write_buffer(
@@ -132,7 +160,7 @@ impl Fluids {
         );
         let parameters: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("fluid simulation parameters"),
-            size: 80,
+            size: 112,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -165,7 +193,8 @@ impl Fluids {
                         count: None,
                     },
                     storage(13, false), storage(14, false), storage(15, false),
-                    storage(16, true),
+                    storage(16, true), storage(17, false), storage(18, false),
+                    storage(19, false),
                 ],
             },
         );
@@ -194,6 +223,9 @@ impl Fluids {
                     Self::binding(14, &lambdas),
                     Self::binding(15, &position_corrections),
                     Self::binding(16, fluid_properties),
+                    Self::binding(17, &streaming_particles),
+                    Self::binding(18, &streaming_count),
+                    Self::binding(19, &streaming_results),
                 ],
             },
         );
@@ -233,12 +265,17 @@ impl Fluids {
             derived_material_identifiers,
             derived_coverage,
             derived_velocity,
+            streaming_particles,
+            streaming_count,
+            streaming_results,
             parameters,
             bind_group,
             edit_remove_pipeline: pipeline("remove_edited_fluid_particles", "fluid edit removal pipeline"),
             edit_spawn_pipeline: pipeline("spawn_edited_fluid_particles", "fluid edit spawn pipeline"),
             edit_clear_pipeline: pipeline("clear_fluid_edits", "fluid edit clear pipeline"),
             predict_pipeline: pipeline("predict_fluid_particles", "fluid prediction pipeline"),
+            classify_active_pipeline: pipeline("classify_active_fluid_particles",
+                "fluid active classification pipeline"),
             clear_buckets_pipeline: pipeline("clear_fluid_buckets", "fluid bucket clear pipeline"),
             insert_buckets_pipeline: pipeline("insert_fluid_particles", "fluid bucket insertion pipeline"),
             insert_predicted_buckets_pipeline: pipeline("insert_predicted_fluid_particles",
@@ -254,6 +291,8 @@ impl Fluids {
             apply_velocity_smoothing_pipeline: pipeline("apply_fluid_velocity_smoothing",
                 "fluid velocity smoothing application pipeline"),
             raster_pipeline: pipeline("rasterize_fluid_cells", "fluid cellular raster pipeline"),
+            export_pipeline: pipeline("export_fluid_particles", "fluid export pipeline"),
+            import_pipeline: pipeline("import_fluid_particles", "fluid import pipeline"),
             particle_capacity,
             buffered_cell_count,
             bucket_count,
@@ -281,6 +320,9 @@ impl Fluids {
         &self,
         accelerator: &Accelerator,
         edits: &[(usize, u32)],
+        active_origin: TileCoordinates,
+        active_width: u16,
+        active_height: u16,
         buffered_origin: TileCoordinates,
         buffered_width: u16,
         buffered_height: u16,
@@ -294,8 +336,9 @@ impl Fluids {
             );
         }
         self.write_parameters(
-            accelerator, buffered_origin, buffered_width, buffered_height,
-            ring_offset_x, ring_offset_y, [0.0; 2], 0.0,
+            accelerator, active_origin, active_width, active_height,
+            buffered_origin, buffered_width, buffered_height,
+            ring_offset_x, ring_offset_y, None, [0.0; 2], 0.0,
         );
         let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
             &wgpu::CommandEncoderDescriptor { label: Some("fluid edits") },
@@ -314,6 +357,9 @@ impl Fluids {
     pub fn simulate(
         &self,
         accelerator: &Accelerator,
+        active_origin: TileCoordinates,
+        active_width: u16,
+        active_height: u16,
         buffered_origin: TileCoordinates,
         buffered_width: u16,
         buffered_height: u16,
@@ -323,12 +369,15 @@ impl Fluids {
         delta_time: f32,
     ) {
         self.write_parameters(
-            accelerator, buffered_origin, buffered_width, buffered_height,
-            ring_offset_x, ring_offset_y, gravity, delta_time,
+            accelerator, active_origin, active_width, active_height,
+            buffered_origin, buffered_width, buffered_height,
+            ring_offset_x, ring_offset_y, None, gravity, delta_time,
         );
         let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
             &wgpu::CommandEncoderDescriptor { label: Some("fluid simulation") },
         );
+        self.dispatch(&mut encoder, &self.classify_active_pipeline, self.particle_capacity,
+            "classify active fluid particles");
         for _ in 0..PBF_SUBSTEP_COUNT {
             self.dispatch(&mut encoder, &self.predict_pipeline, self.particle_capacity,
                 "predict fluid particles");
@@ -364,6 +413,9 @@ impl Fluids {
     pub fn refresh(
         &self,
         accelerator: &Accelerator,
+        active_origin: TileCoordinates,
+        active_width: u16,
+        active_height: u16,
         buffered_origin: TileCoordinates,
         buffered_width: u16,
         buffered_height: u16,
@@ -371,13 +423,105 @@ impl Fluids {
         ring_offset_y: u16,
     ) {
         self.write_parameters(
-            accelerator, buffered_origin, buffered_width, buffered_height,
-            ring_offset_x, ring_offset_y, [0.0; 2], 0.0,
+            accelerator, active_origin, active_width, active_height,
+            buffered_origin, buffered_width, buffered_height,
+            ring_offset_x, ring_offset_y, None, [0.0; 2], 0.0,
         );
         let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
             &wgpu::CommandEncoderDescriptor { label: Some("fluid cellular refresh") },
         );
         self.encode_rebuild(&mut encoder);
+        accelerator.wgpu_queue().submit(Some(encoder.finish()));
+    }
+
+    /// Returns the maximum number of authoritative resident particles
+    pub const fn particle_capacity(&self) -> u32 { self.particle_capacity }
+
+    /// Returns the tile buffer required by active movement and PBF support
+    pub fn minimum_buffer_tiles() -> u8 {
+        let predicted_movement: f32 = MAXIMUM_MOVEMENT_CELLS as f32 /
+            PBF_SUBSTEP_COUNT as f32 + MAXIMUM_CORRECTION_CELLS *
+            PBF_CONSTRAINT_ITERATION_COUNT as f32;
+        ((SUPPORT_RADIUS_CELLS * 2.0 + predicted_movement) / 8.0).ceil() as u8
+    }
+
+    /// Compacts outgoing authoritative records, releases their slots, and copies them for readback
+    pub fn export(
+        &self,
+        accelerator: &Accelerator,
+        download: &FluidDownload,
+        active_origin: TileCoordinates,
+        active_width: u16,
+        active_height: u16,
+        buffered_origin: TileCoordinates,
+        buffered_width: u16,
+        buffered_height: u16,
+        ring_offset_x: u16,
+        ring_offset_y: u16,
+    ) {
+        accelerator.wgpu_queue().write_buffer(
+            self.streaming_count.wgpu_buffer(), 0, &0u32.to_le_bytes(),
+        );
+        self.write_parameters(
+            accelerator, active_origin, active_width, active_height,
+            buffered_origin, buffered_width, buffered_height,
+            ring_offset_x, ring_offset_y, Some(download.area), [0.0; 2], 0.0,
+        );
+        let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
+            &wgpu::CommandEncoderDescriptor { label: Some("fluid export") },
+        );
+        self.dispatch(&mut encoder, &self.export_pipeline, self.particle_capacity,
+            "compact outgoing fluid particles");
+        encoder.copy_buffer_to_buffer(
+            self.streaming_count.wgpu_buffer(), 0, &download.buffer, 0, 4,
+        );
+        encoder.copy_buffer_to_buffer(
+            self.streaming_particles.wgpu_buffer(), 0, &download.buffer, 16,
+            u64::from(self.particle_capacity) * ChunkFluidParticle::GPU_SIZE as u64,
+        );
+        accelerator.wgpu_queue().submit(Some(encoder.finish()));
+    }
+
+    /// Reconstructs dormant records and copies their exact success flags for readback
+    pub fn import(
+        &self,
+        accelerator: &Accelerator,
+        upload: &FluidUpload,
+        active_origin: TileCoordinates,
+        active_width: u16,
+        active_height: u16,
+        buffered_origin: TileCoordinates,
+        buffered_width: u16,
+        buffered_height: u16,
+        ring_offset_x: u16,
+        ring_offset_y: u16,
+    ) {
+        let mut bytes: Vec<u8> = Vec::with_capacity(
+            upload.particles.len() * ChunkFluidParticle::GPU_SIZE,
+        );
+        for particle in &upload.particles { particle.serialize_gpu(&mut bytes); }
+        accelerator.wgpu_queue().write_buffer(
+            self.streaming_particles.wgpu_buffer(), 0, &bytes,
+        );
+        accelerator.wgpu_queue().write_buffer(
+            self.streaming_count.wgpu_buffer(), 0,
+            &(upload.particles.len() as u32).to_le_bytes(),
+        );
+        self.write_parameters(
+            accelerator, active_origin, active_width, active_height,
+            buffered_origin, buffered_width, buffered_height,
+            ring_offset_x, ring_offset_y, None, [0.0; 2], 0.0,
+        );
+        let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
+            &wgpu::CommandEncoderDescriptor { label: Some("fluid import") },
+        );
+        self.dispatch(&mut encoder, &self.import_pipeline, upload.particles.len() as u32,
+            "import dormant fluid particles");
+        self.encode_rebuild(&mut encoder);
+        encoder.copy_buffer_to_buffer(
+            self.streaming_results.wgpu_buffer(), 0, &upload.buffer, 0,
+            upload.particles.len() as u64 * 4,
+        );
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
 
@@ -408,19 +552,33 @@ impl Fluids {
     fn write_parameters(
         &self,
         accelerator: &Accelerator,
+        active_origin: TileCoordinates,
+        active_width: u16,
+        active_height: u16,
         buffered_origin: TileCoordinates,
         buffered_width: u16,
         buffered_height: u16,
         ring_offset_x: u16,
         ring_offset_y: u16,
+        streaming_area: Option<TileArea>,
         gravity: [f32; 2],
         delta_time: f32,
     ) {
-        let values: [u32; 20] = [
+        let streaming_origin: TileCoordinates = streaming_area.map_or(
+            TileCoordinates { x: 0, y: 0 }, TileArea::origin,
+        );
+        let streaming_dimensions: [u16; 2] = streaming_area.map_or(
+            [0, 0], TileArea::dimensions,
+        );
+        let values: [u32; 28] = [
             buffered_origin.x as u32, buffered_origin.y as u32,
             u32::from(buffered_width), u32::from(buffered_height),
+            active_origin.x as u32, active_origin.y as u32,
+            u32::from(active_width), u32::from(active_height),
             u32::from(ring_offset_x), u32::from(ring_offset_y),
             self.bucket_dimensions[0], self.bucket_dimensions[1],
+            streaming_origin.x as u32, streaming_origin.y as u32,
+            u32::from(streaming_dimensions[0]), u32::from(streaming_dimensions[1]),
             gravity[0].to_bits(), gravity[1].to_bits(), delta_time.to_bits(),
             self.particle_capacity, self.buffered_cell_count, self.bucket_count,
             SUPPORT_RADIUS_CELLS.to_bits(), PARTICLE_RADIUS_CELLS.to_bits(),
@@ -457,6 +615,9 @@ impl Drop for Fluids {
         self.derived_material_identifiers.free();
         self.derived_coverage.free();
         self.derived_velocity.free();
+        self.streaming_particles.free();
+        self.streaming_count.free();
+        self.streaming_results.free();
         self.parameters.destroy();
     }
 

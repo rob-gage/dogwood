@@ -22,6 +22,11 @@ pub enum ChunkEntry {
         /// Chunk streaming identifier used to match this `ChunkEntry::Generating` to a generated chunk
         streaming_identifier: u64,
     },
+    /// A dirty `Chunk` being serialized and written outside the fixed tick
+    Saving {
+        /// Chunk streaming identifier used to match this `ChunkEntry::Saving` to a saved chunk
+        streaming_identifier: u64,
+    },
     /// Loading or generating the `Chunk` failed
     Error(Box<dyn Error>),
 }

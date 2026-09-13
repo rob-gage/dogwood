@@ -2,7 +2,7 @@
 
 use super::Chunk;
 use crate::tiles::TileCoordinates;
-use std::error::Error;
+use std::{error::Error, io};
 
 /// The result returned by a background chunk load or generation task
 pub enum ChunkStreamingResponse {
@@ -23,5 +23,14 @@ pub enum ChunkStreamingResponse {
         coordinates: TileCoordinates,
         /// The generated chunk
         result: Result<Box<Chunk>, Box<dyn Error + Send + Sync>>,
+    },
+    /// A dirty chunk save completed outside the fixed tick
+    Saved {
+        /// The identifier of the save operation
+        streaming_identifier: u64,
+        /// The coordinates of the saved chunk
+        coordinates: TileCoordinates,
+        /// The unchanged chunk, retaining ownership on either success or failure
+        result: Result<Box<Chunk>, (Box<Chunk>, io::Error)>,
     },
 }

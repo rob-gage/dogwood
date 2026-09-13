@@ -1,9 +1,11 @@
 // Copyright Rob Gage 2026
 
+use super::ChunkFluidParticle;
 use crate::{
     materials::MaterialIdentifier,
     tiles::{
         CellularAppearance,
+        TileArea,
         TileCoordinates,
         TileData,
     },
@@ -16,6 +18,8 @@ pub struct Chunk {
     pub tile_coordinates: TileCoordinates,
     /// The tiles in this `Chunk`,
     tiles: Box<[TileData]>,
+    /// Sparse authoritative fluid particles outside GPU residency
+    dormant_fluid_particles: Vec<ChunkFluidParticle>,
 }
 
 impl Chunk {
@@ -29,6 +33,7 @@ impl Chunk {
             tile_coordinates,
             tiles: (0..usize::from(Self::WIDTH) * usize::from(Self::WIDTH))
                 .map(|_| TileData::EMPTY).collect(),
+            dormant_fluid_particles: Vec::new(),
         }
     }
 
@@ -45,7 +50,38 @@ impl Chunk {
         };
         let mut tile_data: Vec<TileData> = Vec::with_capacity(4096);
         for _ in 0..4096 { tile_data.push(TileData::deserialize(reader)?); }
-        Ok(Self { tile_coordinates, tiles: tile_data.into_boxed_slice() })
+        let mut fluid_magic: [u8; 8] = [0; 8];
+        if reader.read(&mut fluid_magic[..1])? == 0 {
+            return Ok(Self {
+                tile_coordinates,
+                tiles: tile_data.into_boxed_slice(),
+                dormant_fluid_particles: Vec::new(),
+            });
+        }
+        reader.read_exact(&mut fluid_magic[1..])?;
+        if &fluid_magic != b"fluid___" { return Err(io::ErrorKind::InvalidData.into()); }
+        let mut count_data: [u8; 4] = [0; 4];
+        reader.read_exact(&mut count_data)?;
+        let count: usize = u32::from_le_bytes(count_data) as usize;
+        let mut dormant_fluid_particles: Vec<ChunkFluidParticle> = Vec::new();
+        dormant_fluid_particles.try_reserve_exact(count).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidData, "Dormant fluid particle count is too large")
+        })?;
+        for _ in 0..count {
+            let particle: ChunkFluidParticle = ChunkFluidParticle::deserialize(reader)?;
+            if particle.tile_coordinates().chunk_coordinates() != tile_coordinates {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Dormant fluid particle is outside its chunk",
+                ));
+            }
+            dormant_fluid_particles.push(particle);
+        }
+        Ok(Self {
+            tile_coordinates,
+            tiles: tile_data.into_boxed_slice(),
+            dormant_fluid_particles,
+        })
     }
 
     /// Serializes a `Chunk` into binary data
@@ -54,6 +90,12 @@ impl Chunk {
         writer.write_all(&self.tile_coordinates.x.to_le_bytes())?;
         writer.write_all(&self.tile_coordinates.y.to_le_bytes())?;
         for tile in &self.tiles { tile.serialize(writer)?; }
+        writer.write_all(b"fluid___")?;
+        let count: u32 = self.dormant_fluid_particles.len().try_into().map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidData, "Too many dormant fluid particles")
+        })?;
+        writer.write_all(&count.to_le_bytes())?;
+        for particle in &self.dormant_fluid_particles { particle.serialize(writer)?; }
         Ok(())
     }
 
@@ -132,6 +174,72 @@ impl Chunk {
             integrity,
         );
         Ok(())
+    }
+
+    /// Removes and returns dormant fluid belonging to an area
+    pub fn take_dormant_fluid_particles(
+        &mut self,
+        area: TileArea,
+    ) -> Vec<ChunkFluidParticle> {
+        // ponytail: linear sparse scan; index by local tile if dormant chunk density becomes costly
+        let mut particles: Vec<ChunkFluidParticle> = Vec::new();
+        let mut index: usize = 0;
+        while index < self.dormant_fluid_particles.len() {
+            if area.contains(self.dormant_fluid_particles[index].tile_coordinates()) {
+                particles.push(self.dormant_fluid_particles.swap_remove(index));
+            } else {
+                index += 1;
+            }
+        }
+        particles
+    }
+
+    /// Adds an authoritative dormant particle according to its current world position
+    pub fn insert_dormant_fluid_particle(
+        &mut self,
+        particle: ChunkFluidParticle,
+    ) -> Result<(), ()> {
+        if particle.tile_coordinates().chunk_coordinates() != self.tile_coordinates {
+            return Err(());
+        }
+        self.dormant_fluid_particles.push(particle);
+        Ok(())
+    }
+
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+    use crate::materials::MaterialForm;
+
+    #[test]
+    fn dormant_fluid_round_trips_and_old_chunks_remain_readable() {
+        let coordinates: TileCoordinates = TileCoordinates { x: -64, y: -64 };
+        let mut chunk: Chunk = Chunk::new_empty(coordinates);
+        let particle: ChunkFluidParticle = ChunkFluidParticle {
+            material_identifier: MaterialIdentifier::new(MaterialForm::Fluid, 7),
+            position: [-0.25, -63.5],
+            velocity: [1.25, -2.5],
+        };
+        chunk.insert_dormant_fluid_particle(particle).unwrap();
+        let mut bytes: Vec<u8> = Vec::new();
+        chunk.serialize(&mut bytes).unwrap();
+        let mut reader: &[u8] = &bytes;
+        let mut loaded: Chunk = Chunk::deserialize(&mut reader).unwrap();
+        let loaded_particles: Vec<ChunkFluidParticle> = loaded.take_dormant_fluid_particles(
+            TileArea::new(TileCoordinates { x: -1, y: -64 }, 1, 1),
+        );
+        assert!(loaded_particles.len() == 1);
+        assert!(loaded_particles[0].material_identifier == particle.material_identifier);
+        assert!(loaded_particles[0].position == particle.position);
+        assert!(loaded_particles[0].velocity == particle.velocity);
+
+        bytes.truncate(16 + 4096 * TileData::SERIALIZED_SIZE);
+        let mut old_reader: &[u8] = &bytes;
+        let old_chunk: Chunk = Chunk::deserialize(&mut old_reader).unwrap();
+        assert!(old_chunk.dormant_fluid_particles.is_empty());
     }
 
 }

@@ -1,5 +1,6 @@
 // Copyright Rob Gage 2026
 
+mod cell_particle;
 mod cellular_collision;
 mod cellular_physics_body_proxy;
 mod collision_readback_slot;
@@ -12,6 +13,7 @@ mod scene_simulation;
 mod scene_simulation_configuration;
 mod scene_physics_world;
 
+pub use cell_particle::CellParticle;
 pub use cellular_collision::CellularCollision;
 pub use cellular_physics_body_proxy::CellularPhysicsBodyProxy;
 pub use collision_occupancy_snapshot::CollisionOccupancySnapshot;

@@ -2,7 +2,7 @@
 
 struct Particle {
     material_identifier: u32,
-    padding: u32,
+    is_active: u32,
     position: vec2<f32>,
     velocity: vec2<f32>,
     padding_2: vec2<u32>,
@@ -11,8 +11,12 @@ struct Particle {
 struct Parameters {
     buffered_origin: vec2<i32>,
     buffered_tile_size: vec2<u32>,
+    active_origin: vec2<i32>,
+    active_tile_size: vec2<u32>,
     ring_offset: vec2<u32>,
     bucket_dimensions: vec2<u32>,
+    streaming_origin: vec2<i32>,
+    streaming_tile_size: vec2<u32>,
     gravity: vec2<f32>,
     delta_time: f32,
     particle_capacity: u32,
@@ -42,6 +46,9 @@ struct Parameters {
 @group(0) @binding(14) var<storage, read_write> lambdas: array<f32>;
 @group(0) @binding(15) var<storage, read_write> position_corrections: array<vec2<f32>>;
 @group(0) @binding(16) var<storage, read> fluid_material_properties: array<vec4<f32>>;
+@group(0) @binding(17) var<storage, read_write> streaming_particles: array<Particle>;
+@group(0) @binding(18) var<storage, read_write> streaming_count: array<atomic<u32>>;
+@group(0) @binding(19) var<storage, read_write> streaming_results: array<u32>;
 
 const EMPTY: u32 = 0u;
 const INVALID_INDEX: u32 = 0xffffffffu;
@@ -49,6 +56,7 @@ const FLUID_FORM: u32 = 3u;
 const CELLS_PER_TILE: f32 = 8.0;
 const PI: f32 = 3.141592653589793;
 const PBF_SUBSTEP_COUNT: f32 = 2.0;
+const PBF_CONSTRAINT_ITERATION_COUNT: f32 = 4.0;
 const CONSTRAINT_EPSILON: f32 = 0.01;
 const ARTIFICIAL_PRESSURE_DELTA_Q_RATIO: f32 = 0.3;
 const MAXIMUM_CORRECTION_CELLS: f32 = 0.25;
@@ -91,6 +99,19 @@ fn clear_fluid_edits(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if invocation.x < parameters.buffered_cell_count { edit_cells[invocation.x] = EMPTY; }
 }
 
+// Freezes active-area membership for all substeps in this fixed tick
+@compute @workgroup_size(64)
+fn classify_active_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let particle_index: u32 = invocation.x;
+    if particle_index >= parameters.particle_capacity ||
+            particles[particle_index].material_identifier == EMPTY { return; }
+    particles[particle_index].is_active = select(
+        0u,
+        1u,
+        position_is_active(particles[particle_index].position),
+    );
+}
+
 // Predicts one PBF substep while retaining the previous authoritative position for velocity reconstruction
 @compute @workgroup_size(64)
 fn predict_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>) {
@@ -98,6 +119,12 @@ fn predict_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>)
     if particle_index >= parameters.particle_capacity ||
             particles[particle_index].material_identifier == EMPTY { return; }
     var particle: Particle = particles[particle_index];
+    if particle.is_active == 0u {
+        if position_supports_active_buckets(particle.position) {
+            predicted_positions[particle_index] = particle.position;
+        }
+        return;
+    }
     let substep_dt: f32 = parameters.delta_time / PBF_SUBSTEP_COUNT;
     particle.velocity += parameters.gravity * substep_dt;
     let maximum_speed: f32 = f32(parameters.maximum_movement_cells) /
@@ -135,10 +162,7 @@ fn insert_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>) 
     if particle_index >= parameters.particle_capacity ||
             particles[particle_index].material_identifier == EMPTY { return; }
     let bucket: u32 = bucket_index(particles[particle_index].position);
-    if bucket == INVALID_INDEX {
-        release_particle(particle_index);
-        return;
-    }
+    if bucket == INVALID_INDEX { return; }
     next_particle[particle_index] = atomicExchange(&bucket_heads[bucket], particle_index);
 }
 
@@ -148,6 +172,7 @@ fn insert_predicted_fluid_particles(@builtin(global_invocation_id) invocation: v
     let particle_index: u32 = invocation.x;
     if particle_index >= parameters.particle_capacity ||
             particles[particle_index].material_identifier == EMPTY { return; }
+    if !position_supports_active_buckets(particles[particle_index].position) { return; }
     let bucket: u32 = bucket_index(predicted_positions[particle_index]);
     if bucket == INVALID_INDEX { return; }
     next_particle[particle_index] = atomicExchange(&bucket_heads[bucket], particle_index);
@@ -160,6 +185,7 @@ fn calculate_fluid_lambdas(@builtin(global_invocation_id) invocation: vec3<u32>)
     if particle_index >= parameters.particle_capacity ||
             particles[particle_index].material_identifier == EMPTY { return; }
     let position: vec2<f32> = predicted_positions[particle_index];
+    if !position_supports_active_lambdas(position) { return; }
     let rest_density: f32 = fluid_properties_for(particles[particle_index].material_identifier).x;
     let base_bucket: vec2<i32> = bucket_coordinates(position);
     var density: f32 = poly6_kernel(0.0);
@@ -203,6 +229,7 @@ fn calculate_fluid_position_corrections(@builtin(global_invocation_id) invocatio
     let particle_index: u32 = invocation.x;
     if particle_index >= parameters.particle_capacity ||
             particles[particle_index].material_identifier == EMPTY { return; }
+    if particles[particle_index].is_active == 0u { return; }
     let position: vec2<f32> = predicted_positions[particle_index];
     let base_bucket: vec2<i32> = bucket_coordinates(position);
     var correction_cells: vec2<f32> = vec2<f32>(0.0);
@@ -243,6 +270,7 @@ fn apply_fluid_position_corrections(@builtin(global_invocation_id) invocation: v
     let particle_index: u32 = invocation.x;
     if particle_index >= parameters.particle_capacity ||
             particles[particle_index].material_identifier == EMPTY { return; }
+    if particles[particle_index].is_active == 0u { return; }
     let corrected: vec2<f32> = predicted_positions[particle_index] +
         position_corrections[particle_index];
     predicted_positions[particle_index] = resolve_particle_collisions(
@@ -258,11 +286,9 @@ fn commit_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>) 
     let particle_index: u32 = invocation.x;
     if particle_index >= parameters.particle_capacity ||
             particles[particle_index].material_identifier == EMPTY { return; }
+    if particles[particle_index].is_active == 0u { return; }
     let position: vec2<f32> = predicted_positions[particle_index];
-    if !position_is_resident(position) {
-        release_particle(particle_index);
-        return;
-    }
+    if !position_is_resident(position) { return; }
     let substep_dt: f32 = parameters.delta_time / PBF_SUBSTEP_COUNT;
     var velocity: vec2<f32> = (position - particles[particle_index].position) / substep_dt;
     let maximum_speed: f32 = f32(parameters.maximum_movement_cells) /
@@ -280,6 +306,7 @@ fn calculate_fluid_velocity_smoothing(@builtin(global_invocation_id) invocation:
     if particle_index >= parameters.particle_capacity ||
             particles[particle_index].material_identifier == EMPTY { return; }
     let particle: Particle = particles[particle_index];
+    if particle.is_active == 0u { return; }
     let base_bucket: vec2<i32> = bucket_coordinates(particle.position);
     var difference_sum: vec2<f32> = vec2<f32>(0.0);
     var weight_sum: f32 = 0.0;
@@ -315,7 +342,37 @@ fn apply_fluid_velocity_smoothing(@builtin(global_invocation_id) invocation: vec
     let particle_index: u32 = invocation.x;
     if particle_index >= parameters.particle_capacity ||
             particles[particle_index].material_identifier == EMPTY { return; }
+    if particles[particle_index].is_active == 0u { return; }
     particles[particle_index].velocity += position_corrections[particle_index];
+}
+
+// Transfers exact authoritative records out before their world tiles leave residency
+@compute @workgroup_size(64)
+fn export_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let particle_index: u32 = invocation.x;
+    if particle_index >= parameters.particle_capacity ||
+            particles[particle_index].material_identifier == EMPTY { return; }
+    let tile: vec2<i32> = vec2<i32>(floor(particles[particle_index].position));
+    let relative: vec2<i32> = tile - parameters.streaming_origin;
+    if any(relative < vec2<i32>(0)) || relative.x >= i32(parameters.streaming_tile_size.x) ||
+            relative.y >= i32(parameters.streaming_tile_size.y) { return; }
+    let output_index: u32 = atomicAdd(&streaming_count[0], 1u);
+    streaming_particles[output_index] = particles[particle_index];
+    release_particle(particle_index);
+}
+
+// Reclaims authoritative GPU slots and records each claim result for asynchronous ownership transfer
+@compute @workgroup_size(64)
+fn import_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let input_index: u32 = invocation.x;
+    if input_index >= atomicLoad(&streaming_count[0]) { return; }
+    let particle_index: u32 = claim_free_particle();
+    if particle_index == INVALID_INDEX {
+        streaming_results[input_index] = 0u;
+        return;
+    }
+    particles[particle_index] = streaming_particles[input_index];
+    streaming_results[input_index] = 1u;
 }
 
 // Each cell gathers its own result, so particles never contend for derived-cell writes
@@ -492,6 +549,39 @@ fn position_is_resident(position: vec2<f32>) -> bool {
     return all(relative >= vec2<f32>(0.0)) &&
         relative.x < f32(parameters.buffered_tile_size.x) &&
         relative.y < f32(parameters.buffered_tile_size.y);
+}
+
+fn position_is_active(position: vec2<f32>) -> bool {
+    let relative: vec2<f32> = position - vec2<f32>(parameters.active_origin);
+    return all(relative >= vec2<f32>(0.0)) &&
+        relative.x < f32(parameters.active_tile_size.x) &&
+        relative.y < f32(parameters.active_tile_size.y);
+}
+
+// Neighbor lambdas need one support radius beyond particles that directly support active fluid.
+fn position_supports_active_buckets(position: vec2<f32>) -> bool {
+    let predicted_movement_cells: f32 = f32(parameters.maximum_movement_cells) /
+        PBF_SUBSTEP_COUNT + MAXIMUM_CORRECTION_CELLS * PBF_CONSTRAINT_ITERATION_COUNT;
+    return position_is_within_active_padding(
+        (parameters.support_radius_cells * 2.0 + predicted_movement_cells) / CELLS_PER_TILE,
+        position,
+    );
+}
+
+fn position_supports_active_lambdas(position: vec2<f32>) -> bool {
+    let predicted_movement_cells: f32 = f32(parameters.maximum_movement_cells) /
+        PBF_SUBSTEP_COUNT + MAXIMUM_CORRECTION_CELLS * PBF_CONSTRAINT_ITERATION_COUNT;
+    return position_is_within_active_padding(
+        (parameters.support_radius_cells + predicted_movement_cells) / CELLS_PER_TILE,
+        position,
+    );
+}
+
+fn position_is_within_active_padding(padding: f32, position: vec2<f32>) -> bool {
+    let minimum: vec2<f32> = vec2<f32>(parameters.active_origin) - vec2<f32>(padding);
+    let maximum: vec2<f32> = vec2<f32>(parameters.active_origin) +
+        vec2<f32>(parameters.active_tile_size) + vec2<f32>(padding);
+    return all(position >= minimum) && all(position < maximum);
 }
 
 fn bucket_coordinates(position: vec2<f32>) -> vec2<i32> {

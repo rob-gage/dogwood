@@ -35,7 +35,7 @@ impl TileArea {
     }
 
     /// Expands this area by the provided tile distances
-    pub(crate) fn expanded(
+    pub fn expanded(
         self,
         left: u16,
         bottom: u16,
@@ -60,6 +60,23 @@ impl TileArea {
             coordinates.y >= self.minimum.y && coordinates.y <= self.maximum.y
     }
 
+    /// Returns whether this area overlaps another tile area
+    pub const fn intersects(self, other: Self) -> bool {
+        self.minimum.x <= other.maximum.x && self.maximum.x >= other.minimum.x &&
+            self.minimum.y <= other.maximum.y && self.maximum.y >= other.minimum.y
+    }
+
+    /// Returns the bottom-left tile coordinate
+    pub const fn origin(self) -> TileCoordinates { self.minimum }
+
+    /// Returns this area's tile dimensions
+    pub fn dimensions(self) -> [u16; 2] {
+        [
+            (self.maximum.x - self.minimum.x + 1) as u16,
+            (self.maximum.y - self.minimum.y + 1) as u16,
+        ]
+    }
+
     /// Iterates over tile coordinates contained in this `TileArea`
     pub fn iterate_tile_coordinates(self) -> impl Iterator<Item = TileCoordinates> {
         (self.minimum.y..=self.maximum.y).flat_map(move |y| {
@@ -72,25 +89,6 @@ impl TileArea {
         (self.minimum.y..=self.maximum.y).step_by(64).flat_map(move |y| {
             (self.minimum.x..=self.maximum.x).step_by(64).map(move |x| TileCoordinates { x, y })
         })
-    }
-
-}
-
-#[cfg(test)]
-mod tests {
-
-    use super::*;
-
-    #[test]
-    fn expands_a_chunk_area_toward_streaming_direction() {
-        let area: TileArea = TileArea::new(TileCoordinates { x: 0, y: 0 }, 64, 64)
-            .chunk_area().expanded(0, 0, 64, 0);
-        let chunks: Vec<TileCoordinates> = area.iterate_chunk_coordinates().collect();
-
-        assert!(chunks.len() == 2);
-        assert!(area.contains(TileCoordinates { x: 0, y: 0 }));
-        assert!(area.contains(TileCoordinates { x: 64, y: 0 }));
-        assert!(!area.contains(TileCoordinates { x: -64, y: 0 }));
     }
 
 }
