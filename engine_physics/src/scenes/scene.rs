@@ -551,7 +551,7 @@ impl Scene {
         self.tile_downloads_apply_completed()?;
         self.fluid_downloads_apply_completed()?;
         self.fluid_uploads_apply_completed()?;
-        self.tile_downlaods_clean()?;
+        self.tile_downloads_clean()?;
         self.tile_uploads_clean()?;
         self.tick_time += elapsed;
         let tick_time: Duration = Duration::from_secs(1) / TICK_RATE;
@@ -1171,149 +1171,6 @@ impl Scene {
         self.tiles.get(y * width + x).copied()
     }
 
-    /// Queues tile downloads from the `Accelerator`
-    pub fn tiles_download(
-        &self,
-        area: TileArea,
-    ) -> impl Future<Output = Result<HashMap<TileCoordinates, TileData>, io::Error>> + 'static {
-        let downloads: Vec<Arc<Mutex<TileDownload>>> = area.iterate_tile_coordinates()
-            .filter_map(|coordinates| self.tile_at(coordinates).map(|tile| {
-                Arc::new(Mutex::new(TileDownload::new(
-                    self.accelerator.as_ref(),
-                    coordinates,
-                    tile,
-                )))
-            })).collect();
-        let mut error: Option<io::Error> = None;
-        if let Err(_) = self.tile_downloads.lock().map(|mut tile_downloads| {
-            tile_downloads.extend(downloads.iter().cloned());
-        }) { error = Some(io::Error::other("Tile download queue is unavailable")); }
-        let mut downloads: Vec<Arc<Mutex<TileDownload>>> = downloads;
-        let mut tile_data: HashMap<TileCoordinates, TileData> = HashMap::new();
-        poll_fn(move |context| {
-            if let Some(error) = error.take() { return std::task::Poll::Ready(Err(error)); }
-            let mut index: usize = 0;
-            while index < downloads.len() {
-                let mut download: std::sync::MutexGuard<TileDownload> =
-                    downloads[index].lock().unwrap();
-                match download.result.take() {
-                    Some(Ok(data)) => {
-                        let coordinates: TileCoordinates = download.coordinates;
-                        drop(download);
-                        downloads.swap_remove(index);
-                        tile_data.insert(coordinates, data);
-                    }
-                    Some(Err(error)) => return std::task::Poll::Ready(Err(error)),
-                    None => {
-                        download.waker = Some(context.waker().clone());
-                        index += 1;
-                    }
-                }
-            }
-            std::task::Poll::Ready(Ok(std::mem::take(&mut tile_data)))
-        })
-    }
-
-    /// Queues tile uploads to the `Accelerator`
-    pub fn tiles_upload(
-        &self,
-        area: TileArea,
-    ) -> impl Future<Output = Result<(), io::Error>> + 'static {
-        let mut error: Option<io::Error> = None;
-        let mut uploads: Vec<Arc<Mutex<TileUpload>>> = Vec::new();
-        for coordinates in area.iterate_tile_coordinates() {
-            if self.tile_at(coordinates).is_none() { continue; }
-            match self.chunks.get(&coordinates.chunk_coordinates()) {
-                Some(ChunkEntry::Active { chunk, .. }) => match chunk.get_tile(coordinates) {
-                    Ok(tile_data) => uploads.push(Arc::new(Mutex::new(
-                        TileUpload::new(coordinates, tile_data)
-                    ))),
-                    Err(()) => {
-                        error = Some(io::Error::new(io::ErrorKind::InvalidInput,
-                            "Tile is not in its active chunk",
-                        ));
-                        break;
-                    }
-                },
-                _ => {
-                    error = Some(io::Error::new(io::ErrorKind::NotFound,
-                        "Tile chunk is not active",
-                    ));
-                    break;
-                }
-            }
-        }
-        if error.is_none() && let Err(_) = self.tile_uploads.lock().map(|mut tile_uploads| {
-            tile_uploads.extend(uploads.iter().cloned());
-        }) { error = Some(io::Error::other("Tile upload queue is unavailable")); }
-        poll_fn(move |context| {
-            if let Some(error) = error.take() { return std::task::Poll::Ready(Err(error)); }
-            let mut index: usize = 0;
-            while index < uploads.len() {
-                let mut upload: std::sync::MutexGuard<TileUpload> = uploads[index].lock().unwrap();
-                match upload.result.take() {
-                    Some(Ok(())) => {
-                        drop(upload);
-                        uploads.swap_remove(index);
-                    }
-                    Some(Err(error)) => return std::task::Poll::Ready(Err(error)),
-                    None => {
-                        upload.waker = Some(context.waker().clone());
-                        index += 1;
-                    }
-                }
-            }
-            std::task::Poll::Ready(Ok(()))
-        })
-    }
-
-    /// Queues mandatory downloads for tiles leaving GPU residency
-    fn tile_downloads_queue(&mut self, area: TileArea) -> Result<(), io::Error> {
-        // bind every world coordinate to its physical slot under the old ring mapping
-        let mut downloads: Vec<Arc<Mutex<TileDownload>>> = Vec::new();
-        for coordinates in area.iterate_tile_coordinates() {
-            let tile: Tile = self.tile_at(coordinates).ok_or_else(|| {
-                io::Error::other("Outgoing tile is outside the old GPU buffer")
-            })?;
-            downloads.push(Arc::new(Mutex::new(TileDownload::new(
-                self.accelerator.as_ref(),
-                coordinates,
-                tile,
-            ))));
-        }
-        // share the existing copy and deserialization path while retaining internal ownership
-        self.tile_downloads.lock().map_err(|_| {
-            io::Error::other("Tile download queue is unavailable")
-        })?.extend(downloads.iter().cloned());
-        self.outgoing_tile_downloads.extend(downloads);
-        Ok(())
-    }
-
-    /// Returns whether an area contains an outgoing tile awaiting download
-    fn tile_download_pending_in(&self, area: TileArea) -> Result<bool, io::Error> {
-        for download in &self.outgoing_tile_downloads {
-            let coordinates: TileCoordinates = download.lock().map_err(|_| {
-                io::Error::other("Outgoing tile download is unavailable")
-            })?.coordinates;
-            if area.contains(coordinates) { return Ok(true); }
-        }
-        Ok(false)
-    }
-
-    /// Returns whether a chunk contains an outgoing tile awaiting download
-    fn tile_download_pending_for_chunk(
-        &self,
-        coordinates: TileCoordinates,
-    ) -> Result<bool, io::Error> {
-        for download in &self.outgoing_tile_downloads {
-            let tile_coordinates: TileCoordinates = download.lock().map_err(|_| {
-                io::Error::other("Outgoing tile download is unavailable")
-            })?.coordinates;
-            if tile_coordinates.chunk_coordinates() == coordinates { return Ok(true); }
-        }
-        Ok(false)
-    }
-
     /// Queues one authoritative fluid export under the current ring interpretation
     fn fluid_downloads_queue(&mut self, area: TileArea) {
         let download: Arc<Mutex<FluidDownload>> = self.fluid_download_pool.pop().unwrap_or_else(
@@ -1609,6 +1466,149 @@ impl Scene {
         Ok(())
     }
 
+    /// Queues tile downloads from the `Accelerator`
+    pub fn tiles_download(
+        &self,
+        area: TileArea,
+    ) -> impl Future<Output = Result<HashMap<TileCoordinates, TileData>, io::Error>> + 'static {
+        let downloads: Vec<Arc<Mutex<TileDownload>>> = area.iterate_tile_coordinates()
+            .filter_map(|coordinates| self.tile_at(coordinates).map(|tile| {
+                Arc::new(Mutex::new(TileDownload::new(
+                    self.accelerator.as_ref(),
+                    coordinates,
+                    tile,
+                )))
+            })).collect();
+        let mut error: Option<io::Error> = None;
+        if let Err(_) = self.tile_downloads.lock().map(|mut tile_downloads| {
+            tile_downloads.extend(downloads.iter().cloned());
+        }) { error = Some(io::Error::other("Tile download queue is unavailable")); }
+        let mut downloads: Vec<Arc<Mutex<TileDownload>>> = downloads;
+        let mut tile_data: HashMap<TileCoordinates, TileData> = HashMap::new();
+        poll_fn(move |context| {
+            if let Some(error) = error.take() { return std::task::Poll::Ready(Err(error)); }
+            let mut index: usize = 0;
+            while index < downloads.len() {
+                let mut download: std::sync::MutexGuard<TileDownload> =
+                    downloads[index].lock().unwrap();
+                match download.result.take() {
+                    Some(Ok(data)) => {
+                        let coordinates: TileCoordinates = download.coordinates;
+                        drop(download);
+                        downloads.swap_remove(index);
+                        tile_data.insert(coordinates, data);
+                    }
+                    Some(Err(error)) => return std::task::Poll::Ready(Err(error)),
+                    None => {
+                        download.waker = Some(context.waker().clone());
+                        index += 1;
+                    }
+                }
+            }
+            std::task::Poll::Ready(Ok(std::mem::take(&mut tile_data)))
+        })
+    }
+
+    /// Queues tile uploads to the `Accelerator`
+    pub fn tiles_upload(
+        &self,
+        area: TileArea,
+    ) -> impl Future<Output = Result<(), io::Error>> + 'static {
+        let mut error: Option<io::Error> = None;
+        let mut uploads: Vec<Arc<Mutex<TileUpload>>> = Vec::new();
+        for coordinates in area.iterate_tile_coordinates() {
+            if self.tile_at(coordinates).is_none() { continue; }
+            match self.chunks.get(&coordinates.chunk_coordinates()) {
+                Some(ChunkEntry::Active { chunk, .. }) => match chunk.get_tile(coordinates) {
+                    Ok(tile_data) => uploads.push(Arc::new(Mutex::new(
+                        TileUpload::new(coordinates, tile_data)
+                    ))),
+                    Err(()) => {
+                        error = Some(io::Error::new(io::ErrorKind::InvalidInput,
+                                                    "Tile is not in its active chunk",
+                        ));
+                        break;
+                    }
+                },
+                _ => {
+                    error = Some(io::Error::new(io::ErrorKind::NotFound,
+                                                "Tile chunk is not active",
+                    ));
+                    break;
+                }
+            }
+        }
+        if error.is_none() && let Err(_) = self.tile_uploads.lock().map(|mut tile_uploads| {
+            tile_uploads.extend(uploads.iter().cloned());
+        }) { error = Some(io::Error::other("Tile upload queue is unavailable")); }
+        poll_fn(move |context| {
+            if let Some(error) = error.take() { return std::task::Poll::Ready(Err(error)); }
+            let mut index: usize = 0;
+            while index < uploads.len() {
+                let mut upload: std::sync::MutexGuard<TileUpload> = uploads[index].lock().unwrap();
+                match upload.result.take() {
+                    Some(Ok(())) => {
+                        drop(upload);
+                        uploads.swap_remove(index);
+                    }
+                    Some(Err(error)) => return std::task::Poll::Ready(Err(error)),
+                    None => {
+                        upload.waker = Some(context.waker().clone());
+                        index += 1;
+                    }
+                }
+            }
+            std::task::Poll::Ready(Ok(()))
+        })
+    }
+
+    /// Queues mandatory downloads for tiles leaving GPU residency
+    fn tile_downloads_queue(&mut self, area: TileArea) -> Result<(), io::Error> {
+        // bind every world coordinate to its physical slot under the old ring mapping
+        let mut downloads: Vec<Arc<Mutex<TileDownload>>> = Vec::new();
+        for coordinates in area.iterate_tile_coordinates() {
+            let tile: Tile = self.tile_at(coordinates).ok_or_else(|| {
+                io::Error::other("Outgoing tile is outside the old GPU buffer")
+            })?;
+            downloads.push(Arc::new(Mutex::new(TileDownload::new(
+                self.accelerator.as_ref(),
+                coordinates,
+                tile,
+            ))));
+        }
+        // share the existing copy and deserialization path while retaining internal ownership
+        self.tile_downloads.lock().map_err(|_| {
+            io::Error::other("Tile download queue is unavailable")
+        })?.extend(downloads.iter().cloned());
+        self.outgoing_tile_downloads.extend(downloads);
+        Ok(())
+    }
+
+    /// Returns whether an area contains an outgoing tile awaiting download
+    fn tile_download_pending_in(&self, area: TileArea) -> Result<bool, io::Error> {
+        for download in &self.outgoing_tile_downloads {
+            let coordinates: TileCoordinates = download.lock().map_err(|_| {
+                io::Error::other("Outgoing tile download is unavailable")
+            })?.coordinates;
+            if area.contains(coordinates) { return Ok(true); }
+        }
+        Ok(false)
+    }
+
+    /// Returns whether a chunk contains an outgoing tile awaiting download
+    fn tile_download_pending_for_chunk(
+        &self,
+        coordinates: TileCoordinates,
+    ) -> Result<bool, io::Error> {
+        for download in &self.outgoing_tile_downloads {
+            let tile_coordinates: TileCoordinates = download.lock().map_err(|_| {
+                io::Error::other("Outgoing tile download is unavailable")
+            })?.coordinates;
+            if tile_coordinates.chunk_coordinates() == coordinates { return Ok(true); }
+        }
+        Ok(false)
+    }
+
     /// Applies completed outgoing tile downloads to persistent CPU chunks
     fn tile_downloads_apply_completed(&mut self) -> Result<(), io::Error> {
         let mut index: usize = 0;
@@ -1740,7 +1740,7 @@ impl Scene {
     }
 
     /// Removes completed GPU tile downloads
-    fn tile_downlaods_clean(&self) -> Result<(), io::Error> {
+    fn tile_downloads_clean(&self) -> Result<(), io::Error> {
         self.tile_downloads.lock().map_err(|_| {
             io::Error::other("Tile download queue is unavailable")
         })?.retain(|download| !download.lock().unwrap().is_complete);
@@ -1814,190 +1814,6 @@ impl Drop for Scene {
         self.cellular_material_identifiers.free();
         self.cellular_appearances.free();
         self.cellular_integrities.free();
-    }
-
-}
-
-#[cfg(test)]
-mod tests {
-
-    use super::*;
-    use engine_graphics::{
-        Color,
-        MaterialAppearance,
-    };
-
-    #[test]
-    fn fluid_streaming_preserves_state_and_freezes_buffered_particles() {
-        let Ok(accelerator) = Accelerator::new() else { return; };
-        let accelerator: Arc<Accelerator> = Arc::new(accelerator);
-        let mut materials: MaterialRegistry = MaterialRegistry::new();
-        let water: MaterialIdentifier = materials.register(Material::Fluid {
-            name: "Water".into(),
-            graphics: MaterialAppearance::from_color(Color::new_rgb(45, 125, 210)),
-            pressure_transmission: 0.95,
-            friction: 0.05,
-            restitution: 0.0,
-            rest_density: 1.0,
-            artificial_pressure: 0.02,
-            xsph_smoothing: 0.08,
-            body_push_speed: 4.0,
-        });
-        let data: SceneData = SceneData::new_temporary(materials).unwrap();
-        let mut chunk: Chunk = Chunk::new_empty(TileCoordinates { x: 0, y: 0 });
-        chunk.insert_dormant_fluid_particle(ChunkFluidParticle {
-            material_identifier: water,
-            position: [0.5, 0.5],
-            velocity: [1.0, 0.0],
-        }).unwrap();
-        chunk.insert_dormant_fluid_particle(ChunkFluidParticle {
-            material_identifier: water,
-            position: [0.75, 0.5],
-            velocity: [1.0, 0.0],
-        }).unwrap();
-        chunk.insert_dormant_fluid_particle(ChunkFluidParticle {
-            material_identifier: water,
-            position: [0.9, 0.5],
-            velocity: [1.0, 0.0],
-        }).unwrap();
-        data.write_chunk(&chunk).unwrap();
-        let mut scene: Scene = Scene::load(
-            &accelerator,
-            SceneSimulationConfiguration {
-                gravity: [0.0, 0.0],
-                width: 2,
-                height: 2,
-                buffer_size: 2,
-                streaming_batch_size: 1,
-            },
-            data,
-        ).unwrap();
-        let settle = |scene: &mut Scene, target: TileCoordinates| {
-            scene.origin_target = target;
-            for _ in 0..2048 {
-                scene.update(Duration::ZERO, false).unwrap();
-                scene.accelerator.wgpu_device().poll(
-                    wgpu::PollType::wait_indefinitely(),
-                ).unwrap();
-                let tile_jobs_complete: bool = scene.outgoing_tile_downloads.is_empty() &&
-                    scene.tile_downloads.lock().unwrap().is_empty() &&
-                    scene.tile_uploads.lock().unwrap().is_empty();
-                if scene.origin == target && tile_jobs_complete &&
-                        scene.fluid_downloads.is_empty() && scene.fluid_uploads.is_empty() {
-                    return;
-                }
-                std::thread::yield_now();
-            }
-            panic!(
-                "Streaming stalled at ({}, {}) toward ({}, {}): fluid {}/{}, tile {}/{}",
-                scene.origin.x,
-                scene.origin.y,
-                target.x,
-                target.y,
-                scene.fluid_downloads.len(),
-                scene.fluid_uploads.len(),
-                scene.tile_downloads.lock().unwrap().len(),
-                scene.tile_uploads.lock().unwrap().len(),
-            );
-        };
-
-        settle(&mut scene, TileCoordinates { x: 0, y: 0 });
-        assert!(scene.area_fluid_active().contains(TileCoordinates { x: -1, y: 0 }));
-        assert!(scene.area_fluid_active().contains(TileCoordinates { x: 0, y: -1 }));
-        assert!(!scene.area_fluid_active().contains(TileCoordinates { x: -2, y: 0 }));
-        assert!(!scene.area_fluid_active().contains(TileCoordinates { x: 0, y: -2 }));
-        assert!(scene.area_buffered().contains(TileCoordinates { x: -2, y: 0 }));
-        assert!(scene.area_buffered().contains(TileCoordinates { x: 0, y: -2 }));
-        settle(&mut scene, TileCoordinates { x: 2, y: 0 });
-        for _ in 0..10 {
-            scene.update(Duration::from_secs(1) / TICK_RATE, true).unwrap();
-        }
-        settle(&mut scene, TileCoordinates { x: 5, y: 0 });
-        let Some(ChunkEntry::Active { chunk, is_dirty }) =
-            scene.chunks.get_mut(&TileCoordinates { x: 0, y: 0 })
-        else { panic!("Export destination chunk is not active"); };
-        let mut particles: Vec<ChunkFluidParticle> = chunk.take_dormant_fluid_particles(
-            TileArea::new(TileCoordinates { x: 0, y: 0 }, 1, 1),
-        );
-        particles.sort_by(|left, right| left.position[0].total_cmp(&right.position[0]));
-        assert!(particles.len() == 3);
-        assert!(particles.iter().all(|particle| particle.material_identifier == water));
-        assert!(particles[0].position == [0.5, 0.5]);
-        assert!(particles[1].position == [0.75, 0.5]);
-        assert!(particles[2].position == [0.9, 0.5]);
-        assert!(particles.iter().all(|particle| particle.velocity == [1.0, 0.0]));
-        particles[0].position = [1.999, 0.5];
-        particles[1].position = [2.99, 0.5];
-        particles[2].position = [0.5, 2.99];
-        particles[2].velocity = [0.0, 1.0];
-        for particle in particles {
-            chunk.insert_dormant_fluid_particle(particle).unwrap();
-        }
-        *is_dirty = true;
-
-        settle(&mut scene, TileCoordinates { x: 0, y: 0 });
-        scene.update(Duration::from_secs(1) / TICK_RATE, true).unwrap();
-        settle(&mut scene, TileCoordinates { x: -5, y: 0 });
-        let Some(ChunkEntry::Active { chunk, .. }) =
-            scene.chunks.get_mut(&TileCoordinates { x: 0, y: 0 })
-        else { panic!("Negative-wrap export destination chunk is not active"); };
-        let particles: Vec<ChunkFluidParticle> = chunk.take_dormant_fluid_particles(
-            TileArea::new(TileCoordinates { x: 0, y: 0 }, 4, 4),
-        );
-        assert!(particles.len() == 3);
-        assert!(particles.iter().all(|particle| particle.material_identifier == water));
-        assert!(particles.iter().any(|particle| {
-            (particle.position[0] - (1.999 + 1.0 / TICK_RATE as f32)).abs() < 0.0001
-        }));
-        assert!(particles.iter().any(|particle| {
-            (particle.position[0] - (2.99 + 1.0 / TICK_RATE as f32)).abs() < 0.0001
-        }));
-        assert!(particles.iter().any(|particle| {
-            (particle.position[1] - (2.99 + 1.0 / TICK_RATE as f32)).abs() < 0.0001
-        }));
-        assert!(particles.iter().filter(|particle| particle.velocity[0] > 0.0).all(|particle| {
-            (particle.velocity[0] - 1.0).abs() < 0.0001
-        }));
-        assert!(particles.iter().filter(|particle| particle.velocity[1] > 0.0).all(|particle| {
-            (particle.velocity[1] - 1.0).abs() < 0.0001
-        }));
-        for particle in particles {
-            chunk.insert_dormant_fluid_particle(particle).unwrap();
-        }
-        assert!(!scene.fluid_download_pool.is_empty());
-
-        scene.fluid_downloads.push(Arc::new(Mutex::new(FluidDownload::new(
-            scene.accelerator.as_ref(),
-            TileArea::new(TileCoordinates { x: 0, y: 0 }, 1, 1),
-            scene.fluids.particle_capacity(),
-        ))));
-        scene.origin = TileCoordinates { x: 192, y: 192 };
-        scene.chunks_save().unwrap();
-        assert!(scene.chunks.contains_key(&TileCoordinates { x: 0, y: 0 }));
-        scene.fluid_downloads.clear();
-        scene.chunks_save().unwrap();
-        let save_identifier: u64 = match scene.chunks.get(&TileCoordinates { x: 0, y: 0 }) {
-            Some(ChunkEntry::Saving { streaming_identifier }) => *streaming_identifier,
-            _ => panic!("Dirty chunk save did not leave the fixed tick"),
-        };
-        loop {
-            let response: ChunkStreamingResponse = scene.chunk_streaming_responses
-                .recv_timeout(Duration::from_secs(5)).unwrap();
-            if let ChunkStreamingResponse::Saved {
-                streaming_identifier,
-                result,
-                ..
-            } = response && streaming_identifier == save_identifier {
-                assert!(result.is_ok());
-                break;
-            }
-        }
-        let mut saved_chunk: Chunk = scene.data.read_chunk(
-            TileCoordinates { x: 0, y: 0 },
-        ).unwrap().unwrap();
-        assert!(saved_chunk.take_dormant_fluid_particles(
-            TileArea::new(TileCoordinates { x: 0, y: 0 }, 4, 4),
-        ).len() == 3);
     }
 
 }

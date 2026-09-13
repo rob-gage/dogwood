@@ -85,6 +85,10 @@ pub struct Fluids {
     velocity_smoothing_pipeline: wgpu::ComputePipeline,
     /// Applies the completed velocity smoothing correction without neighbor races
     apply_velocity_smoothing_pipeline: wgpu::ComputePipeline,
+    /// Resolves fluid material contact response in the derived cellular representation
+    cell_contact_pipeline: wgpu::ComputePipeline,
+    /// Applies one derived-cell contact correction to each authoritative particle
+    apply_cell_contact_pipeline: wgpu::ComputePipeline,
     /// Gathers nearby particles into ring-aligned derived cell fields
     raster_pipeline: wgpu::ComputePipeline,
     /// Compacts and removes particles belonging to an outgoing tile strip
@@ -290,6 +294,10 @@ impl Fluids {
                 "fluid velocity smoothing pipeline"),
             apply_velocity_smoothing_pipeline: pipeline("apply_fluid_velocity_smoothing",
                 "fluid velocity smoothing application pipeline"),
+            cell_contact_pipeline: pipeline("resolve_fluid_cell_contacts",
+                "fluid cell contact pipeline"),
+            apply_cell_contact_pipeline: pipeline("apply_fluid_cell_contacts",
+                "fluid cell contact application pipeline"),
             raster_pipeline: pipeline("rasterize_fluid_cells", "fluid cellular raster pipeline"),
             export_pipeline: pipeline("export_fluid_particles", "fluid export pipeline"),
             import_pipeline: pipeline("import_fluid_particles", "fluid import pipeline"),
@@ -406,6 +414,12 @@ impl Fluids {
             self.particle_capacity, "apply fluid velocity smoothing");
         self.dispatch(&mut encoder, &self.raster_pipeline, self.buffered_cell_count,
             "rasterize derived fluid cells");
+        self.dispatch(&mut encoder, &self.cell_contact_pipeline, self.buffered_cell_count,
+            "resolve fluid cell contacts");
+        self.dispatch(&mut encoder, &self.apply_cell_contact_pipeline, self.particle_capacity,
+            "apply fluid cell contacts");
+        self.dispatch(&mut encoder, &self.raster_pipeline, self.buffered_cell_count,
+            "refresh contacted fluid cells");
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
 

@@ -51,8 +51,10 @@ impl MaterialRegistry {
                     (0.0..=1.0).contains(friction) && restitution.is_finite() &&
                     (0.0..=1.0).contains(restitution)
             ),
-            Material::Fluid { rest_density, artificial_pressure, xsph_smoothing,
-                body_push_speed, .. } => assert!(
+            Material::Fluid { friction, restitution, rest_density, artificial_pressure,
+                xsph_smoothing, body_push_speed, .. } => assert!(
+                friction.is_finite() && (0.0..=1.0).contains(friction) &&
+                restitution.is_finite() && (0.0..=1.0).contains(restitution) &&
                 rest_density.is_finite() && *rest_density > 0.0 &&
                 artificial_pressure.is_finite() && *artificial_pressure >= 0.0 &&
                 xsph_smoothing.is_finite() && (0.0..=1.0).contains(xsph_smoothing) &&

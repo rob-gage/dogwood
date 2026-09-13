@@ -49,9 +49,9 @@ pub enum Material {
         graphics: MaterialAppearance,
         /// Fraction of pressure that may leave this material each solver iteration
         pressure_transmission: f32,
-        /// Tangential contact damping for cellular mechanics
+        /// Tangential damping at solid contacts
         friction: f32,
-        /// Normal contact bounce retained by cellular mechanics
+        /// Normal velocity retained as bounce at solid contacts
         restitution: f32,
         /// PBF rest density in normalized particle units
         rest_density: f32,

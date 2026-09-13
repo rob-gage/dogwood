@@ -5,7 +5,7 @@ struct Particle {
     is_active: u32,
     position: vec2<f32>,
     velocity: vec2<f32>,
-    padding_2: vec2<u32>,
+    prediction_collision_displacement: vec2<f32>,
 }
 
 struct Parameters {
@@ -90,7 +90,7 @@ fn spawn_edited_fluid_particles(@builtin(global_invocation_id) invocation: vec3<
         0u,
         (vec2<f32>(cell) + vec2<f32>(0.5)) / CELLS_PER_TILE,
         vec2<f32>(0.0),
-        vec2<u32>(0u),
+        vec2<f32>(0.0),
     );
 }
 
@@ -127,6 +127,7 @@ fn predict_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>)
     }
     let substep_dt: f32 = parameters.delta_time / PBF_SUBSTEP_COUNT;
     particle.velocity += parameters.gravity * substep_dt;
+    particle.prediction_collision_displacement = vec2<f32>(0.0);
     let maximum_speed: f32 = f32(parameters.maximum_movement_cells) /
         (CELLS_PER_TILE * parameters.delta_time);
     let speed: f32 = length(particle.velocity);
@@ -137,13 +138,9 @@ fn predict_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>)
     var position: vec2<f32> = particle.position;
     for (var movement_step: u32 = 0u; movement_step < step_count; movement_step++) {
         position += particle.velocity * substep_dt / f32(step_count);
-        let resolved: vec4<f32> = resolve_particle_collisions(
-            position,
-            particle.velocity,
-            particle.material_identifier,
-        );
-        position = resolved.xy;
-        particle.velocity = resolved.zw;
+        let resolved: vec2<f32> = project_particle_position(position);
+        particle.prediction_collision_displacement += position - resolved;
+        position = resolved;
     }
     particles[particle_index] = particle;
     predicted_positions[particle_index] = position;
@@ -273,11 +270,7 @@ fn apply_fluid_position_corrections(@builtin(global_invocation_id) invocation: v
     if particles[particle_index].is_active == 0u { return; }
     let corrected: vec2<f32> = predicted_positions[particle_index] +
         position_corrections[particle_index];
-    predicted_positions[particle_index] = resolve_particle_collisions(
-        corrected,
-        particles[particle_index].velocity,
-        particles[particle_index].material_identifier,
-    ).xy;
+    predicted_positions[particle_index] = project_particle_position(corrected);
 }
 
 // Commits the corrected position and reconstructs velocity from the retained authoritative position
@@ -290,7 +283,8 @@ fn commit_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>) 
     let position: vec2<f32> = predicted_positions[particle_index];
     if !position_is_resident(position) { return; }
     let substep_dt: f32 = parameters.delta_time / PBF_SUBSTEP_COUNT;
-    var velocity: vec2<f32> = (position - particles[particle_index].position) / substep_dt;
+    var velocity: vec2<f32> = (position + particles[particle_index].prediction_collision_displacement -
+        particles[particle_index].position) / substep_dt;
     let maximum_speed: f32 = f32(parameters.maximum_movement_cells) /
         (CELLS_PER_TILE * parameters.delta_time);
     let speed: f32 = length(velocity);
@@ -344,6 +338,67 @@ fn apply_fluid_velocity_smoothing(@builtin(global_invocation_id) invocation: vec
             particles[particle_index].material_identifier == EMPTY { return; }
     if particles[particle_index].is_active == 0u { return; }
     particles[particle_index].velocity += position_corrections[particle_index];
+}
+
+// Resolves material response once per derived fluid cell after final XSPH smoothing
+@compute @workgroup_size(64)
+fn resolve_fluid_cell_contacts(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let logical_index: u32 = invocation.x;
+    if logical_index >= parameters.buffered_cell_count { return; }
+    let cell: vec2<i32> = world_cell_from_logical_index(logical_index);
+    let index: u32 = physical_cell_index(cell);
+    let material_identifier: u32 = derived_material_identifiers[index];
+    let initial_velocity: vec2<f32> = derived_velocity[index].xy;
+    if material_identifier == EMPTY {
+        derived_velocity[index] = vec4<f32>(initial_velocity, vec2<f32>(0.0));
+        return;
+    }
+    var velocity: vec2<f32> = initial_velocity;
+    let offsets: array<vec2<i32>, 4> = array<vec2<i32>, 4>(
+        vec2<i32>(-1, 0),
+        vec2<i32>(1, 0),
+        vec2<i32>(0, -1),
+        vec2<i32>(0, 1),
+    );
+    for (var neighbor_number: u32 = 0u; neighbor_number < 4u; neighbor_number++) {
+        let offset: vec2<i32> = offsets[neighbor_number];
+        let neighbor: u32 = physical_cell_index(cell + offset);
+        if neighbor == INVALID_INDEX || (cellular_material_identifiers[neighbor] == EMPTY &&
+                external_body_occupancy[neighbor] == EMPTY) { continue; }
+        var boundary_velocity: vec2<f32> = select(
+            vec2<f32>(0.0),
+            external_body_velocity[neighbor].xy,
+            external_body_occupancy[neighbor] != EMPTY,
+        );
+        let boundary_speed: f32 = length(boundary_velocity) * CELLS_PER_TILE;
+        let body_push_speed: f32 = fluid_properties_for(material_identifier).w;
+        if boundary_speed > body_push_speed {
+            boundary_velocity *= body_push_speed / boundary_speed;
+        }
+        velocity = apply_fluid_cell_contact_velocity(
+            velocity,
+            boundary_velocity,
+            -vec2<f32>(offset),
+            material_identifier,
+        );
+    }
+    derived_velocity[index] = vec4<f32>(initial_velocity, velocity - initial_velocity);
+}
+
+// Each authoritative particle consumes at most its center cell's one bulk correction
+@compute @workgroup_size(64)
+fn apply_fluid_cell_contacts(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let particle_index: u32 = invocation.x;
+    if particle_index >= parameters.particle_capacity ||
+            particles[particle_index].material_identifier == EMPTY { return; }
+    if particles[particle_index].is_active == 0u { return; }
+    let cell: vec2<i32> = vec2<i32>(floor(
+        particles[particle_index].position * CELLS_PER_TILE,
+    ));
+    let index: u32 = physical_cell_index(cell);
+    if index == INVALID_INDEX || derived_material_identifiers[index] !=
+            particles[particle_index].material_identifier { return; }
+    particles[particle_index].velocity += derived_velocity[index].zw;
 }
 
 // Transfers exact authoritative records out before their world tiles leave residency
@@ -457,13 +512,8 @@ fn fluid_contact_properties_for(material_identifier: u32) -> vec2<f32> {
     return fluid_material_properties[(material_identifier & 0x3fffffffu) * 2u + 1u].xy;
 }
 
-fn resolve_particle_collisions(
-    initial_position: vec2<f32>,
-    initial_velocity: vec2<f32>,
-    material_identifier: u32,
-) -> vec4<f32> {
+fn project_particle_position(initial_position: vec2<f32>) -> vec2<f32> {
     var position: vec2<f32> = initial_position;
-    var velocity: vec2<f32> = initial_velocity;
     let radius: f32 = parameters.particle_radius_cells / CELLS_PER_TILE;
     for (var iteration: u32 = 0u; iteration < 2u; iteration++) {
         let center_cell: vec2<i32> = vec2<i32>(floor(position * CELLS_PER_TILE));
@@ -499,32 +549,34 @@ fn resolve_particle_collisions(
                     penetration = radius + side;
                 }
                 position += normal * penetration;
-                var boundary_velocity: vec2<f32> = select(
-                    vec2<f32>(0.0), external_body_velocity[index].xy,
-                    external_body_occupancy[index] != EMPTY,
-                );
-                let boundary_speed: f32 = length(boundary_velocity) * CELLS_PER_TILE;
-                let body_push_speed: f32 = fluid_properties_for(material_identifier).w;
-                if boundary_speed > body_push_speed {
-                    boundary_velocity *= body_push_speed / boundary_speed;
-                }
-                var relative_velocity: vec2<f32> = velocity - boundary_velocity;
-                let inward_speed: f32 = dot(relative_velocity, normal);
-                if inward_speed < 0.0 {
-                    relative_velocity -= normal * inward_speed *
-                        (1.0 + fluid_contact_properties_for(material_identifier).y);
-                }
-                let normal_velocity: vec2<f32> = normal * dot(relative_velocity, normal);
-                relative_velocity -= (relative_velocity - normal_velocity) *
-                    fluid_contact_properties_for(material_identifier).x;
-                velocity = boundary_velocity + relative_velocity;
                 resolved = true;
                 break;
             }
         }
         if !resolved { break; }
     }
-    return vec4<f32>(position, velocity);
+    return position;
+}
+
+fn apply_fluid_cell_contact_velocity(
+    velocity: vec2<f32>,
+    boundary_velocity: vec2<f32>,
+    normal: vec2<f32>,
+    material_identifier: u32,
+) -> vec2<f32> {
+    let properties: vec2<f32> = clamp(
+        fluid_contact_properties_for(material_identifier),
+        vec2<f32>(0.0),
+        vec2<f32>(1.0),
+    );
+    var relative_velocity: vec2<f32> = velocity - boundary_velocity;
+    let inward_speed: f32 = dot(relative_velocity, normal);
+    if inward_speed < 0.0 {
+        relative_velocity -= normal * inward_speed * (1.0 + properties.y);
+    }
+    let normal_velocity: vec2<f32> = normal * dot(relative_velocity, normal);
+    relative_velocity -= (relative_velocity - normal_velocity) * properties.x;
+    return boundary_velocity + relative_velocity;
 }
 
 fn claim_free_particle() -> u32 {
