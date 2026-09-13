@@ -37,6 +37,8 @@ struct MaterialAppearance {
 
 @group(0) @binding(7) var<storage, read> fluid_coverage: array<f32>;
 
+const INVALID_INDEX: u32 = 0xffffffffu;
+
 // A fullscreen triangle delegates all scene lookup to the fragment shader
 @vertex
 fn vertex(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
@@ -72,8 +74,38 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let local = vec2<u32>(cell - tile * 8);
     let cell_index = tile_index * 64u + local.y * 8u + local.x;
     var material_identifier = cellular_material_identifiers[cell_index];
-    let is_fluid = material_identifier == 0u && fluid_coverage[cell_index] > 0.0;
-    if is_fluid { material_identifier = fluid_material_identifiers[cell_index]; }
+    var coverage: f32 = fluid_coverage[cell_index];
+    var fluid_material_identifier: u32 = fluid_material_identifiers[cell_index];
+    if material_identifier == 0u {
+        var neighbor_count: u32 = 0u;
+        var strongest_coverage: f32 = 0.0;
+        var strongest_material_identifier: u32 = 0u;
+        for (var offset_y: i32 = -1; offset_y <= 1; offset_y++) {
+            for (var offset_x: i32 = -1; offset_x <= 1; offset_x++) {
+                if offset_x == 0 && offset_y == 0 { continue; }
+                let neighbor_index: u32 = physical_cell_index(
+                    cell + vec2<i32>(offset_x, offset_y),
+                );
+                if neighbor_index == INVALID_INDEX || fluid_coverage[neighbor_index] <= 0.35 {
+                    continue;
+                }
+                neighbor_count += 1u;
+                if fluid_coverage[neighbor_index] > strongest_coverage {
+                    strongest_coverage = fluid_coverage[neighbor_index];
+                    strongest_material_identifier = fluid_material_identifiers[neighbor_index];
+                }
+            }
+        }
+        if neighbor_count >= 4u {
+            coverage = 1.0;
+            fluid_material_identifier = strongest_material_identifier;
+        } else if coverage == 0.0 && neighbor_count >= 2u {
+            coverage = strongest_coverage * 0.2;
+            fluid_material_identifier = strongest_material_identifier;
+        }
+    }
+    let is_fluid = material_identifier == 0u && coverage > 0.0;
+    if is_fluid { material_identifier = fluid_material_identifier; }
     if material_identifier == 0u { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }
     // select the material form and its base appearance
     let form = material_identifier >> 30u;
@@ -102,7 +134,17 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     );
     let result = clamp(base * (vec4<f32>(1.0) + sample * properties.color_influence),
         vec4<f32>(0.0), vec4<f32>(1.0));
-    return select(result, vec4<f32>(result.rgb * fluid_coverage[cell_index], 1.0), is_fluid);
+    return select(result, vec4<f32>(result.rgb * coverage, 1.0), is_fluid);
+}
+
+fn physical_cell_index(cell: vec2<i32>) -> u32 {
+    let tile = vec2<i32>(floor_divide(cell.x, 8), floor_divide(cell.y, 8));
+    let relative = tile - uniforms.buffered_origin;
+    if any(relative < vec2<i32>(0)) || relative.x >= i32(uniforms.buffered_tile_size.x) ||
+            relative.y >= i32(uniforms.buffered_tile_size.y) { return INVALID_INDEX; }
+    let physical = (vec2<u32>(relative) + uniforms.ring_offset) % uniforms.buffered_tile_size;
+    let local = vec2<u32>(cell - tile * 8);
+    return (physical.y * uniforms.buffered_tile_size.x + physical.x) * 64u + local.y * 8u + local.x;
 }
 
 // signed floor division keeps negative world coordinates in the correct tile

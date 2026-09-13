@@ -344,7 +344,7 @@ fn rasterize_fluid_cells(@builtin(global_invocation_id) invocation: vec3<u32>) {
                 let particle: Particle = particles[particle_index];
                 let distance_cells: f32 = length(particle.position * CELLS_PER_TILE - center);
                 // Support radius is for PBF neighbors; one particle should render as about one cell.
-                let particle_diameter: f32 = parameters.particle_radius_cells * 2.0;
+                let particle_diameter: f32 = 1.2;
                 let weight: f32 = max(0.0, 1.0 - distance_cells / particle_diameter);
                 if weight > 0.0 {
                     weight_sum += weight;
