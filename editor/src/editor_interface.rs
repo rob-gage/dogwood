@@ -52,8 +52,12 @@ impl EditorInterface {
         color: Color,
     ) -> bool {
         let response = ui.horizontal(|ui| {
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
-            ui.painter().rect_filled(rect, 3.0, egui::Color32::from_rgb(
+            let (row, _) = ui.allocate_exact_size(egui::vec2(16.0, 28.0), egui::Sense::hover());
+            let swatch = egui::Rect::from_center_size(
+                row.center(),
+                egui::vec2(16.0, 16.0),
+            );
+            ui.painter().rect_filled(swatch, 3.0, egui::Color32::from_rgb(
                 color.red(), color.green(), color.blue(),
             ));
             ui.add_sized(
