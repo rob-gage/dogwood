@@ -100,7 +100,7 @@ impl ActorRegistry {
     }
 
     /// Returns an actor position interpolated between its latest fixed ticks
-    pub(crate) fn get_render_position(
+    pub fn get_render_position(
         &self,
         identifier: Actor,
         interpolation: f32,
@@ -134,16 +134,17 @@ impl ActorRegistry {
         })
     }
 
-    /// Returns the possessed walking-pawn physics data needed by cellular interaction.
+    /// Returns the possessed walking-pawn data needed by the transient cellular proxy.
     pub fn walking_pawn_physics(
         &self,
         identifier: Actor,
-    ) -> Option<([f32; 2], [f32; 2], [f32; 2])> {
+    ) -> Option<([f32; 2], [f32; 2], [f32; 2], [f32; 2])> {
         let entity = self.world.get_entity(identifier.bevy_entity()).ok()?;
         let pawn = entity.get::<ActorPawn>()?;
         let walking = pawn.walking?;
         let position = *entity.get::<ScenePosition>()?;
         let velocity = *entity.get::<SceneVelocity>()?;
+        let state = entity.get::<ActorPawnWalkingState>()?;
         Some((
             [
                 position.tile_coordinates.x as f32 + position.x_offset,
@@ -151,6 +152,7 @@ impl ActorRegistry {
             ],
             [velocity.x, velocity.y],
             [walking.collider_width, walking.collider_height],
+            state.cellular_drive_impulse,
         ))
     }
 

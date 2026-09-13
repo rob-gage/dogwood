@@ -46,6 +46,7 @@ impl CellularCollision {
     pub fn new(
         accelerator: &Accelerator,
         cellular_material_identifiers: &AcceleratorBuffer,
+        external_body_occupancy: &AcceleratorBuffer,
         width: u16,
         height: u16,
     ) -> Self {
@@ -95,6 +96,16 @@ impl CellularCollision {
                         },
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             });
         let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -112,6 +123,10 @@ impl CellularCollision {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: parameters.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: external_body_occupancy.wgpu_buffer().as_entire_binding(),
                 },
             ],
         });
@@ -188,8 +203,6 @@ impl CellularCollision {
         height: u16,
         ring_offset_x: u16,
         ring_offset_y: u16,
-        gravity: [f32; 2],
-        actor: Option<([f32; 2], [f32; 2], [f32; 2])>,
     ) -> Result<bool, io::Error> {
         // claim a free staging slot or skip this snapshot without waiting
         let Some(slot): Option<&CollisionReadbackSlot> = self.readback_slots.iter().find(|slot| {
@@ -207,8 +220,6 @@ impl CellularCollision {
         let sequence: u64 = self.sequence_next;
         self.sequence_next = self.sequence_next.wrapping_add(1);
         // upload the ring mapping captured for this logical snapshot
-        let actor_present: u32 = u32::from(actor.is_some());
-        let actor = actor.unwrap_or(([0.0; 2], [0.0; 2], [0.0; 2]));
         let values: [u32; 16] = [
             origin.x as u32,
             origin.y as u32,
@@ -216,13 +227,13 @@ impl CellularCollision {
             u32::from(height),
             u32::from(ring_offset_x),
             u32::from(ring_offset_y),
-            actor.0[0].to_bits(),
-            actor.0[1].to_bits(),
-            actor.2[0].to_bits(),
-            actor.2[1].to_bits(),
-            gravity[0].to_bits(),
-            gravity[1].to_bits(),
-            actor_present,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
             0,
             0,
             0,

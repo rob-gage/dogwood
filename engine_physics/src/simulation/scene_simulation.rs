@@ -22,6 +22,8 @@ use rapier2d::{
     },
 };
 
+const CELLULAR_DRIVE_TRANSFER: f32 = 0.08;
+
 /// Implements the fixed-rate systems that advance a `Scene`
 pub trait SceneSimulation {
 
@@ -85,6 +87,7 @@ pub trait SceneSimulation {
     ) {
         if !configuration.collider_width.is_finite() ||
                 !configuration.collider_height.is_finite() ||
+                !configuration.mass.is_finite() || configuration.mass <= 0.0 ||
                 configuration.collider_width <= 0.0 ||
                 configuration.collider_height <= 0.0 {
             return;
@@ -96,6 +99,10 @@ pub trait SceneSimulation {
             Vector::Y
         };
         let tangent: Vector = Vector::new(up.y, -up.x);
+        state.cellular_drive_impulse = [
+            tangent.x * control.locomotion_x * configuration.acceleration * configuration.mass * delta_time * CELLULAR_DRIVE_TRANSFER,
+            tangent.y * control.locomotion_x * configuration.acceleration * configuration.mass * delta_time * CELLULAR_DRIVE_TRANSFER,
+        ];
         let tangent_velocity: f32 = velocity.x * tangent.x + velocity.y * tangent.y;
         let target: f32 = control.locomotion_x * configuration.speed;
         let change: f32 = (target - tangent_velocity).clamp(
@@ -117,6 +124,9 @@ pub trait SceneSimulation {
         }
         if jump_requested {
             let up_velocity: f32 = velocity.x * up.x + velocity.y * up.y;
+            let jump_impulse = (configuration.jump_velocity - up_velocity) * configuration.mass * CELLULAR_DRIVE_TRANSFER;
+            state.cellular_drive_impulse[0] += up.x * jump_impulse;
+            state.cellular_drive_impulse[1] += up.y * jump_impulse;
             velocity.x += up.x * (configuration.jump_velocity - up_velocity);
             velocity.y += up.y * (configuration.jump_velocity - up_velocity);
         }
@@ -145,6 +155,7 @@ pub trait SceneSimulation {
         let world_x: f32 = position.tile_coordinates.x as f32 + position.x_offset;
         let world_y: f32 = position.tile_coordinates.y as f32 + position.y_offset;
         let mut up_velocity: f32 = velocity.x * up.x + velocity.y * up.y;
+        let landing_impulse: f32 = (-up_velocity).max(0.0) * configuration.mass * CELLULAR_DRIVE_TRANSFER;
         let mut tangent_velocity: f32 = velocity.x * tangent.x + velocity.y * tangent.y;
         if was_grounded && control.locomotion_x == 0.0 && tangent_velocity.abs() < 1e-4 {
             tangent_velocity = 0.0;
@@ -283,6 +294,10 @@ pub trait SceneSimulation {
                 velocity.x -= up.x * velocity_into_ground;
                 velocity.y -= up.y * velocity_into_ground;
             }
+        }
+        if state.grounded && !was_grounded && landing_impulse > 0.0 {
+            state.cellular_drive_impulse[0] -= up.x * landing_impulse;
+            state.cellular_drive_impulse[1] -= up.y * landing_impulse;
         }
     }
 

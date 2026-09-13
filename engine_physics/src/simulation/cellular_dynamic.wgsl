@@ -11,11 +11,7 @@ struct Parameters {
     tick: u32,
     buffered_cell_count: u32,
     maximum_movement_cells: u32,
-    actor_center: vec2<f32>,
-    actor_velocity: vec2<f32>,
-    actor_collider_size: vec2<f32>,
-    actor_present: u32,
-    actor_padding: u32,
+    padding: array<vec4<u32>, 2>,
 }
 
 struct Proposal {
@@ -28,20 +24,17 @@ struct Proposal {
 
 @group(0) @binding(0) var<storage, read> cellular_material_identifiers: array<u32>;
 @group(0) @binding(1) var<storage, read> cellular_appearances: array<u32>;
-@group(0) @binding(2) var<storage, read> cellular_kinematics: array<vec4<f32>>;
+@group(0) @binding(2) var<storage, read_write> cellular_kinematics: array<vec4<f32>>;
 @group(0) @binding(3) var<storage, read_write> material_identifiers_output: array<u32>;
 @group(0) @binding(4) var<storage, read_write> appearances_output: array<u32>;
-@group(0) @binding(5) var<storage, read_write> kinematics_output: array<vec4<f32>>;
-@group(0) @binding(6) var<storage, read_write> destination_claims: array<atomic<u32>>;
-@group(0) @binding(7) var<storage, read_write> proposals: array<Proposal>;
-@group(0) @binding(8) var<uniform> parameters: Parameters;
+@group(0) @binding(5) var<storage, read_write> destination_claims: array<atomic<u32>>;
+@group(0) @binding(6) var<storage, read_write> proposals: array<Proposal>;
+@group(0) @binding(7) var<uniform> parameters: Parameters;
+@group(0) @binding(8) var<storage, read> external_body_occupancy: array<u32>;
 
 const INVALID_INDEX: u32 = 0xffffffffu;
 const CELLS_PER_TILE: i32 = 8;
 const CELLULAR_DYNAMIC_FORM: u32 = 2u;
-const CELL_SIZE_TILES: f32 = 0.125;
-const PLAYER_SEPARATION_SPEED: f32 = 6.0;
-const PLAYER_VELOCITY_TRANSFER: f32 = 1.25;
 
 // Reset transient atomic contention state
 @compute @workgroup_size(64)
@@ -58,7 +51,6 @@ fn calculate_cellular_dynamic_movement_proposals(@builtin(global_invocation_id) 
     let logical_index: u32 = invocation.x;
     if logical_index >= parameters.buffered_cell_count { return; }
     let source_cell: vec2<i32> = cellular_dynamic_world_cell_from_logical_index(logical_index);
-    if !is_cellular_dynamic_active_cell(source_cell) { return; }
     let source_index: u32 = cellular_dynamic_physical_cell_index(source_cell);
     let material_identifier: u32 = cellular_material_identifiers[source_index];
     if material_identifier >> 30u != CELLULAR_DYNAMIC_FORM { return; }
@@ -78,17 +70,7 @@ fn calculate_cellular_dynamic_movement_proposals(@builtin(global_invocation_id) 
     if accumulated_distance > f32(parameters.maximum_movement_cells) {
         accumulated *= f32(parameters.maximum_movement_cells) / accumulated_distance;
     }
-    let source_inside_player: bool = player_capsule_contains(source_cell);
-    if parameters.actor_present != 0u {
-        let distance = player_capsule_distance(source_cell);
-        if distance <= 2.0 * CELL_SIZE_TILES {
-            let separation = player_separation_direction(source_cell);
-            velocity += separation * (PLAYER_SEPARATION_SPEED * max(0.0,
-                1.0 - distance / (2.0 * CELL_SIZE_TILES))) +
-                parameters.actor_velocity * PLAYER_VELOCITY_TRANSFER;
-            if source_inside_player { accumulated += separation * 0.5; }
-        }
-    }
+    let source_inside_body = external_body_occupancy[source_index] != 0u;
     // separate whole-cell displacement from retained subcell residual
     let displacement: vec2<i32> = vec2<i32>(accumulated);
     var residual: vec2<f32> = accumulated - vec2<f32>(displacement);
@@ -113,8 +95,8 @@ fn calculate_cellular_dynamic_movement_proposals(@builtin(global_invocation_id) 
                 next.y += direction.y;
             }
             let next_index: u32 = cellular_dynamic_physical_cell_index(next);
-            if !is_cellular_dynamic_active_cell(next) || next_index == INVALID_INDEX ||
-                    cellular_material_identifiers[next_index] != 0u || player_capsule_contains(next) {
+            if next_index == INVALID_INDEX || cellular_material_identifiers[next_index] != 0u ||
+                    external_body_occupancy[next_index] != 0u {
                 direct_blocked = true;
                 break;
             }
@@ -137,8 +119,8 @@ fn calculate_cellular_dynamic_movement_proposals(@builtin(global_invocation_id) 
             }
         }
     }
-    if source_inside_player && all(destination_cell == source_cell) {
-        destination_cell = choose_player_exit_destination(source_cell);
+    if source_inside_body && all(destination_cell == source_cell) {
+        destination_cell = choose_external_body_exit_destination(source_cell);
     }
     // publish integrated matter state before atomically competing for its destination
     let destination_index: u32 = cellular_dynamic_physical_cell_index(destination_cell);
@@ -171,30 +153,29 @@ fn resolve_cellular_dynamic_movement_proposals(@builtin(global_invocation_id) in
         let source_index: u32 = cellular_dynamic_source_index_from_claim_ticket(claim, cell);
         material_identifiers_output[index] = cellular_material_identifiers[source_index];
         appearances_output[index] = cellular_appearances[source_index];
-        kinematics_output[index] = proposals[source_index].kinematics;
+        cellular_kinematics[index] = proposals[source_index].kinematics;
         return;
     }
     // clear accepted sources while preserving losing or stationary dynamic cells
     let material_identifier: u32 = cellular_material_identifiers[index];
-    if is_cellular_dynamic_active_cell(cell) && material_identifier >> 30u == CELLULAR_DYNAMIC_FORM {
+    if material_identifier >> 30u == CELLULAR_DYNAMIC_FORM {
         let proposal: Proposal = proposals[index];
         if proposal.destination != index &&
                 atomicLoad(&destination_claims[proposal.destination]) ==
                     cellular_dynamic_destination_claim_ticket(index, cellular_dynamic_world_cell_from_physical_index(proposal.destination)) {
             material_identifiers_output[index] = 0u;
             appearances_output[index] = 0u;
-            kinematics_output[index] = vec4<f32>(0.0);
+            cellular_kinematics[index] = vec4<f32>(0.0);
             return;
         }
         material_identifiers_output[index] = material_identifier;
         appearances_output[index] = cellular_appearances[index];
-        kinematics_output[index] = proposal.kinematics;
+        cellular_kinematics[index] = proposal.kinematics;
         return;
     }
     // preserve static, empty, and inactive-buffered cells unchanged
     material_identifiers_output[index] = material_identifier;
     appearances_output[index] = cellular_appearances[index];
-    kinematics_output[index] = cellular_kinematics[index];
 }
 
 // Choose one immutable-empty gravity-relative slide destination
@@ -208,65 +189,25 @@ fn choose_cellular_dynamic_slide_destination(source: vec2<i32>) -> vec2<i32> {
         let direction: vec2<i32> = vec2<i32>(sign(direction_f));
         let candidate: vec2<i32> = source + direction;
         let index: u32 = cellular_dynamic_physical_cell_index(candidate);
-        if any(direction != vec2<i32>(0)) && is_cellular_dynamic_active_cell(candidate) &&
-                index != INVALID_INDEX && cellular_material_identifiers[index] == 0u {
+        if any(direction != vec2<i32>(0)) && index != INVALID_INDEX &&
+                cellular_material_identifiers[index] == 0u && external_body_occupancy[index] == 0u {
             return candidate;
         }
     }
     return source;
 }
 
-fn choose_player_exit_destination(source: vec2<i32>) -> vec2<i32> {
-    let direction = player_separation_direction(source);
-    let candidate = source + vec2<i32>(sign(direction));
-    let index = cellular_dynamic_physical_cell_index(candidate);
-    if all(sign(direction) != vec2<f32>(0.0)) && is_cellular_dynamic_active_cell(candidate) &&
-            index != INVALID_INDEX && cellular_material_identifiers[index] == 0u &&
-            !player_capsule_contains(candidate) { return candidate; }
+fn choose_external_body_exit_destination(source: vec2<i32>) -> vec2<i32> {
+    let first = hash_cellular_dynamic_claim_priority(source, parameters.tick) & 3u;
+    for (var offset = 0u; offset < 4u; offset++) {
+        let direction = (first + offset) & 3u;
+        let delta = select(select(vec2<i32>(1, 0), vec2<i32>(-1, 0), direction == 1u),
+            select(vec2<i32>(0, 1), vec2<i32>(0, -1), direction == 3u), direction >= 2u);
+        let index = cellular_dynamic_physical_cell_index(source + delta);
+        if index != INVALID_INDEX && cellular_material_identifiers[index] == 0u &&
+                external_body_occupancy[index] == 0u { return source + delta; }
+    }
     return source;
-}
-
-fn player_capsule_contains(cell: vec2<i32>) -> bool {
-    return player_capsule_distance(cell) <= parameters.actor_collider_size.x * 0.5 + CELL_SIZE_TILES;
-}
-
-fn player_capsule_distance(cell: vec2<i32>) -> f32 {
-    if parameters.actor_present == 0u { return 1000000.0; }
-    let gravity_length = length(parameters.gravity);
-    let up = select(vec2<f32>(0.0, 1.0), -parameters.gravity / gravity_length,
-        gravity_length > 0.0);
-    let tangent = vec2<f32>(up.y, -up.x);
-    let relative = (vec2<f32>(cell) + vec2<f32>(0.5)) * CELL_SIZE_TILES -
-        parameters.actor_center;
-    let x = dot(relative, tangent);
-    let y = dot(relative, up);
-    let radius = parameters.actor_collider_size.x * 0.5;
-    let segment_half = max(0.0, (parameters.actor_collider_size.y - radius * 2.0) * 0.5);
-    let closest_y = clamp(y, -segment_half, segment_half);
-    return length(vec2<f32>(x, y - closest_y));
-}
-
-fn player_separation_direction(cell: vec2<i32>) -> vec2<f32> {
-    let gravity_length = length(parameters.gravity);
-    let up = select(vec2<f32>(0.0, 1.0), -parameters.gravity / gravity_length,
-        gravity_length > 0.0);
-    let tangent = vec2<f32>(up.y, -up.x);
-    let relative = (vec2<f32>(cell) + vec2<f32>(0.5)) * CELL_SIZE_TILES -
-        parameters.actor_center;
-    let x = dot(relative, tangent);
-    let y = dot(relative, up);
-    let radius = parameters.actor_collider_size.x * 0.5;
-    let segment_half = max(0.0, (parameters.actor_collider_size.y - radius * 2.0) * 0.5);
-    let closest_y = clamp(y, -segment_half, segment_half);
-    let local = vec2<f32>(x, y - closest_y);
-    if length(local) < 0.0001 { return hash_cellular_dynamic_direction(cell, parameters.tick); }
-    return tangent * (local.x / length(local)) + up * (local.y / length(local));
-}
-
-fn hash_cellular_dynamic_direction(cell: vec2<i32>, tick: u32) -> vec2<f32> {
-    let value = hash_cellular_dynamic_claim_priority(cell, tick);
-    return normalize(vec2<f32>(select(-1.0, 1.0, (value & 1u) == 0u),
-        select(-1.0, 1.0, (value & 2u) == 0u)));
 }
 
 // Create a unique destination-specific rotating claim ticket
@@ -343,18 +284,6 @@ fn cellular_dynamic_world_cell_from_physical_index(index: u32) -> vec2<i32> {
             parameters.buffered_tile_size;
     return (parameters.buffered_origin + vec2<i32>(logical_tile)) * CELLS_PER_TILE +
         vec2<i32>(i32(local_index % 8u), i32(local_index / 8u));
-}
-
-// Test whether a world cell belongs to the active simulation area
-fn is_cellular_dynamic_active_cell(cell: vec2<i32>) -> bool {
-    let tile: vec2<i32> = vec2<i32>(
-        floor_divide_cell_coordinate(cell.x, CELLS_PER_TILE),
-        floor_divide_cell_coordinate(cell.y, CELLS_PER_TILE),
-    );
-    let relative: vec2<i32> = tile - parameters.active_origin;
-    return all(relative >= vec2<i32>(0)) &&
-        relative.x < i32(parameters.active_tile_size.x) &&
-        relative.y < i32(parameters.active_tile_size.y);
 }
 
 // Divide signed coordinates toward negative infinity

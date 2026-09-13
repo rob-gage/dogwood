@@ -11,6 +11,7 @@ use super::{
 };
 use crate::simulation::{
     CellularCollision,
+    CellularPhysicsBodyProxy,
     CellularDynamic,
     CellularPressure,
     SceneSimulationConfiguration,
@@ -129,6 +130,8 @@ pub struct Scene {
     cellular_appearances: AcceleratorBuffer,
     /// The parallel buffer containing persistent static-cell integrity
     cellular_integrities: AcceleratorBuffer,
+    /// Transient rasterized possessed-pawn interaction geometry
+    cellular_physics_body_proxy: CellularPhysicsBodyProxy,
     /// GPU simulation of dynamic cells in the canonical cellular buffers
     cellular_dynamic: CellularDynamic,
     /// GPU impulse, pressure, integrity, and fracture subsystem
@@ -209,10 +212,12 @@ impl Scene {
             accelerator.allocate::<u32>(buffered_cell_count);
         let cellular_integrities: AcceleratorBuffer =
             accelerator.allocate::<f32>(buffered_cell_count);
+        let cellular_physics_body_proxy = CellularPhysicsBodyProxy::new(accelerator.as_ref(), buffered_cell_count);
         let cellular_dynamic: CellularDynamic = CellularDynamic::new(
             accelerator.as_ref(),
             &cellular_material_identifiers,
             &cellular_appearances,
+            cellular_physics_body_proxy.occupancy_buffer(),
             buffered_tile_count,
         );
         let cellular_pressure: CellularPressure = CellularPressure::new(
@@ -222,11 +227,15 @@ impl Scene {
             &cellular_appearances,
             &cellular_integrities,
             cellular_dynamic.kinematics_buffer(),
+            cellular_physics_body_proxy.occupancy_buffer(),
+            cellular_physics_body_proxy.velocity_buffer(),
+            cellular_physics_body_proxy.count_buffer(),
             buffered_cell_count,
         );
         let cellular_collision: CellularCollision = CellularCollision::new(
             accelerator.as_ref(),
             &cellular_material_identifiers,
+            cellular_physics_body_proxy.occupancy_buffer(),
             simulation.width + buffer_size,
             simulation.height + buffer_size,
         );
@@ -262,6 +271,7 @@ impl Scene {
             cellular_material_identifiers,
             cellular_appearances,
             cellular_integrities,
+            cellular_physics_body_proxy,
             cellular_dynamic,
             cellular_pressure,
             cellular_collision,
@@ -504,7 +514,7 @@ impl Scene {
             self.gravity,
             &self.physics_world,
         );
-        let current_walking_pawn: Option<([f32; 2], [f32; 2], [f32; 2])> =
+        let current_walking_pawn: Option<([f32; 2], [f32; 2], [f32; 2], [f32; 2])> =
             self.possessed_actor().and_then(|actor| {
                 self.actor_registry.walking_pawn_physics(actor)
             });
@@ -514,6 +524,16 @@ impl Scene {
         if is_simulation_active {
             let buffer_size: i32 = i32::from(self.simulation_buffer_size);
             let dimensions: u16 = u16::from(self.simulation_buffer_size) * 2;
+            self.cellular_physics_body_proxy.rasterize(
+                self.accelerator.as_ref(), TileCoordinates { x: self.origin.x - buffer_size, y: self.origin.y - buffer_size },
+                self.simulation_width + dimensions, self.simulation_height + dimensions, self.tiles_ring_offset_x,
+                self.tiles_ring_offset_y, self.gravity, current_walking_pawn,
+            );
+            self.cellular_pressure.simulate(
+                self.accelerator.as_ref(), TileCoordinates { x: self.origin.x - buffer_size, y: self.origin.y - buffer_size },
+                self.simulation_width + dimensions, self.simulation_height + dimensions, self.tiles_ring_offset_x,
+                self.tiles_ring_offset_y, 1.0 / TICK_RATE as f32,
+            );
             self.cellular_dynamic.simulate_cellular_dynamic_tick(
                 self.accelerator.as_ref(),
                 &self.cellular_material_identifiers,
@@ -524,22 +544,9 @@ impl Scene {
                 },
                 self.simulation_width + dimensions,
                 self.simulation_height + dimensions,
-                self.origin,
-                self.simulation_width,
-                self.simulation_height,
                 self.tiles_ring_offset_x,
                 self.tiles_ring_offset_y,
                 self.gravity,
-                1.0 / TICK_RATE as f32,
-                current_walking_pawn,
-            );
-            self.cellular_pressure.simulate(
-                self.accelerator.as_ref(),
-                TileCoordinates { x: self.origin.x - buffer_size, y: self.origin.y - buffer_size },
-                self.simulation_width + dimensions,
-                self.simulation_height + dimensions,
-                self.tiles_ring_offset_x,
-                self.tiles_ring_offset_y,
                 1.0 / TICK_RATE as f32,
             );
             self.cellular_collision_dirty = true;
@@ -556,8 +563,6 @@ impl Scene {
             self.simulation_height + u16::from(self.simulation_buffer_size) * 2,
             self.tiles_ring_offset_x,
             self.tiles_ring_offset_y,
-            self.gravity,
-            current_walking_pawn,
         )? { self.cellular_collision_dirty = false; }
         Ok(())
     }
@@ -611,6 +616,11 @@ impl Scene {
                 &integrities,
             );
             self.cellular_dynamic.clear_cellular_dynamic_kinematics(
+                self.accelerator.as_ref(),
+                edits[start].0,
+                end - start,
+            );
+            self.cellular_pressure.clear_transient_state(
                 self.accelerator.as_ref(),
                 edits[start].0,
                 end - start,
@@ -1317,6 +1327,11 @@ impl Scene {
                 &state.integrities,
             );
             self.cellular_dynamic.clear_cellular_dynamic_kinematics(
+                self.accelerator.as_ref(),
+                tile.0 as usize * 64,
+                64,
+            );
+            self.cellular_pressure.clear_transient_state(
                 self.accelerator.as_ref(),
                 tile.0 as usize * 64,
                 64,

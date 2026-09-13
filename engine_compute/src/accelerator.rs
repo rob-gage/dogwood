@@ -31,8 +31,12 @@ impl Accelerator {
                 apply_limit_buckets: false,
             },
         ))?;
-        let (device, queue): (wgpu::Device, wgpu::Queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))?;
+        let (device, queue): (wgpu::Device, wgpu::Queue) = pollster::block_on(
+            adapter.request_device(&wgpu::DeviceDescriptor {
+                required_limits: adapter.limits(),
+                ..Default::default()
+            })
+        )?;
         Ok(Self {
             wgpu_instance: instance,
             wgpu_adapter: adapter,

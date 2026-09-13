@@ -39,6 +39,20 @@ impl MaterialRegistry {
 
     /// Registers a `Material` and returns its `MaterialIdentifier`
     pub fn register(&mut self, material: Material) -> MaterialIdentifier {
+        match &material {
+            Material::CellularStatic { pressure_transmission, friction, restitution, .. } |
+            Material::Fluid { pressure_transmission, friction, restitution, .. } => assert!(
+                pressure_transmission.is_finite() && (0.0..=1.0).contains(pressure_transmission) &&
+                friction.is_finite() && (0.0..=1.0).contains(friction) &&
+                restitution.is_finite() && (0.0..=1.0).contains(restitution)
+            ),
+            Material::CellularDynamic { mass, pressure_transmission, friction, restitution, .. } => assert!(
+                mass.is_finite() && *mass > 0.0 && pressure_transmission.is_finite() &&
+                    (0.0..=1.0).contains(pressure_transmission) && friction.is_finite() &&
+                    (0.0..=1.0).contains(friction) && restitution.is_finite() &&
+                    (0.0..=1.0).contains(restitution)
+            ),
+        }
         match material {
             material @ Material::CellularStatic { .. } => {
                 let index: u32 = self.cellular_statics.len() as u32;
@@ -103,35 +117,9 @@ impl MaterialRegistry {
             ));
         }
         // read each material form in identifier-index order
-        let cellular_statics: Vec<Material> = Self::deserialize_form(
-            reader,
-            |name: String, graphics: MaterialAppearance, properties| {
-                let (pressure_ignore_threshold, default_integrity, debris_material, debris_yield_rate) =
-                    properties.unwrap();
-                Material::CellularStatic {
-                    name,
-                    graphics,
-                    pressure_ignore_threshold,
-                    default_integrity,
-                    debris_material,
-                    debris_yield_rate,
-                }
-            },
-            true,
-        )?;
-        let cellular_dynamics: Vec<Material> = Self::deserialize_form(
-            reader,
-            |name: String, graphics: MaterialAppearance, _| Material::CellularDynamic {
-                name,
-                graphics,
-            },
-            false,
-        )?;
-        let fluids: Vec<Material> = Self::deserialize_form(
-            reader,
-            |name: String, graphics: MaterialAppearance, _| Material::Fluid { name, graphics },
-            false,
-        )?;
+        let cellular_statics = Self::deserialize_form(reader, MaterialForm::CellularStatic)?;
+        let cellular_dynamics = Self::deserialize_form(reader, MaterialForm::CellularDynamic)?;
+        let fluids = Self::deserialize_form(reader, MaterialForm::Fluid)?;
         for material in &cellular_statics {
             if let Material::CellularStatic { debris_material: Some(identifier), .. } = material {
                 if identifier.form_checked() != Some(MaterialForm::CellularDynamic) ||
@@ -150,16 +138,15 @@ impl MaterialRegistry {
     /// Writes this `MaterialRegistry` in identifier-index order
     pub fn serialize<W: io::Write>(&self, writer: &mut W) -> Result<(), io::Error> {
         writer.write_all(b"dogwoodm")?;
-        Self::serialize_form(writer, &self.cellular_statics, true)?;
-        Self::serialize_form(writer, &self.cellular_dynamics, false)?;
-        Self::serialize_form(writer, &self.fluids, false)
+        Self::serialize_form(writer, &self.cellular_statics)?;
+        Self::serialize_form(writer, &self.cellular_dynamics)?;
+        Self::serialize_form(writer, &self.fluids)
     }
 
     /// Reads all materials belonging to one material form
     fn deserialize_form<R: io::Read>(
         reader: &mut R,
-        material: impl Fn(String, MaterialAppearance, Option<(f32, f32, Option<MaterialIdentifier>, f32)>) -> Material,
-        is_static: bool,
+        form: MaterialForm,
     ) -> Result<Vec<Material>, io::Error> {
         let count: u32 = Self::read_u32(reader)?;
         let mut materials: Vec<Material> = Vec::with_capacity(count as usize);
@@ -187,21 +174,34 @@ impl MaterialRegistry {
             ).with_variation(variation)
                 .with_color_influence(color_influence)
                 .with_radiance_influence(radiance_influence);
-            let properties = if is_static {
-                let pressure_ignore_threshold = f32::from_bits(Self::read_u32(reader)?);
-                let default_integrity = f32::from_bits(Self::read_u32(reader)?);
-                let debris_identifier = MaterialIdentifier::from_u32(Self::read_u32(reader)?);
-                let debris_material = (debris_identifier != MaterialIdentifier::NULL)
-                    .then_some(debris_identifier);
-                let debris_yield_rate = f32::from_bits(Self::read_u32(reader)?);
-                Some((
-                    pressure_ignore_threshold,
-                    default_integrity,
-                    debris_material,
-                    debris_yield_rate
-                ))
-            } else { None };
-            materials.push(material(name, graphics, properties));
+            let material = match form {
+                MaterialForm::CellularStatic => {
+                    let pressure_ignore_threshold = f32::from_bits(Self::read_u32(reader)?);
+                    let default_integrity = f32::from_bits(Self::read_u32(reader)?);
+                    let debris_identifier = MaterialIdentifier::from_u32(Self::read_u32(reader)?);
+                    let debris_material = (debris_identifier != MaterialIdentifier::NULL)
+                        .then_some(debris_identifier);
+                    let debris_yield_rate = f32::from_bits(Self::read_u32(reader)?);
+                    let pressure_transmission = f32::from_bits(Self::read_u32(reader)?);
+                    let friction = f32::from_bits(Self::read_u32(reader)?);
+                    let restitution = f32::from_bits(Self::read_u32(reader)?);
+                    Material::CellularStatic { name, graphics, pressure_ignore_threshold,
+                        default_integrity, debris_material, debris_yield_rate, pressure_transmission,
+                        friction, restitution }
+                }
+                MaterialForm::CellularDynamic => Material::CellularDynamic { name, graphics,
+                    mass: f32::from_bits(Self::read_u32(reader)?),
+                    pressure_transmission: f32::from_bits(Self::read_u32(reader)?),
+                    friction: f32::from_bits(Self::read_u32(reader)?),
+                    restitution: f32::from_bits(Self::read_u32(reader)?),
+                },
+                MaterialForm::Fluid => Material::Fluid { name, graphics,
+                    pressure_transmission: f32::from_bits(Self::read_u32(reader)?),
+                    friction: f32::from_bits(Self::read_u32(reader)?),
+                    restitution: f32::from_bits(Self::read_u32(reader)?),
+                },
+            };
+            materials.push(material);
         }
         Ok(materials)
     }
@@ -210,7 +210,6 @@ impl MaterialRegistry {
     fn serialize_form<W: io::Write>(
         writer: &mut W,
         materials: &[Material],
-        is_static: bool,
     ) -> Result<(), io::Error> {
         let count: u32 = materials.len().try_into().map_err(|_| {
             io::Error::new(io::ErrorKind::InvalidInput, "Too many registered materials")
@@ -236,18 +235,28 @@ impl MaterialRegistry {
             ].into_iter().flatten() {
                 writer.write_all(&value.to_bits().to_le_bytes())?;
             }
-            if is_static {
-                let Material::CellularStatic {
-                    pressure_ignore_threshold,
-                    default_integrity,
-                    debris_material,
-                    debris_yield_rate,
-                    ..
-                } = material else { unreachable!() };
-                writer.write_all(&pressure_ignore_threshold.to_bits().to_le_bytes())?;
-                writer.write_all(&default_integrity.to_bits().to_le_bytes())?;
-                writer.write_all(&debris_material.unwrap_or(MaterialIdentifier::NULL).as_u32().to_le_bytes())?;
-                writer.write_all(&debris_yield_rate.to_bits().to_le_bytes())?;
+            match material {
+                Material::CellularStatic { pressure_ignore_threshold, default_integrity,
+                    debris_material, debris_yield_rate, pressure_transmission, friction, restitution, .. } => {
+                    writer.write_all(&pressure_ignore_threshold.to_bits().to_le_bytes())?;
+                    writer.write_all(&default_integrity.to_bits().to_le_bytes())?;
+                    writer.write_all(&debris_material.unwrap_or(MaterialIdentifier::NULL).as_u32().to_le_bytes())?;
+                    writer.write_all(&debris_yield_rate.to_bits().to_le_bytes())?;
+                    writer.write_all(&pressure_transmission.to_bits().to_le_bytes())?;
+                    writer.write_all(&friction.to_bits().to_le_bytes())?;
+                    writer.write_all(&restitution.to_bits().to_le_bytes())?;
+                }
+                Material::CellularDynamic { mass, pressure_transmission, friction, restitution, .. } => {
+                    writer.write_all(&mass.to_bits().to_le_bytes())?;
+                    writer.write_all(&pressure_transmission.to_bits().to_le_bytes())?;
+                    writer.write_all(&friction.to_bits().to_le_bytes())?;
+                    writer.write_all(&restitution.to_bits().to_le_bytes())?;
+                }
+                Material::Fluid { pressure_transmission, friction, restitution, .. } => {
+                    writer.write_all(&pressure_transmission.to_bits().to_le_bytes())?;
+                    writer.write_all(&friction.to_bits().to_le_bytes())?;
+                    writer.write_all(&restitution.to_bits().to_le_bytes())?;
+                }
             }
         }
         Ok(())

@@ -48,13 +48,17 @@ impl DemoGame {
     /// Creates a `DemoGame` with a GPU-backed scene
     pub fn new(accelerator: &Arc<Accelerator>) -> Result<Self, Box<dyn Error>> {
         let mut materials: MaterialRegistry = MaterialRegistry::new();
-        let stone_graphics: MaterialAppearance = MaterialAppearance::from_color(
-            Color::new_rgb(128, 128, 128),
+        let stone_debris_graphics: MaterialAppearance = MaterialAppearance::from_color(
+            Color::new_rgb(148, 148, 148),
         ).with_variation([0.5, 0.5, 0.5, 0.0])
             .with_color_influence([0.25, 0.25, 0.25, 0.0]);
         let stone_debris: MaterialIdentifier = materials.register(Material::CellularDynamic {
             name: "Stone Debris".into(),
-            graphics: stone_graphics,
+            graphics: stone_debris_graphics,
+            mass: 3.0,
+            pressure_transmission: 0.55,
+            friction: 0.45,
+            restitution: 0.15,
         });
         let sand_graphics: MaterialAppearance = MaterialAppearance::from_color(
             Color::new_rgb(194, 178, 128),
@@ -63,7 +67,15 @@ impl DemoGame {
         let sand: MaterialIdentifier = materials.register(Material::CellularDynamic {
             name: "Sand".into(),
             graphics: sand_graphics,
+            mass: 1.0,
+            pressure_transmission: 0.35,
+            friction: 0.65,
+            restitution: 0.05,
         });
+        let stone_graphics: MaterialAppearance = MaterialAppearance::from_color(
+            Color::new_rgb(108, 108, 108),
+        ).with_variation([0.5, 0.5, 0.5, 0.0])
+            .with_color_influence([0.25, 0.25, 0.25, 0.0]);
         let stone: MaterialIdentifier = materials.register(Material::CellularStatic {
             name: "Stone".into(),
             graphics: stone_graphics,
@@ -71,6 +83,9 @@ impl DemoGame {
             default_integrity: 20.0,
             debris_material: Some(stone_debris),
             debris_yield_rate: 0.8,
+            pressure_transmission: 0.8,
+            friction: 0.8,
+            restitution: 0.02,
         });
         let data: SceneData = SceneData::new_temporary(materials)?;
         let mut scene: Scene = Scene::load_with_generator(
@@ -79,7 +94,7 @@ impl DemoGame {
                 gravity: [0.0, -18.0],
                 width: 16,
                 height: 9,
-                buffer_size: 4,
+                buffer_size: 12,
                 streaming_batch_size: 4,
             },
             data,
@@ -95,6 +110,7 @@ impl DemoGame {
         pawn_configuration.walking = Some(ActorPawnWalkingConfiguration {
             speed: 4.0,
             acceleration: 24.0,
+            mass: 8.0,
             jump_velocity: 7.0,
             maximum_slope_angle: 50.0_f32.to_radians(),
             collider_width: 0.75,

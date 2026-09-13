@@ -19,6 +19,12 @@ pub enum Material {
         debris_material: Option<MaterialIdentifier>,
         /// Fraction of failed matter that becomes debris
         debris_yield_rate: f32,
+        /// Fraction of pressure that may leave this material each solver iteration
+        pressure_transmission: f32,
+        /// Tangential contact damping for cellular mechanics
+        friction: f32,
+        /// Normal contact bounce retained by cellular mechanics
+        restitution: f32,
     },
     /// A dynamic cellular material
     CellularDynamic {
@@ -26,6 +32,14 @@ pub enum Material {
         name: String,
         /// The graphics information for this `Material`
         graphics: MaterialAppearance,
+        /// Effective per-cell mass used by cellular pressure response
+        mass: f32,
+        /// Fraction of pressure that may leave this material each solver iteration
+        pressure_transmission: f32,
+        /// Tangential contact damping for cellular mechanics
+        friction: f32,
+        /// Normal contact bounce retained by cellular mechanics
+        restitution: f32,
     },
     /// A fluid material
     Fluid {
@@ -33,6 +47,12 @@ pub enum Material {
         name: String,
         /// The graphics information for this `Material`
         graphics: MaterialAppearance,
+        /// Fraction of pressure that may leave this material each solver iteration
+        pressure_transmission: f32,
+        /// Tangential contact damping for cellular mechanics
+        friction: f32,
+        /// Normal contact bounce retained by cellular mechanics
+        restitution: f32,
     }
 }
 
