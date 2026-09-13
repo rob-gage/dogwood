@@ -10,12 +10,14 @@ pub struct TileData {
     cell_material_identifiers: [[MaterialIdentifier; 8]; 8],
     /// The persistent per-cell appearance samples
     cell_appearances: [[CellularAppearance; 8]; 8],
+    /// Persistent structural integrity samples
+    cell_integrities: [[f32; 8]; 8],
 }
 
 impl TileData {
 
     /// The size of serialized `TileData` in bytes
-    pub const SERIALIZED_SIZE: usize = 8 * 8 * 4 * 2;
+    pub const SERIALIZED_SIZE: usize = 8 * 8 * 4 * 3;
 
     /// The serialized size of one parallel cell field
     pub const CELL_FIELD_SERIALIZED_SIZE: usize = 8 * 8 * 4;
@@ -24,6 +26,7 @@ impl TileData {
     pub const EMPTY: Self = Self {
         cell_material_identifiers: [[MaterialIdentifier::NULL; 8]; 8],
         cell_appearances: [[CellularAppearance::NEUTRAL; 8]; 8],
+        cell_integrities: [[0.0; 8]; 8],
     };
 
     /// Creates a tile filled with one material
@@ -31,6 +34,7 @@ impl TileData {
         Self {
             cell_material_identifiers: [[material_identifier; 8]; 8],
             cell_appearances: [[CellularAppearance::NEUTRAL; 8]; 8],
+            cell_integrities: [[0.0; 8]; 8],
         }
     }
 
@@ -42,6 +46,7 @@ impl TileData {
         Self {
             cell_material_identifiers: [[material_identifier; 8]; 8],
             cell_appearances: [[appearance; 8]; 8],
+            cell_integrities: [[0.0; 8]; 8],
         }
     }
 
@@ -53,8 +58,21 @@ impl TileData {
         material_identifier: MaterialIdentifier,
         appearance: CellularAppearance,
     ) {
+        self.set_cell_with_integrity(x, y, material_identifier, appearance, 0.0);
+    }
+
+    /// Sets one local cell's material, appearance, and structural integrity
+    pub fn set_cell_with_integrity(
+        &mut self,
+        x: usize,
+        y: usize,
+        material_identifier: MaterialIdentifier,
+        appearance: CellularAppearance,
+        integrity: f32,
+    ) {
         self.cell_material_identifiers[y][x] = material_identifier;
         self.cell_appearances[y][x] = appearance;
+        self.cell_integrities[y][x] = integrity;
     }
 
     /// Returns one local cell's material identifier
@@ -89,21 +107,35 @@ impl TileData {
         Ok(())
     }
 
+    /// Writes persistent integrity in row-major GPU order
+    pub fn serialize_integrities<W: io::Write>(&self, writer: &mut W) -> Result<(), io::Error> {
+        for row in &self.cell_integrities {
+            for integrity in row {
+                writer.write_all(&integrity.to_bits().to_le_bytes())?;
+            }
+        }
+        Ok(())
+    }
+
     /// Deserializes binary data into a `TileData`
     pub fn deserialize<R: io::Read>(reader: &mut R) -> Result<TileData, io::Error> {
         let mut material_data: Vec<u8> = vec![0; Self::CELL_FIELD_SERIALIZED_SIZE];
         reader.read_exact(&mut material_data)?;
         let mut appearance_data: Vec<u8> = vec![0; Self::CELL_FIELD_SERIALIZED_SIZE];
         reader.read_exact(&mut appearance_data)?;
+        let mut integrity_data: Vec<u8> = vec![0; Self::CELL_FIELD_SERIALIZED_SIZE];
+        reader.read_exact(&mut integrity_data)?;
         let mut material_reader = material_data.as_slice();
         let mut appearance_reader = appearance_data.as_slice();
-        Self::deserialize_fields(&mut material_reader, &mut appearance_reader)
+        let mut integrity_reader = integrity_data.as_slice();
+        Self::deserialize_fields(&mut material_reader, &mut appearance_reader, &mut integrity_reader)
     }
 
     /// Deserializes the two parallel cell fields from separate streams
-    pub fn deserialize_fields<R: io::Read, A: io::Read>(
+    pub fn deserialize_fields<R: io::Read, A: io::Read, I: io::Read>(
         material_reader: &mut R,
         appearance_reader: &mut A,
+        integrity_reader: &mut I,
     ) -> Result<TileData, io::Error> {
         let mut tile_data: Self = Self::EMPTY;
         for row in &mut tile_data.cell_material_identifiers {
@@ -122,13 +154,21 @@ impl TileData {
                 *appearance = CellularAppearance(u32::from_le_bytes(data));
             }
         }
+        for row in &mut tile_data.cell_integrities {
+            for integrity in row {
+                let mut data: [u8; 4] = [0; 4];
+                integrity_reader.read_exact(&mut data)?;
+                *integrity = f32::from_bits(u32::from_le_bytes(data));
+            }
+        }
         Ok(tile_data)
     }
 
     /// Serializes a `TileData` into binary data
     pub fn serialize<W: io::Write>(&self, writer: &mut W) -> Result<(), io::Error> {
         self.serialize_material_identifiers(writer)?;
-        self.serialize_appearances(writer)
+        self.serialize_appearances(writer)?;
+        self.serialize_integrities(writer)
     }
 
 }

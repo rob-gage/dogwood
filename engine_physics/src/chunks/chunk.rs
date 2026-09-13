@@ -87,7 +87,8 @@ impl Chunk {
         Ok(())
     }
 
-    /// Sets a provided `TileData` at a given position in this `Chunk`, panicking if it is out of bounds
+    /// Sets a provided `TileData` at a given position in this `Chunk`,
+    /// panicking if it is out of bounds
     pub fn set_tile_unchecked(&mut self, position: TileCoordinates, tile: TileData) {
         self.set_tile(position, tile).unwrap()
     }
@@ -101,6 +102,19 @@ impl Chunk {
         material_identifier: MaterialIdentifier,
         appearance: CellularAppearance,
     ) -> Result<(), ()> {
+        self.set_cell_with_integrity(position, x, y, material_identifier, appearance, 0.0)
+    }
+
+    /// Sets one cell with an explicit persistent integrity value
+    pub fn set_cell_with_integrity(
+        &mut self,
+        position: TileCoordinates,
+        x: usize,
+        y: usize,
+        material_identifier: MaterialIdentifier,
+        appearance: CellularAppearance,
+        integrity: f32,
+    ) -> Result<(), ()> {
         let tile_x: usize = usize::try_from(
             position.x.checked_sub(self.tile_coordinates.x).ok_or(())?
         ).map_err(|_| ())?;
@@ -110,11 +124,12 @@ impl Chunk {
         if tile_x >= usize::from(Self::WIDTH) || tile_y >= usize::from(Self::WIDTH) {
             return Err(());
         }
-        self.tiles[tile_y * usize::from(Self::WIDTH) + tile_x].set_cell(
+        self.tiles[tile_y * usize::from(Self::WIDTH) + tile_x].set_cell_with_integrity(
             x,
             y,
             material_identifier,
             appearance,
+            integrity,
         );
         Ok(())
     }

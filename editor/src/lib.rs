@@ -2,6 +2,7 @@
 
 mod editor_application;
 mod editor_brush;
+mod editor_tool;
 mod editor_game;
 mod viewport_area;
 

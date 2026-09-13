@@ -1,5 +1,6 @@
 // Copyright Rob Gage 2026
 
+use super::MaterialIdentifier;
 use engine_graphics::MaterialAppearance;
 
 /// A material
@@ -10,6 +11,14 @@ pub enum Material {
         name: String,
         /// The graphics information for this `Material`
         graphics: MaterialAppearance,
+        /// Load below which this material takes no structural damage
+        pressure_ignore_threshold: f32,
+        /// Structural integrity assigned to newly placed/generated cells
+        default_integrity: f32,
+        /// Optional dynamic material produced when this cell fractures
+        debris_material: Option<MaterialIdentifier>,
+        /// Fraction of failed matter that becomes debris
+        debris_yield_rate: f32,
     },
     /// A dynamic cellular material
     CellularDynamic {

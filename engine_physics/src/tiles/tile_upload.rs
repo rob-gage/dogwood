@@ -17,6 +17,8 @@ pub struct TileUpload {
     pub material_identifiers: Vec<u8>,
     /// Persistent appearances in matching GPU cell order
     pub appearances: Vec<u8>,
+    /// Persistent integrities in matching GPU cell order
+    pub integrities: Vec<u8>,
     /// Whether the upload has completed
     pub is_complete: bool,
     /// The completed upload result
@@ -36,10 +38,14 @@ impl TileUpload {
         let mut appearances: Vec<u8> = Vec::with_capacity(TileData::CELL_FIELD_SERIALIZED_SIZE);
         tile_data.serialize_appearances(&mut appearances)
             .expect("Writing to a Vec cannot fail");
+        let mut integrities: Vec<u8> = Vec::with_capacity(TileData::CELL_FIELD_SERIALIZED_SIZE);
+        tile_data.serialize_integrities(&mut integrities)
+            .expect("Writing to a Vec cannot fail");
         Self {
             coordinates,
             material_identifiers,
             appearances,
+            integrities,
             result: None,
             is_complete: false,
             waker: None,

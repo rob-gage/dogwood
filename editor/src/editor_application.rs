@@ -39,6 +39,7 @@ use std::{
 };
 use crate::{
     editor_brush::EditorBrush,
+    editor_tool::EditorTool,
     viewport_area::ViewportArea,
 };
 
@@ -66,8 +67,8 @@ pub struct EditorApplication<G: Game> {
     stroke_anchor: Option<CellCoordinates>,
     /// Unconsumed high-resolution wheel movement in physical pixels
     pixel_scroll_y: f64,
-    /// The material selected for painting, or `None` for Eraser
-    selected_material: Option<MaterialIdentifier>,
+    /// The concrete editor action selected for the primary interaction
+    tool: EditorTool,
 }
 
 impl<G: Game> EditorApplication<G> {
@@ -91,7 +92,7 @@ impl<G: Game> EditorApplication<G> {
             brush: EditorBrush::new(),
             stroke_anchor: None,
             pixel_scroll_y: 0.0,
-            selected_material: None,
+            tool: EditorTool::Eraser,
         }
     }
 
@@ -106,14 +107,20 @@ impl<G: Game> EditorApplication<G> {
         let Some(anchor): Option<CellCoordinates> = self.hovered_cell() else {
             return (Vec::new(), Color::new_rgba(255, 80, 80, 96));
         };
-        let color: Color = self.selected_material.and_then(|material_identifier| {
+        let material_identifier = match self.tool {
+            EditorTool::Material(material_identifier) => Some(material_identifier),
+            _ => None,
+        };
+        let color: Color = material_identifier.and_then(|material_identifier| {
             self.application.game().scene().and_then(|scene| {
                 scene.materials().get(material_identifier).map(|material| {
                     let color: Color = material.appearance().base_color();
                     Color::new_rgba(color.red(), color.green(), color.blue(), 96)
                 })
             })
-        }).unwrap_or(Color::new_rgba(255, 80, 80, 96));
+        }).unwrap_or(if matches!(self.tool, EditorTool::Impulse) {
+            Color::new_rgba(255, 190, 60, 128)
+        } else { Color::new_rgba(255, 80, 80, 96) });
         let cells: Vec<[f32; 4]> = self.brush.cells(anchor).into_iter().filter_map(|coordinates| {
             self.application.scene_surface_rectangle([
                 coordinates.x as f32 / 8.0,
@@ -139,14 +146,27 @@ impl<G: Game> EditorApplication<G> {
                 .into_iter().skip(1).collect(),
         };
         let mut cells: HashSet<CellCoordinates> = HashSet::new();
-        for anchor in anchors {
-            cells.extend(self.brush.cells(anchor));
+        for anchor in &anchors {
+            cells.extend(self.brush.cells(*anchor));
         }
-        let selected_material: Option<MaterialIdentifier> = self.selected_material;
+        let tool = match self.tool {
+            EditorTool::Eraser => EditorTool::Eraser,
+            EditorTool::Impulse => EditorTool::Impulse,
+            EditorTool::Material(material_identifier) => EditorTool::Material(material_identifier),
+        };
         let Some(scene) = self.application.game_mutable().scene_mutable() else { return; };
+        if matches!(tool, EditorTool::Impulse) {
+            let radius_cells: f32 = (self.brush.size() as f32 * 0.5).max(0.75);
+            let strength: f32 = self.brush.size() as f32 * 1.25;
+            for impulse_anchor in &anchors {
+                scene.apply_cellular_radial_impulse(*impulse_anchor, radius_cells, strength);
+            }
+            self.stroke_anchor = Some(anchor);
+            return;
+        }
         let mut edits: SceneEditBatch = SceneEditBatch::new();
-        match selected_material {
-            Some(material_identifier) => {
+        match tool {
+            EditorTool::Material(material_identifier) => {
                 let Some(material) = scene.materials().get(material_identifier) else { return; };
                 let variation: [f32; 4] = material.appearance().variation();
                 edits.place_cells(cells.into_iter().map(|coordinates| SceneEditCellPlacement {
@@ -158,7 +178,8 @@ impl<G: Game> EditorApplication<G> {
                     ),
                 }).collect());
             }
-            None => edits.erase(cells.into_iter().collect()),
+            EditorTool::Eraser => edits.erase(cells.into_iter().collect()),
+            EditorTool::Impulse => unreachable!(),
         }
         if scene.apply_edits(&mut edits).is_ok() {
             self.stroke_anchor = Some(anchor);
@@ -300,6 +321,7 @@ impl<G: Game> EditorApplication<G> {
         let square_requested: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         let circle_requested: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         let eraser_requested: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+        let impulse_requested: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         let material_requested: Rc<Cell<Option<MaterialIdentifier>>> = Rc::new(Cell::new(None));
         let free_fly_action: Rc<Cell<bool>> = free_fly_requested.clone();
         let return_action: Rc<Cell<bool>> = return_requested.clone();
@@ -307,6 +329,7 @@ impl<G: Game> EditorApplication<G> {
         let square_action: Rc<Cell<bool>> = square_requested.clone();
         let circle_action: Rc<Cell<bool>> = circle_requested.clone();
         let eraser_action: Rc<Cell<bool>> = eraser_requested.clone();
+        let impulse_action: Rc<Cell<bool>> = impulse_requested.clone();
         let material_entries: Vec<(MaterialIdentifier, String)> = self.application.game().scene()
             .map_or_else(Vec::new, |scene| scene.materials().iter().map(|(
                 material_identifier,
@@ -336,15 +359,18 @@ impl<G: Game> EditorApplication<G> {
         let mut palette: StackVertical = StackVertical::new()
             .with_width(128.0)
             .with_background_color(&background)
-            .with_child(Button::new(if self.selected_material.is_none() {
+            .with_child(Button::new(if matches!(self.tool, EditorTool::Eraser) {
                 "> Eraser"
             } else {
                 "Eraser"
             }, move || eraser_action.set(true)));
+        palette = palette.with_child(Button::new(if matches!(self.tool, EditorTool::Impulse) {
+            "> Impulse"
+        } else { "Impulse" }, move || impulse_action.set(true)));
         for (material_identifier, material_name) in material_entries {
             let material_action: Rc<Cell<Option<MaterialIdentifier>>> = material_requested.clone();
-            let is_selected: bool = self.selected_material.map(MaterialIdentifier::as_u32) ==
-                Some(material_identifier.as_u32());
+            let is_selected: bool = matches!(self.tool, EditorTool::Material(selected)
+                if selected.as_u32() == material_identifier.as_u32());
             palette = palette.with_child(Button::new(if is_selected {
                 format!("> {material_name}")
             } else {
@@ -363,11 +389,15 @@ impl<G: Game> EditorApplication<G> {
         self.application.add_widget(&mut layout);
         self.application.set_scene_viewport_bounds(viewport_bounds.get());
         if eraser_requested.get() {
-            self.selected_material = None;
+            self.tool = EditorTool::Eraser;
+            self.stroke_anchor = None;
+        }
+        if impulse_requested.get() {
+            self.tool = EditorTool::Impulse;
             self.stroke_anchor = None;
         }
         if let Some(material_identifier) = material_requested.get() {
-            self.selected_material = Some(material_identifier);
+            self.tool = EditorTool::Material(material_identifier);
             self.stroke_anchor = None;
         }
         if square_requested.get() && self.brush.select_square() { self.stroke_anchor = None; }

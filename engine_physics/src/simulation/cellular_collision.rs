@@ -56,7 +56,7 @@ impl CellularCollision {
         let occupancy: AcceleratorBuffer = accelerator.allocate::<[u32; 2]>(tile_count as usize);
         let parameters: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("cellular collision parameters"),
-            size: 16,
+            size: 64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -160,7 +160,7 @@ impl CellularCollision {
     }
 
     /// Consumes completed readbacks without waiting and retains the newest snapshot
-    pub fn collect_completed(&mut self) -> Result<(), io::Error> {
+    pub fn collect_collision(&mut self) -> Result<(), io::Error> {
         for slot in &self.readback_slots {
             let mut status: std::sync::MutexGuard<'_, CollisionReadbackStatus> =
                 slot.status.lock().map_err(|_| {
@@ -180,7 +180,7 @@ impl CellularCollision {
     }
 
     /// Dispatches extraction and asynchronous readback if a staging slot is available
-    pub fn extract(
+    pub fn extract_collision(
         &mut self,
         accelerator: &Accelerator,
         origin: TileCoordinates,
@@ -188,6 +188,8 @@ impl CellularCollision {
         height: u16,
         ring_offset_x: u16,
         ring_offset_y: u16,
+        gravity: [f32; 2],
+        actor: Option<([f32; 2], [f32; 2], [f32; 2])>,
     ) -> Result<bool, io::Error> {
         // claim a free staging slot or skip this snapshot without waiting
         let Some(slot): Option<&CollisionReadbackSlot> = self.readback_slots.iter().find(|slot| {
@@ -205,13 +207,28 @@ impl CellularCollision {
         let sequence: u64 = self.sequence_next;
         self.sequence_next = self.sequence_next.wrapping_add(1);
         // upload the ring mapping captured for this logical snapshot
-        let mut bytes: [u8; 16] = [0; 16];
-        for (index, value) in [
+        let actor_present: u32 = u32::from(actor.is_some());
+        let actor = actor.unwrap_or(([0.0; 2], [0.0; 2], [0.0; 2]));
+        let values: [u32; 16] = [
+            origin.x as u32,
+            origin.y as u32,
             u32::from(width),
             u32::from(height),
             u32::from(ring_offset_x),
             u32::from(ring_offset_y),
-        ].into_iter().enumerate() {
+            actor.0[0].to_bits(),
+            actor.0[1].to_bits(),
+            actor.2[0].to_bits(),
+            actor.2[1].to_bits(),
+            gravity[0].to_bits(),
+            gravity[1].to_bits(),
+            actor_present,
+            0,
+            0,
+            0,
+        ];
+        let mut bytes: [u8; 64] = [0; 64];
+        for (index, value) in values.into_iter().enumerate() {
             bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes());
         }
         accelerator.wgpu_queue().write_buffer(&self.parameters, 0, &bytes);

@@ -11,6 +11,11 @@ struct Parameters {
     tick: u32,
     buffered_cell_count: u32,
     maximum_movement_cells: u32,
+    actor_center: vec2<f32>,
+    actor_velocity: vec2<f32>,
+    actor_collider_size: vec2<f32>,
+    actor_present: u32,
+    actor_padding: u32,
 }
 
 struct Proposal {
@@ -34,6 +39,9 @@ struct Proposal {
 const INVALID_INDEX: u32 = 0xffffffffu;
 const CELLS_PER_TILE: i32 = 8;
 const CELLULAR_DYNAMIC_FORM: u32 = 2u;
+const CELL_SIZE_TILES: f32 = 0.125;
+const PLAYER_SEPARATION_SPEED: f32 = 6.0;
+const PLAYER_VELOCITY_TRANSFER: f32 = 1.25;
 
 // Reset transient atomic contention state
 @compute @workgroup_size(64)
@@ -70,6 +78,17 @@ fn calculate_cellular_dynamic_movement_proposals(@builtin(global_invocation_id) 
     if accumulated_distance > f32(parameters.maximum_movement_cells) {
         accumulated *= f32(parameters.maximum_movement_cells) / accumulated_distance;
     }
+    let source_inside_player: bool = player_capsule_contains(source_cell);
+    if parameters.actor_present != 0u {
+        let distance = player_capsule_distance(source_cell);
+        if distance <= 2.0 * CELL_SIZE_TILES {
+            let separation = player_separation_direction(source_cell);
+            velocity += separation * (PLAYER_SEPARATION_SPEED * max(0.0,
+                1.0 - distance / (2.0 * CELL_SIZE_TILES))) +
+                parameters.actor_velocity * PLAYER_VELOCITY_TRANSFER;
+            if source_inside_player { accumulated += separation * 0.5; }
+        }
+    }
     // separate whole-cell displacement from retained subcell residual
     let displacement: vec2<i32> = vec2<i32>(accumulated);
     var residual: vec2<f32> = accumulated - vec2<f32>(displacement);
@@ -95,7 +114,7 @@ fn calculate_cellular_dynamic_movement_proposals(@builtin(global_invocation_id) 
             }
             let next_index: u32 = cellular_dynamic_physical_cell_index(next);
             if !is_cellular_dynamic_active_cell(next) || next_index == INVALID_INDEX ||
-                    cellular_material_identifiers[next_index] != 0u {
+                    cellular_material_identifiers[next_index] != 0u || player_capsule_contains(next) {
                 direct_blocked = true;
                 break;
             }
@@ -106,10 +125,20 @@ fn calculate_cellular_dynamic_movement_proposals(@builtin(global_invocation_id) 
         if direct_blocked && all(destination_cell == source_cell) {
             destination_cell = choose_cellular_dynamic_slide_destination(source_cell);
             if all(destination_cell == source_cell) {
-                velocity = vec2<f32>(0.0);
-                residual = vec2<f32>(0.0);
+                let gravity_length: f32 = length(parameters.gravity);
+                if gravity_length > 0.0 {
+                    let gravity_direction: vec2<f32> = parameters.gravity / gravity_length;
+                    let into_support: f32 = dot(velocity, gravity_direction);
+                    if into_support > 0.0 {
+                        velocity -= gravity_direction * into_support;
+                    }
+                }
+                residual = clamp(accumulated, vec2<f32>(-0.999), vec2<f32>(0.999));
             }
         }
+    }
+    if source_inside_player && all(destination_cell == source_cell) {
+        destination_cell = choose_player_exit_destination(source_cell);
     }
     // publish integrated matter state before atomically competing for its destination
     let destination_index: u32 = cellular_dynamic_physical_cell_index(destination_cell);
@@ -185,6 +214,59 @@ fn choose_cellular_dynamic_slide_destination(source: vec2<i32>) -> vec2<i32> {
         }
     }
     return source;
+}
+
+fn choose_player_exit_destination(source: vec2<i32>) -> vec2<i32> {
+    let direction = player_separation_direction(source);
+    let candidate = source + vec2<i32>(sign(direction));
+    let index = cellular_dynamic_physical_cell_index(candidate);
+    if all(sign(direction) != vec2<f32>(0.0)) && is_cellular_dynamic_active_cell(candidate) &&
+            index != INVALID_INDEX && cellular_material_identifiers[index] == 0u &&
+            !player_capsule_contains(candidate) { return candidate; }
+    return source;
+}
+
+fn player_capsule_contains(cell: vec2<i32>) -> bool {
+    return player_capsule_distance(cell) <= parameters.actor_collider_size.x * 0.5 + CELL_SIZE_TILES;
+}
+
+fn player_capsule_distance(cell: vec2<i32>) -> f32 {
+    if parameters.actor_present == 0u { return 1000000.0; }
+    let gravity_length = length(parameters.gravity);
+    let up = select(vec2<f32>(0.0, 1.0), -parameters.gravity / gravity_length,
+        gravity_length > 0.0);
+    let tangent = vec2<f32>(up.y, -up.x);
+    let relative = (vec2<f32>(cell) + vec2<f32>(0.5)) * CELL_SIZE_TILES -
+        parameters.actor_center;
+    let x = dot(relative, tangent);
+    let y = dot(relative, up);
+    let radius = parameters.actor_collider_size.x * 0.5;
+    let segment_half = max(0.0, (parameters.actor_collider_size.y - radius * 2.0) * 0.5);
+    let closest_y = clamp(y, -segment_half, segment_half);
+    return length(vec2<f32>(x, y - closest_y));
+}
+
+fn player_separation_direction(cell: vec2<i32>) -> vec2<f32> {
+    let gravity_length = length(parameters.gravity);
+    let up = select(vec2<f32>(0.0, 1.0), -parameters.gravity / gravity_length,
+        gravity_length > 0.0);
+    let tangent = vec2<f32>(up.y, -up.x);
+    let relative = (vec2<f32>(cell) + vec2<f32>(0.5)) * CELL_SIZE_TILES -
+        parameters.actor_center;
+    let x = dot(relative, tangent);
+    let y = dot(relative, up);
+    let radius = parameters.actor_collider_size.x * 0.5;
+    let segment_half = max(0.0, (parameters.actor_collider_size.y - radius * 2.0) * 0.5);
+    let closest_y = clamp(y, -segment_half, segment_half);
+    let local = vec2<f32>(x, y - closest_y);
+    if length(local) < 0.0001 { return hash_cellular_dynamic_direction(cell, parameters.tick); }
+    return tangent * (local.x / length(local)) + up * (local.y / length(local));
+}
+
+fn hash_cellular_dynamic_direction(cell: vec2<i32>, tick: u32) -> vec2<f32> {
+    let value = hash_cellular_dynamic_claim_priority(cell, tick);
+    return normalize(vec2<f32>(select(-1.0, 1.0, (value & 1u) == 0u),
+        select(-1.0, 1.0, (value & 2u) == 0u)));
 }
 
 // Create a unique destination-specific rotating claim ticket

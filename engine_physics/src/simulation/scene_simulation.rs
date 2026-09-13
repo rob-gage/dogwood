@@ -107,7 +107,15 @@ pub trait SceneSimulation {
         velocity.y += tangent.y * change;
         velocity.x += gravity[0] * delta_time;
         velocity.y += gravity[1] * delta_time;
-        if control.locomotion_y > 0.0 && state.grounded {
+        let jump_requested: bool = control.locomotion_y > 0.0 && state.grounded;
+        if was_grounded && !jump_requested {
+            let into_ground: f32 = velocity.x * up.x + velocity.y * up.y;
+            if into_ground < 0.0 {
+                velocity.x -= up.x * into_ground;
+                velocity.y -= up.y * into_ground;
+            }
+        }
+        if jump_requested {
             let up_velocity: f32 = velocity.x * up.x + velocity.y * up.y;
             velocity.x += up.x * (configuration.jump_velocity - up_velocity);
             velocity.y += up.y * (configuration.jump_velocity - up_velocity);
@@ -138,6 +146,9 @@ pub trait SceneSimulation {
         let world_y: f32 = position.tile_coordinates.y as f32 + position.y_offset;
         let mut up_velocity: f32 = velocity.x * up.x + velocity.y * up.y;
         let mut tangent_velocity: f32 = velocity.x * tangent.x + velocity.y * tangent.y;
+        if was_grounded && control.locomotion_x == 0.0 && tangent_velocity.abs() < 1e-4 {
+            tangent_velocity = 0.0;
+        }
         let requested_tangent_velocity: f32 = tangent_velocity;
         let mut contacted_wall: bool = false;
         let mut contacted_walkable_surface: bool = false;

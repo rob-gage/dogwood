@@ -10,7 +10,7 @@ use engine_compute::{
 const MAXIMUM_MOVEMENT_CELLS: u32 = 4;
 
 /// Simulates dynamic cellular material in the canonical cellular buffers
-pub(crate) struct CellularDynamic {
+pub struct CellularDynamic {
     /// Persistent velocity and subcell residual attached to each physical cell slot
     kinematics: AcceleratorBuffer,
     /// Resolved material identifiers before they are committed to canonical storage
@@ -41,8 +41,10 @@ pub(crate) struct CellularDynamic {
 
 impl CellularDynamic {
 
+    pub const fn kinematics_buffer(&self) -> &AcceleratorBuffer { &self.kinematics }
+
     /// Creates the private cellular dynamic solver and its fixed-size GPU state
-    pub(crate) fn new(
+    pub fn new(
         accelerator: &Accelerator,
         cellular_material_identifiers: &AcceleratorBuffer,
         cellular_appearances: &AcceleratorBuffer,
@@ -71,7 +73,7 @@ impl CellularDynamic {
         // describe the active and buffered ring mapping shared by every pass
         let parameters: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("cellular dynamic parameters"),
-            size: 64,
+            size: 96,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -201,7 +203,7 @@ impl CellularDynamic {
     }
 
     /// Simulates one fixed tick and commits the resolved state to canonical storage
-    pub(crate) fn simulate_cellular_dynamic_tick(
+    pub fn simulate_cellular_dynamic_tick(
         &mut self,
         accelerator: &Accelerator,
         cellular_material_identifiers: &AcceleratorBuffer,
@@ -216,9 +218,12 @@ impl CellularDynamic {
         ring_offset_y: u16,
         gravity: [f32; 2],
         delta_time: f32,
+        actor: Option<([f32; 2], [f32; 2], [f32; 2])>,
     ) {
         // encode signed origins, ring geometry, kinematics inputs, and deterministic tick state
-        let parameters: [u32; 16] = [
+        let actor_present: u32 = u32::from(actor.is_some());
+        let actor = actor.unwrap_or(([0.0; 2], [0.0; 2], [0.0; 2]));
+        let parameters: [u32; 24] = [
             buffered_origin.x as u32,
             buffered_origin.y as u32,
             u32::from(buffered_width),
@@ -235,6 +240,14 @@ impl CellularDynamic {
             self.tick,
             self.buffered_cell_count,
             MAXIMUM_MOVEMENT_CELLS,
+            actor.0[0].to_bits(),
+            actor.0[1].to_bits(),
+            actor.1[0].to_bits(),
+            actor.1[1].to_bits(),
+            actor.2[0].to_bits(),
+            actor.2[1].to_bits(),
+            actor_present,
+            0,
         ];
         let mut bytes: Vec<u8> = Vec::with_capacity(64);
         for value in parameters { bytes.extend_from_slice(&value.to_le_bytes()); }
@@ -291,7 +304,7 @@ impl CellularDynamic {
     }
 
     /// Clears motion state replaced by a CPU cell edit or tile upload
-    pub(crate) fn clear_cellular_dynamic_kinematics(
+    pub fn clear_cellular_dynamic_kinematics(
         &self,
         accelerator: &Accelerator,
         cell_start: usize,

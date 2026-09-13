@@ -12,6 +12,7 @@ use super::{
 use crate::simulation::{
     CellularCollision,
     CellularDynamic,
+    CellularPressure,
     SceneSimulationConfiguration,
     ScenePhysicsWorld,
 };
@@ -126,8 +127,12 @@ pub struct Scene {
     cellular_material_identifiers: AcceleratorBuffer,
     /// The parallel buffer containing persistent cell appearance samples
     cellular_appearances: AcceleratorBuffer,
+    /// The parallel buffer containing persistent static-cell integrity
+    cellular_integrities: AcceleratorBuffer,
     /// GPU simulation of dynamic cells in the canonical cellular buffers
     cellular_dynamic: CellularDynamic,
+    /// GPU impulse, pressure, integrity, and fracture subsystem
+    cellular_pressure: CellularPressure,
     /// Compact CPU-readable occupancy derived from the authoritative cellular GPU buffer
     cellular_collision: CellularCollision,
     /// Whether cellular data or its ring mapping needs a replacement collision extraction
@@ -202,11 +207,22 @@ impl Scene {
             accelerator.allocate::<u32>(buffered_cell_count);
         let cellular_appearances: AcceleratorBuffer =
             accelerator.allocate::<u32>(buffered_cell_count);
+        let cellular_integrities: AcceleratorBuffer =
+            accelerator.allocate::<f32>(buffered_cell_count);
         let cellular_dynamic: CellularDynamic = CellularDynamic::new(
             accelerator.as_ref(),
             &cellular_material_identifiers,
             &cellular_appearances,
             buffered_tile_count,
+        );
+        let cellular_pressure: CellularPressure = CellularPressure::new(
+            accelerator.as_ref(),
+            data.materials(),
+            &cellular_material_identifiers,
+            &cellular_appearances,
+            &cellular_integrities,
+            cellular_dynamic.kinematics_buffer(),
+            buffered_cell_count,
         );
         let cellular_collision: CellularCollision = CellularCollision::new(
             accelerator.as_ref(),
@@ -245,7 +261,9 @@ impl Scene {
             tile_uploads: Mutex::new(Vec::new()),
             cellular_material_identifiers,
             cellular_appearances,
+            cellular_integrities,
             cellular_dynamic,
+            cellular_pressure,
             cellular_collision,
             cellular_collision_dirty: true,
             gravity: simulation.gravity,
@@ -346,7 +364,7 @@ impl Scene {
 
     /// Applies queued material edits to resident cellular world state
     pub fn apply_edits(&mut self, edits: &mut SceneEditBatch) -> Result<(), io::Error> {
-        let mut cell_edits: HashMap<usize, (CellCoordinates, MaterialIdentifier, CellularAppearance)> =
+        let mut cell_edits: HashMap<usize, (CellCoordinates, MaterialIdentifier, CellularAppearance, f32)> =
             HashMap::new();
         for edit in edits.drain() {
             match edit {
@@ -365,6 +383,10 @@ impl Scene {
                                 coordinates,
                                 material_identifier,
                                 appearance,
+                                match self.data.materials().get(material_identifier) {
+                                    Some(Material::CellularStatic { default_integrity, .. }) => *default_integrity,
+                                    _ => 0.0,
+                                },
                             ));
                         }
                     }
@@ -376,29 +398,31 @@ impl Scene {
                                 coordinates,
                                 MaterialIdentifier::NULL,
                                 CellularAppearance::NEUTRAL,
+                                0.0,
                             ));
                         }
                     }
                 }
             }
         }
-        let mut cell_edits: Vec<(usize, CellCoordinates, MaterialIdentifier, CellularAppearance)> =
-            cell_edits.into_iter().map(|(index, (coordinates, material_identifier, appearance))| {
-                (index, coordinates, material_identifier, appearance)
+        let mut cell_edits: Vec<(usize, CellCoordinates, MaterialIdentifier, CellularAppearance, f32)> =
+            cell_edits.into_iter().map(|(index, (coordinates, material_identifier, appearance, integrity))| {
+                (index, coordinates, material_identifier, appearance, integrity)
             }).collect();
         cell_edits.sort_unstable_by_key(|(physical_index, ..)| *physical_index);
-        for (_, coordinates, material_identifier, appearance) in &cell_edits {
+        for (_, coordinates, material_identifier, appearance, integrity) in &cell_edits {
             let tile_coordinates: TileCoordinates = coordinates.tile_coordinates();
             let [x, y]: [usize; 2] = coordinates.local_tile_coordinates();
             let Some(ChunkEntry::Active { chunk, is_dirty }) =
                 self.chunks.get_mut(&tile_coordinates.chunk_coordinates())
             else { return Err(io::Error::other("Resident tile chunk is not active")); };
-            chunk.set_cell(
+            chunk.set_cell_with_integrity(
                 tile_coordinates,
                 x,
                 y,
                 *material_identifier,
                 *appearance,
+                *integrity,
             ).map_err(|_| io::Error::other("Resident tile is not in its active chunk"))?;
             *is_dirty = true;
         }
@@ -407,6 +431,28 @@ impl Scene {
             self.write_cell_edits(&cell_edits);
         }
         Ok(())
+    }
+
+    /// Applies one GPU radial cellular impulse without moving cells immediately.
+    pub fn apply_cellular_radial_impulse(
+        &mut self,
+        center: CellCoordinates,
+        radius_cells: f32,
+        strength: f32,
+    ) {
+        let buffer_size: i32 = i32::from(self.simulation_buffer_size);
+        let dimensions: u16 = u16::from(self.simulation_buffer_size) * 2;
+        self.cellular_pressure.apply_radial_impulse(
+            self.accelerator.as_ref(),
+            TileCoordinates { x: self.origin.x - buffer_size, y: self.origin.y - buffer_size },
+            self.simulation_width + dimensions,
+            self.simulation_height + dimensions,
+            self.tiles_ring_offset_x,
+            self.tiles_ring_offset_y,
+            center,
+            radius_cells.max(0.75),
+            strength,
+        );
     }
 
     /// Handles `Scene` streaming and fixed-rate simulation
@@ -426,7 +472,7 @@ impl Scene {
         self.tile_downloads_submit()?;
         self.tile_uploads_submit()?;
         self.accelerator.poll().map_err(|error| io::Error::other(error.to_string()))?;
-        self.cellular_collision.collect_completed()?;
+        self.cellular_collision.collect_collision()?;
         self.tile_downloads_apply_completed()?;
         self.tile_downlaods_clean()?;
         self.tile_uploads_clean()?;
@@ -458,6 +504,10 @@ impl Scene {
             self.gravity,
             &self.physics_world,
         );
+        let current_walking_pawn: Option<([f32; 2], [f32; 2], [f32; 2])> =
+            self.possessed_actor().and_then(|actor| {
+                self.actor_registry.walking_pawn_physics(actor)
+            });
         let possessed_position: Option<ScenePosition> = self.possessed_actor()
             .and_then(|actor| self.actor_registry.get_position(actor)).copied();
         if let Some(position) = possessed_position { self.follow_position(position); }
@@ -481,12 +531,22 @@ impl Scene {
                 self.tiles_ring_offset_y,
                 self.gravity,
                 1.0 / TICK_RATE as f32,
+                current_walking_pawn,
+            );
+            self.cellular_pressure.simulate(
+                self.accelerator.as_ref(),
+                TileCoordinates { x: self.origin.x - buffer_size, y: self.origin.y - buffer_size },
+                self.simulation_width + dimensions,
+                self.simulation_height + dimensions,
+                self.tiles_ring_offset_x,
+                self.tiles_ring_offset_y,
+                1.0 / TICK_RATE as f32,
             );
             self.cellular_collision_dirty = true;
         }
         if !self.cellular_collision_dirty { return Ok(()); }
         let buffer_size: i32 = i32::from(self.simulation_buffer_size);
-        if self.cellular_collision.extract(
+        if self.cellular_collision.extract_collision(
             self.accelerator.as_ref(),
             TileCoordinates {
                 x: self.origin.x - buffer_size,
@@ -496,6 +556,8 @@ impl Scene {
             self.simulation_height + u16::from(self.simulation_buffer_size) * 2,
             self.tiles_ring_offset_x,
             self.tiles_ring_offset_y,
+            self.gravity,
+            current_walking_pawn,
         )? { self.cellular_collision_dirty = false; }
         Ok(())
     }
@@ -515,7 +577,7 @@ impl Scene {
     /// Writes final contiguous cellular edits to the two authoritative GPU buffers
     fn write_cell_edits(
         &self,
-        edits: &[(usize, CellCoordinates, MaterialIdentifier, CellularAppearance)],
+        edits: &[(usize, CellCoordinates, MaterialIdentifier, CellularAppearance, f32)],
     ) {
         let mut start: usize = 0;
         while start < edits.len() {
@@ -526,9 +588,11 @@ impl Scene {
             }
             let mut material_identifiers: Vec<u8> = Vec::with_capacity((end - start) * 4);
             let mut appearances: Vec<u8> = Vec::with_capacity((end - start) * 4);
+            let mut integrities: Vec<u8> = Vec::with_capacity((end - start) * 4);
             for edit in &edits[start..end] {
                 material_identifiers.extend_from_slice(&edit.2.as_u32().to_le_bytes());
                 appearances.extend_from_slice(&edit.3.0.to_le_bytes());
+                integrities.extend_from_slice(&edit.4.to_bits().to_le_bytes());
             }
             let offset: u64 = edits[start].0 as u64 * 4;
             self.accelerator.wgpu_queue().write_buffer(
@@ -540,6 +604,11 @@ impl Scene {
                 self.cellular_appearances.wgpu_buffer(),
                 offset,
                 &appearances,
+            );
+            self.accelerator.wgpu_queue().write_buffer(
+                self.cellular_integrities.wgpu_buffer(),
+                offset,
+                &integrities,
             );
             self.cellular_dynamic.clear_cellular_dynamic_kinematics(
                 self.accelerator.as_ref(),
@@ -1148,6 +1217,13 @@ impl Scene {
                     TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
                     TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
                 );
+                command_encoder.copy_buffer_to_buffer(
+                    self.cellular_integrities.wgpu_buffer(),
+                    tile.0 as u64 * TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
+                    &state.buffer,
+                    TileData::CELL_FIELD_SERIALIZED_SIZE as u64 * 2,
+                    TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
+                );
                 state.is_started = true;
                 downloads_started.push((download.clone(), state.buffer.clone()));
             }
@@ -1165,9 +1241,16 @@ impl Scene {
                                     let mut material_data: &[u8] = &mapped_data[..
                                         TileData::CELL_FIELD_SERIALIZED_SIZE];
                                     let mut appearance_data: &[u8] = &mapped_data[
-                                        TileData::CELL_FIELD_SERIALIZED_SIZE..];
+                                        TileData::CELL_FIELD_SERIALIZED_SIZE..
+                                            TileData::CELL_FIELD_SERIALIZED_SIZE * 2];
+                                    let mut integrity_data: &[u8] = &mapped_data[
+                                        TileData::CELL_FIELD_SERIALIZED_SIZE * 2..];
                                     let tile_data: Result<TileData, io::Error> =
-                                        TileData::deserialize_fields(&mut material_data, &mut appearance_data);
+                                        TileData::deserialize_fields(
+                                            &mut material_data,
+                                            &mut appearance_data,
+                                            &mut integrity_data,
+                                        );
                                     drop(mapped_data);
                                     mapped_buffer.unmap();
                                     tile_data
@@ -1228,6 +1311,11 @@ impl Scene {
                 tile.0 as u64 * TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
                 &state.appearances,
             );
+            self.accelerator.wgpu_queue().write_buffer(
+                self.cellular_integrities.wgpu_buffer(),
+                tile.0 as u64 * TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
+                &state.integrities,
+            );
             self.cellular_dynamic.clear_cellular_dynamic_kinematics(
                 self.accelerator.as_ref(),
                 tile.0 as usize * 64,
@@ -1255,6 +1343,7 @@ impl Drop for Scene {
     fn drop(&mut self) {
         self.cellular_material_identifiers.free();
         self.cellular_appearances.free();
+        self.cellular_integrities.free();
     }
 
 }

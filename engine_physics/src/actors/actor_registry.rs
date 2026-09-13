@@ -134,6 +134,26 @@ impl ActorRegistry {
         })
     }
 
+    /// Returns the possessed walking-pawn physics data needed by cellular interaction.
+    pub fn walking_pawn_physics(
+        &self,
+        identifier: Actor,
+    ) -> Option<([f32; 2], [f32; 2], [f32; 2])> {
+        let entity = self.world.get_entity(identifier.bevy_entity()).ok()?;
+        let pawn = entity.get::<ActorPawn>()?;
+        let walking = pawn.walking?;
+        let position = *entity.get::<ScenePosition>()?;
+        let velocity = *entity.get::<SceneVelocity>()?;
+        Some((
+            [
+                position.tile_coordinates.x as f32 + position.x_offset,
+                position.tile_coordinates.y as f32 + position.y_offset,
+            ],
+            [velocity.x, velocity.y],
+            [walking.collider_width, walking.collider_height],
+        ))
+    }
+
     /// Sets an actor's position
     pub fn set_position(&mut self, identifier: Actor, position: ScenePosition) -> bool {
         let entity: bevy_ecs::entity::Entity = identifier.bevy_entity();

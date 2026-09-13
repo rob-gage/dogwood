@@ -52,9 +52,25 @@ impl DemoGame {
             Color::new_rgb(128, 128, 128),
         ).with_variation([0.5, 0.5, 0.5, 0.0])
             .with_color_influence([0.25, 0.25, 0.25, 0.0]);
+        let stone_debris: MaterialIdentifier = materials.register(Material::CellularDynamic {
+            name: "Stone Debris".into(),
+            graphics: stone_graphics,
+        });
+        let sand_graphics: MaterialAppearance = MaterialAppearance::from_color(
+            Color::new_rgb(194, 178, 128),
+        ).with_variation([0.5, 0.5, 0.5, 0.0])
+            .with_color_influence([0.20, 0.18, 0.12, 0.0]);
+        let sand: MaterialIdentifier = materials.register(Material::CellularDynamic {
+            name: "Sand".into(),
+            graphics: sand_graphics,
+        });
         let stone: MaterialIdentifier = materials.register(Material::CellularStatic {
             name: "Stone".into(),
             graphics: stone_graphics,
+            pressure_ignore_threshold: 8.0,
+            default_integrity: 20.0,
+            debris_material: Some(stone_debris),
+            debris_yield_rate: 0.8,
         });
         let data: SceneData = SceneData::new_temporary(materials)?;
         let mut scene: Scene = Scene::load_with_generator(
@@ -67,7 +83,13 @@ impl DemoGame {
                 streaming_batch_size: 4,
             },
             data,
-            DemoSceneGenerator { stone, stone_variation: stone_graphics.variation() },
+            DemoSceneGenerator {
+                stone,
+                stone_variation: stone_graphics.variation(),
+                sand,
+                sand_variation: sand_graphics.variation(),
+                stone_integrity: 20.0,
+            },
         )?;
         let mut pawn_configuration: ActorPawn = ActorPawn::new();
         pawn_configuration.walking = Some(ActorPawnWalkingConfiguration {
