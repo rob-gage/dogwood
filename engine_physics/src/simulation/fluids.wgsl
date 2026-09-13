@@ -38,11 +38,22 @@ struct Parameters {
 @group(0) @binding(10) var<storage, read> external_body_occupancy: array<u32>;
 @group(0) @binding(11) var<storage, read> external_body_velocity: array<vec4<f32>>;
 @group(0) @binding(12) var<uniform> parameters: Parameters;
+@group(0) @binding(13) var<storage, read_write> predicted_positions: array<vec2<f32>>;
+@group(0) @binding(14) var<storage, read_write> lambdas: array<f32>;
+@group(0) @binding(15) var<storage, read_write> position_corrections: array<vec2<f32>>;
 
 const EMPTY: u32 = 0u;
 const INVALID_INDEX: u32 = 0xffffffffu;
 const FLUID_FORM: u32 = 3u;
 const CELLS_PER_TILE: f32 = 8.0;
+const PI: f32 = 3.141592653589793;
+const PBF_SUBSTEP_COUNT: f32 = 2.0;
+const REST_DENSITY: f32 = 1.0;
+const CONSTRAINT_EPSILON: f32 = 0.01;
+const ARTIFICIAL_PRESSURE_DELTA_Q_RATIO: f32 = 0.3;
+const ARTIFICIAL_PRESSURE_K: f32 = 0.1;
+const MAXIMUM_CORRECTION_CELLS: f32 = 0.25;
+const XSPH_SMOOTHING: f32 = 0.25;
 
 // Removes every authoritative particle whose current world cell was edited
 @compute @workgroup_size(64)
@@ -82,37 +93,34 @@ fn clear_fluid_edits(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if invocation.x < parameters.buffered_cell_count { edit_cells[invocation.x] = EMPTY; }
 }
 
-// Integrates gravity and resolves a small swept sequence against cellular and body occupancy
+// Predicts one PBF substep while retaining the previous authoritative position for velocity reconstruction
 @compute @workgroup_size(64)
-fn move_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>) {
+fn predict_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let particle_index: u32 = invocation.x;
     if particle_index >= parameters.particle_capacity ||
             particles[particle_index].material_identifier == EMPTY { return; }
     var particle: Particle = particles[particle_index];
-    particle.velocity += parameters.gravity * parameters.delta_time;
+    let substep_dt: f32 = parameters.delta_time / PBF_SUBSTEP_COUNT;
+    particle.velocity += parameters.gravity * substep_dt;
     let maximum_speed: f32 = f32(parameters.maximum_movement_cells) /
         (CELLS_PER_TILE * parameters.delta_time);
     let speed: f32 = length(particle.velocity);
     if speed > maximum_speed { particle.velocity *= maximum_speed / speed; }
-    let movement_cells: f32 = length(particle.velocity) * parameters.delta_time * CELLS_PER_TILE;
+    let movement_cells: f32 = length(particle.velocity) * substep_dt * CELLS_PER_TILE;
     let step_count: u32 = clamp(u32(ceil(movement_cells * 2.0)), 1u,
         parameters.maximum_movement_cells * 2u);
-    let step: vec2<f32> = particle.velocity * parameters.delta_time / f32(step_count);
+    var position: vec2<f32> = particle.position;
     for (var movement_step: u32 = 0u; movement_step < step_count; movement_step++) {
-        particle.position += step;
+        position += particle.velocity * substep_dt / f32(step_count);
         let resolved: vec4<f32> = resolve_particle_collisions(
-            particle.position,
+            position,
             particle.velocity,
         );
-        particle.position = resolved.xy;
+        position = resolved.xy;
         particle.velocity = resolved.zw;
     }
-    if !position_is_resident(particle.position) {
-        particles[particle_index] = particle;
-        release_particle(particle_index);
-        return;
-    }
     particles[particle_index] = particle;
+    predicted_positions[particle_index] = position;
 }
 
 @compute @workgroup_size(64)
@@ -133,6 +141,180 @@ fn insert_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>) 
         return;
     }
     next_particle[particle_index] = atomicExchange(&bucket_heads[bucket], particle_index);
+}
+
+// Builds the same linked-list grid from predicted rather than committed positions
+@compute @workgroup_size(64)
+fn insert_predicted_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let particle_index: u32 = invocation.x;
+    if particle_index >= parameters.particle_capacity ||
+            particles[particle_index].material_identifier == EMPTY { return; }
+    let bucket: u32 = bucket_index(predicted_positions[particle_index]);
+    if bucket == INVALID_INDEX { return; }
+    next_particle[particle_index] = atomicExchange(&bucket_heads[bucket], particle_index);
+}
+
+// Calculates the standard PBF density constraint and lambda from immutable predicted positions
+@compute @workgroup_size(64)
+fn calculate_fluid_lambdas(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let particle_index: u32 = invocation.x;
+    if particle_index >= parameters.particle_capacity ||
+            particles[particle_index].material_identifier == EMPTY { return; }
+    let position: vec2<f32> = predicted_positions[particle_index];
+    let base_bucket: vec2<i32> = bucket_coordinates(position);
+    var density: f32 = poly6_kernel(0.0);
+    var self_gradient: vec2<f32> = vec2<f32>(0.0);
+    var gradient_squared_sum: f32 = 0.0;
+    for (var bucket_y: i32 = -1; bucket_y <= 1; bucket_y++) {
+        for (var bucket_x: i32 = -1; bucket_x <= 1; bucket_x++) {
+            let bucket: u32 = bucket_index_from_coordinates(
+                base_bucket + vec2<i32>(bucket_x, bucket_y),
+            );
+            if bucket == INVALID_INDEX { continue; }
+            var neighbor_index: u32 = atomicLoad(&bucket_heads[bucket]);
+            for (var chain_length: u32 = 0u;
+                    neighbor_index != INVALID_INDEX && chain_length < parameters.particle_capacity;
+                    chain_length++) {
+                if neighbor_index != particle_index {
+                    let separation: vec2<f32> =
+                        (position - predicted_positions[neighbor_index]) * CELLS_PER_TILE;
+                    let distance: f32 = length(separation);
+                    if distance < parameters.support_radius_cells {
+                        density += poly6_kernel(distance);
+                        let gradient: vec2<f32> = spiky_gradient(separation, distance) /
+                            REST_DENSITY;
+                        self_gradient += gradient;
+                        gradient_squared_sum += dot(gradient, gradient);
+                    }
+                }
+                neighbor_index = next_particle[neighbor_index];
+            }
+        }
+    }
+    gradient_squared_sum += dot(self_gradient, self_gradient);
+    let constraint: f32 = density / REST_DENSITY - 1.0;
+    lambdas[particle_index] = -constraint /
+        (gradient_squared_sum + CONSTRAINT_EPSILON);
+}
+
+// Gathers correction separately so every lambda and predicted position is immutable during this pass
+@compute @workgroup_size(64)
+fn calculate_fluid_position_corrections(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let particle_index: u32 = invocation.x;
+    if particle_index >= parameters.particle_capacity ||
+            particles[particle_index].material_identifier == EMPTY { return; }
+    let position: vec2<f32> = predicted_positions[particle_index];
+    let base_bucket: vec2<i32> = bucket_coordinates(position);
+    var correction_cells: vec2<f32> = vec2<f32>(0.0);
+    for (var bucket_y: i32 = -1; bucket_y <= 1; bucket_y++) {
+        for (var bucket_x: i32 = -1; bucket_x <= 1; bucket_x++) {
+            let bucket: u32 = bucket_index_from_coordinates(
+                base_bucket + vec2<i32>(bucket_x, bucket_y),
+            );
+            if bucket == INVALID_INDEX { continue; }
+            var neighbor_index: u32 = atomicLoad(&bucket_heads[bucket]);
+            for (var chain_length: u32 = 0u;
+                    neighbor_index != INVALID_INDEX && chain_length < parameters.particle_capacity;
+                    chain_length++) {
+                if neighbor_index != particle_index {
+                    let separation: vec2<f32> =
+                        (position - predicted_positions[neighbor_index]) * CELLS_PER_TILE;
+                    let distance: f32 = length(separation);
+                    if distance > 0.000001 && distance < parameters.support_radius_cells {
+                        correction_cells += (lambdas[particle_index] + lambdas[neighbor_index] +
+                            artificial_pressure(distance)) * spiky_gradient(separation, distance) /
+                            REST_DENSITY;
+                    }
+                }
+                neighbor_index = next_particle[neighbor_index];
+            }
+        }
+    }
+    let correction_length: f32 = length(correction_cells);
+    if correction_length > MAXIMUM_CORRECTION_CELLS {
+        correction_cells *= MAXIMUM_CORRECTION_CELLS / correction_length;
+    }
+    position_corrections[particle_index] = correction_cells / CELLS_PER_TILE;
+}
+
+// Applies race-free corrections and reprojects against the same concrete solid boundary
+@compute @workgroup_size(64)
+fn apply_fluid_position_corrections(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let particle_index: u32 = invocation.x;
+    if particle_index >= parameters.particle_capacity ||
+            particles[particle_index].material_identifier == EMPTY { return; }
+    let corrected: vec2<f32> = predicted_positions[particle_index] +
+        position_corrections[particle_index];
+    predicted_positions[particle_index] = resolve_particle_collisions(
+        corrected,
+        particles[particle_index].velocity,
+    ).xy;
+}
+
+// Commits the corrected position and reconstructs velocity from the retained authoritative position
+@compute @workgroup_size(64)
+fn commit_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let particle_index: u32 = invocation.x;
+    if particle_index >= parameters.particle_capacity ||
+            particles[particle_index].material_identifier == EMPTY { return; }
+    let position: vec2<f32> = predicted_positions[particle_index];
+    if !position_is_resident(position) {
+        release_particle(particle_index);
+        return;
+    }
+    let substep_dt: f32 = parameters.delta_time / PBF_SUBSTEP_COUNT;
+    var velocity: vec2<f32> = (position - particles[particle_index].position) / substep_dt;
+    let maximum_speed: f32 = f32(parameters.maximum_movement_cells) /
+        (CELLS_PER_TILE * parameters.delta_time);
+    let speed: f32 = length(velocity);
+    if speed > maximum_speed { velocity *= maximum_speed / speed; }
+    particles[particle_index].position = position;
+    particles[particle_index].velocity = velocity;
+}
+
+// Calculates one final XSPH correction from committed neighbors to quiet constraint noise
+@compute @workgroup_size(64)
+fn calculate_fluid_velocity_smoothing(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let particle_index: u32 = invocation.x;
+    if particle_index >= parameters.particle_capacity ||
+            particles[particle_index].material_identifier == EMPTY { return; }
+    let particle: Particle = particles[particle_index];
+    let base_bucket: vec2<i32> = bucket_coordinates(particle.position);
+    var difference_sum: vec2<f32> = vec2<f32>(0.0);
+    var weight_sum: f32 = 0.0;
+    for (var bucket_y: i32 = -1; bucket_y <= 1; bucket_y++) {
+        for (var bucket_x: i32 = -1; bucket_x <= 1; bucket_x++) {
+            let bucket: u32 = bucket_index_from_coordinates(
+                base_bucket + vec2<i32>(bucket_x, bucket_y),
+            );
+            if bucket == INVALID_INDEX { continue; }
+            var neighbor_index: u32 = atomicLoad(&bucket_heads[bucket]);
+            for (var chain_length: u32 = 0u;
+                    neighbor_index != INVALID_INDEX && chain_length < parameters.particle_capacity;
+                    chain_length++) {
+                if neighbor_index != particle_index {
+                    let distance: f32 = length(
+                        (particle.position - particles[neighbor_index].position) * CELLS_PER_TILE,
+                    );
+                    let weight: f32 = poly6_kernel(distance);
+                    difference_sum +=
+                        (particles[neighbor_index].velocity - particle.velocity) * weight;
+                    weight_sum += weight;
+                }
+                neighbor_index = next_particle[neighbor_index];
+            }
+        }
+    }
+    position_corrections[particle_index] = XSPH_SMOOTHING * difference_sum /
+        max(weight_sum, 0.000001);
+}
+
+@compute @workgroup_size(64)
+fn apply_fluid_velocity_smoothing(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let particle_index: u32 = invocation.x;
+    if particle_index >= parameters.particle_capacity ||
+            particles[particle_index].material_identifier == EMPTY { return; }
+    particles[particle_index].velocity += position_corrections[particle_index];
 }
 
 // Each cell gathers its own result, so particles never contend for derived-cell writes
@@ -180,6 +362,31 @@ fn rasterize_fluid_cells(@builtin(global_invocation_id) invocation: vec3<u32>) {
         0.0,
         0.0,
     );
+}
+
+fn poly6_kernel(distance: f32) -> f32 {
+    let h: f32 = parameters.support_radius_cells;
+    if distance >= h { return 0.0; }
+    let difference: f32 = h * h - distance * distance;
+    return 4.0 * difference * difference * difference /
+        (PI * h * h * h * h * h * h * h * h);
+}
+
+fn spiky_gradient(separation: vec2<f32>, distance: f32) -> vec2<f32> {
+    let h: f32 = parameters.support_radius_cells;
+    if distance <= 0.000001 || distance >= h { return vec2<f32>(0.0); }
+    let remaining: f32 = h - distance;
+    return -30.0 * remaining * remaining / (PI * h * h * h * h * h) *
+        separation / distance;
+}
+
+fn artificial_pressure(distance: f32) -> f32 {
+    let reference: f32 = poly6_kernel(
+        ARTIFICIAL_PRESSURE_DELTA_Q_RATIO * parameters.support_radius_cells,
+    );
+    let ratio: f32 = poly6_kernel(distance) / max(reference, 0.000001);
+    let squared: f32 = ratio * ratio;
+    return -ARTIFICIAL_PRESSURE_K * squared * squared;
 }
 
 fn resolve_particle_collisions(
