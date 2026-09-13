@@ -36,6 +36,7 @@ impl SceneRenderer {
         viewport: [u32; 4],
         camera_position: [f32; 2],
         camera_size: [f32; 2],
+        editor_viewport: bool,
         view_mode: u32,
         show_tile_borders: bool,
         show_chunk_borders: bool,
@@ -266,7 +267,11 @@ impl SceneRenderer {
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        load: wgpu::LoadOp::Clear(if editor_viewport {
+                            wgpu::Color { r: 30.0 / 255.0, g: 32.0 / 255.0, b: 36.0 / 255.0, a: 1.0 }
+                        } else {
+                            wgpu::Color::BLACK
+                        }),
                         store: wgpu::StoreOp::Store,
                     },
                 })],

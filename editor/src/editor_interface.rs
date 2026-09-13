@@ -4,10 +4,14 @@ use crate::editor_view_mode::EditorViewMode;
 use engine::physics::materials::MaterialIdentifier;
 use engine_graphics::Color;
 use engine_user_interface::{UserInterface, Widget};
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::Cell,
+    collections::HashSet,
+    rc::Rc,
+};
 
 /// The docked editor chrome displayed around the scene viewport
-pub(crate) struct EditorInterface {
+pub struct EditorInterface {
     pub is_playing: bool,
     pub free_fly_enabled: bool,
     pub return_enabled: bool,
@@ -163,13 +167,42 @@ impl Widget for EditorInterface {
             ]));
             let painter = ui.painter().with_clip_rect(rect);
             let preview_color: egui::Color32 = (&self.preview_color).into();
+            let cell_size: [f32; 2] = self.preview_cells.iter().fold([0.0, 0.0],
+                |[width, height], [left, top, right, bottom]| [
+                    width.max(right - left),
+                    height.max(bottom - top),
+                ]);
+            let preview_keys: HashSet<(i32, i32)> = self.preview_cells.iter().map(|[left, top, ..]| {
+                (
+                    (left / cell_size[0]).round() as i32,
+                    (top / cell_size[1]).round() as i32,
+                )
+            }).collect();
             for [left, top, right, bottom] in &self.preview_cells {
                 let cell = egui::Rect::from_min_max(
                     egui::pos2(left / scale, top / scale),
                     egui::pos2(right / scale, bottom / scale),
                 );
                 painter.rect_filled(cell, 0.0, preview_color);
-                painter.rect_stroke(cell, 0.0, egui::Stroke::new(1.0, egui::Color32::WHITE), egui::StrokeKind::Inside);
+                let key = (
+                    (left / cell_size[0]).round() as i32,
+                    (top / cell_size[1]).round() as i32,
+                );
+                let stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
+                let left_edge = egui::pos2(left / scale, top / scale);
+                let right_edge = egui::pos2(right / scale, bottom / scale);
+                if !preview_keys.contains(&(key.0 - 1, key.1)) {
+                    painter.line_segment([left_edge, egui::pos2(left / scale, bottom / scale)], stroke);
+                }
+                if !preview_keys.contains(&(key.0 + 1, key.1)) {
+                    painter.line_segment([egui::pos2(right / scale, top / scale), right_edge], stroke);
+                }
+                if !preview_keys.contains(&(key.0, key.1 - 1)) {
+                    painter.line_segment([left_edge, egui::pos2(right / scale, top / scale)], stroke);
+                }
+                if !preview_keys.contains(&(key.0, key.1 + 1)) {
+                    painter.line_segment([egui::pos2(left / scale, bottom / scale), right_edge], stroke);
+                }
             }
             ui.allocate_rect(rect, egui::Sense::hover());
         }).response

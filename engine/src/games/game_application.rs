@@ -138,6 +138,7 @@ impl<G: Game> GameApplication<G> {
             viewport,
             self.camera_position,
             camera_size,
+            self.scene_viewport_bounds.is_some(),
             self.scene_view_mode,
             self.show_tile_borders,
             self.show_chunk_borders,
@@ -401,7 +402,7 @@ impl<G: Game> GameApplication<G> {
             [x + (width - viewport_width) / 2, y, viewport_width, height]
         } else {
             let viewport_height: u32 = (width as f32 / aspect_ratio).round() as u32;
-            [x, y + (height - viewport_height) / 2, width, viewport_height]
+            [x, y, width, viewport_height]
         }
     }
 

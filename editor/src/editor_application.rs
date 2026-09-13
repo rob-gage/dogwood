@@ -123,7 +123,7 @@ impl<G: Game> EditorApplication<G> {
                 })
             })
         }).unwrap_or(if matches!(self.tool, EditorTool::Impulse) {
-            Color::new_rgba(255, 190, 60, 128)
+            Color::new_rgba(255, 190, 60, 0)
         } else { Color::new_rgba(255, 80, 80, 96) });
         let cells: Vec<[f32; 4]> = self.brush.cells(anchor).into_iter().filter_map(|coordinates| {
             self.application.scene_surface_rectangle([
