@@ -14,6 +14,9 @@ pub mod audio {
 pub mod compute {
     pub use engine_compute::Accelerator;
 }
+pub mod diagnostics {
+    pub use engine_diagnostics::initialize;
+}
 pub mod input {
 
 }

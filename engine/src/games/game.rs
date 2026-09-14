@@ -66,6 +66,12 @@ pub trait Game {
     where
         Self: Sized,
     {
+        let _application_span = tracing::info_span!(
+            "application",
+            title = Self::TITLE,
+            kind = "game",
+        ).entered();
+        tracing::info!("launching game");
         let mut event_loop_builder: winit::event_loop::EventLoopBuilder<()> =
             winit::event_loop::EventLoop::builder();
         #[cfg(all(
@@ -94,7 +100,8 @@ pub trait Game {
         winit::platform::wayland::EventLoopBuilderExtWayland::with_wayland(
             &mut event_loop_builder,
         );
-        let event_loop: winit::event_loop::EventLoop<()> = event_loop_builder.build()?;
+        let event_loop: winit::event_loop::EventLoop<()> = event_loop_builder.build()
+            .inspect_err(|error| tracing::error!(%error, "failed to create event loop"))?;
         let mut application: GameApplication<Self> = GameApplication::new(accelerator, self);
         event_loop.run_app(&mut application)?;
         application.finish()

@@ -13,5 +13,6 @@ engine_user_interface = { version = "0.0.0", path = "../engine_user_interface" }
 engine_compute = { version = "0.0.0", path = "../engine_compute" }
 pollster = { workspace = true }
 egui.workspace = true
+tracing.workspace = true
 wgpu = { workspace = true }
 winit = { version = "0.30.13", default-features = false, features = ["rwh_06"] }

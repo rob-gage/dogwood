@@ -416,8 +416,15 @@ impl<G: Game> EditorApplication<G> {
         accelerator: Arc<engine::compute::Accelerator>,
         game: G,
     ) -> Result<(), Box<dyn Error>> {
+        let _application_span = tracing::info_span!(
+            "application",
+            title = G::TITLE,
+            kind = "editor",
+        ).entered();
+        tracing::info!("launching editor");
         let event_loop: winit::event_loop::EventLoop<()> =
-            winit::event_loop::EventLoop::builder().build()?;
+            winit::event_loop::EventLoop::builder().build()
+                .inspect_err(|error| tracing::error!(%error, "failed to create event loop"))?;
         let mut application: EditorApplication<G> = Self::new(accelerator, game);
         event_loop.run_app(&mut application)?;
         application.application.finish()

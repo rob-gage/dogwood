@@ -39,6 +39,9 @@ struct StaticProperties {
 @group(0) @binding(12) var<storage, read> external_body_count: array<atomic<u32>>;
 @group(0) @binding(13) var<uniform> parameters: Parameters;
 @group(0) @binding(14) var<storage, read_write> active_pressure_tiles: array<atomic<u32>>;
+@group(0) @binding(15) var<storage, read_write> active_cellular_dynamic_tiles: array<atomic<u32>>;
+@group(0) @binding(16) var<storage, read_write> active_pressure_tile_indices: array<u32>;
+@group(1) @binding(0) var<storage, read_write> pressure_indirect_dispatch: array<atomic<u32>>;
 
 const EMPTY: u32 = 0u;
 const CELLULAR_STATIC_FORM: u32 = 1u;
@@ -47,6 +50,7 @@ const MATERIAL_INDEX_MASK: u32 = 0x3fffffffu;
 const INVALID_INDEX: u32 = 0xffffffffu;
 const IMMOVABLE_CONTACT_MASS: f32 = 1000000.0;
 const CONTACT_PRESSURE_TRANSFER: f32 = 0.02;
+const CELLULAR_DYNAMIC_ACTIVE_COUNTDOWN: u32 = 8u;
 
 // Clears the transient coarse mask before current pressure sources are discovered
 @compute @workgroup_size(64)
@@ -95,8 +99,29 @@ fn mark_active_pressure_tiles(@builtin(global_invocation_id) invocation: vec3<u3
             atomicStore(&active_pressure_tiles[
                 u32(active_tile.y) * parameters.buffered_tile_size.x + u32(active_tile.x)
             ], 1u);
+            let physical_tile: vec2<u32> =
+                (vec2<u32>(active_tile) + parameters.ring_offset) %
+                    parameters.buffered_tile_size;
+            atomicMax(&active_cellular_dynamic_tiles[
+                physical_tile.y * parameters.buffered_tile_size.x + physical_tile.x
+            ], CELLULAR_DYNAMIC_ACTIVE_COUNTDOWN);
         }
     }
+}
+
+// Converts the coarse pressure mask into one indirect workgroup per active tile
+@compute @workgroup_size(64)
+fn compact_active_pressure_tiles(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    if invocation.x == 0u {
+        atomicStore(&pressure_indirect_dispatch[1], 1u);
+        atomicStore(&pressure_indirect_dispatch[2], 1u);
+    }
+    let tile_count: u32 = parameters.buffered_tile_size.x * parameters.buffered_tile_size.y;
+    let logical_tile_index: u32 = invocation.x;
+    if logical_tile_index >= tile_count ||
+            atomicLoad(&active_pressure_tiles[logical_tile_index]) == 0u { return; }
+    let slot: u32 = atomicAdd(&pressure_indirect_dispatch[0], 1u);
+    active_pressure_tile_indices[slot] = logical_tile_index;
 }
 
 // Queues editor impulse pressure without bypassing material transmission or mass response
@@ -122,10 +147,12 @@ fn queue_cellular_radial_impulse(@builtin(global_invocation_id) invocation: vec3
 
 // Snapshots tick-start velocities into pressure scratch before contact resolution mutates them
 @compute @workgroup_size(64)
-fn copy_contact_velocity(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    let logical_index: u32 = invocation.x;
+fn copy_contact_velocity(
+    @builtin(workgroup_id) workgroup: vec3<u32>,
+    @builtin(local_invocation_index) local_index: u32,
+) {
+    let logical_index: u32 = active_pressure_logical_index(workgroup.x, local_index);
     if logical_index >= parameters.buffered_cell_count { return; }
-    if !pressure_tile_is_active(logical_index) { return; }
     let index: u32 = physical_index(world_cell(logical_index));
     if index == INVALID_INDEX { return; }
     pressure_b[index] = vec4<f32>(cellular_kinematics[index].xy, 0.0, 0.0);
@@ -133,10 +160,12 @@ fn copy_contact_velocity(@builtin(global_invocation_id) invocation: vec3<u32>) {
 
 // Resolves pairwise contact velocity and gathers its small pressure-transfer component
 @compute @workgroup_size(64)
-fn resolve_cellular_contacts(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    let logical_index: u32 = invocation.x;
+fn resolve_cellular_contacts(
+    @builtin(workgroup_id) workgroup: vec3<u32>,
+    @builtin(local_invocation_index) local_index: u32,
+) {
+    let logical_index: u32 = active_pressure_logical_index(workgroup.x, local_index);
     if logical_index >= parameters.buffered_cell_count { return; }
-    if !pressure_tile_is_active(logical_index) { return; }
     let cell: vec2<i32> = world_cell(logical_index);
     let index: u32 = physical_index(cell);
     if index == INVALID_INDEX { return; }
@@ -151,10 +180,12 @@ fn resolve_cellular_contacts(@builtin(global_invocation_id) invocation: vec3<u32
 
 // Converts queued sources into the first directional pressure field
 @compute @workgroup_size(64)
-fn seed_cellular_pressure(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    let logical_index: u32 = invocation.x;
+fn seed_cellular_pressure(
+    @builtin(workgroup_id) workgroup: vec3<u32>,
+    @builtin(local_invocation_index) local_index: u32,
+) {
+    let logical_index: u32 = active_pressure_logical_index(workgroup.x, local_index);
     if logical_index >= parameters.buffered_cell_count { return; }
-    if !pressure_tile_is_active(logical_index) { return; }
     let index: u32 = physical_index(world_cell(logical_index));
     if index == INVALID_INDEX { return; }
     retained_pressure[index] = vec4<f32>(0.0);
@@ -173,22 +204,30 @@ fn seed_cellular_pressure(@builtin(global_invocation_id) invocation: vec3<u32>) 
 
 // Alternating entry points preserve explicit pressure ping-pong ordering on the CPU
 @compute @workgroup_size(64)
-fn propagate_pressure_a(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    propagate_pressure(invocation.x, true);
+fn propagate_pressure_a(
+    @builtin(workgroup_id) workgroup: vec3<u32>,
+    @builtin(local_invocation_index) local_index: u32,
+) {
+    propagate_pressure(active_pressure_logical_index(workgroup.x, local_index), true);
 }
 
 // Runs the second ping-pong direction of one pressure propagation step
 @compute @workgroup_size(64)
-fn propagate_pressure_b(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    propagate_pressure(invocation.x, false);
+fn propagate_pressure_b(
+    @builtin(workgroup_id) workgroup: vec3<u32>,
+    @builtin(local_invocation_index) local_index: u32,
+) {
+    propagate_pressure(active_pressure_logical_index(workgroup.x, local_index), false);
 }
 
 // Applies all retained pressure after the fixed propagation budget has been consumed
 @compute @workgroup_size(64)
-fn apply_retained_pressure(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    let logical_index: u32 = invocation.x;
+fn apply_retained_pressure(
+    @builtin(workgroup_id) workgroup: vec3<u32>,
+    @builtin(local_invocation_index) local_index: u32,
+) {
+    let logical_index: u32 = active_pressure_logical_index(workgroup.x, local_index);
     if logical_index >= parameters.buffered_cell_count { return; }
-    if !pressure_tile_is_active(logical_index) { return; }
     let cell: vec2<i32> = world_cell(logical_index);
     let index: u32 = physical_index(cell);
     if index == INVALID_INDEX { return; }
@@ -321,7 +360,6 @@ fn apply_static_pressure(
 // Retains pressure that the source material or blocked stencil routes cannot transmit
 fn propagate_pressure(logical_index: u32, from_a: bool) {
     if logical_index >= parameters.buffered_cell_count { return; }
-    if !pressure_tile_is_active(logical_index) { return; }
     let cell: vec2<i32> = world_cell(logical_index);
     let index: u32 = physical_index(cell);
     if index == INVALID_INDEX { return; }
@@ -513,9 +551,9 @@ fn floor_divide(value: i32, divisor: i32) -> i32 {
     return value / divisor;
 }
 
-// Returns whether this logical cell lies in the coarse pressure work region
-fn pressure_tile_is_active(logical_index: u32) -> bool {
-    return atomicLoad(&active_pressure_tiles[logical_index / 64u]) != 0u;
+// Maps one compacted active tile workgroup to its tile-major logical cell
+fn active_pressure_logical_index(workgroup: u32, local_index: u32) -> u32 {
+    return active_pressure_tile_indices[workgroup] * 64u + local_index;
 }
 
 // Produces a deterministic per-cell random value for fracture yield decisions

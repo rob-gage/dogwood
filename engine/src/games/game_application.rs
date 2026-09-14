@@ -127,6 +127,7 @@ impl<G: Game> GameApplication<G> {
                     None => return,
                     Some(Success(frame)) | Some(Suboptimal(frame)) => frame,
                     Some(Outdated) | Some(Lost) => {
+                        tracing::warn!("reconfiguring unavailable rendering surface");
                         let (Some(surface), Some(configuration)) = (
                             self.surface.as_ref(),
                             self.surface_configuration.as_ref(),
@@ -134,7 +135,11 @@ impl<G: Game> GameApplication<G> {
                         surface.configure(self.accelerator.wgpu_device(), configuration);
                         return;
                     }
-                    Some(Timeout) | Some(Occluded) | Some(Validation) => return,
+                    Some(Validation) => {
+                        tracing::error!("rendering surface validation failed");
+                        return;
+                    }
+                    Some(Timeout) | Some(Occluded) => return,
                 };
         let view: wgpu::TextureView =
             frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -398,6 +403,7 @@ impl<G: Game> GameApplication<G> {
                 ) {
                     Ok(surface) => surface,
                     Err(error) => {
+                        tracing::error!(%error, "failed to create rendering surface");
                         self.error = Some(Box::new(error));
                         event_loop.exit();
                         return;
@@ -409,6 +415,7 @@ impl<G: Game> GameApplication<G> {
                     size.width.max(1),
                     size.height.max(1),
                 ) else {
+                    tracing::error!("rendering surface has no supported configuration");
                     self.error = Some("The surface has no supported configuration".into());
                     event_loop.exit();
                     return;
@@ -422,8 +429,10 @@ impl<G: Game> GameApplication<G> {
                 self.surface_configuration = Some(configuration);
                 self.update_camera(0.0);
                 self.window = Some(window);
+                tracing::info!(title = %self.title, "application window initialized");
             }
             Err(error) => {
+                tracing::error!(%error, "failed to create application window");
                 self.error = Some(Box::new(error));
                 event_loop.exit();
             }
@@ -498,6 +507,7 @@ impl<G: Game> winit::application::ApplicationHandler for GameApplication<G> {
             self.input_translator.as_ref(),
         );
         if let Err(error) = self.update() {
+            tracing::error!(%error, "application update failed");
             self.error = Some(Box::new(error));
             event_loop.exit();
             return;

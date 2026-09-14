@@ -11,5 +11,7 @@ struct Command {
 enum Subcommand {}
 
 fn main() {
+    let _tracing_guard = engine_diagnostics::initialize();
     let _command: Command = clap::Parser::parse();
+    tracing::debug!("parsed command line");
 }

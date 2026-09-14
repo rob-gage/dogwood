@@ -37,6 +37,10 @@ impl Accelerator {
                 ..Default::default()
             })
         )?;
+        tracing::debug!(
+            adapter = ?adapter.get_info(),
+            "initialized graphics accelerator"
+        );
         Ok(Self {
             wgpu_instance: instance,
             wgpu_adapter: adapter,

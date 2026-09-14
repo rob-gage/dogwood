@@ -8,4 +8,5 @@ license.workspace = true
 
 [dependencies]
 pollster = { workspace = true }
+tracing = { workspace = true }
 wgpu = { workspace = true }

@@ -267,7 +267,8 @@ impl Scene {
             &cellular_material_identifiers,
             &cellular_appearances,
             cellular_physics_body_proxy.occupancy_buffer(),
-            buffered_tile_count,
+            simulation.width + buffer_size,
+            simulation.height + buffer_size,
         );
         let cellular_pressure: CellularPressure = CellularPressure::new(
             accelerator.as_ref(),
@@ -279,6 +280,7 @@ impl Scene {
             cellular_physics_body_proxy.occupancy_buffer(),
             cellular_physics_body_proxy.velocity_buffer(),
             cellular_physics_body_proxy.count_buffer(),
+            cellular_dynamic.active_tiles_buffer(),
             buffered_cell_count,
         );
         let cellular_collision: CellularCollision = CellularCollision::new(
@@ -710,14 +712,10 @@ impl Scene {
             );
             self.cellular_dynamic.simulate_cellular_dynamic_tick(
                 self.accelerator.as_ref(),
-                &self.cellular_material_identifiers,
-                &self.cellular_appearances,
                 TileCoordinates {
                     x: self.origin.x - buffer_size,
                     y: self.origin.y - buffer_size,
                 },
-                self.simulation_width + dimensions,
-                self.simulation_height + dimensions,
                 self.tiles_ring_offset_x,
                 self.tiles_ring_offset_y,
                 self.gravity,
@@ -2286,6 +2284,41 @@ mod tests {
         let restored: Vec<ChunkGasCell> = GasDownload::deserialize(&bytes, area, &[vapor]).unwrap();
         assert!(restored.iter().any(|cell| cell.coordinates == coordinates &&
             cell.species == vec![(vapor, 1.0)]));
+    }
+
+    #[test]
+    fn cellular_indirect_dispatch_executes() {
+        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let accelerator: Arc<Accelerator> = Arc::new(Accelerator::new().unwrap());
+        let mut materials: MaterialRegistry = MaterialRegistry::new();
+        let sand: MaterialIdentifier = materials.register(Material::CellularDynamic {
+            name: "Sand".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(194, 178, 128)),
+            mass: 1.0,
+            pressure_transmission: 0.35,
+            friction: 0.65,
+            restitution: 0.05,
+        });
+        let mut scene: Scene = Scene::new(
+            &accelerator,
+            materials,
+            SceneSimulationConfiguration {
+                gravity: [0.0, -18.0],
+                width: 4,
+                height: 4,
+                buffer_size: 2,
+                streaming_batch_size: 1,
+            },
+        ).unwrap();
+        let mut edits: SceneEditBatch = SceneEditBatch::new();
+        edits.place_material(
+            sand,
+            CellularAppearance::NEUTRAL,
+            vec![CellCoordinates { x: 0, y: 8 }],
+        );
+        scene.apply_edits(&mut edits).unwrap();
+        scene.update(Duration::from_secs(1) / 60, true).unwrap();
+        accelerator.poll().unwrap();
     }
 
 }
