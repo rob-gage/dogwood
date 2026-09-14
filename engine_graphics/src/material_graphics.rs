@@ -15,7 +15,7 @@ pub struct MaterialGraphics {
     pub cellular_dynamics: AcceleratorBuffer,
     /// The graphics properties for fluid materials
     pub fluids: AcceleratorBuffer,
-    /// PBF properties for every registered fluid material
+    /// Solver, contact, and physical properties for every registered fluid material
     pub fluid_properties: AcceleratorBuffer,
 }
 
@@ -45,7 +45,7 @@ impl MaterialGraphics {
         let data: Vec<u32> = properties.into_iter().flat_map(
             MaterialAppearance::accelerator_data
         ).collect();
-        // Keep empty material-form buffers large enough for one WGSL element.
+        // keep empty material form buffers large enough for one WGSL element
         let buffer: AcceleratorBuffer = accelerator.allocate::<u32>(data.len().max(16));
         if !data.is_empty() {
             let mut bytes: Vec<u8> = Vec::with_capacity(data.len() * size_of::<u32>());
@@ -55,7 +55,10 @@ impl MaterialGraphics {
         buffer
     }
 
-    fn create_raw_buffer(accelerator: &Accelerator, properties: Vec<[f32; 8]>) -> AcceleratorBuffer {
+    fn create_raw_buffer(
+        accelerator: &Accelerator,
+        properties: Vec<[f32; 8]>
+    ) -> AcceleratorBuffer {
         let data: Vec<u32> = properties.into_iter().flatten().map(f32::to_bits).collect();
         let buffer: AcceleratorBuffer = accelerator.allocate::<u32>(data.len().max(8));
         if !data.is_empty() {

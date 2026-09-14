@@ -61,6 +61,10 @@ pub enum Material {
         xsph_smoothing: f32,
         /// Maximum normal velocity imparted by a moving body, in cells/sec
         body_push_speed: f32,
+        /// Physical density used by buoyancy
+        density: f32,
+        /// Physical viscosity used by actor drag and swimmer entrainment
+        viscosity: f32,
     }
 }
 

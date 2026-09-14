@@ -130,6 +130,12 @@ pub struct Scene {
     tile_uploads: Mutex<Vec<Arc<Mutex<TileUpload>>>>,
     /// Fluid imports that own dormant records until GPU reconstruction is confirmed
     fluid_uploads: Vec<Arc<Mutex<FluidUpload>>>,
+    /// Fixed staging storage for the possessed pawn's asynchronous derived-fluid sample
+    fluid_sample_buffer: wgpu::Buffer,
+    /// Completed derived-fluid sample or readback failure
+    fluid_sample_result: Arc<Mutex<Option<Result<[f32; 5], String>>>>,
+    /// Actor for which the in-flight derived-fluid sample was generated
+    fluid_sample_actor: Option<Actor>,
     /// The physical X slot containing the buffered area's leftmost tile
     tiles_ring_offset_x: u16,
     /// The physical Y slot containing the buffered area's bottommost tile
@@ -267,6 +273,14 @@ impl Scene {
                 fluids.particle_capacity(),
             ),
         ))];
+        let fluid_sample_buffer: wgpu::Buffer = accelerator.wgpu_device().create_buffer(
+            &wgpu::BufferDescriptor {
+                label: Some("Pawn fluid sample readback"),
+                size: 32,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
         let tile_count: u32 = buffered_tile_count as u32;
         let tiles: Box<[Tile]> = (0..tile_count).map(Tile).collect();
         let (chunk_streaming_response_sender, chunk_streaming_responses) =
@@ -299,6 +313,9 @@ impl Scene {
             fluid_download_pool,
             tile_uploads: Mutex::new(Vec::new()),
             fluid_uploads: Vec::new(),
+            fluid_sample_buffer,
+            fluid_sample_result: Arc::new(Mutex::new(None)),
+            fluid_sample_actor: None,
             cellular_material_identifiers,
             cellular_appearances,
             cellular_integrities,
@@ -551,6 +568,7 @@ impl Scene {
         self.tile_downloads_apply_completed()?;
         self.fluid_downloads_apply_completed()?;
         self.fluid_uploads_apply_completed()?;
+        self.fluid_sample_apply_completed()?;
         self.tile_downloads_clean()?;
         self.tile_uploads_clean()?;
         self.tick_time += elapsed;
@@ -585,6 +603,9 @@ impl Scene {
             self.possessed_actor().and_then(|actor| {
                 self.actor_registry.walking_pawn_physics(actor)
             });
+        let current_pawn_fluid_permeable: bool = self.possessed_actor().and_then(|actor| {
+            self.actor_registry.get_pawn(actor)
+        }).is_some_and(|pawn| pawn.swimming.is_some());
         let possessed_position: Option<ScenePosition> = self.possessed_actor()
             .and_then(|actor| self.actor_registry.get_position(actor)).copied();
         if let Some(position) = possessed_position { self.follow_position(position); }
@@ -597,6 +618,7 @@ impl Scene {
                 self.accelerator.as_ref(), TileCoordinates { x: self.origin.x - buffer_size, y: self.origin.y - buffer_size },
                 self.simulation_width + dimensions, self.simulation_height + dimensions, self.tiles_ring_offset_x,
                 self.tiles_ring_offset_y, self.gravity, current_walking_pawn,
+                current_pawn_fluid_permeable,
             );
             self.cellular_pressure.simulate(
                 self.accelerator.as_ref(), TileCoordinates { x: self.origin.x - buffer_size, y: self.origin.y - buffer_size },
@@ -634,6 +656,7 @@ impl Scene {
                 self.gravity,
                 1.0 / TICK_RATE as f32,
             );
+            self.fluid_sample_submit()?;
             self.cellular_collision_dirty = true;
         }
         if !self.cellular_collision_dirty { return Ok(()); }
@@ -1361,6 +1384,72 @@ impl Scene {
         Ok(())
     }
 
+    /// Applies a completed sample only to the actor for which it was dispatched
+    fn fluid_sample_apply_completed(&mut self) -> Result<(), io::Error> {
+        let Some(result) = self.fluid_sample_result.lock().map_err(|_| {
+            io::Error::other("Pawn fluid sample result is unavailable")
+        })?.take() else { return Ok(()); };
+        let actor: Actor = self.fluid_sample_actor.take().ok_or_else(|| {
+            io::Error::other("Completed pawn fluid sample has no actor")
+        })?;
+        let sample: [f32; 5] = result.map_err(io::Error::other)?;
+        if self.possessed_actor() == Some(actor) {
+            self.actor_registry.apply_swimming_sample(actor, sample);
+        }
+        Ok(())
+    }
+
+    /// Dispatches one tiny derived-cell sample without waiting for its readback
+    fn fluid_sample_submit(&mut self) -> Result<(), io::Error> {
+        if self.fluid_sample_actor.is_some() { return Ok(()); }
+        let Some(actor) = self.possessed_actor() else { return Ok(()); };
+        let Some((center, collider)) = self.actor_registry.swimming_pawn_sample(actor)
+            else { return Ok(()); };
+        let active_area: TileArea = self.area_fluid_active();
+        let active_dimensions: [u16; 2] = active_area.dimensions();
+        let buffered_area: TileArea = self.area_buffered();
+        let buffered_dimensions: [u16; 2] = buffered_area.dimensions();
+        self.fluids.sample_pawn(
+            self.accelerator.as_ref(),
+            &self.fluid_sample_buffer,
+            center,
+            collider,
+            active_area.origin(),
+            active_dimensions[0],
+            active_dimensions[1],
+            buffered_area.origin(),
+            buffered_dimensions[0],
+            buffered_dimensions[1],
+            self.tiles_ring_offset_x,
+            self.tiles_ring_offset_y,
+            self.gravity,
+        );
+        self.fluid_sample_actor = Some(actor);
+        let mapped_buffer: wgpu::Buffer = self.fluid_sample_buffer.clone();
+        let result: Arc<Mutex<Option<Result<[f32; 5], String>>>> =
+            self.fluid_sample_result.clone();
+        self.fluid_sample_buffer.slice(..).map_async(wgpu::MapMode::Read, move |mapping| {
+            let sample: Result<[f32; 5], String> = mapping.map_err(|_| {
+                "Pawn fluid sample readback failed".to_owned()
+            }).and_then(|()| mapped_buffer.slice(..).get_mapped_range()
+                .map_err(|error| error.to_string()).and_then(|mapped| {
+                    let sample: [f32; 5] = std::array::from_fn(|index| f32::from_bits(
+                        u32::from_le_bytes(mapped[index * 4..index * 4 + 4]
+                            .try_into().unwrap()),
+                    ));
+                    drop(mapped);
+                    if sample.into_iter().all(f32::is_finite) {
+                        Ok(sample)
+                    } else {
+                        Err("Pawn fluid sample contains a non-finite value".to_owned())
+                    }
+                }));
+            mapped_buffer.unmap();
+            if let Ok(mut result) = result.lock() { *result = Some(sample); }
+        });
+        Ok(())
+    }
+
     /// Submits queued fluid exports and begins their asynchronous readbacks
     fn fluid_downloads_submit(&self) -> Result<(), io::Error> {
         for download in &self.fluid_downloads {
@@ -1814,6 +1903,7 @@ impl Drop for Scene {
         self.cellular_material_identifiers.free();
         self.cellular_appearances.free();
         self.cellular_integrities.free();
+        self.fluid_sample_buffer.destroy();
     }
 
 }

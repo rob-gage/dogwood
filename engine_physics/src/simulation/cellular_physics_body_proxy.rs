@@ -1,9 +1,12 @@
 // Copyright Rob Gage 2026
 
 use crate::tiles::TileCoordinates;
-use engine_compute::{Accelerator, AcceleratorBuffer};
+use engine_compute::{
+    Accelerator,
+    AcceleratorBuffer
+};
 
-/// Rasterizes the possessed walking pawn into transient cellular interaction geometry.
+/// Rasterizes the possessed pawn into transient cellular interaction geometry
 pub struct CellularPhysicsBodyProxy {
     occupancy: AcceleratorBuffer,
     velocity: AcceleratorBuffer,
@@ -57,10 +60,11 @@ impl CellularPhysicsBodyProxy {
             label: Some("cellular physics body proxy pipeline layout"), bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = |entry_point, label| device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some(label), layout: Some(&pipeline_layout), module: &shader,
-            entry_point: Some(entry_point), compilation_options: Default::default(), cache: None,
-        });
+        let pipeline = |entry_point, label| device.create_compute_pipeline(
+            &wgpu::ComputePipelineDescriptor {
+                label: Some(label), layout: Some(&pipeline_layout), module: &shader,
+                entry_point: Some(entry_point), compilation_options: Default::default(), cache: None,
+            });
         Self { occupancy, velocity, count, parameters, bind_group,
             clear_pipeline: pipeline("clear_cellular_physics_body_proxy", "cellular physics body proxy clear pipeline"),
             raster_pipeline: pipeline("rasterize_cellular_physics_body_proxy", "cellular physics body proxy raster pipeline"),
@@ -81,21 +85,24 @@ impl CellularPhysicsBodyProxy {
         ring_offset_y: u16,
         gravity: [f32; 2],
         pawn: Option<([f32; 2], [f32; 2], [f32; 2], [f32; 2])>,
+        is_fluid_permeable: bool,
     ) {
-        let (center, velocity, collider, drive, present) = pawn.map_or(
+        let (center, velocity, collider, drive, occupancy) = pawn.map_or(
             ([0.0; 2], [0.0; 2], [0.0; 2], [0.0; 2], 0u32),
-            |(center, velocity, collider, drive)| (center, velocity, collider, drive, 1u32),
+            |(center, velocity, collider, drive)| (center, velocity, collider, drive,
+                if is_fluid_permeable { 2u32 } else { 1u32 }),
         );
         let values = [origin.x as u32, origin.y as u32, u32::from(width), u32::from(height),
             u32::from(ring_offset_x), u32::from(ring_offset_y), center[0].to_bits(), center[1].to_bits(),
             velocity[0].to_bits(), velocity[1].to_bits(), drive[0].to_bits(), drive[1].to_bits(),
             collider[0].to_bits(), collider[1].to_bits(), gravity[0].to_bits(), gravity[1].to_bits(),
-            self.buffered_cell_count, present, 0, 0, 0, 0, 0, 0];
+            self.buffered_cell_count, occupancy, 0, 0, 0, 0, 0, 0];
         let bytes: Vec<u8> = values.into_iter().flat_map(u32::to_le_bytes).collect();
         accelerator.wgpu_queue().write_buffer(&self.parameters, 0, &bytes);
-        let mut encoder = accelerator.wgpu_device().create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("cellular physics body proxy rasterization"),
-        });
+        let mut encoder =
+            accelerator.wgpu_device().create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("cellular physics body proxy rasterization"),
+            });
         for (pipeline, label) in [(&self.clear_pipeline, "clear cellular physics body proxy"),
                 (&self.raster_pipeline, "rasterize cellular physics body proxy")] {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {

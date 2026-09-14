@@ -1,7 +1,7 @@
 struct Parameters {
     buffered_origin: vec2<i32>, buffered_tile_size: vec2<u32>, ring_offset: vec2<u32>,
     center: vec2<f32>, velocity: vec2<f32>, drive: vec2<f32>, collider: vec2<f32>,
-    gravity: vec2<f32>, buffered_cell_count: u32, present: u32, padding: vec2<u32>,
+    gravity: vec2<f32>, buffered_cell_count: u32, occupancy_kind: u32, padding: vec2<u32>,
 }
 
 @group(0) @binding(0) var<storage, read_write> occupancy: array<u32>;
@@ -22,7 +22,7 @@ fn clear_cellular_physics_body_proxy(@builtin(global_invocation_id) invocation: 
 @compute @workgroup_size(64)
 fn rasterize_cellular_physics_body_proxy(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let logical = invocation.x;
-    if logical >= parameters.buffered_cell_count || parameters.present == 0u { return; }
+    if logical >= parameters.buffered_cell_count || parameters.occupancy_kind == 0u { return; }
     let tile = logical / 64u;
     let cell = (parameters.buffered_origin + vec2<i32>(i32(tile % parameters.buffered_tile_size.x),
         i32(tile / parameters.buffered_tile_size.x))) * 8 + vec2<i32>(i32(logical % 8u), i32((logical % 64u) / 8u));
@@ -36,7 +36,7 @@ fn rasterize_cellular_physics_body_proxy(@builtin(global_invocation_id) invocati
     if length(vec2<f32>(dot(relative, tangent), dot(relative, up) - nearest)) > radius { return; }
     let physical = physical_index(cell);
     if physical == INVALID { return; }
-    occupancy[physical] = 1u;
+    occupancy[physical] = parameters.occupancy_kind;
     velocity[physical] = vec4<f32>(parameters.velocity, parameters.drive);
     atomicAdd(&count[0], 1u);
 }

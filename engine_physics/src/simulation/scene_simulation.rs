@@ -7,6 +7,8 @@ use crate::{
         ActorPawn,
         ActorPawnMovement,
         ActorPawnNoclipConfiguration,
+        ActorPawnSwimmingConfiguration,
+        ActorPawnSwimmingState,
         ActorPawnWalkingConfiguration,
         ActorPawnWalkingState,
         ActorPreviousPosition,
@@ -38,15 +40,21 @@ pub trait SceneSimulation {
         let mut query: bevy_ecs::query::QueryState<(
             &ActorPawn,
             &ActorControlState,
+            &mut ActorPawnSwimmingState,
             &mut ActorPawnWalkingState,
             &mut ActorPreviousPosition,
             &mut ScenePosition,
             &mut SceneVelocity,
         )> = world.query();
-        for (pawn, control, mut state, mut previous, mut position, mut velocity) in
+        for (pawn, control, swimming_state, mut walking_state, mut previous,
+                mut position, mut velocity) in
                 query.iter_mut(world) {
             previous.0 = *position;
             if !is_simulation_active && !pawn.simulate_when_paused { continue; }
+            if !matches!(pawn.movement, Some(ActorPawnMovement::Walking)) {
+                walking_state.cellular_drive_impulse = [0.0; 2];
+                walking_state.grounded = false;
+            }
             match pawn.movement {
                 Some(ActorPawnMovement::Noclip) => {
                     let Some(configuration): Option<ActorPawnNoclipConfiguration> = pawn.noclip
@@ -61,7 +69,24 @@ pub trait SceneSimulation {
                     Self::simulate_actor_pawn_walking(
                         &control.0,
                         &configuration,
-                        &mut state,
+                        &mut walking_state,
+                        &mut position,
+                        &mut velocity,
+                        gravity,
+                        physics_world,
+                        delta_time,
+                    );
+                }
+                Some(ActorPawnMovement::Swimming) => {
+                    let Some(configuration): Option<ActorPawnSwimmingConfiguration> = pawn.swimming
+                        else { continue; };
+                    let Some(walking): Option<ActorPawnWalkingConfiguration> = pawn.walking
+                        else { continue; };
+                    Self::simulate_actor_pawn_swimming(
+                        &control.0,
+                        &configuration,
+                        &swimming_state,
+                        &walking,
                         &mut position,
                         &mut velocity,
                         gravity,
@@ -299,6 +324,96 @@ pub trait SceneSimulation {
             state.cellular_drive_impulse[0] -= up.x * landing_impulse;
             state.cellular_drive_impulse[1] -= up.y * landing_impulse;
         }
+    }
+
+    /// Advances one swimmer relative to its asynchronously sampled surrounding fluid
+    fn simulate_actor_pawn_swimming(
+        control: &engine_input::ControlState,
+        configuration: &ActorPawnSwimmingConfiguration,
+        state: &ActorPawnSwimmingState,
+        walking: &ActorPawnWalkingConfiguration,
+        position: &mut ScenePosition,
+        velocity: &mut SceneVelocity,
+        gravity: [f32; 2],
+        physics_world: &ScenePhysicsWorld,
+        delta_time: f32,
+    ) {
+        if !walking.collider_width.is_finite() || !walking.collider_height.is_finite() ||
+                walking.collider_width <= 0.0 || walking.collider_height <= 0.0 {
+            return;
+        }
+        let gravity_magnitude: f32 = gravity[0].hypot(gravity[1]);
+        let up: Vector = if gravity_magnitude > 0.0 {
+            Vector::new(-gravity[0] / gravity_magnitude, -gravity[1] / gravity_magnitude)
+        } else {
+            Vector::Y
+        };
+        let tangent: Vector = Vector::new(up.y, -up.x);
+        let immersion: f32 = state.immersion.clamp(0.0, 1.0);
+        let buoyancy_ratio: f32 = immersion * state.fluid_density / configuration.density;
+        velocity.x += gravity[0] * (1.0 - buoyancy_ratio) * delta_time;
+        velocity.y += gravity[1] * (1.0 - buoyancy_ratio) * delta_time;
+
+        let fluid_velocity: Vector = Vector::new(
+            state.fluid_velocity[0],
+            state.fluid_velocity[1],
+        );
+        let mut relative_velocity: Vector = Vector::new(velocity.x, velocity.y) - fluid_velocity;
+        let drag: f32 = (-state.fluid_viscosity * configuration.drag * immersion *
+            delta_time).exp();
+        relative_velocity *= drag;
+        let mut input: Vector = tangent * control.locomotion_x + up * control.locomotion_y;
+        let input_magnitude: f32 = input.length();
+        if input_magnitude > 1.0 { input /= input_magnitude; }
+        relative_velocity += input * configuration.acceleration * delta_time;
+        let relative_speed: f32 = relative_velocity.length();
+        if relative_speed > configuration.maximum_speed {
+            relative_velocity *= configuration.maximum_speed / relative_speed;
+        }
+        let resolved_velocity: Vector = fluid_velocity + relative_velocity;
+        velocity.x = resolved_velocity.x;
+        velocity.y = resolved_velocity.y;
+
+        let radius: f32 = walking.collider_width.min(walking.collider_height) * 0.5;
+        let half_segment_length: f32 = (walking.collider_height - radius * 2.0) * 0.5;
+        let character_shape: Capsule = Capsule::new(
+            -up * half_segment_length,
+            up * half_segment_length,
+            radius,
+        );
+        let controller: KinematicCharacterController = KinematicCharacterController {
+            up,
+            offset: CharacterLength::Absolute(1.0 / 1024.0),
+            snap_to_ground: None,
+            autostep: None,
+            normal_nudge_factor: 1.0 / 1024.0,
+            ..Default::default()
+        };
+        let world_x: f32 = position.tile_coordinates.x as f32 + position.x_offset;
+        let world_y: f32 = position.tile_coordinates.y as f32 + position.y_offset;
+        let movement = physics_world.move_character(
+            &controller,
+            delta_time,
+            &character_shape,
+            &Pose::translation(world_x, world_y),
+            Vector::new(velocity.x, velocity.y) * delta_time,
+            |collision| {
+                let normal_speed: f32 = velocity.x * collision.hit.normal1.x +
+                    velocity.y * collision.hit.normal1.y;
+                if normal_speed < 0.0 {
+                    velocity.x -= collision.hit.normal1.x * normal_speed;
+                    velocity.y -= collision.hit.normal1.y * normal_speed;
+                }
+            },
+        );
+        Self::integrate_actor_position(
+            position,
+            &SceneVelocity {
+                x: movement.translation.x,
+                y: movement.translation.y,
+            },
+            1.0,
+        );
     }
 
     /// Integrates an actor's continuous velocity and normalizes its tile-relative position

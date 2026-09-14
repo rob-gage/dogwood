@@ -4,6 +4,9 @@ use super::{
     Actor,
     ActorControlState,
     ActorPawn,
+    ActorPawnMovement,
+    ActorPawnSwimmingConfiguration,
+    ActorPawnSwimmingState,
     ActorPawnWalkingConfiguration,
     ActorPossessable,
     ActorPawnWalkingState,
@@ -46,9 +49,11 @@ impl ActorRegistry {
         position: ScenePosition,
         velocity: SceneVelocity,
     ) -> Actor {
+        Self::validate_pawn(&pawn);
         Actor::from_bevy_entity(self.world.spawn((
             pawn,
             ActorControlState::default(),
+            ActorPawnSwimmingState::default(),
             ActorPawnWalkingState::default(),
             ActorPreviousPosition(position),
             position,
@@ -63,10 +68,12 @@ impl ActorRegistry {
         position: ScenePosition,
         velocity: SceneVelocity,
     ) -> Actor {
+        Self::validate_pawn(&pawn);
         Actor::from_bevy_entity(self.world.spawn((
             pawn,
             ActorPossessable,
             ActorControlState::default(),
+            ActorPawnSwimmingState::default(),
             ActorPawnWalkingState::default(),
             ActorPreviousPosition(position),
             position,
@@ -152,8 +159,60 @@ impl ActorRegistry {
             ],
             [velocity.x, velocity.y],
             [walking.collider_width, walking.collider_height],
-            state.cellular_drive_impulse,
+            if matches!(pawn.movement, Some(ActorPawnMovement::Walking)) {
+                state.cellular_drive_impulse
+            } else {
+                [0.0; 2]
+            },
         ))
+    }
+
+    /// Returns the possessed swimming-capable pawn capsule to sample on the GPU
+    pub fn swimming_pawn_sample(
+        &self,
+        identifier: Actor,
+    ) -> Option<([f32; 2], [f32; 2])> {
+        let entity = self.world.get_entity(identifier.bevy_entity()).ok()?;
+        let pawn = entity.get::<ActorPawn>()?;
+        pawn.swimming?;
+        let walking = pawn.walking?;
+        let position = *entity.get::<ScenePosition>()?;
+        Some(([
+            position.tile_coordinates.x as f32 + position.x_offset,
+            position.tile_coordinates.y as f32 + position.y_offset,
+        ], [walking.collider_width, walking.collider_height]))
+    }
+
+    /// Applies one completed derived-fluid sample and its walking/swimming hysteresis
+    pub fn apply_swimming_sample(
+        &mut self,
+        identifier: Actor,
+        sample: [f32; 5],
+    ) -> bool {
+        let entity = identifier.bevy_entity();
+        let Some(pawn) = self.world.get::<ActorPawn>(entity) else { return false; };
+        let Some(configuration) = pawn.swimming else { return false; };
+        if pawn.walking.is_none() { return false; }
+        let movement = pawn.movement;
+        let Some(mut state) = self.world.get_mut::<ActorPawnSwimmingState>(entity) else {
+            return false;
+        };
+        state.immersion = sample[0].clamp(0.0, 1.0);
+        state.fluid_velocity = [sample[1], sample[2]];
+        state.fluid_density = sample[3].max(0.0);
+        state.fluid_viscosity = sample[4].max(0.0);
+        drop(state);
+        let movement = match movement {
+            Some(ActorPawnMovement::Walking)
+                if sample[0] >= configuration.enter_immersion =>
+                    Some(ActorPawnMovement::Swimming),
+            Some(ActorPawnMovement::Swimming)
+                if sample[0] < configuration.exit_immersion =>
+                    Some(ActorPawnMovement::Walking),
+            _ => return true,
+        };
+        self.world.get_mut::<ActorPawn>(entity).unwrap().movement = movement;
+        true
     }
 
     /// Sets an actor's position
@@ -209,6 +268,80 @@ impl ActorRegistry {
     /// Returns whether an actor is eligible for possession
     pub fn is_possessable(&self, identifier: Actor) -> bool {
         self.world.get::<ActorPossessable>(identifier.bevy_entity()).is_some()
+    }
+
+    /// Rejects invalid configured swimming parameters before inserting a pawn
+    fn validate_pawn(pawn: &ActorPawn) {
+        let Some(ActorPawnSwimmingConfiguration {
+            maximum_speed,
+            acceleration,
+            density,
+            drag,
+            enter_immersion,
+            exit_immersion,
+        }) = pawn.swimming else { return; };
+        assert!(maximum_speed.is_finite() && maximum_speed >= 0.0);
+        assert!(acceleration.is_finite() && acceleration >= 0.0);
+        assert!(density.is_finite() && density > 0.0);
+        assert!(drag.is_finite() && drag >= 0.0);
+        assert!(enter_immersion.is_finite() && (0.0..=1.0).contains(&enter_immersion));
+        assert!(exit_immersion.is_finite() && (0.0..=1.0).contains(&exit_immersion));
+        assert!(exit_immersion < enter_immersion);
+    }
+
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+    use crate::tiles::TileCoordinates;
+
+    #[test]
+    fn swimming_sample_uses_hysteresis_without_changing_other_modes() {
+        let mut registry: ActorRegistry = ActorRegistry::new();
+        let mut pawn: ActorPawn = ActorPawn::new();
+        pawn.walking = Some(ActorPawnWalkingConfiguration {
+            speed: 0.0,
+            acceleration: 0.0,
+            mass: 1.0,
+            jump_velocity: 0.0,
+            maximum_slope_angle: 0.0,
+            collider_width: 1.0,
+            collider_height: 1.0,
+        });
+        pawn.swimming = Some(ActorPawnSwimmingConfiguration {
+            maximum_speed: 1.0,
+            acceleration: 1.0,
+            density: 1.0,
+            drag: 1.0,
+            enter_immersion: 0.6,
+            exit_immersion: 0.4,
+        });
+        pawn.movement = Some(ActorPawnMovement::Walking);
+        let actor: Actor = registry.spawn_pawn(
+            pawn,
+            ScenePosition {
+                tile_coordinates: TileCoordinates { x: 0, y: 0 },
+                x_offset: 0.0,
+                y_offset: 0.0,
+            },
+            SceneVelocity { x: 0.0, y: 0.0 },
+        );
+        registry.apply_swimming_sample(actor, [0.6, 0.0, 0.0, 1.0, 1.0]);
+        assert!(matches!(registry.get_pawn(actor).unwrap().movement,
+            Some(ActorPawnMovement::Swimming)));
+        registry.apply_swimming_sample(actor, [0.5, 0.0, 0.0, 1.0, 1.0]);
+        assert!(matches!(registry.get_pawn(actor).unwrap().movement,
+            Some(ActorPawnMovement::Swimming)));
+        registry.apply_swimming_sample(actor, [0.39, 0.0, 0.0, 1.0, 1.0]);
+        assert!(matches!(registry.get_pawn(actor).unwrap().movement,
+            Some(ActorPawnMovement::Walking)));
+        registry.world.get_mut::<ActorPawn>(actor.bevy_entity()).unwrap().movement =
+            Some(ActorPawnMovement::Flying);
+        registry.apply_swimming_sample(actor, [1.0, 0.0, 0.0, 1.0, 1.0]);
+        assert!(matches!(registry.get_pawn(actor).unwrap().movement,
+            Some(ActorPawnMovement::Flying)));
     }
 
 }

@@ -13,6 +13,7 @@ use engine::{
         actors::{
             ActorPawn,
             ActorPawnMovement,
+            ActorPawnSwimmingConfiguration,
             ActorPawnWalkingConfiguration,
         },
         materials::{
@@ -97,6 +98,8 @@ impl DemoGame {
             artificial_pressure: 0.02,
             xsph_smoothing: 0.08,
             body_push_speed: 4.0,
+            density: 1.0,
+            viscosity: 2.0,
         });
         let data: SceneData = SceneData::new_temporary(materials)?;
         let mut scene: Scene = Scene::load_with_generator(
@@ -126,6 +129,14 @@ impl DemoGame {
             maximum_slope_angle: 50.0_f32.to_radians(),
             collider_width: 0.75,
             collider_height: 0.75,
+        });
+        pawn_configuration.swimming = Some(ActorPawnSwimmingConfiguration {
+            maximum_speed: 3.5,
+            acceleration: 12.0,
+            density: 0.95,
+            drag: 1.0,
+            enter_immersion: 0.55,
+            exit_immersion: 0.35,
         });
         pawn_configuration.movement = Some(ActorPawnMovement::Walking);
         let pawn: engine::physics::actors::Actor =

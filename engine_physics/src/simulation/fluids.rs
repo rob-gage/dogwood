@@ -53,6 +53,8 @@ pub struct Fluids {
     streaming_count: AcceleratorBuffer,
     /// Per-record success flags for a fluid import
     streaming_results: AcceleratorBuffer,
+    /// One compact reduction of the possessed pawn capsule over derived fluid cells
+    sample_output: AcceleratorBuffer,
     /// Current ring mapping, spatial dimensions, gravity, and fixed-step values
     parameters: wgpu::Buffer,
     /// All concrete particle, edit, collision, bucket, and derived-cell bindings
@@ -85,12 +87,14 @@ pub struct Fluids {
     velocity_smoothing_pipeline: wgpu::ComputePipeline,
     /// Applies the completed velocity smoothing correction without neighbor races
     apply_velocity_smoothing_pipeline: wgpu::ComputePipeline,
-    /// Resolves fluid material contact response in the derived cellular representation
+    /// Resolves hard contact and swimmer entrainment in the derived cellular representation
     cell_contact_pipeline: wgpu::ComputePipeline,
     /// Applies one derived-cell contact correction to each authoritative particle
     apply_cell_contact_pipeline: wgpu::ComputePipeline,
     /// Gathers nearby particles into ring-aligned derived cell fields
     raster_pipeline: wgpu::ComputePipeline,
+    /// Reduces final derived fluid state across the possessed pawn capsule
+    sample_pipeline: wgpu::ComputePipeline,
     /// Compacts and removes particles belonging to an outgoing tile strip
     export_pipeline: wgpu::ComputePipeline,
     /// Reconstructs imported records through the existing free-particle stack
@@ -154,6 +158,7 @@ impl Fluids {
         let streaming_count: AcceleratorBuffer = accelerator.allocate::<u32>(1);
         let streaming_results: AcceleratorBuffer =
             accelerator.allocate::<u32>(particle_capacity as usize);
+        let sample_output: AcceleratorBuffer = accelerator.allocate::<[f32; 8]>(1);
         let free_indices_data: Vec<u8> = (0..particle_capacity)
             .flat_map(u32::to_le_bytes).collect();
         accelerator.wgpu_queue().write_buffer(
@@ -164,7 +169,7 @@ impl Fluids {
         );
         let parameters: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("fluid simulation parameters"),
-            size: 112,
+            size: 128,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -198,7 +203,7 @@ impl Fluids {
                     },
                     storage(13, false), storage(14, false), storage(15, false),
                     storage(16, true), storage(17, false), storage(18, false),
-                    storage(19, false),
+                    storage(19, false), storage(20, false),
                 ],
             },
         );
@@ -230,6 +235,7 @@ impl Fluids {
                     Self::binding(17, &streaming_particles),
                     Self::binding(18, &streaming_count),
                     Self::binding(19, &streaming_results),
+                    Self::binding(20, &sample_output),
                 ],
             },
         );
@@ -272,6 +278,7 @@ impl Fluids {
             streaming_particles,
             streaming_count,
             streaming_results,
+            sample_output,
             parameters,
             bind_group,
             edit_remove_pipeline: pipeline("remove_edited_fluid_particles", "fluid edit removal pipeline"),
@@ -299,6 +306,7 @@ impl Fluids {
             apply_cell_contact_pipeline: pipeline("apply_fluid_cell_contacts",
                 "fluid cell contact application pipeline"),
             raster_pipeline: pipeline("rasterize_fluid_cells", "fluid cellular raster pipeline"),
+            sample_pipeline: pipeline("sample_pawn_fluid", "pawn fluid sample pipeline"),
             export_pipeline: pipeline("export_fluid_particles", "fluid export pipeline"),
             import_pipeline: pipeline("import_fluid_particles", "fluid import pipeline"),
             particle_capacity,
@@ -346,7 +354,7 @@ impl Fluids {
         self.write_parameters(
             accelerator, active_origin, active_width, active_height,
             buffered_origin, buffered_width, buffered_height,
-            ring_offset_x, ring_offset_y, None, [0.0; 2], 0.0,
+            ring_offset_x, ring_offset_y, None, [0.0; 2], 0.0, None,
         );
         let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
             &wgpu::CommandEncoderDescriptor { label: Some("fluid edits") },
@@ -379,7 +387,7 @@ impl Fluids {
         self.write_parameters(
             accelerator, active_origin, active_width, active_height,
             buffered_origin, buffered_width, buffered_height,
-            ring_offset_x, ring_offset_y, None, gravity, delta_time,
+            ring_offset_x, ring_offset_y, None, gravity, delta_time, None,
         );
         let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
             &wgpu::CommandEncoderDescriptor { label: Some("fluid simulation") },
@@ -415,11 +423,44 @@ impl Fluids {
         self.dispatch(&mut encoder, &self.raster_pipeline, self.buffered_cell_count,
             "rasterize derived fluid cells");
         self.dispatch(&mut encoder, &self.cell_contact_pipeline, self.buffered_cell_count,
-            "resolve fluid cell contacts");
+            "resolve fluid cell interactions");
         self.dispatch(&mut encoder, &self.apply_cell_contact_pipeline, self.particle_capacity,
             "apply fluid cell contacts");
         self.dispatch(&mut encoder, &self.raster_pipeline, self.buffered_cell_count,
             "refresh contacted fluid cells");
+        accelerator.wgpu_queue().submit(Some(encoder.finish()));
+    }
+
+    /// Samples final derived fluid state across one gravity-relative pawn capsule
+    pub fn sample_pawn(
+        &self,
+        accelerator: &Accelerator,
+        output: &wgpu::Buffer,
+        center: [f32; 2],
+        collider: [f32; 2],
+        active_origin: TileCoordinates,
+        active_width: u16,
+        active_height: u16,
+        buffered_origin: TileCoordinates,
+        buffered_width: u16,
+        buffered_height: u16,
+        ring_offset_x: u16,
+        ring_offset_y: u16,
+        gravity: [f32; 2],
+    ) {
+        self.write_parameters(
+            accelerator, active_origin, active_width, active_height,
+            buffered_origin, buffered_width, buffered_height,
+            ring_offset_x, ring_offset_y, None, gravity, 0.0,
+            Some((center, collider)),
+        );
+        let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
+            &wgpu::CommandEncoderDescriptor { label: Some("pawn fluid sample") },
+        );
+        self.dispatch(&mut encoder, &self.sample_pipeline, 1, "sample pawn fluid");
+        encoder.copy_buffer_to_buffer(
+            self.sample_output.wgpu_buffer(), 0, output, 0, 32,
+        );
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
 
@@ -439,7 +480,7 @@ impl Fluids {
         self.write_parameters(
             accelerator, active_origin, active_width, active_height,
             buffered_origin, buffered_width, buffered_height,
-            ring_offset_x, ring_offset_y, None, [0.0; 2], 0.0,
+            ring_offset_x, ring_offset_y, None, [0.0; 2], 0.0, None,
         );
         let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
             &wgpu::CommandEncoderDescriptor { label: Some("fluid cellular refresh") },
@@ -479,7 +520,7 @@ impl Fluids {
         self.write_parameters(
             accelerator, active_origin, active_width, active_height,
             buffered_origin, buffered_width, buffered_height,
-            ring_offset_x, ring_offset_y, Some(download.area), [0.0; 2], 0.0,
+            ring_offset_x, ring_offset_y, Some(download.area), [0.0; 2], 0.0, None,
         );
         let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
             &wgpu::CommandEncoderDescriptor { label: Some("fluid export") },
@@ -524,7 +565,7 @@ impl Fluids {
         self.write_parameters(
             accelerator, active_origin, active_width, active_height,
             buffered_origin, buffered_width, buffered_height,
-            ring_offset_x, ring_offset_y, None, [0.0; 2], 0.0,
+            ring_offset_x, ring_offset_y, None, [0.0; 2], 0.0, None,
         );
         let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
             &wgpu::CommandEncoderDescriptor { label: Some("fluid import") },
@@ -577,6 +618,7 @@ impl Fluids {
         streaming_area: Option<TileArea>,
         gravity: [f32; 2],
         delta_time: f32,
+        sample: Option<([f32; 2], [f32; 2])>,
     ) {
         let streaming_origin: TileCoordinates = streaming_area.map_or(
             TileCoordinates { x: 0, y: 0 }, TileArea::origin,
@@ -584,7 +626,8 @@ impl Fluids {
         let streaming_dimensions: [u16; 2] = streaming_area.map_or(
             [0, 0], TileArea::dimensions,
         );
-        let values: [u32; 28] = [
+        let (sample_center, sample_collider) = sample.unwrap_or(([0.0; 2], [0.0; 2]));
+        let values: [u32; 32] = [
             buffered_origin.x as u32, buffered_origin.y as u32,
             u32::from(buffered_width), u32::from(buffered_height),
             active_origin.x as u32, active_origin.y as u32,
@@ -596,7 +639,10 @@ impl Fluids {
             gravity[0].to_bits(), gravity[1].to_bits(), delta_time.to_bits(),
             self.particle_capacity, self.buffered_cell_count, self.bucket_count,
             SUPPORT_RADIUS_CELLS.to_bits(), PARTICLE_RADIUS_CELLS.to_bits(),
-            MAXIMUM_MOVEMENT_CELLS, 0, 0, 0,
+            MAXIMUM_MOVEMENT_CELLS, 0,
+            sample_center[0].to_bits(), sample_center[1].to_bits(),
+            sample_collider[0].to_bits(), sample_collider[1].to_bits(),
+            0, 0,
         ];
         let bytes: Vec<u8> = values.into_iter().flat_map(u32::to_le_bytes).collect();
         accelerator.wgpu_queue().write_buffer(&self.parameters, 0, &bytes);
@@ -632,6 +678,7 @@ impl Drop for Fluids {
         self.streaming_particles.free();
         self.streaming_count.free();
         self.streaming_results.free();
+        self.sample_output.free();
         self.parameters.destroy();
     }
 

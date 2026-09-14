@@ -39,28 +39,7 @@ impl MaterialRegistry {
 
     /// Registers a `Material` and returns its `MaterialIdentifier`
     pub fn register(&mut self, material: Material) -> MaterialIdentifier {
-        match &material {
-            Material::CellularStatic { pressure_transmission, friction, restitution, .. } => assert!(
-                pressure_transmission.is_finite() && (0.0..=1.0).contains(pressure_transmission) &&
-                friction.is_finite() && (0.0..=1.0).contains(friction) &&
-                restitution.is_finite() && (0.0..=1.0).contains(restitution)
-            ),
-            Material::CellularDynamic { mass, pressure_transmission, friction, restitution, .. } => assert!(
-                mass.is_finite() && *mass > 0.0 && pressure_transmission.is_finite() &&
-                    (0.0..=1.0).contains(pressure_transmission) && friction.is_finite() &&
-                    (0.0..=1.0).contains(friction) && restitution.is_finite() &&
-                    (0.0..=1.0).contains(restitution)
-            ),
-            Material::Fluid { friction, restitution, rest_density, artificial_pressure,
-                xsph_smoothing, body_push_speed, .. } => assert!(
-                friction.is_finite() && (0.0..=1.0).contains(friction) &&
-                restitution.is_finite() && (0.0..=1.0).contains(restitution) &&
-                rest_density.is_finite() && *rest_density > 0.0 &&
-                artificial_pressure.is_finite() && *artificial_pressure >= 0.0 &&
-                xsph_smoothing.is_finite() && (0.0..=1.0).contains(xsph_smoothing) &&
-                body_push_speed.is_finite() && *body_push_speed >= 0.0
-            ),
-        }
+        assert!(Self::material_is_valid(&material));
         match material {
             material @ Material::CellularStatic { .. } => {
                 let index: u32 = self.cellular_statics.len() as u32;
@@ -77,6 +56,31 @@ impl MaterialRegistry {
                 self.fluids.push(material);
                 MaterialIdentifier::new(MaterialForm::Fluid, index)
             }
+        }
+    }
+
+    /// Returns whether all simulation properties of a material are valid
+    fn material_is_valid(material: &Material) -> bool {
+        match material {
+            Material::CellularStatic { pressure_transmission, friction, restitution, .. } =>
+                pressure_transmission.is_finite() && (0.0..=1.0).contains(pressure_transmission) &&
+                friction.is_finite() && (0.0..=1.0).contains(friction) &&
+                restitution.is_finite() && (0.0..=1.0).contains(restitution),
+            Material::CellularDynamic { mass, pressure_transmission, friction, restitution, .. } =>
+                mass.is_finite() && *mass > 0.0 && pressure_transmission.is_finite() &&
+                    (0.0..=1.0).contains(pressure_transmission) && friction.is_finite() &&
+                    (0.0..=1.0).contains(friction) && restitution.is_finite() &&
+                    (0.0..=1.0).contains(restitution),
+            Material::Fluid { friction, restitution, rest_density, artificial_pressure,
+                xsph_smoothing, body_push_speed, density, viscosity, .. } =>
+                friction.is_finite() && (0.0..=1.0).contains(friction) &&
+                restitution.is_finite() && (0.0..=1.0).contains(restitution) &&
+                rest_density.is_finite() && *rest_density > 0.0 &&
+                artificial_pressure.is_finite() && *artificial_pressure >= 0.0 &&
+                xsph_smoothing.is_finite() && (0.0..=1.0).contains(xsph_smoothing) &&
+                body_push_speed.is_finite() && *body_push_speed >= 0.0 &&
+                density.is_finite() && *density > 0.0 &&
+                viscosity.is_finite() && *viscosity >= 0.0,
         }
     }
 
@@ -113,9 +117,9 @@ impl MaterialRegistry {
             self.fluids.iter().map(|material| *material.appearance()).collect(),
             self.fluids.iter().map(|material| match material {
                 Material::Fluid { rest_density, artificial_pressure, xsph_smoothing,
-                    body_push_speed, friction, restitution, .. } => [*rest_density,
+                    body_push_speed, friction, restitution, density, viscosity, .. } => [*rest_density,
                     *artificial_pressure, *xsph_smoothing, *body_push_speed, *friction,
-                    *restitution, 0.0, 0.0],
+                    *restitution, *density, *viscosity],
                 _ => unreachable!(),
             }).collect(),
         )
@@ -218,8 +222,16 @@ impl MaterialRegistry {
                     artificial_pressure: f32::from_bits(Self::read_u32(reader)?),
                     xsph_smoothing: f32::from_bits(Self::read_u32(reader)?),
                     body_push_speed: f32::from_bits(Self::read_u32(reader)?),
+                    density: f32::from_bits(Self::read_u32(reader)?),
+                    viscosity: f32::from_bits(Self::read_u32(reader)?),
                 },
             };
+            if !Self::material_is_valid(&material) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Invalid material properties",
+                ));
+            }
             materials.push(material);
         }
         Ok(materials)
@@ -272,7 +284,8 @@ impl MaterialRegistry {
                     writer.write_all(&restitution.to_bits().to_le_bytes())?;
                 }
                 Material::Fluid { pressure_transmission, friction, restitution,
-                    rest_density, artificial_pressure, xsph_smoothing, body_push_speed, .. } => {
+                    rest_density, artificial_pressure, xsph_smoothing, body_push_speed,
+                    density, viscosity, .. } => {
                     writer.write_all(&pressure_transmission.to_bits().to_le_bytes())?;
                     writer.write_all(&friction.to_bits().to_le_bytes())?;
                     writer.write_all(&restitution.to_bits().to_le_bytes())?;
@@ -280,6 +293,8 @@ impl MaterialRegistry {
                     writer.write_all(&artificial_pressure.to_bits().to_le_bytes())?;
                     writer.write_all(&xsph_smoothing.to_bits().to_le_bytes())?;
                     writer.write_all(&body_push_speed.to_bits().to_le_bytes())?;
+                    writer.write_all(&density.to_bits().to_le_bytes())?;
+                    writer.write_all(&viscosity.to_bits().to_le_bytes())?;
                 }
             }
         }

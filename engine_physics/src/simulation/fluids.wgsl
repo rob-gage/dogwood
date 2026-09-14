@@ -26,6 +26,8 @@ struct Parameters {
     particle_radius_cells: f32,
     maximum_movement_cells: u32,
     padding_0: u32,
+    sample_center: vec2<f32>,
+    sample_collider: vec2<f32>,
     padding_1: vec2<u32>,
 }
 
@@ -49,6 +51,7 @@ struct Parameters {
 @group(0) @binding(17) var<storage, read_write> streaming_particles: array<Particle>;
 @group(0) @binding(18) var<storage, read_write> streaming_count: array<atomic<u32>>;
 @group(0) @binding(19) var<storage, read_write> streaming_results: array<u32>;
+@group(0) @binding(20) var<storage, read_write> sample_output: array<vec4<f32>>;
 
 const EMPTY: u32 = 0u;
 const INVALID_INDEX: u32 = 0xffffffffu;
@@ -60,6 +63,8 @@ const PBF_CONSTRAINT_ITERATION_COUNT: f32 = 4.0;
 const CONSTRAINT_EPSILON: f32 = 0.01;
 const ARTIFICIAL_PRESSURE_DELTA_Q_RATIO: f32 = 0.3;
 const MAXIMUM_CORRECTION_CELLS: f32 = 0.25;
+const HARD_BODY: u32 = 1u;
+const SWIMMER_BODY: u32 = 2u;
 
 // Removes every authoritative particle whose current world cell was edited
 @compute @workgroup_size(64)
@@ -340,7 +345,7 @@ fn apply_fluid_velocity_smoothing(@builtin(global_invocation_id) invocation: vec
     particles[particle_index].velocity += position_corrections[particle_index];
 }
 
-// Resolves material response once per derived fluid cell after final XSPH smoothing
+// Resolves hard contact and soft swimmer entrainment after final XSPH smoothing
 @compute @workgroup_size(64)
 fn resolve_fluid_cell_contacts(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let logical_index: u32 = invocation.x;
@@ -364,11 +369,11 @@ fn resolve_fluid_cell_contacts(@builtin(global_invocation_id) invocation: vec3<u
         let offset: vec2<i32> = offsets[neighbor_number];
         let neighbor: u32 = physical_cell_index(cell + offset);
         if neighbor == INVALID_INDEX || (cellular_material_identifiers[neighbor] == EMPTY &&
-                external_body_occupancy[neighbor] == EMPTY) { continue; }
+                external_body_occupancy[neighbor] != HARD_BODY) { continue; }
         var boundary_velocity: vec2<f32> = select(
             vec2<f32>(0.0),
             external_body_velocity[neighbor].xy,
-            external_body_occupancy[neighbor] != EMPTY,
+            external_body_occupancy[neighbor] == HARD_BODY,
         );
         let boundary_speed: f32 = length(boundary_velocity) * CELLS_PER_TILE;
         let body_push_speed: f32 = fluid_properties_for(material_identifier).w;
@@ -381,6 +386,13 @@ fn resolve_fluid_cell_contacts(@builtin(global_invocation_id) invocation: vec3<u
             -vec2<f32>(offset),
             material_identifier,
         );
+    }
+    if external_body_occupancy[index] == SWIMMER_BODY {
+        let viscosity: f32 = max(0.0, fluid_physical_properties_for(material_identifier).y);
+        let coupling: f32 = clamp(1.0 - exp(
+            -viscosity * derived_coverage[index] * parameters.delta_time,
+        ), 0.0, 1.0);
+        velocity += (external_body_velocity[index].xy - velocity) * coupling;
     }
     derived_velocity[index] = vec4<f32>(initial_velocity, velocity - initial_velocity);
 }
@@ -479,6 +491,63 @@ fn rasterize_fluid_cells(@builtin(global_invocation_id) invocation: vec3<u32>) {
     );
 }
 
+// Reduces the possessed pawn capsule against the final derived fluid representation
+@compute @workgroup_size(1)
+fn sample_pawn_fluid(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    if invocation.x != 0u { return; }
+    let gravity_length: f32 = length(parameters.gravity);
+    let up: vec2<f32> = select(
+        vec2<f32>(0.0, 1.0),
+        -parameters.gravity / max(gravity_length, 0.000001),
+        gravity_length > 0.0,
+    );
+    let tangent: vec2<f32> = vec2<f32>(up.y, -up.x);
+    let radius: f32 = min(parameters.sample_collider.x, parameters.sample_collider.y) * 0.5;
+    let half_segment: f32 = max(0.0, (parameters.sample_collider.y - radius * 2.0) * 0.5);
+    let extent: vec2<f32> = abs(tangent) * radius + abs(up) * (half_segment + radius);
+    let minimum: vec2<i32> = vec2<i32>(floor(
+        (parameters.sample_center - extent) * CELLS_PER_TILE,
+    ));
+    let maximum: vec2<i32> = vec2<i32>(floor(
+        (parameters.sample_center + extent) * CELLS_PER_TILE,
+    ));
+    var capsule_cell_count: f32 = 0.0;
+    var coverage_sum: f32 = 0.0;
+    var velocity_sum: vec2<f32> = vec2<f32>(0.0);
+    var density_sum: f32 = 0.0;
+    var viscosity_sum: f32 = 0.0;
+    for (var y: i32 = minimum.y; y <= maximum.y; y++) {
+        for (var x: i32 = minimum.x; x <= maximum.x; x++) {
+            let cell: vec2<i32> = vec2<i32>(x, y);
+            let relative: vec2<f32> = (vec2<f32>(cell) + vec2<f32>(0.5)) /
+                CELLS_PER_TILE - parameters.sample_center;
+            let nearest: f32 = clamp(dot(relative, up), -half_segment, half_segment);
+            if length(vec2<f32>(dot(relative, tangent), dot(relative, up) - nearest)) > radius {
+                continue;
+            }
+            capsule_cell_count += 1.0;
+            let index: u32 = physical_cell_index(cell);
+            if index == INVALID_INDEX || derived_material_identifiers[index] == EMPTY { continue; }
+            let coverage: f32 = clamp(derived_coverage[index], 0.0, 1.0);
+            let properties: vec2<f32> = fluid_physical_properties_for(
+                derived_material_identifiers[index],
+            );
+            coverage_sum += coverage;
+            velocity_sum += derived_velocity[index].xy * coverage;
+            density_sum += properties.x * coverage;
+            viscosity_sum += properties.y * coverage;
+        }
+    }
+    let divisor: f32 = max(coverage_sum, 0.000001);
+    sample_output[0] = vec4<f32>(
+        coverage_sum / max(capsule_cell_count, 1.0),
+        velocity_sum.x / divisor,
+        velocity_sum.y / divisor,
+        density_sum / divisor,
+    );
+    sample_output[1] = vec4<f32>(viscosity_sum / divisor, 0.0, 0.0, 0.0);
+}
+
 fn poly6_kernel(distance: f32) -> f32 {
     let h: f32 = parameters.support_radius_cells;
     if distance >= h { return 0.0; }
@@ -512,6 +581,10 @@ fn fluid_contact_properties_for(material_identifier: u32) -> vec2<f32> {
     return fluid_material_properties[(material_identifier & 0x3fffffffu) * 2u + 1u].xy;
 }
 
+fn fluid_physical_properties_for(material_identifier: u32) -> vec2<f32> {
+    return fluid_material_properties[(material_identifier & 0x3fffffffu) * 2u + 1u].zw;
+}
+
 fn project_particle_position(initial_position: vec2<f32>) -> vec2<f32> {
     var position: vec2<f32> = initial_position;
     let radius: f32 = parameters.particle_radius_cells / CELLS_PER_TILE;
@@ -523,7 +596,7 @@ fn project_particle_position(initial_position: vec2<f32>) -> vec2<f32> {
                 let cell: vec2<i32> = center_cell + vec2<i32>(offset_x, offset_y);
                 let index: u32 = physical_cell_index(cell);
                 if index == INVALID_INDEX || (cellular_material_identifiers[index] == EMPTY &&
-                        external_body_occupancy[index] == EMPTY) { continue; }
+                        external_body_occupancy[index] != HARD_BODY) { continue; }
                 let minimum: vec2<f32> = vec2<f32>(cell) / CELLS_PER_TILE;
                 let maximum: vec2<f32> = vec2<f32>(cell + vec2<i32>(1)) / CELLS_PER_TILE;
                 let nearest: vec2<f32> = clamp(position, minimum, maximum);
