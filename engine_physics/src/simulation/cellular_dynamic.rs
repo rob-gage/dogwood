@@ -145,10 +145,12 @@ impl CellularDynamic {
             },
         );
         // build the three explicit pass pipelines from one cellular dynamic shader
-        let shader: wgpu::ShaderModule = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("cellular dynamic shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("cellular_dynamic.wgsl").into()),
-        });
+        let shader: wgpu::ShaderModule = super::create_simulation_shader_module(
+            device,
+            "cellular dynamic shader",
+            include_str!("cellular_dynamic.wgsl"),
+            "engine_physics/src/simulation/cellular_dynamic.wgsl",
+        );
         let pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("cellular dynamic pipeline layout"),

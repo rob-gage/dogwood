@@ -151,10 +151,12 @@ impl Gases {
                 wgpu::BindGroupEntry { binding: 13, resource: parameters.as_entire_binding() },
             ],
         });
-        let shader: wgpu::ShaderModule = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("gas simulation shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("gases.wgsl").into()),
-        });
+        let shader: wgpu::ShaderModule = super::create_simulation_shader_module(
+            device,
+            "gas simulation shader",
+            include_str!("gases.wgsl"),
+            "engine_physics/src/simulation/gases.wgsl",
+        );
         let pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("gas simulation pipeline layout"),

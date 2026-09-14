@@ -1,5 +1,15 @@
 // Copyright Rob Gage 2026
 
+#define_import_path compute::gases
+
+#import utility::cell_coordinates::{
+    CELLS_PER_TILE,
+    CELLS_PER_TILE_FLOAT,
+    world_cell_from_logical_tile_major_index,
+}
+#import utility::material_identifier::EMPTY_MATERIAL_IDENTIFIER
+#import utility::tile_ring::{INVALID_PHYSICAL_CELL_INDEX, physical_cell_index_from_world_cell}
+
 struct Parameters {
     buffered_origin: vec2<i32>,
     buffered_tile_size: vec2<u32>,
@@ -35,73 +45,56 @@ struct Parameters {
 @group(0) @binding(12) var<storage, read_write> streaming_data: array<u32>;
 @group(0) @binding(13) var<uniform> parameters: Parameters;
 
-const INVALID_INDEX: u32 = 0xffffffffu;
-const CELLS_PER_TILE: f32 = 8.0;
 const INCOMPRESSIBILITY_MIXING: f32 = 1.0;
 
-// Semi-Lagrangian backtracing reads the immutable current field and writes separate scratch.
+// Semi-Lagrangian backtracing from immutable velocity into separate scratch
 @compute @workgroup_size(64)
 fn advect_gas_velocity(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let logical_index: u32 = invocation.x;
     if logical_index >= parameters.buffered_cell_count { return; }
-    let cell: vec2<i32> = world_cell_from_logical_index(logical_index);
-    let index: u32 = physical_cell_index(cell);
-    if is_obstacle(cell) {
+    let cell: vec2<i32> = world_cell_from_gas_logical_index(logical_index);
+    let index: u32 = gas_physical_cell_index_from_world_cell(cell);
+    if world_cell_is_gas_obstacle(cell) {
         velocity_scratch[index] = vec2<f32>(0.0);
         return;
     }
     let center: vec2<f32> = vec2<f32>(cell) + vec2<f32>(0.5);
     let backtraced: vec2<f32> = center - velocity[index] * parameters.delta_time;
-    velocity_scratch[index] = sample_velocity(backtraced);
+    velocity_scratch[index] = sample_gas_velocity_bilinear_at_cell_position(backtraced);
 }
 
+// Calculates scalar curl from the advected scratch velocity field
 @compute @workgroup_size(64)
 fn calculate_gas_curl(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let logical_index: u32 = invocation.x;
     if logical_index >= parameters.buffered_cell_count { return; }
-    let cell: vec2<i32> = world_cell_from_logical_index(logical_index);
-    let index: u32 = physical_cell_index(cell);
-    if is_obstacle(cell) {
+    let cell: vec2<i32> = world_cell_from_gas_logical_index(logical_index);
+    let index: u32 = gas_physical_cell_index_from_world_cell(cell);
+    if world_cell_is_gas_obstacle(cell) {
         curl[index] = 0.0;
         return;
     }
-    let left: vec2<f32> = scratch_velocity_at(cell + vec2<i32>(-1, 0));
-    let right: vec2<f32> = scratch_velocity_at(cell + vec2<i32>(1, 0));
-    let bottom: vec2<f32> = scratch_velocity_at(cell + vec2<i32>(0, -1));
-    let top: vec2<f32> = scratch_velocity_at(cell + vec2<i32>(0, 1));
+    let left: vec2<f32> = gas_scratch_velocity_at_world_cell(cell + vec2<i32>(-1, 0));
+    let right: vec2<f32> = gas_scratch_velocity_at_world_cell(cell + vec2<i32>(1, 0));
+    let bottom: vec2<f32> = gas_scratch_velocity_at_world_cell(cell + vec2<i32>(0, -1));
+    let top: vec2<f32> = gas_scratch_velocity_at_world_cell(cell + vec2<i32>(0, 1));
     curl[index] = 0.5 * ((right.y - left.y) - (top.x - bottom.x));
 }
 
-// Density below the implicit ambient atmosphere reverses arbitrary scene gravity.
+// Applies buoyancy and vorticity confinement to advected gas velocity
 @compute @workgroup_size(64)
 fn apply_gas_forces(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let logical_index: u32 = invocation.x;
     if logical_index >= parameters.buffered_cell_count { return; }
-    let cell: vec2<i32> = world_cell_from_logical_index(logical_index);
-    let index: u32 = physical_cell_index(cell);
-    if is_obstacle(cell) {
+    let cell: vec2<i32> = world_cell_from_gas_logical_index(logical_index);
+    let index: u32 = gas_physical_cell_index_from_world_cell(cell);
+    if world_cell_is_gas_obstacle(cell) {
         velocity[index] = vec2<f32>(0.0);
         return;
     }
-    var density_offset: f32 = 0.0;
-    for (var species: u32 = 0u; species < parameters.gas_count; species++) {
-        density_offset += concentrations[concentration_index(species, index)] *
-            (gas_properties[species * 2u].x - parameters.ambient_density);
-    }
-    let curl_gradient: vec2<f32> = 0.5 * vec2<f32>(
-        abs(curl_at(cell + vec2<i32>(1, 0))) - abs(curl_at(cell + vec2<i32>(-1, 0))),
-        abs(curl_at(cell + vec2<i32>(0, 1))) - abs(curl_at(cell + vec2<i32>(0, -1))),
-    );
-    let gradient_length: f32 = length(curl_gradient);
-    let normal: vec2<f32> = select(
-        vec2<f32>(0.0),
-        curl_gradient / max(gradient_length, 0.000001),
-        gradient_length > 0.000001,
-    );
-    let confinement: vec2<f32> = parameters.vorticity_confinement *
-        vec2<f32>(normal.y, -normal.x) * curl[index];
-    let buoyancy: vec2<f32> = parameters.gravity * CELLS_PER_TILE * density_offset *
-        parameters.buoyancy_coefficient;
+    let buoyancy: vec2<f32> = parameters.gravity * CELLS_PER_TILE_FLOAT *
+        gas_density_offset_from_ambient(index) * parameters.buoyancy_coefficient;
+    let confinement: vec2<f32> = calculate_gas_vorticity_confinement(cell, index);
     var next_velocity: vec2<f32> = velocity_scratch[index] +
         (buoyancy + confinement) * parameters.delta_time;
     let speed: f32 = length(next_velocity);
@@ -109,22 +102,26 @@ fn apply_gas_forces(@builtin(global_invocation_id) invocation: vec3<u32>) {
     velocity[index] = next_velocity;
 }
 
+// Calculates velocity divergence for the incompressibility projection
 @compute @workgroup_size(64)
 fn calculate_gas_divergence(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let logical_index: u32 = invocation.x;
     if logical_index >= parameters.buffered_cell_count { return; }
-    let cell: vec2<i32> = world_cell_from_logical_index(logical_index);
-    let index: u32 = physical_cell_index(cell);
-    if is_obstacle(cell) {
+    let cell: vec2<i32> = world_cell_from_gas_logical_index(logical_index);
+    let index: u32 = gas_physical_cell_index_from_world_cell(cell);
+    if world_cell_is_gas_obstacle(cell) {
         divergence[index] = 0.0;
         return;
     }
     divergence[index] = 0.5 * (
-        velocity_at(cell + vec2<i32>(1, 0)).x - velocity_at(cell + vec2<i32>(-1, 0)).x +
-        velocity_at(cell + vec2<i32>(0, 1)).y - velocity_at(cell + vec2<i32>(0, -1)).y
+        gas_velocity_at_world_cell(cell + vec2<i32>(1, 0)).x -
+            gas_velocity_at_world_cell(cell + vec2<i32>(-1, 0)).x +
+        gas_velocity_at_world_cell(cell + vec2<i32>(0, 1)).y -
+            gas_velocity_at_world_cell(cell + vec2<i32>(0, -1)).y
     );
 }
 
+// Clears both Jacobi pressure fields before projection
 @compute @workgroup_size(64)
 fn clear_gas_pressure(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if invocation.x >= parameters.buffered_cell_count { return; }
@@ -132,65 +129,56 @@ fn clear_gas_pressure(@builtin(global_invocation_id) invocation: vec3<u32>) {
     pressure_b[invocation.x] = 0.0;
 }
 
+// Solves one Jacobi iteration from pressure B into pressure A
 @compute @workgroup_size(64)
 fn solve_gas_pressure_a(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let logical_index: u32 = invocation.x;
     if logical_index >= parameters.buffered_cell_count { return; }
-    let cell: vec2<i32> = world_cell_from_logical_index(logical_index);
-    let index: u32 = physical_cell_index(cell);
-    if is_obstacle(cell) {
+    let cell: vec2<i32> = world_cell_from_gas_logical_index(logical_index);
+    let index: u32 = gas_physical_cell_index_from_world_cell(cell);
+    if world_cell_is_gas_obstacle(cell) {
         pressure_a[index] = 0.0;
         return;
     }
-    let center: f32 = pressure_b[index];
-    pressure_a[index] = (pressure_b_at(cell + vec2<i32>(-1, 0), center) +
-        pressure_b_at(cell + vec2<i32>(1, 0), center) +
-        pressure_b_at(cell + vec2<i32>(0, -1), center) +
-        pressure_b_at(cell + vec2<i32>(0, 1), center) - divergence[index]) * 0.25;
+    pressure_a[index] = calculate_gas_jacobi_pressure(cell, index, false);
 }
 
+// Solves one Jacobi iteration from pressure A into pressure B
 @compute @workgroup_size(64)
 fn solve_gas_pressure_b(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let logical_index: u32 = invocation.x;
     if logical_index >= parameters.buffered_cell_count { return; }
-    let cell: vec2<i32> = world_cell_from_logical_index(logical_index);
-    let index: u32 = physical_cell_index(cell);
-    if is_obstacle(cell) {
+    let cell: vec2<i32> = world_cell_from_gas_logical_index(logical_index);
+    let index: u32 = gas_physical_cell_index_from_world_cell(cell);
+    if world_cell_is_gas_obstacle(cell) {
         pressure_b[index] = 0.0;
         return;
     }
-    let center: f32 = pressure_a[index];
-    pressure_b[index] = (pressure_a_at(cell + vec2<i32>(-1, 0), center) +
-        pressure_a_at(cell + vec2<i32>(1, 0), center) +
-        pressure_a_at(cell + vec2<i32>(0, -1), center) +
-        pressure_a_at(cell + vec2<i32>(0, 1), center) - divergence[index]) * 0.25;
+    pressure_b[index] = calculate_gas_jacobi_pressure(cell, index, true);
 }
 
-// Twelve Jacobi iterations end in pressure B, which is the sole projection input.
+// Projects velocity with pressure B after the fixed twelve Jacobi iterations
 @compute @workgroup_size(64)
 fn project_gas_velocity(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let logical_index: u32 = invocation.x;
     if logical_index >= parameters.buffered_cell_count { return; }
-    let cell: vec2<i32> = world_cell_from_logical_index(logical_index);
-    let index: u32 = physical_cell_index(cell);
-    if is_obstacle(cell) {
+    let cell: vec2<i32> = world_cell_from_gas_logical_index(logical_index);
+    let index: u32 = gas_physical_cell_index_from_world_cell(cell);
+    if world_cell_is_gas_obstacle(cell) {
         velocity[index] = vec2<f32>(0.0);
         return;
     }
-    let center: f32 = pressure_b[index];
+    let center_pressure: f32 = pressure_b[index];
     var projected: vec2<f32> = velocity[index] - 0.5 * vec2<f32>(
-        pressure_b_at(cell + vec2<i32>(1, 0), center) -
-            pressure_b_at(cell + vec2<i32>(-1, 0), center),
-        pressure_b_at(cell + vec2<i32>(0, 1), center) -
-            pressure_b_at(cell + vec2<i32>(0, -1), center),
+        gas_pressure_at_world_cell(cell + vec2<i32>(1, 0), center_pressure, false) -
+            gas_pressure_at_world_cell(cell + vec2<i32>(-1, 0), center_pressure, false),
+        gas_pressure_at_world_cell(cell + vec2<i32>(0, 1), center_pressure, false) -
+            gas_pressure_at_world_cell(cell + vec2<i32>(0, -1), center_pressure, false),
     );
-    if is_obstacle(cell + vec2<i32>(-1, 0)) && projected.x < 0.0 { projected.x = 0.0; }
-    if is_obstacle(cell + vec2<i32>(1, 0)) && projected.x > 0.0 { projected.x = 0.0; }
-    if is_obstacle(cell + vec2<i32>(0, -1)) && projected.y < 0.0 { projected.y = 0.0; }
-    if is_obstacle(cell + vec2<i32>(0, 1)) && projected.y > 0.0 { projected.y = 0.0; }
-    velocity[index] = projected;
+    velocity[index] = clamp_projected_gas_velocity_against_obstacle_faces(cell, projected);
 }
 
+// Advects, diffuses, and dissipates every gas-species concentration
 @compute @workgroup_size(64)
 fn advect_gas_concentrations(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let field_index: u32 = invocation.x;
@@ -198,19 +186,20 @@ fn advect_gas_concentrations(@builtin(global_invocation_id) invocation: vec3<u32
     if field_index >= field_count { return; }
     let species: u32 = field_index / parameters.buffered_cell_count;
     let logical_index: u32 = field_index % parameters.buffered_cell_count;
-    let cell: vec2<i32> = world_cell_from_logical_index(logical_index);
-    let index: u32 = physical_cell_index(cell);
-    let output_index: u32 = concentration_index(species, index);
-    if is_obstacle(cell) {
+    let cell: vec2<i32> = world_cell_from_gas_logical_index(logical_index);
+    let index: u32 = gas_physical_cell_index_from_world_cell(cell);
+    let output_index: u32 =
+        gas_concentration_storage_index_from_species_and_physical_cell(species, index);
+    if world_cell_is_gas_obstacle(cell) {
         concentration_scratch[output_index] = 0.0;
         return;
     }
     let current: f32 = concentrations[output_index];
     let transported: f32 = current - parameters.delta_time * (
-        concentration_flux_x(species, cell) -
-            concentration_flux_x(species, cell + vec2<i32>(-1, 0)) +
-        concentration_flux_y(species, cell) -
-            concentration_flux_y(species, cell + vec2<i32>(0, -1))
+        gas_concentration_flux_across_positive_x_face(species, cell) -
+            gas_concentration_flux_across_positive_x_face(species, cell + vec2<i32>(-1, 0)) +
+        gas_concentration_flux_across_positive_y_face(species, cell) -
+            gas_concentration_flux_across_positive_y_face(species, cell + vec2<i32>(0, -1))
     );
     let properties: vec4<f32> = gas_properties[species * 2u];
     let compressibility: f32 = clamp(gas_properties[species * 2u + 1u].x, 0.0, 1.0);
@@ -219,34 +208,37 @@ fn advect_gas_concentrations(@builtin(global_invocation_id) invocation: vec3<u32
             parameters.delta_time, 0.24,
     );
     let mixed: f32 = transported + mixing * (
-        concentration_at(species, cell + vec2<i32>(-1, 0), current) +
-        concentration_at(species, cell + vec2<i32>(1, 0), current) +
-        concentration_at(species, cell + vec2<i32>(0, -1), current) +
-        concentration_at(species, cell + vec2<i32>(0, 1), current) - 4.0 * current
+        gas_concentration_at_world_cell(species, cell + vec2<i32>(-1, 0), current) +
+        gas_concentration_at_world_cell(species, cell + vec2<i32>(1, 0), current) +
+        gas_concentration_at_world_cell(species, cell + vec2<i32>(0, -1), current) +
+        gas_concentration_at_world_cell(species, cell + vec2<i32>(0, 1), current) - 4.0 * current
     );
     let remaining: f32 = exp(-max(properties.w, 0.0) * parameters.delta_time);
     concentration_scratch[output_index] = max(0.0, mixed) * remaining;
 }
 
+// Clears authoritative gas state after a physical ring slot is reassigned
 @compute @workgroup_size(64)
 fn clear_gas_area(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if invocation.x >= parameters.streaming_cell_count { return; }
-    let cell: vec2<i32> = world_cell_from_streaming_index(invocation.x);
-    let index: u32 = physical_cell_index(cell);
-    if index == INVALID_INDEX { return; }
+    let cell: vec2<i32> = world_cell_from_gas_streaming_index(invocation.x);
+    let index: u32 = gas_physical_cell_index_from_world_cell(cell);
+    if index == INVALID_PHYSICAL_CELL_INDEX { return; }
     velocity[index] = vec2<f32>(0.0);
     for (var species: u32 = 0u; species < parameters.gas_count; species++) {
-        concentrations[concentration_index(species, index)] = 0.0;
+        concentrations[
+            gas_concentration_storage_index_from_species_and_physical_cell(species, index)
+        ] = 0.0;
     }
 }
 
-// Each invocation owns one fixed output record and clears the same outgoing physical cell.
+// Exports one fixed gas record and clears the same outgoing physical cell
 @compute @workgroup_size(64)
 fn export_gas_area(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let output_index: u32 = invocation.x;
     if output_index >= parameters.streaming_cell_count { return; }
-    let cell: vec2<i32> = world_cell_from_streaming_index(output_index);
-    let index: u32 = physical_cell_index(cell);
+    let cell: vec2<i32> = world_cell_from_gas_streaming_index(output_index);
+    let index: u32 = gas_physical_cell_index_from_world_cell(cell);
     let stride: u32 = 4u + parameters.gas_count;
     let start: u32 = output_index * stride;
     streaming_data[start] = bitcast<u32>(cell.x);
@@ -255,124 +247,205 @@ fn export_gas_area(@builtin(global_invocation_id) invocation: vec3<u32>) {
     streaming_data[start + 3u] = bitcast<u32>(velocity[index].y);
     velocity[index] = vec2<f32>(0.0);
     for (var species: u32 = 0u; species < parameters.gas_count; species++) {
-        let concentration: u32 = concentration_index(species, index);
+        let concentration: u32 =
+            gas_concentration_storage_index_from_species_and_physical_cell(species, index);
         streaming_data[start + 4u + species] = bitcast<u32>(concentrations[concentration]);
         concentrations[concentration] = 0.0;
     }
 }
 
-fn sample_velocity(position: vec2<f32>) -> vec2<f32> {
-    let shifted: vec2<f32> = position - vec2<f32>(0.5);
+// Sums density difference from the implicit ambient atmosphere
+fn gas_density_offset_from_ambient(physical_cell_index: u32) -> f32 {
+    var density_offset: f32 = 0.0;
+    for (var species: u32 = 0u; species < parameters.gas_count; species++) {
+        density_offset += concentrations[
+            gas_concentration_storage_index_from_species_and_physical_cell(
+                species, physical_cell_index,
+            )
+        ] *
+            (gas_properties[species * 2u].x - parameters.ambient_density);
+    }
+    return density_offset;
+}
+
+// Calculates vorticity confinement from neighboring curl magnitudes
+fn calculate_gas_vorticity_confinement(
+    world_cell: vec2<i32>,
+    physical_cell_index: u32,
+) -> vec2<f32> {
+    let curl_gradient: vec2<f32> = 0.5 * vec2<f32>(
+        abs(gas_curl_at_world_cell(world_cell + vec2<i32>(1, 0))) -
+            abs(gas_curl_at_world_cell(world_cell + vec2<i32>(-1, 0))),
+        abs(gas_curl_at_world_cell(world_cell + vec2<i32>(0, 1))) -
+            abs(gas_curl_at_world_cell(world_cell + vec2<i32>(0, -1))),
+    );
+    let gradient_length: f32 = length(curl_gradient);
+    let normal: vec2<f32> = select(
+        vec2<f32>(0.0),
+        curl_gradient / max(gradient_length, 0.000001),
+        gradient_length > 0.000001,
+    );
+    return parameters.vorticity_confinement *
+        vec2<f32>(normal.y, -normal.x) * curl[physical_cell_index];
+}
+
+// Calculates one Jacobi gas-pressure value from the selected immutable field
+fn calculate_gas_jacobi_pressure(
+    world_cell: vec2<i32>,
+    physical_cell_index: u32,
+    read_pressure_a: bool,
+) -> f32 {
+    let center: f32 = select(
+        pressure_b[physical_cell_index], pressure_a[physical_cell_index], read_pressure_a,
+    );
+    return (
+        gas_pressure_at_world_cell(world_cell + vec2<i32>(-1, 0), center, read_pressure_a) +
+        gas_pressure_at_world_cell(world_cell + vec2<i32>(1, 0), center, read_pressure_a) +
+        gas_pressure_at_world_cell(world_cell + vec2<i32>(0, -1), center, read_pressure_a) +
+        gas_pressure_at_world_cell(world_cell + vec2<i32>(0, 1), center, read_pressure_a) -
+        divergence[physical_cell_index]
+    ) * 0.25;
+}
+
+// Removes projected velocity components directed into neighboring obstacles
+fn clamp_projected_gas_velocity_against_obstacle_faces(
+    world_cell: vec2<i32>,
+    projected_velocity: vec2<f32>,
+) -> vec2<f32> {
+    var clamped_velocity: vec2<f32> = projected_velocity;
+    if world_cell_is_gas_obstacle(world_cell + vec2<i32>(-1, 0)) &&
+            clamped_velocity.x < 0.0 { clamped_velocity.x = 0.0; }
+    if world_cell_is_gas_obstacle(world_cell + vec2<i32>(1, 0)) &&
+            clamped_velocity.x > 0.0 { clamped_velocity.x = 0.0; }
+    if world_cell_is_gas_obstacle(world_cell + vec2<i32>(0, -1)) &&
+            clamped_velocity.y < 0.0 { clamped_velocity.y = 0.0; }
+    if world_cell_is_gas_obstacle(world_cell + vec2<i32>(0, 1)) &&
+            clamped_velocity.y > 0.0 { clamped_velocity.y = 0.0; }
+    return clamped_velocity;
+}
+
+// Bilinearly samples the authoritative gas velocity field
+fn sample_gas_velocity_bilinear_at_cell_position(cell_position: vec2<f32>) -> vec2<f32> {
+    let shifted: vec2<f32> = cell_position - vec2<f32>(0.5);
     let base: vec2<i32> = vec2<i32>(floor(shifted));
     let fraction: vec2<f32> = fract(shifted);
     let bottom: vec2<f32> = mix(
-        velocity_at(base), velocity_at(base + vec2<i32>(1, 0)), fraction.x,
+        gas_velocity_at_world_cell(base), gas_velocity_at_world_cell(base + vec2<i32>(1, 0)), fraction.x,
     );
     let top: vec2<f32> = mix(
-        velocity_at(base + vec2<i32>(0, 1)),
-        velocity_at(base + vec2<i32>(1, 1)), fraction.x,
+        gas_velocity_at_world_cell(base + vec2<i32>(0, 1)),
+        gas_velocity_at_world_cell(base + vec2<i32>(1, 1)), fraction.x,
     );
     return mix(bottom, top, fraction.y);
 }
 
-fn concentration_flux_x(species: u32, left: vec2<i32>) -> f32 {
+// Calculates conservative gas flux across a cell's positive-X face
+fn gas_concentration_flux_across_positive_x_face(species: u32, left: vec2<i32>) -> f32 {
     let right: vec2<i32> = left + vec2<i32>(1, 0);
-    if is_obstacle(left) || is_obstacle(right) { return 0.0; }
-    let face_velocity: f32 = 0.5 * (velocity_at(left).x + velocity_at(right).x);
+    if world_cell_is_gas_obstacle(left) || world_cell_is_gas_obstacle(right) { return 0.0; }
+    let face_velocity: f32 = 0.5 * (gas_velocity_at_world_cell(left).x + gas_velocity_at_world_cell(right).x);
     let upstream: vec2<i32> = select(right, left, face_velocity >= 0.0);
-    return face_velocity * concentrations[concentration_index(
-        species, physical_cell_index(upstream),
-    )];
+    return face_velocity * concentrations[
+        gas_concentration_storage_index_from_species_and_physical_cell(
+            species, gas_physical_cell_index_from_world_cell(upstream),
+        )
+    ];
 }
 
-fn concentration_flux_y(species: u32, bottom: vec2<i32>) -> f32 {
+// Calculates conservative gas flux across a cell's positive-Y face
+fn gas_concentration_flux_across_positive_y_face(species: u32, bottom: vec2<i32>) -> f32 {
     let top: vec2<i32> = bottom + vec2<i32>(0, 1);
-    if is_obstacle(bottom) || is_obstacle(top) { return 0.0; }
-    let face_velocity: f32 = 0.5 * (velocity_at(bottom).y + velocity_at(top).y);
+    if world_cell_is_gas_obstacle(bottom) || world_cell_is_gas_obstacle(top) { return 0.0; }
+    let face_velocity: f32 = 0.5 * (gas_velocity_at_world_cell(bottom).y + gas_velocity_at_world_cell(top).y);
     let upstream: vec2<i32> = select(top, bottom, face_velocity >= 0.0);
-    return face_velocity * concentrations[concentration_index(
-        species, physical_cell_index(upstream),
-    )];
+    return face_velocity * concentrations[
+        gas_concentration_storage_index_from_species_and_physical_cell(
+            species, gas_physical_cell_index_from_world_cell(upstream),
+        )
+    ];
 }
 
-fn concentration_at(species: u32, cell: vec2<i32>, boundary: f32) -> f32 {
-    if is_obstacle(cell) { return boundary; }
-    let index: u32 = physical_cell_index(cell);
-    if index == INVALID_INDEX { return boundary; }
-    return concentrations[concentration_index(species, index)];
+// Reads one gas concentration with obstacle and residency boundary handling
+fn gas_concentration_at_world_cell(species: u32, cell: vec2<i32>, boundary: f32) -> f32 {
+    if world_cell_is_gas_obstacle(cell) { return boundary; }
+    let index: u32 = gas_physical_cell_index_from_world_cell(cell);
+    if index == INVALID_PHYSICAL_CELL_INDEX { return boundary; }
+    return concentrations[
+        gas_concentration_storage_index_from_species_and_physical_cell(species, index)
+    ];
 }
 
-fn concentration_index(species: u32, physical_index: u32) -> u32 {
-    return species * parameters.buffered_cell_count + physical_index;
+// Maps a species and physical cell to species-major concentration storage
+fn gas_concentration_storage_index_from_species_and_physical_cell(
+    species: u32,
+    physical_cell_index: u32,
+) -> u32 {
+    return species * parameters.buffered_cell_count + physical_cell_index;
 }
 
-fn velocity_at(cell: vec2<i32>) -> vec2<f32> {
-    if is_obstacle(cell) { return vec2<f32>(0.0); }
-    let index: u32 = physical_cell_index(cell);
-    if index == INVALID_INDEX { return vec2<f32>(0.0); }
+// Reads authoritative gas velocity with a zero solid boundary
+fn gas_velocity_at_world_cell(cell: vec2<i32>) -> vec2<f32> {
+    if world_cell_is_gas_obstacle(cell) { return vec2<f32>(0.0); }
+    let index: u32 = gas_physical_cell_index_from_world_cell(cell);
+    if index == INVALID_PHYSICAL_CELL_INDEX { return vec2<f32>(0.0); }
     return velocity[index];
 }
 
-fn scratch_velocity_at(cell: vec2<i32>) -> vec2<f32> {
-    if is_obstacle(cell) { return vec2<f32>(0.0); }
-    let index: u32 = physical_cell_index(cell);
-    if index == INVALID_INDEX { return vec2<f32>(0.0); }
+// Reads advected scratch velocity with a zero solid boundary
+fn gas_scratch_velocity_at_world_cell(cell: vec2<i32>) -> vec2<f32> {
+    if world_cell_is_gas_obstacle(cell) { return vec2<f32>(0.0); }
+    let index: u32 = gas_physical_cell_index_from_world_cell(cell);
+    if index == INVALID_PHYSICAL_CELL_INDEX { return vec2<f32>(0.0); }
     return velocity_scratch[index];
 }
 
-fn curl_at(cell: vec2<i32>) -> f32 {
-    if is_obstacle(cell) { return 0.0; }
-    let index: u32 = physical_cell_index(cell);
-    if index == INVALID_INDEX { return 0.0; }
+// Reads scalar gas curl with a zero solid boundary
+fn gas_curl_at_world_cell(cell: vec2<i32>) -> f32 {
+    if world_cell_is_gas_obstacle(cell) { return 0.0; }
+    let index: u32 = gas_physical_cell_index_from_world_cell(cell);
+    if index == INVALID_PHYSICAL_CELL_INDEX { return 0.0; }
     return curl[index];
 }
 
-fn pressure_a_at(cell: vec2<i32>, boundary: f32) -> f32 {
-    if is_obstacle(cell) { return boundary; }
-    return pressure_a[physical_cell_index(cell)];
+// Reads the selected gas pressure field with a Neumann solid boundary
+fn gas_pressure_at_world_cell(
+    cell: vec2<i32>,
+    boundary: f32,
+    read_pressure_a: bool,
+) -> f32 {
+    if world_cell_is_gas_obstacle(cell) { return boundary; }
+    let physical_index: u32 = gas_physical_cell_index_from_world_cell(cell);
+    return select(pressure_b[physical_index], pressure_a[physical_index], read_pressure_a);
 }
 
-fn pressure_b_at(cell: vec2<i32>, boundary: f32) -> f32 {
-    if is_obstacle(cell) { return boundary; }
-    return pressure_b[physical_cell_index(cell)];
-}
-
-fn is_obstacle(cell: vec2<i32>) -> bool {
-    let index: u32 = physical_cell_index(cell);
-    return index == INVALID_INDEX || cellular_material_identifiers[index] != 0u ||
+// Classifies solid cellular, external-body, fluid, and nonresident gas cells
+fn world_cell_is_gas_obstacle(cell: vec2<i32>) -> bool {
+    let index: u32 = gas_physical_cell_index_from_world_cell(cell);
+    return index == INVALID_PHYSICAL_CELL_INDEX ||
+        cellular_material_identifiers[index] != EMPTY_MATERIAL_IDENTIFIER ||
         external_body_occupancy[index] != 0u ||
         fluid_coverage[index] >= parameters.fluid_obstacle_coverage;
 }
 
-fn physical_cell_index(cell: vec2<i32>) -> u32 {
-    let tile: vec2<i32> = vec2<i32>(floor_divide(cell.x, 8), floor_divide(cell.y, 8));
-    let relative: vec2<i32> = tile - parameters.buffered_origin;
-    if any(relative < vec2<i32>(0)) || relative.x >= i32(parameters.buffered_tile_size.x) ||
-            relative.y >= i32(parameters.buffered_tile_size.y) { return INVALID_INDEX; }
-    let physical: vec2<u32> =
-        (vec2<u32>(relative) + parameters.ring_offset) % parameters.buffered_tile_size;
-    let local: vec2<u32> = vec2<u32>(cell - tile * 8);
-    return (physical.y * parameters.buffered_tile_size.x + physical.x) * 64u +
-        local.y * 8u + local.x;
-}
-
-fn world_cell_from_logical_index(index: u32) -> vec2<i32> {
-    let tile_index: u32 = index / 64u;
-    let local_index: u32 = index % 64u;
-    return (parameters.buffered_origin + vec2<i32>(
-        i32(tile_index % parameters.buffered_tile_size.x),
-        i32(tile_index / parameters.buffered_tile_size.x),
-    )) * 8 + vec2<i32>(i32(local_index % 8u), i32(local_index / 8u));
-}
-
-fn world_cell_from_streaming_index(index: u32) -> vec2<i32> {
-    let width: u32 = parameters.streaming_tile_size.x * 8u;
-    return parameters.streaming_origin * 8 + vec2<i32>(
-        i32(index % width), i32(index / width),
+// Maps a world cell through the gas solver's current physical tile ring
+fn gas_physical_cell_index_from_world_cell(world_cell: vec2<i32>) -> u32 {
+    return physical_cell_index_from_world_cell(
+        world_cell, parameters.buffered_origin, parameters.buffered_tile_size,
+        parameters.ring_offset,
     );
 }
 
-fn floor_divide(value: i32, divisor: i32) -> i32 {
-    if value < 0 { return (value - divisor + 1) / divisor; }
-    return value / divisor;
+// Converts gas dispatch order into a signed buffered world cell
+fn world_cell_from_gas_logical_index(logical_index: u32) -> vec2<i32> {
+    return world_cell_from_logical_tile_major_index(
+        logical_index, parameters.buffered_origin, parameters.buffered_tile_size,
+    );
+}
+
+// Converts row-major gas streaming order into a signed world cell
+fn world_cell_from_gas_streaming_index(streaming_index: u32) -> vec2<i32> {
+    let width: u32 = parameters.streaming_tile_size.x * CELLS_PER_TILE;
+    return parameters.streaming_origin * i32(CELLS_PER_TILE) + vec2<i32>(
+        i32(streaming_index % width), i32(streaming_index / width),
+    );
 }

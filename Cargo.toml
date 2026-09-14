@@ -22,7 +22,8 @@ license = "AGPL-3.0-only"
 egui = "0.36.1"
 egui-wgpu = { version = "0.36.1", default-features = false, features = ["winit"] }
 egui-winit = { version = "0.36.1", default-features = false }
-wgpu = "30.0.0"
+wgpu = { version = "30.0.0", features = ["naga-ir"] }
+naga_oil = "0.23.0"
 pollster = "0.4.0"
 tracing = { version = "0.1.44", features = ["release_max_level_off"] }
 tracing-appender = "0.2.5"

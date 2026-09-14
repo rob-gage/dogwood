@@ -239,11 +239,11 @@ impl Fluids {
                 ],
             },
         );
-        let shader: wgpu::ShaderModule = device.create_shader_module(
-            wgpu::ShaderModuleDescriptor {
-                label: Some("fluid simulation shader"),
-                source: wgpu::ShaderSource::Wgsl(include_str!("fluids.wgsl").into()),
-            },
+        let shader: wgpu::ShaderModule = super::create_simulation_shader_module(
+            device,
+            "fluid simulation shader",
+            include_str!("fluids.wgsl"),
+            "engine_physics/src/simulation/fluids.wgsl",
         );
         let pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
@@ -288,10 +288,13 @@ impl Fluids {
             classify_active_pipeline: pipeline("classify_active_fluid_particles",
                 "fluid active classification pipeline"),
             clear_buckets_pipeline: pipeline("clear_fluid_buckets", "fluid bucket clear pipeline"),
-            insert_buckets_pipeline: pipeline("insert_fluid_particles", "fluid bucket insertion pipeline"),
-            insert_predicted_buckets_pipeline: pipeline("insert_predicted_fluid_particles",
+            insert_buckets_pipeline: pipeline("insert_committed_fluid_particles_into_spatial_buckets",
+                "fluid bucket insertion pipeline"),
+            insert_predicted_buckets_pipeline: pipeline(
+                "insert_predicted_fluid_particles_into_spatial_buckets",
                 "predicted fluid bucket insertion pipeline"),
-            lambda_pipeline: pipeline("calculate_fluid_lambdas", "fluid lambda pipeline"),
+            lambda_pipeline: pipeline("calculate_fluid_density_constraint_lambdas",
+                "fluid lambda pipeline"),
             position_correction_pipeline: pipeline("calculate_fluid_position_corrections",
                 "fluid position correction pipeline"),
             apply_position_correction_pipeline: pipeline("apply_fluid_position_corrections",
@@ -301,12 +304,15 @@ impl Fluids {
                 "fluid velocity smoothing pipeline"),
             apply_velocity_smoothing_pipeline: pipeline("apply_fluid_velocity_smoothing",
                 "fluid velocity smoothing application pipeline"),
-            cell_contact_pipeline: pipeline("resolve_fluid_cell_contacts",
+            cell_contact_pipeline: pipeline("resolve_fluid_cellular_contact_velocity",
                 "fluid cell contact pipeline"),
-            apply_cell_contact_pipeline: pipeline("apply_fluid_cell_contacts",
+            apply_cell_contact_pipeline: pipeline(
+                "apply_fluid_cellular_contact_velocity_to_particles",
                 "fluid cell contact application pipeline"),
-            raster_pipeline: pipeline("rasterize_fluid_cells", "fluid cellular raster pipeline"),
-            sample_pipeline: pipeline("sample_pawn_fluid", "pawn fluid sample pipeline"),
+            raster_pipeline: pipeline("rasterize_fluid_particle_coverage_into_cells",
+                "fluid cellular raster pipeline"),
+            sample_pipeline: pipeline("sample_fluid_state_inside_pawn_capsule",
+                "pawn fluid sample pipeline"),
             export_pipeline: pipeline("export_fluid_particles", "fluid export pipeline"),
             import_pipeline: pipeline("import_fluid_particles", "fluid import pipeline"),
             particle_capacity,

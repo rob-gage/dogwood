@@ -133,10 +133,12 @@ impl CellularCollision {
             ],
         });
         // build the concrete occupancy extraction pipeline
-        let shader: wgpu::ShaderModule = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("cellular collision shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("cellular_collision.wgsl").into()),
-        });
+        let shader: wgpu::ShaderModule = super::create_simulation_shader_module(
+            device,
+            "cellular collision shader",
+            include_str!("cellular_collision.wgsl"),
+            "engine_physics/src/simulation/cellular_collision.wgsl",
+        );
         let pipeline_layout: wgpu::PipelineLayout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("cellular collision pipeline layout"),
@@ -148,7 +150,7 @@ impl CellularCollision {
                 label: Some("cellular collision pipeline"),
                 layout: Some(&pipeline_layout),
                 module: &shader,
-                entry_point: Some("extract_occupancy"),
+                entry_point: Some("extract_cellular_collision_occupancy"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 cache: None,
             });

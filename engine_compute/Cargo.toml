@@ -7,6 +7,7 @@ edition = "2024"
 license.workspace = true
 
 [dependencies]
+naga_oil = { workspace = true }
 pollster = { workspace = true }
 tracing = { workspace = true }
 wgpu = { workspace = true }

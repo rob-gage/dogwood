@@ -551,6 +551,17 @@ dependencies = [
 
 [[package]]
 name = "codespan-reporting"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe6d2e5af09e8c8ad56c969f2157a3d4238cebc7c55f0a517728c38f7b200f81"
+dependencies = [
+ "serde",
+ "termcolor",
+ "unicode-width",
+]
+
+[[package]]
+name = "codespan-reporting"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af491d569909a7e4dee0ad7db7f5341fef5c614d5b8ec8cf765732aba3cff681"
@@ -685,6 +696,12 @@ name = "cursor-icon"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
+
+[[package]]
+name = "data-encoding"
+version = "2.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
 
 [[package]]
 name = "demo_game"
@@ -918,6 +935,7 @@ name = "engine_compute"
 version = "0.0.0"
 dependencies = [
  "engine_diagnostics",
+ "naga_oil",
  "pollster",
  "tracing",
  "wgpu",
@@ -1641,7 +1659,7 @@ dependencies = [
  "bitflags 2.13.1",
  "cfg-if",
  "cfg_aliases",
- "codespan-reporting",
+ "codespan-reporting 0.13.1",
  "half",
  "hashbrown 0.17.1",
  "indexmap",
@@ -1650,6 +1668,7 @@ dependencies = [
  "naga-types",
  "num-traits",
  "once_cell",
+ "pp-rs",
  "rustc-hash 1.1.0",
  "spirv",
  "thiserror 2.0.20",
@@ -1666,6 +1685,23 @@ dependencies = [
  "indexmap",
  "rustc-hash 1.1.0",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "naga_oil"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c028f8a00a344c5e80c15c4d4f0056c59767c03bad3ad8422f8816e198d9bce7"
+dependencies = [
+ "codespan-reporting 0.12.0",
+ "data-encoding",
+ "indexmap",
+ "naga",
+ "regex",
+ "rustc-hash 1.1.0",
+ "thiserror 2.0.20",
+ "tracing",
+ "unicode-ident",
 ]
 
 [[package]]
@@ -2327,6 +2363,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 
 [[package]]
+name = "pp-rs"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb458bb7f6e250e6eb79d5026badc10a3ebb8f9a15d1fff0f13d17c71f4d6dee"
+dependencies = [
+ "unicode-xid",
+]
+
+[[package]]
 name = "presser"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2487,6 +2532,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1c93da5bb2c5d4e6c0ef7abeead62c89169a0a4882bfb83ac892f2423aea2fe"
 dependencies = [
  "bitflags 2.13.1",
+]
+
+[[package]]
+name = "regex"
+version = "1.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f020237b6c8eed93db2e2cb53c00c60a8e1bc73da7d073199a1180401450218d"
+dependencies = [
+ "aho-corasick",
+ "memchr",
+ "regex-automata",
+ "regex-syntax",
 ]
 
 [[package]]

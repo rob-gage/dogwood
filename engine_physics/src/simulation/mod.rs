@@ -14,6 +14,15 @@ mod scene_simulation;
 mod scene_simulation_configuration;
 mod scene_physics_world;
 
+fn create_simulation_shader_module(
+    device: &wgpu::Device,
+    label: &'static str,
+    source: &'static str,
+    file_path: &'static str,
+) -> wgpu::ShaderModule {
+    engine_compute::create_composed_shader_module(device, label, source, file_path)
+}
+
 pub use cell_particle::CellParticle;
 pub use cellular_collision::CellularCollision;
 pub use cellular_physics_body_proxy::CellularPhysicsBodyProxy;

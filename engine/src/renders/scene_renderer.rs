@@ -2,6 +2,7 @@
 
 use engine_compute::Accelerator;
 use engine_physics::scenes::Scene;
+use super::create_render_shader_module;
 
 /// Handles the rendering of `Scene`s
 pub struct SceneRenderer {
@@ -45,11 +46,12 @@ impl SceneRenderer {
     ) {
         if self.format != Some(format) {
             let device: &wgpu::Device = accelerator.wgpu_device();
-            let shader: wgpu::ShaderModule = device.create_shader_module(
-                wgpu::ShaderModuleDescriptor {
-                    label: Some("Scene shader"),
-                    source: wgpu::ShaderSource::Wgsl(include_str!("scene.wgsl").into()),
-                });
+            let shader: wgpu::ShaderModule = create_render_shader_module(
+                device,
+                "Scene shader",
+                include_str!("scene.wgsl"),
+                "engine/src/renders/scene.wgsl",
+            );
             let bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
                 &wgpu::BindGroupLayoutDescriptor {
                     label: Some("Scene bind group layout"),
@@ -189,7 +191,7 @@ impl SceneRenderer {
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
-                    entry_point: Some("vertex"),
+                    entry_point: Some("render_scene_fullscreen_triangle_vertex"),
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     buffers: &[],
                 },
@@ -198,7 +200,7 @@ impl SceneRenderer {
                 multisample: wgpu::MultisampleState::default(),
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
-                    entry_point: Some("fragment"),
+                    entry_point: Some("render_scene_fragment"),
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format,

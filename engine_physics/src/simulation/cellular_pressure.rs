@@ -237,13 +237,11 @@ impl CellularPressure {
                 }],
             },
         );
-        let shader: wgpu::ShaderModule = device.create_shader_module(
-            wgpu::ShaderModuleDescriptor {
-                label: Some("cellular pressure shader"),
-                source: wgpu::ShaderSource::Wgsl(
-                    include_str!("cellular_pressure.wgsl").into()
-                ),
-            },
+        let shader: wgpu::ShaderModule = super::create_simulation_shader_module(
+            device,
+            "cellular pressure shader",
+            include_str!("cellular_pressure.wgsl"),
+            "engine_physics/src/simulation/cellular_pressure.wgsl",
         );
         let pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
@@ -278,20 +276,22 @@ impl CellularPressure {
             ),
             clear_active_tiles_pipeline: Self::create_pipeline(
                 device, &pipeline_layout, &shader,
-                "cellular pressure active tile clear pipeline", "clear_active_pressure_tiles",
+                "cellular pressure active tile clear pipeline",
+                "clear_active_cellular_pressure_tiles",
             ),
             mark_active_tiles_pipeline: Self::create_pipeline(
                 device, &pipeline_layout, &shader,
-                "cellular pressure active tile marking pipeline", "mark_active_pressure_tiles",
+                "cellular pressure active tile marking pipeline",
+                "mark_active_cellular_pressure_tiles",
             ),
             compact_active_tiles_pipeline: Self::create_pipeline(
                 device, &compact_pipeline_layout, &shader,
                 "cellular pressure active tile compaction pipeline",
-                "compact_active_pressure_tiles",
+                "compact_active_cellular_pressure_tiles",
             ),
             copy_contact_velocity_pipeline: Self::create_pipeline(
                 device, &pipeline_layout, &shader,
-                "cellular contact velocity copy pipeline", "copy_contact_velocity",
+                "cellular contact velocity copy pipeline", "copy_cellular_contact_velocity_snapshot",
             ),
             resolve_contacts_pipeline: Self::create_pipeline(
                 device, &pipeline_layout, &shader,
@@ -303,15 +303,15 @@ impl CellularPressure {
             ),
             propagate_a_pipeline: Self::create_pipeline(
                 device, &pipeline_layout, &shader,
-                "cellular pressure A propagation", "propagate_pressure_a",
+                "cellular pressure A propagation", "propagate_cellular_pressure_a",
             ),
             propagate_b_pipeline: Self::create_pipeline(
                 device, &pipeline_layout, &shader,
-                "cellular pressure B propagation", "propagate_pressure_b",
+                "cellular pressure B propagation", "propagate_cellular_pressure_b",
             ),
             apply_pipeline: Self::create_pipeline(
                 device, &pipeline_layout, &shader,
-                "cellular retained pressure pipeline", "apply_retained_pressure",
+                "cellular retained pressure pipeline", "apply_retained_cellular_pressure",
             ),
             buffered_cell_count,
             tick: 0,
