@@ -3,6 +3,8 @@
 use super::{
     FluidDownload,
     FluidUpload,
+    GasDownload,
+    GasUpload,
     SceneData,
     SceneEditCellPlacement,
     SceneEdit,
@@ -19,6 +21,7 @@ use crate::simulation::{
     CellularDynamic,
     CellularPressure,
     Fluids,
+    Gases,
     SceneSimulationConfiguration,
     ScenePhysicsWorld,
 };
@@ -32,6 +35,7 @@ use crate::{
         ChunkEntry,
         ChunkStreamingResponse,
         ChunkFluidParticle,
+        ChunkGasCell,
     },
     materials::{
         Material,
@@ -56,7 +60,10 @@ use engine_graphics::{
     SceneGraphics,
 };
 use std::{
-    collections::HashMap,
+    collections::{
+        HashMap,
+        HashSet,
+    },
     error::Error,
     future::poll_fn,
     io,
@@ -126,6 +133,10 @@ pub struct Scene {
     fluid_downloads: Vec<Arc<Mutex<FluidDownload>>>,
     /// Completed fluid-export staging storage available for reuse
     fluid_download_pool: Vec<Arc<Mutex<FluidDownload>>>,
+    /// Gas exports that own outgoing fields until asynchronous readback reaches CPU chunks
+    gas_downloads: Vec<Arc<Mutex<GasDownload>>>,
+    /// Completed gas-export staging storage available for reuse
+    gas_download_pool: Vec<Arc<Mutex<GasDownload>>>,
     /// The tile uploads pending processing by `tick`
     tile_uploads: Mutex<Vec<Arc<Mutex<TileUpload>>>>,
     /// Fluid imports that own dormant records until GPU reconstruction is confirmed
@@ -150,6 +161,8 @@ pub struct Scene {
     cellular_physics_body_proxy: CellularPhysicsBodyProxy,
     /// GPU-authoritative fluid particles and their transient cellular representation
     fluids: Fluids,
+    /// GPU-authoritative shared gas velocity and per-species concentrations
+    gases: Gases,
     /// GPU simulation of dynamic cells in the canonical cellular buffers
     cellular_dynamic: CellularDynamic,
     /// GPU impulse, pressure, integrity, and fracture subsystem
@@ -240,6 +253,15 @@ impl Scene {
             simulation.width + buffer_size,
             simulation.height + buffer_size,
         );
+        let gases: Gases = Gases::new(
+            accelerator.as_ref(),
+            data.materials(),
+            &cellular_material_identifiers,
+            cellular_physics_body_proxy.occupancy_buffer(),
+            fluids.coverage_buffer(),
+            &material_graphics.gas_properties,
+            buffered_cell_count,
+        );
         let cellular_dynamic: CellularDynamic = CellularDynamic::new(
             accelerator.as_ref(),
             &cellular_material_identifiers,
@@ -271,6 +293,17 @@ impl Scene {
                 accelerator.as_ref(),
                 TileArea::new(TileCoordinates { x: 0, y: 0 }, 1, 1),
                 fluids.particle_capacity(),
+            ),
+        ))];
+        let maximum_gas_streaming_cell_count: u32 =
+            u32::from(simulation.streaming_batch_size) *
+            u32::from((simulation.width + buffer_size).max(simulation.height + buffer_size)) * 64;
+        let gas_download_pool: Vec<Arc<Mutex<GasDownload>>> = vec![Arc::new(Mutex::new(
+            GasDownload::new(
+                accelerator.as_ref(),
+                TileArea::new(TileCoordinates { x: 0, y: 0 }, 1, 1),
+                maximum_gas_streaming_cell_count,
+                gases.gas_count(),
             ),
         ))];
         let fluid_sample_buffer: wgpu::Buffer = accelerator.wgpu_device().create_buffer(
@@ -311,6 +344,8 @@ impl Scene {
             outgoing_tile_downloads: Vec::new(),
             fluid_downloads: Vec::new(),
             fluid_download_pool,
+            gas_downloads: Vec::new(),
+            gas_download_pool,
             tile_uploads: Mutex::new(Vec::new()),
             fluid_uploads: Vec::new(),
             fluid_sample_buffer,
@@ -321,6 +356,7 @@ impl Scene {
             cellular_integrities,
             cellular_physics_body_proxy,
             fluids,
+            gases,
             cellular_dynamic,
             cellular_pressure,
             cellular_collision,
@@ -340,6 +376,9 @@ impl Scene {
         }
         drop(scene.tiles_upload(scene.area_buffered()));
         scene.fluid_uploads_queue(scene.area_buffered())?;
+        let buffered_area: TileArea = scene.area_buffered();
+        scene.gas_clear_area(buffered_area);
+        scene.gas_upload_area(buffered_area)?;
         Ok(scene)
     }
 
@@ -361,6 +400,8 @@ impl Scene {
             cellular_appearances: &self.cellular_appearances,
             fluid_material_identifiers: self.fluids.material_identifiers_buffer(),
             fluid_coverage: self.fluids.coverage_buffer(),
+            gas_concentrations: self.gases.concentrations_buffer(),
+            gas_count: self.gases.gas_count(),
             cellular_pressure: self.cellular_pressure.retained_pressure(),
             buffered_origin: [self.origin.x - buffer_size, self.origin.y - buffer_size],
             buffered_tile_size: [
@@ -430,6 +471,8 @@ impl Scene {
         let mut cell_edits: HashMap<usize, (CellCoordinates, MaterialIdentifier, CellularAppearance, f32)> =
             HashMap::new();
         let mut fluid_edits: HashMap<usize, u32> = HashMap::new();
+        let mut gas_edits: HashSet<(usize, u32)> = HashSet::new();
+        let mut gas_clear_cells: HashSet<usize> = HashSet::new();
         for edit in edits.drain() {
             match edit {
                 SceneEdit::PlaceCells { cells } => {
@@ -445,12 +488,24 @@ impl Scene {
                                         coordinates, material_identifier, appearance, *default_integrity,
                                     ));
                                     fluid_edits.insert(physical_index, Fluids::erase_edit());
+                                    if self.gases.gas_count() != 0 {
+                                        gas_clear_cells.insert(physical_index);
+                                        for species in 0..self.gases.gas_count() {
+                                            gas_edits.remove(&(physical_index, species));
+                                        }
+                                    }
                                 }
                                 Some(Material::CellularDynamic { .. }) => {
                                     cell_edits.insert(physical_index, (
                                         coordinates, material_identifier, appearance, 0.0,
                                     ));
                                     fluid_edits.insert(physical_index, Fluids::erase_edit());
+                                    if self.gases.gas_count() != 0 {
+                                        gas_clear_cells.insert(physical_index);
+                                        for species in 0..self.gases.gas_count() {
+                                            gas_edits.remove(&(physical_index, species));
+                                        }
+                                    }
                                 }
                                 Some(Material::Fluid { .. }) => {
                                     cell_edits.insert(physical_index, (
@@ -458,6 +513,15 @@ impl Scene {
                                         CellularAppearance::NEUTRAL, 0.0,
                                     ));
                                     fluid_edits.insert(physical_index, material_identifier.as_u32());
+                                    if self.gases.gas_count() != 0 {
+                                        gas_clear_cells.insert(physical_index);
+                                        for species in 0..self.gases.gas_count() {
+                                            gas_edits.remove(&(physical_index, species));
+                                        }
+                                    }
+                                }
+                                Some(Material::Gas { .. }) => {
+                                    gas_edits.insert((physical_index, material_identifier.index()));
                                 }
                                 None => { }
                             }
@@ -474,6 +538,12 @@ impl Scene {
                                 0.0,
                             ));
                             fluid_edits.insert(physical_index, Fluids::erase_edit());
+                            if self.gases.gas_count() != 0 {
+                                gas_clear_cells.insert(physical_index);
+                                for species in 0..self.gases.gas_count() {
+                                    gas_edits.remove(&(physical_index, species));
+                                }
+                            }
                         }
                     }
                 }
@@ -520,6 +590,15 @@ impl Scene {
                 self.tiles_ring_offset_x, self.tiles_ring_offset_y,
             );
         }
+        if !gas_edits.is_empty() || !gas_clear_cells.is_empty() {
+            let mut gas_edits: Vec<(usize, u32)> = gas_edits.into_iter().collect();
+            gas_edits.sort_unstable();
+            let mut gas_clear_cells: Vec<usize> = gas_clear_cells.into_iter().collect();
+            gas_clear_cells.sort_unstable();
+            self.gases.apply_edits(
+                self.accelerator.as_ref(), &gas_edits, &gas_clear_cells,
+            );
+        }
         Ok(())
     }
 
@@ -563,11 +642,13 @@ impl Scene {
         self.tile_uploads_submit()?;
         self.fluid_downloads_submit()?;
         self.fluid_uploads_submit()?;
+        self.gas_downloads_submit()?;
         self.accelerator.poll().map_err(|error| io::Error::other(error.to_string()))?;
         self.cellular_collision.collect_collision()?;
         self.tile_downloads_apply_completed()?;
         self.fluid_downloads_apply_completed()?;
         self.fluid_uploads_apply_completed()?;
+        self.gas_downloads_apply_completed()?;
         self.fluid_sample_apply_completed()?;
         self.tile_downloads_clean()?;
         self.tile_uploads_clean()?;
@@ -647,6 +728,19 @@ impl Scene {
                 fluid_active_area.origin(),
                 fluid_active_dimensions[0],
                 fluid_active_dimensions[1],
+                TileCoordinates {
+                    x: self.origin.x - buffer_size,
+                    y: self.origin.y - buffer_size,
+                },
+                self.simulation_width + dimensions,
+                self.simulation_height + dimensions,
+                self.tiles_ring_offset_x,
+                self.tiles_ring_offset_y,
+                self.gravity,
+                1.0 / TICK_RATE as f32,
+            );
+            self.gases.simulate(
+                self.accelerator.as_ref(),
                 TileCoordinates {
                     x: self.origin.x - buffer_size,
                     y: self.origin.y - buffer_size,
@@ -903,7 +997,8 @@ impl Scene {
         for coordinates in coordinates {
             // keep stale CPU chunks unavailable to save or removal until downloads are applied
             if self.tile_download_pending_for_chunk(coordinates)? ||
-                    self.fluid_transfer_pending_for_chunk(coordinates)? { continue; }
+                    self.fluid_transfer_pending_for_chunk(coordinates)? ||
+                    self.gas_transfer_pending_for_chunk(coordinates)? { continue; }
             let Some(entry) = self.chunks.remove(&coordinates) else { continue; };
             let ChunkEntry::Active { chunk, is_dirty: true } = entry else { continue; };
             let streaming_identifier: u64 = self.chunks_streaming_identifier_next;
@@ -1141,7 +1236,8 @@ impl Scene {
         // defer rapid re-entry until the prior download has reached its CPU chunk
         if self.tile_download_pending_in(tiles_upload_area)? ||
                 self.fluid_download_pending_in(tiles_upload_area)? ||
-                self.fluid_upload_pending_in(tiles_download_area)? { return Ok(()); }
+                self.fluid_upload_pending_in(tiles_download_area)? ||
+                self.gas_download_pending_in(tiles_upload_area)? { return Ok(()); }
 
         // materialize queued CPU state before capturing the old physical slots
         self.tile_uploads_submit()?;
@@ -1152,6 +1248,8 @@ impl Scene {
         self.tile_downloads_submit()?;
         self.fluid_downloads_queue(tiles_download_area);
         self.fluid_downloads_submit()?;
+        self.gas_downloads_queue(tiles_download_area);
+        self.gas_downloads_submit()?;
 
         // remap only the reused edge; retained tiles keep their physical kinematic slots
         if new_origin.x > self.origin.x {
@@ -1178,8 +1276,10 @@ impl Scene {
             self.tiles_ring_offset_x,
             self.tiles_ring_offset_y,
         );
+        self.gas_clear_area(tiles_upload_area);
         let _ = self.tiles_upload(tiles_upload_area);
         self.fluid_uploads_queue(tiles_upload_area)?;
+        self.gas_upload_area(tiles_upload_area)?;
         Ok(())
     }
 
@@ -1194,6 +1294,196 @@ impl Scene {
         let x: usize = (x + self.tiles_ring_offset_x as usize) % width;
         let y: usize = (y + self.tiles_ring_offset_y as usize) % height;
         self.tiles.get(y * width + x).copied()
+    }
+
+    /// Queues one dense gas strip export under the current ring interpretation
+    fn gas_downloads_queue(&mut self, area: TileArea) {
+        if self.gases.gas_count() == 0 { return; }
+        let dimensions: u16 = (self.simulation_width +
+            u16::from(self.simulation_buffer_size) * 2).max(
+                self.simulation_height + u16::from(self.simulation_buffer_size) * 2,
+            );
+        let maximum_cell_count: u32 = u32::from(self.tile_streaming_batch_size) *
+            u32::from(dimensions) * 64;
+        let download: Arc<Mutex<GasDownload>> = self.gas_download_pool.pop().unwrap_or_else(
+            || Arc::new(Mutex::new(GasDownload::new(
+                self.accelerator.as_ref(), area, maximum_cell_count, self.gases.gas_count(),
+            ))),
+        );
+        download.lock().unwrap().reset(area);
+        self.gas_downloads.push(download);
+    }
+
+    /// Returns whether an incoming area overlaps unresolved exported gas
+    fn gas_download_pending_in(&self, area: TileArea) -> Result<bool, io::Error> {
+        for download in &self.gas_downloads {
+            if download.lock().map_err(|_| {
+                io::Error::other("Gas download is unavailable")
+            })?.area.intersects(area) { return Ok(true); }
+        }
+        Ok(false)
+    }
+
+    /// Returns whether a chunk is pinned by an unresolved gas export
+    fn gas_transfer_pending_for_chunk(
+        &self,
+        coordinates: TileCoordinates,
+    ) -> Result<bool, io::Error> {
+        for download in &self.gas_downloads {
+            if download.lock().map_err(|_| {
+                io::Error::other("Gas download is unavailable")
+            })?.area.chunk_area().contains(coordinates) { return Ok(true); }
+        }
+        Ok(false)
+    }
+
+    /// Clears a world area through its current physical ring mapping
+    fn gas_clear_area(&self, area: TileArea) {
+        let buffered_area: TileArea = self.area_buffered();
+        let dimensions: [u16; 2] = buffered_area.dimensions();
+        self.gases.clear_area(
+            self.accelerator.as_ref(), area, buffered_area.origin(),
+            dimensions[0], dimensions[1],
+            self.tiles_ring_offset_x, self.tiles_ring_offset_y,
+        );
+    }
+
+    /// Moves dormant sparse gas from CPU chunks into dense resident GPU fields
+    fn gas_upload_area(&mut self, area: TileArea) -> Result<(), io::Error> {
+        if self.gases.gas_count() == 0 { return Ok(()); }
+        let chunk_coordinates: Vec<TileCoordinates> =
+            area.chunk_area().iterate_chunk_coordinates().collect();
+        for coordinates in &chunk_coordinates {
+            if !matches!(self.chunks.get(coordinates), Some(ChunkEntry::Active { .. })) {
+                return Err(io::Error::other("Incoming gas chunk is not active"));
+            }
+        }
+        let mut cells: Vec<ChunkGasCell> = Vec::new();
+        for coordinates in chunk_coordinates {
+            let Some(ChunkEntry::Active { chunk, is_dirty }) = self.chunks.get_mut(&coordinates)
+                else { unreachable!(); };
+            let mut chunk_cells: Vec<ChunkGasCell> = chunk.take_dormant_gas_cells(area);
+            if !chunk_cells.is_empty() { *is_dirty = true; }
+            cells.append(&mut chunk_cells);
+        }
+        if cells.is_empty() { return Ok(()); }
+        let upload: GasUpload = GasUpload::new(area, cells);
+        if let Err(error) = upload.validate(self.data.materials()) {
+            self.gas_cells_restore(upload.cells)?;
+            return Err(error);
+        }
+        let physical_indices: Option<Vec<usize>> = upload.cells.iter().map(|cell| {
+            self.cell_edit_index(cell.coordinates)
+        }).collect();
+        let Some(physical_indices) = physical_indices else {
+            self.gas_cells_restore(upload.cells)?;
+            return Err(io::Error::other("Incoming dormant gas cell is outside GPU residency"));
+        };
+        self.gases.import(self.accelerator.as_ref(), &upload, &physical_indices);
+        Ok(())
+    }
+
+    /// Returns sparse gas cells to their owning CPU chunks after a failed import validation
+    fn gas_cells_restore(&mut self, cells: Vec<ChunkGasCell>) -> Result<(), io::Error> {
+        for cell in cells {
+            let coordinates: TileCoordinates = cell.tile_coordinates().chunk_coordinates();
+            let Some(ChunkEntry::Active { chunk, is_dirty }) = self.chunks.get_mut(&coordinates)
+                else { return Err(io::Error::other("Dormant gas source chunk is not active")); };
+            chunk.insert_dormant_gas_cell(cell).map_err(|_| {
+                io::Error::other("Dormant gas cell is outside its source chunk")
+            })?;
+            *is_dirty = true;
+        }
+        Ok(())
+    }
+
+    /// Applies completed gas exports to their world-position CPU chunks
+    fn gas_downloads_apply_completed(&mut self) -> Result<(), io::Error> {
+        let mut index: usize = 0;
+        while index < self.gas_downloads.len() {
+            let mut download = self.gas_downloads[index].lock().map_err(|_| {
+                io::Error::other("Gas download is unavailable")
+            })?;
+            let Some(result) = download.result.as_ref() else {
+                index += 1;
+                continue;
+            };
+            if let Err(error) = result {
+                return Err(io::Error::other(format!("Gas download failed: {error}")));
+            }
+            let area: TileArea = download.area;
+            for cell in result.as_ref().unwrap() {
+                let coordinates: TileCoordinates = cell.tile_coordinates();
+                if !area.contains(coordinates) || !matches!(
+                    self.chunks.get(&coordinates.chunk_coordinates()),
+                    Some(ChunkEntry::Active { .. }),
+                ) {
+                    return Err(io::Error::other(
+                        "Exported gas cell has no active destination chunk",
+                    ));
+                }
+            }
+            let cells: Vec<ChunkGasCell> = download.result.take().unwrap().unwrap();
+            drop(download);
+            self.gas_cells_restore(cells)?;
+            let download: Arc<Mutex<GasDownload>> = self.gas_downloads.swap_remove(index);
+            self.gas_download_pool.push(download);
+        }
+        Ok(())
+    }
+
+    /// Submits queued gas exports and begins their asynchronous readbacks
+    fn gas_downloads_submit(&self) -> Result<(), io::Error> {
+        for download in &self.gas_downloads {
+            let mut state = download.lock().map_err(|_| {
+                io::Error::other("Gas download is unavailable")
+            })?;
+            if state.is_started { continue; }
+            let buffered_area: TileArea = self.area_buffered();
+            let buffered_dimensions: [u16; 2] = buffered_area.dimensions();
+            self.gases.export(
+                self.accelerator.as_ref(), &state, buffered_area.origin(),
+                buffered_dimensions[0], buffered_dimensions[1],
+                self.tiles_ring_offset_x, self.tiles_ring_offset_y,
+            );
+            state.is_started = true;
+            let area: TileArea = state.area;
+            let dimensions: [u16; 2] = area.dimensions();
+            let byte_count: usize = usize::from(dimensions[0]) * usize::from(dimensions[1]) * 64 *
+                (4 + self.gases.gas_count() as usize) * 4;
+            let gas_identifiers: Vec<MaterialIdentifier> = self.data.materials().iter()
+                .filter_map(|(identifier, material)| {
+                    matches!(material, Material::Gas { .. }).then_some(identifier)
+                }).collect();
+            let buffer: wgpu::Buffer = state.buffer.clone();
+            let mapped_buffer: wgpu::Buffer = buffer.clone();
+            let download: Arc<Mutex<GasDownload>> = download.clone();
+            drop(state);
+            buffer.slice(0..byte_count as u64).map_async(wgpu::MapMode::Read, move |result| {
+                let bytes: Result<Vec<u8>, io::Error> = match result {
+                    Ok(()) => match mapped_buffer.slice(0..byte_count as u64).get_mapped_range() {
+                        Ok(mapped_data) => {
+                            let bytes: Vec<u8> = mapped_data.to_vec();
+                            drop(mapped_data);
+                            mapped_buffer.unmap();
+                            Ok(bytes)
+                        }
+                        Err(error) => {
+                            mapped_buffer.unmap();
+                            Err(io::Error::other(error.to_string()))
+                        }
+                    },
+                    Err(_) => Err(io::Error::other("Gas download failed")),
+                };
+                std::thread::spawn(move || {
+                    let result: Result<Vec<ChunkGasCell>, io::Error> = bytes.and_then(|bytes| {
+                        GasDownload::deserialize(&bytes, area, &gas_identifiers)
+                    });
+                    download.lock().unwrap().result = Some(result);
+                });
+            });
+        }
+        Ok(())
     }
 
     /// Queues one authoritative fluid export under the current ring interpretation
@@ -1906,6 +2196,95 @@ impl Drop for Scene {
         self.cellular_appearances.free();
         self.cellular_integrities.free();
         self.fluid_sample_buffer.destroy();
+    }
+
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+    use engine_graphics::{
+        Color,
+        MaterialAppearance,
+    };
+    use std::{
+        sync::mpsc,
+        time::Instant,
+    };
+
+    #[test]
+    fn gas_leaves_and_returns_through_ring_streaming() {
+        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let accelerator: Arc<Accelerator> = Arc::new(Accelerator::new().unwrap());
+        let mut materials: MaterialRegistry = MaterialRegistry::new();
+        let vapor: MaterialIdentifier = materials.register(Material::Gas {
+            name: "Vapor".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(120, 160, 190)),
+            density: 0.65,
+            diffusivity: 0.12,
+            extinction: 0.08,
+            dissipation: 0.0,
+        });
+        let mut scene: Scene = Scene::new(
+            &accelerator,
+            materials,
+            SceneSimulationConfiguration {
+                gravity: [0.0, -18.0],
+                width: 4,
+                height: 4,
+                buffer_size: 2,
+                streaming_batch_size: 1,
+            },
+        ).unwrap();
+        let coordinates: CellCoordinates = CellCoordinates { x: -16, y: 0 };
+        let mut edits: SceneEditBatch = SceneEditBatch::new();
+        edits.place_material(vapor, CellularAppearance::NEUTRAL, vec![coordinates]);
+        scene.apply_edits(&mut edits).unwrap();
+        scene.shift_to(TileCoordinates { x: 1, y: 0 }).unwrap();
+        scene.origin_target = scene.origin;
+        let started: Instant = Instant::now();
+        while !scene.gas_downloads.is_empty() || !scene.fluid_downloads.is_empty() ||
+                !scene.outgoing_tile_downloads.is_empty() {
+            scene.update(Duration::ZERO, false).unwrap();
+            assert!(started.elapsed() < Duration::from_secs(5));
+            std::thread::yield_now();
+        }
+        scene.shift_to(TileCoordinates { x: 0, y: 0 }).unwrap();
+
+        let area: TileArea = TileArea::new(TileCoordinates { x: -2, y: 0 }, 1, 1);
+        let download: GasDownload = GasDownload::new(
+            accelerator.as_ref(), area, 64, scene.gases.gas_count(),
+        );
+        let buffered_area: TileArea = scene.area_buffered();
+        let dimensions: [u16; 2] = buffered_area.dimensions();
+        scene.gases.export(
+            accelerator.as_ref(), &download, buffered_area.origin(),
+            dimensions[0], dimensions[1], scene.tiles_ring_offset_x,
+            scene.tiles_ring_offset_y,
+        );
+        let byte_count: u64 = 64 * u64::from(4 + scene.gases.gas_count()) * 4;
+        let (sender, receiver) = mpsc::sync_channel(1);
+        download.buffer.slice(0..byte_count).map_async(wgpu::MapMode::Read, move |result| {
+            sender.send(result).unwrap();
+        });
+        let started: Instant = Instant::now();
+        loop {
+            accelerator.poll().unwrap();
+            if let Ok(result) = receiver.try_recv() {
+                result.unwrap();
+                break;
+            }
+            assert!(started.elapsed() < Duration::from_secs(5));
+            std::thread::yield_now();
+        }
+        let mapped = download.buffer.slice(0..byte_count).get_mapped_range().unwrap();
+        let bytes: Vec<u8> = mapped.to_vec();
+        drop(mapped);
+        download.buffer.unmap();
+        let restored: Vec<ChunkGasCell> = GasDownload::deserialize(&bytes, area, &[vapor]).unwrap();
+        assert!(restored.iter().any(|cell| cell.coordinates == coordinates &&
+            cell.species == vec![(vapor, 1.0)]));
     }
 
 }

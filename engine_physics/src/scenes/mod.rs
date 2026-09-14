@@ -2,6 +2,8 @@
 
 mod fluid_download;
 mod fluid_upload;
+mod gas_download;
+mod gas_upload;
 mod scene;
 mod scene_edit_cell_placement;
 mod scene_data;
@@ -15,6 +17,8 @@ mod tile_upload;
 
 pub use fluid_download::FluidDownload;
 pub use fluid_upload::FluidUpload;
+pub use gas_download::GasDownload;
+pub use gas_upload::GasUpload;
 pub use scene::Scene;
 pub use scene_edit_cell_placement::SceneEditCellPlacement;
 pub use scene_data::SceneData;

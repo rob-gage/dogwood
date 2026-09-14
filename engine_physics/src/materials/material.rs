@@ -65,7 +65,22 @@ pub enum Material {
         density: f32,
         /// Physical viscosity used by actor drag and swimmer entrainment
         viscosity: f32,
-    }
+    },
+    /// A gaseous species transported by the shared Eulerian gas mixture
+    Gas {
+        /// The name of this `Material`
+        name: String,
+        /// The graphics information for this `Material`
+        graphics: MaterialAppearance,
+        /// Reference density relative to the implicit ambient atmosphere
+        density: f32,
+        /// Species mixing beyond semi-Lagrangian numerical diffusion
+        diffusivity: f32,
+        /// Optical depth contributed by unit concentration
+        extinction: f32,
+        /// Exponential concentration decay rate per second; zero preserves the species
+        dissipation: f32,
+    },
 }
 
 impl Material {
@@ -76,6 +91,7 @@ impl Material {
             Self::CellularStatic { graphics, .. } => graphics,
             Self::CellularDynamic { graphics, .. } => graphics,
             Self::Fluid { graphics, .. } => graphics,
+            Self::Gas { graphics, .. } => graphics,
         }
     }
 
@@ -85,6 +101,7 @@ impl Material {
             Material::CellularStatic { name, .. } => name,
             Material::CellularDynamic { name, .. } => name,
             Material::Fluid { name, .. } => name,
+            Material::Gas { name, .. } => name,
         }
     }
 

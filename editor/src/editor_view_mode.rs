@@ -11,6 +11,8 @@ pub(crate) enum EditorViewMode {
     Pressure,
     /// Reserved for the future temperature field
     Temperature,
+    /// Draws total Eulerian gas concentration
+    Gas,
 }
 
 impl EditorViewMode {
@@ -22,6 +24,7 @@ impl EditorViewMode {
             Self::MaterialForm => 1,
             Self::Pressure => 2,
             Self::Temperature => 3,
+            Self::Gas => 4,
         }
     }
 

@@ -144,6 +144,36 @@ impl SceneRenderer {
                             },
                             count: None,
                         },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 9,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 10,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 11,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
                     ],
                 },
             );
@@ -207,7 +237,8 @@ impl SceneRenderer {
                 graphics.ring_offset[0], graphics.ring_offset[1],
                 walking_pawn_size[0].to_bits(), walking_pawn_size[1].to_bits(),
                 (viewport[0] as f32).to_bits(), (viewport[1] as f32).to_bits(),
-                view_mode, show_tile_borders.into(), show_chunk_borders.into(), 0, 0, 0,
+                view_mode, show_tile_borders.into(), show_chunk_borders.into(),
+                graphics.gas_count, 0, 0,
             ];
             let mut uniform_data: Vec<u8> = Vec::with_capacity(96);
             for value in uniforms { uniform_data.extend_from_slice(&value.to_le_bytes()); }
@@ -256,6 +287,20 @@ impl SceneRenderer {
                         binding: 8,
                         resource: graphics.cellular_pressure.wgpu_buffer().as_entire_binding(),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 9,
+                        resource: graphics.material_graphics.gases
+                            .wgpu_buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 10,
+                        resource: graphics.material_graphics.gas_properties
+                            .wgpu_buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 11,
+                        resource: graphics.gas_concentrations.wgpu_buffer().as_entire_binding(),
+                    },
                 ],
             })
         });
@@ -291,6 +336,72 @@ impl SceneRenderer {
             render_pass.set_scissor_rect(viewport[0], viewport[1], viewport[2], viewport[3]);
             render_pass.draw(0..3, 0..1);
         }
+    }
+
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+    use engine_graphics::{
+        Color,
+        MaterialAppearance,
+    };
+    use engine_physics::{
+        materials::{
+            Material,
+            MaterialRegistry,
+        },
+        simulation::SceneSimulationConfiguration,
+    };
+    use std::sync::Arc;
+
+    #[test]
+    fn scene_shader_builds_without_a_window_surface() {
+        let accelerator: Arc<Accelerator> = Arc::new(Accelerator::new().unwrap());
+        let mut materials: MaterialRegistry = MaterialRegistry::new();
+        materials.register(Material::Gas {
+            name: "Test Gas".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(120, 160, 190)),
+            density: 0.7,
+            diffusivity: 0.1,
+            extinction: 0.1,
+            dissipation: 0.0,
+        });
+        let scene: Scene = Scene::new(
+            &accelerator,
+            materials,
+            SceneSimulationConfiguration {
+                gravity: [0.0, -1.0],
+                width: 1,
+                height: 1,
+                buffer_size: 2,
+                streaming_batch_size: 1,
+            },
+        ).unwrap();
+        let texture: wgpu::Texture = accelerator.wgpu_device().create_texture(
+            &wgpu::TextureDescriptor {
+                label: Some("scene shader test target"),
+                size: wgpu::Extent3d { width: 4, height: 4, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            },
+        );
+        let view: wgpu::TextureView = texture.create_view(&Default::default());
+        let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
+            &wgpu::CommandEncoderDescriptor { label: Some("scene shader test") },
+        );
+        SceneRenderer::new().render(
+            accelerator.as_ref(), Some(&scene), wgpu::TextureFormat::Rgba8Unorm,
+            [0, 0, 4, 4], [0.0; 2], [1.0; 2], true, 0, false, false,
+            &mut encoder, &view,
+        );
+        accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
 
 }

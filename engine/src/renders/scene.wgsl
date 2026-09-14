@@ -13,7 +13,8 @@ struct Uniforms {
     view_mode: u32,
     show_tile_borders: u32,
     show_chunk_borders: u32,
-    _padding: u32,
+    gas_count: u32,
+    _padding: vec2<u32>,
 }
 
 struct MaterialAppearance {
@@ -42,6 +43,12 @@ struct MaterialAppearance {
 @group(0) @binding(7) var<storage, read> fluid_coverage: array<f32>;
 
 @group(0) @binding(8) var<storage, read> cellular_pressure: array<vec4<f32>>;
+
+@group(0) @binding(9) var<storage, read> gases: array<MaterialAppearance>;
+
+@group(0) @binding(10) var<storage, read> gas_properties: array<vec4<f32>>;
+
+@group(0) @binding(11) var<storage, read> gas_concentrations: array<f32>;
 
 const INVALID_INDEX: u32 = 0xffffffffu;
 
@@ -121,46 +128,113 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     if uniforms.view_mode == 3u {
         return apply_borders(vec4<f32>(0.12, 0.14, 0.18, 1.0), cell, world);
     }
-    if material_identifier == 0u {
-        return apply_borders(vec4<f32>(0.0, 0.0, 0.0, 1.0), cell, world);
-    }
-    // select the material form and its base appearance
-    let form = material_identifier >> 30u;
-    let index = material_identifier & 0x3fffffffu;
-    var properties: MaterialAppearance;
-    switch form {
-        case 1u: { properties = cellular_statics[index]; }
-        case 2u: { properties = cellular_dynamics[index]; }
-        case 3u: { properties = fluids[index]; }
-        default: { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }
+    if uniforms.view_mode == 4u {
+        let total_gas: f32 = total_gas_concentration(world * 8.0);
+        let intensity: f32 = 1.0 - exp(-total_gas * 2.0);
+        return apply_borders(vec4<f32>(intensity, intensity * intensity * 0.35,
+            1.0 - intensity * 0.65, 1.0), cell, world);
     }
     if uniforms.view_mode == 1u {
+        let total_gas: f32 = total_gas_concentration(world * 8.0);
         let form_color = array<vec3<f32>, 4>(
-            vec3<f32>(0.0),
+            vec3<f32>(0.72, 0.32, 0.88),
             vec3<f32>(0.35, 0.58, 0.88),
             vec3<f32>(0.90, 0.62, 0.20),
             vec3<f32>(0.22, 0.72, 0.82),
         );
+        if material_identifier == 0u && total_gas > 0.0001 {
+            return apply_borders(vec4<f32>(form_color[0], 1.0), cell, world);
+        }
+        if material_identifier == 0u {
+            return apply_borders(vec4<f32>(0.0, 0.0, 0.0, 1.0), cell, world);
+        }
+        let form: u32 = material_identifier >> 30u;
         return apply_borders(vec4<f32>(form_color[form], 1.0), cell, world);
     }
-    let color = properties.color_freezing;
-    // decode the persistent cell sample and apply material color influence
-    let packed_appearance = select(cellular_appearances[cell_index], 0u, is_fluid);
-    var sample = vec4<f32>(0.0);
-    for (var channel = 0u; channel < 4u; channel++) {
-        let byte = (packed_appearance >> (channel * 8u)) & 0xffu;
-        let signed_byte = select(i32(byte), i32(byte) - 256, byte >= 128u);
-        sample[channel] = max(f32(signed_byte), -127.0) / 127.0;
+    var result: vec4<f32> = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    if material_identifier != 0u {
+        // select the exclusive cellular/fluid form and its base appearance
+        let form: u32 = material_identifier >> 30u;
+        let index: u32 = material_identifier & 0x3fffffffu;
+        var properties: MaterialAppearance;
+        switch form {
+            case 1u: { properties = cellular_statics[index]; }
+            case 2u: { properties = cellular_dynamics[index]; }
+            case 3u: { properties = fluids[index]; }
+            default: { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }
+        }
+        let color: u32 = properties.color_freezing;
+        // decode the persistent cell sample and apply material color influence
+        let packed_appearance: u32 = select(cellular_appearances[cell_index], 0u, is_fluid);
+        var sample: vec4<f32> = vec4<f32>(0.0);
+        for (var channel = 0u; channel < 4u; channel++) {
+            let byte: u32 = (packed_appearance >> (channel * 8u)) & 0xffu;
+            let signed_byte: i32 = select(i32(byte), i32(byte) - 256, byte >= 128u);
+            sample[channel] = max(f32(signed_byte), -127.0) / 127.0;
+        }
+        let base: vec4<f32> = unpack_color(color);
+        result = clamp(base * (vec4<f32>(1.0) + sample * properties.color_influence),
+            vec4<f32>(0.0), vec4<f32>(1.0));
+        if is_fluid { result = vec4<f32>(result.rgb * coverage, 1.0); }
     }
-    let base = vec4<f32>(
+    let gas: vec4<f32> = gas_scattering(world * 8.0);
+    return apply_borders(vec4<f32>(mix(result.rgb, gas.rgb, gas.a), 1.0), cell, world);
+}
+
+fn total_gas_concentration(cell_position: vec2<f32>) -> f32 {
+    var total: f32 = 0.0;
+    for (var species: u32 = 0u; species < uniforms.gas_count; species++) {
+        total += sample_gas_concentration(species, cell_position);
+    }
+    return total;
+}
+
+fn gas_scattering(cell_position: vec2<f32>) -> vec4<f32> {
+    var optical_depth: f32 = 0.0;
+    var weighted_color: vec3<f32> = vec3<f32>(0.0);
+    for (var species: u32 = 0u; species < uniforms.gas_count; species++) {
+        let concentration: f32 = sample_gas_concentration(species, cell_position);
+        let extinction: f32 = max(gas_properties[species].z, 0.0);
+        let weight: f32 = concentration * extinction;
+        optical_depth += weight;
+        weighted_color += unpack_color(gases[species].color_freezing).rgb * weight;
+    }
+    let color: vec3<f32> = select(
+        vec3<f32>(0.0), weighted_color / max(optical_depth, 0.000001), optical_depth > 0.0,
+    );
+    return vec4<f32>(color, 1.0 - exp(-optical_depth));
+}
+
+fn sample_gas_concentration(species: u32, cell_position: vec2<f32>) -> f32 {
+    let shifted: vec2<f32> = cell_position - vec2<f32>(0.5);
+    let base: vec2<i32> = vec2<i32>(floor(shifted));
+    let fraction: vec2<f32> = fract(shifted);
+    let bottom: f32 = mix(
+        gas_concentration_at(species, base),
+        gas_concentration_at(species, base + vec2<i32>(1, 0)), fraction.x,
+    );
+    let top: f32 = mix(
+        gas_concentration_at(species, base + vec2<i32>(0, 1)),
+        gas_concentration_at(species, base + vec2<i32>(1, 1)), fraction.x,
+    );
+    return mix(bottom, top, fraction.y);
+}
+
+fn gas_concentration_at(species: u32, cell: vec2<i32>) -> f32 {
+    let index: u32 = physical_cell_index(cell);
+    if index == INVALID_INDEX { return 0.0; }
+    let buffered_cell_count: u32 = uniforms.buffered_tile_size.x *
+        uniforms.buffered_tile_size.y * 64u;
+    return gas_concentrations[species * buffered_cell_count + index];
+}
+
+fn unpack_color(color: u32) -> vec4<f32> {
+    return vec4<f32>(
         f32(color & 0xffu) / 255.0,
         f32((color >> 8u) & 0xffu) / 255.0,
         f32((color >> 16u) & 0xffu) / 255.0,
         f32(color >> 24u) / 255.0,
     );
-    let result = clamp(base * (vec4<f32>(1.0) + sample * properties.color_influence),
-        vec4<f32>(0.0), vec4<f32>(1.0));
-    return apply_borders(select(result, vec4<f32>(result.rgb * coverage, 1.0), is_fluid), cell, world);
 }
 
 fn apply_borders(color: vec4<f32>, cell: vec2<i32>, world: vec2<f32>) -> vec4<f32> {

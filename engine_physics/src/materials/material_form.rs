@@ -9,4 +9,6 @@ pub enum MaterialForm {
     CellularDynamic,
     /// A fluid `Material`
     Fluid,
+    /// A gaseous species transported through the shared gas mixture
+    Gas,
 }

@@ -15,6 +15,10 @@ pub struct SceneGraphics<'a> {
     pub fluid_material_identifiers: &'a AcceleratorBuffer,
     /// The transient fluid coverage derived for each physical cell
     pub fluid_coverage: &'a AcceleratorBuffer,
+    /// Authoritative species-major gas concentrations
+    pub gas_concentrations: &'a AcceleratorBuffer,
+    /// Number of registered gas species in the concentration allocation
+    pub gas_count: u32,
     /// The transient directional pressure retained by each physical cell
     pub cellular_pressure: &'a AcceleratorBuffer,
     /// The tile coordinates of the buffered area's bottom-left corner

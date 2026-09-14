@@ -1,6 +1,9 @@
 // Copyright Rob Gage 2026
 
-use super::ChunkFluidParticle;
+use super::{
+    ChunkFluidParticle,
+    ChunkGasCell,
+};
 use crate::{
     materials::MaterialIdentifier,
     tiles::{
@@ -20,6 +23,8 @@ pub struct Chunk {
     tiles: Box<[TileData]>,
     /// Sparse authoritative fluid particles outside GPU residency
     dormant_fluid_particles: Vec<ChunkFluidParticle>,
+    /// Sparse authoritative gas cells outside GPU residency
+    dormant_gas_cells: Vec<ChunkGasCell>,
 }
 
 impl Chunk {
@@ -34,6 +39,7 @@ impl Chunk {
             tiles: (0..usize::from(Self::WIDTH) * usize::from(Self::WIDTH))
                 .map(|_| TileData::EMPTY).collect(),
             dormant_fluid_particles: Vec::new(),
+            dormant_gas_cells: Vec::new(),
         }
     }
 
@@ -56,6 +62,7 @@ impl Chunk {
                 tile_coordinates,
                 tiles: tile_data.into_boxed_slice(),
                 dormant_fluid_particles: Vec::new(),
+                dormant_gas_cells: Vec::new(),
             });
         }
         reader.read_exact(&mut fluid_magic[1..])?;
@@ -77,10 +84,38 @@ impl Chunk {
             }
             dormant_fluid_particles.push(particle);
         }
+        let mut gas_magic: [u8; 8] = [0; 8];
+        if reader.read(&mut gas_magic[..1])? == 0 {
+            return Ok(Self {
+                tile_coordinates,
+                tiles: tile_data.into_boxed_slice(),
+                dormant_fluid_particles,
+                dormant_gas_cells: Vec::new(),
+            });
+        }
+        reader.read_exact(&mut gas_magic[1..])?;
+        if &gas_magic != b"gas_____" { return Err(io::ErrorKind::InvalidData.into()); }
+        reader.read_exact(&mut count_data)?;
+        let count: usize = u32::from_le_bytes(count_data) as usize;
+        let mut dormant_gas_cells: Vec<ChunkGasCell> = Vec::new();
+        dormant_gas_cells.try_reserve_exact(count).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidData, "Dormant gas cell count is too large")
+        })?;
+        for _ in 0..count {
+            let cell: ChunkGasCell = ChunkGasCell::deserialize(reader)?;
+            if cell.tile_coordinates().chunk_coordinates() != tile_coordinates {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Dormant gas cell is outside its chunk",
+                ));
+            }
+            dormant_gas_cells.push(cell);
+        }
         Ok(Self {
             tile_coordinates,
             tiles: tile_data.into_boxed_slice(),
             dormant_fluid_particles,
+            dormant_gas_cells,
         })
     }
 
@@ -96,6 +131,12 @@ impl Chunk {
         })?;
         writer.write_all(&count.to_le_bytes())?;
         for particle in &self.dormant_fluid_particles { particle.serialize(writer)?; }
+        writer.write_all(b"gas_____")?;
+        let count: u32 = self.dormant_gas_cells.len().try_into().map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidData, "Too many dormant gas cells")
+        })?;
+        writer.write_all(&count.to_le_bytes())?;
+        for cell in &self.dormant_gas_cells { cell.serialize(writer)?; }
         Ok(())
     }
 
@@ -206,6 +247,30 @@ impl Chunk {
         Ok(())
     }
 
+    /// Removes and returns dormant gas cells belonging to an area
+    pub fn take_dormant_gas_cells(&mut self, area: TileArea) -> Vec<ChunkGasCell> {
+        // ponytail: linear sparse scan; index by local tile if dormant gas density becomes costly
+        let mut cells: Vec<ChunkGasCell> = Vec::new();
+        let mut index: usize = 0;
+        while index < self.dormant_gas_cells.len() {
+            if area.contains(self.dormant_gas_cells[index].tile_coordinates()) {
+                cells.push(self.dormant_gas_cells.swap_remove(index));
+            } else {
+                index += 1;
+            }
+        }
+        cells
+    }
+
+    /// Adds one authoritative dormant gas cell to this chunk
+    pub fn insert_dormant_gas_cell(&mut self, cell: ChunkGasCell) -> Result<(), ()> {
+        if cell.tile_coordinates().chunk_coordinates() != self.tile_coordinates {
+            return Err(());
+        }
+        self.dormant_gas_cells.push(cell);
+        Ok(())
+    }
+
 }
 
 #[cfg(test)]
@@ -224,6 +289,12 @@ mod tests {
             velocity: [1.25, -2.5],
         };
         chunk.insert_dormant_fluid_particle(particle).unwrap();
+        let gas_cell: ChunkGasCell = ChunkGasCell {
+            coordinates: crate::tiles::CellCoordinates { x: -2, y: -510 },
+            velocity: [0.5, 1.25],
+            species: vec![(MaterialIdentifier::new(MaterialForm::Gas, 0), 0.75)],
+        };
+        chunk.insert_dormant_gas_cell(gas_cell.clone()).unwrap();
         let mut bytes: Vec<u8> = Vec::new();
         chunk.serialize(&mut bytes).unwrap();
         let mut reader: &[u8] = &bytes;
@@ -235,11 +306,26 @@ mod tests {
         assert!(loaded_particles[0].material_identifier == particle.material_identifier);
         assert!(loaded_particles[0].position == particle.position);
         assert!(loaded_particles[0].velocity == particle.velocity);
+        let loaded_gas: Vec<ChunkGasCell> = loaded.take_dormant_gas_cells(
+            TileArea::new(TileCoordinates { x: -1, y: -64 }, 1, 1),
+        );
+        assert!(loaded_gas.len() == 1);
+        assert!(loaded_gas[0].coordinates == gas_cell.coordinates);
+        assert!(loaded_gas[0].velocity == gas_cell.velocity);
+        assert!(loaded_gas[0].species == gas_cell.species);
+
+        let gas_section_offset: usize = 16 + 4096 * TileData::SERIALIZED_SIZE + 8 + 4 + 20;
+        let mut fluid_only_bytes: Vec<u8> = bytes.clone();
+        fluid_only_bytes.truncate(gas_section_offset);
+        let mut fluid_only_reader: &[u8] = &fluid_only_bytes;
+        let fluid_only_chunk: Chunk = Chunk::deserialize(&mut fluid_only_reader).unwrap();
+        assert!(fluid_only_chunk.dormant_gas_cells.is_empty());
 
         bytes.truncate(16 + 4096 * TileData::SERIALIZED_SIZE);
         let mut old_reader: &[u8] = &bytes;
         let old_chunk: Chunk = Chunk::deserialize(&mut old_reader).unwrap();
         assert!(old_chunk.dormant_fluid_particles.is_empty());
+        assert!(old_chunk.dormant_gas_cells.is_empty());
     }
 
 }

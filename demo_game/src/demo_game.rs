@@ -24,11 +24,16 @@ use engine::{
         scenes::{
             Scene,
             SceneData,
+            SceneEditBatch,
             ScenePosition,
             SceneVelocity,
         },
         simulation::SceneSimulationConfiguration,
-        tiles::TileCoordinates,
+        tiles::{
+            CellCoordinates,
+            CellularAppearance,
+            TileCoordinates,
+        },
     },
     user_interface::UserInterfaceContext,
 };
@@ -101,6 +106,14 @@ impl DemoGame {
             density: 1.0,
             viscosity: 2.0,
         });
+        let water_vapor: MaterialIdentifier = materials.register(Material::Gas {
+            name: "Water Vapor".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(132, 174, 196)),
+            density: 0.65,
+            diffusivity: 0.12,
+            extinction: 0.08,
+            dissipation: 0.0,
+        });
         let data: SceneData = SceneData::new_temporary(materials)?;
         let mut scene: Scene = Scene::load_with_generator(
             accelerator,
@@ -120,6 +133,15 @@ impl DemoGame {
                 stone_integrity: 20.0,
             },
         )?;
+        let mut vapor_edits: SceneEditBatch = SceneEditBatch::new();
+        vapor_edits.place_material(
+            water_vapor,
+            CellularAppearance::NEUTRAL,
+            (8..20).flat_map(|y| {
+                (-56..-40).map(move |x| CellCoordinates { x, y })
+            }).collect(),
+        );
+        scene.apply_edits(&mut vapor_edits)?;
         let mut pawn_configuration: ActorPawn = ActorPawn::new();
         pawn_configuration.walking = Some(ActorPawnWalkingConfiguration {
             speed: 4.0,

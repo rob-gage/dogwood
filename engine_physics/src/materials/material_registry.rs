@@ -24,6 +24,8 @@ pub struct MaterialRegistry {
     cellular_dynamics: Vec<Material>,
     /// The `Material::Fluid`s in this `MaterialRegistry`
     fluids: Vec<Material>,
+    /// The `Material::Gas`s in this `MaterialRegistry`
+    gases: Vec<Material>,
 }
 
 impl MaterialRegistry {
@@ -34,6 +36,7 @@ impl MaterialRegistry {
             cellular_statics: Vec::new(),
             cellular_dynamics: Vec::new(),
             fluids: Vec::new(),
+            gases: Vec::new(),
         }
     }
 
@@ -55,6 +58,12 @@ impl MaterialRegistry {
                 let index: u32 = self.fluids.len() as u32;
                 self.fluids.push(material);
                 MaterialIdentifier::new(MaterialForm::Fluid, index)
+            }
+            material @ Material::Gas { .. } => {
+                let index: u32 = self.gases.len().try_into()
+                    .expect("Too many registered gas materials");
+                self.gases.push(material);
+                MaterialIdentifier::new(MaterialForm::Gas, index)
             }
         }
     }
@@ -81,6 +90,11 @@ impl MaterialRegistry {
                 body_push_speed.is_finite() && *body_push_speed >= 0.0 &&
                 density.is_finite() && *density > 0.0 &&
                 viscosity.is_finite() && *viscosity >= 0.0,
+            Material::Gas { density, diffusivity, extinction, dissipation, .. } =>
+                density.is_finite() && *density > 0.0 &&
+                diffusivity.is_finite() && *diffusivity >= 0.0 &&
+                extinction.is_finite() && *extinction >= 0.0 &&
+                dissipation.is_finite() && *dissipation >= 0.0,
         }
     }
 
@@ -91,6 +105,7 @@ impl MaterialRegistry {
             MaterialForm::CellularStatic => self.cellular_statics.get(index),
             MaterialForm::CellularDynamic => self.cellular_dynamics.get(index),
             MaterialForm::Fluid => self.fluids.get(index),
+            MaterialForm::Gas => self.gases.get(index),
         }
     }
 
@@ -105,6 +120,9 @@ impl MaterialRegistry {
         ))).chain(self.fluids.iter().enumerate().map(|(index, material)| (
             MaterialIdentifier::new(MaterialForm::Fluid, index as u32),
             material,
+        ))).chain(self.gases.iter().enumerate().map(|(index, material)| (
+            MaterialIdentifier::new(MaterialForm::Gas, index as u32),
+            material,
         )))
     }
 
@@ -115,11 +133,17 @@ impl MaterialRegistry {
             self.cellular_statics.iter().map(|material| *material.appearance()).collect(),
             self.cellular_dynamics.iter().map(|material| *material.appearance()).collect(),
             self.fluids.iter().map(|material| *material.appearance()).collect(),
+            self.gases.iter().map(|material| *material.appearance()).collect(),
             self.fluids.iter().map(|material| match material {
                 Material::Fluid { rest_density, artificial_pressure, xsph_smoothing,
                     body_push_speed, friction, restitution, density, viscosity, .. } => [*rest_density,
                     *artificial_pressure, *xsph_smoothing, *body_push_speed, *friction,
                     *restitution, *density, *viscosity],
+                _ => unreachable!(),
+            }).collect(),
+            self.gases.iter().map(|material| match material {
+                Material::Gas { density, diffusivity, extinction, dissipation, .. } =>
+                    [*density, *diffusivity, *extinction, *dissipation],
                 _ => unreachable!(),
             }).collect(),
         )
@@ -139,6 +163,7 @@ impl MaterialRegistry {
         let cellular_statics = Self::deserialize_form(reader, MaterialForm::CellularStatic)?;
         let cellular_dynamics = Self::deserialize_form(reader, MaterialForm::CellularDynamic)?;
         let fluids = Self::deserialize_form(reader, MaterialForm::Fluid)?;
+        let gases = Self::deserialize_optional_form(reader, MaterialForm::Gas)?;
         for material in &cellular_statics {
             if let Material::CellularStatic { debris_material: Some(identifier), .. } = material {
                 if identifier.form_checked() != Some(MaterialForm::CellularDynamic) ||
@@ -151,7 +176,7 @@ impl MaterialRegistry {
                         }
             }
         }
-        Ok(Self { cellular_statics, cellular_dynamics, fluids })
+        Ok(Self { cellular_statics, cellular_dynamics, fluids, gases })
     }
 
     /// Writes this `MaterialRegistry` in identifier-index order
@@ -159,7 +184,24 @@ impl MaterialRegistry {
         writer.write_all(b"dogwoodm")?;
         Self::serialize_form(writer, &self.cellular_statics)?;
         Self::serialize_form(writer, &self.cellular_dynamics)?;
-        Self::serialize_form(writer, &self.fluids)
+        Self::serialize_form(writer, &self.fluids)?;
+        Self::serialize_form(writer, &self.gases)
+    }
+
+    /// Reads an optional trailing material form, preserving three-form registries
+    fn deserialize_optional_form<R: io::Read>(
+        reader: &mut R,
+        form: MaterialForm,
+    ) -> Result<Vec<Material>, io::Error> {
+        let mut first_count_byte: [u8; 1] = [0];
+        if reader.read(&mut first_count_byte)? == 0 { return Ok(Vec::new()); }
+        let mut remaining_count_bytes: [u8; 3] = [0; 3];
+        reader.read_exact(&mut remaining_count_bytes)?;
+        let count: u32 = u32::from_le_bytes([
+            first_count_byte[0], remaining_count_bytes[0],
+            remaining_count_bytes[1], remaining_count_bytes[2],
+        ]);
+        Self::deserialize_form_count(reader, form, count)
     }
 
     /// Reads all materials belonging to one material form
@@ -168,6 +210,14 @@ impl MaterialRegistry {
         form: MaterialForm,
     ) -> Result<Vec<Material>, io::Error> {
         let count: u32 = Self::read_u32(reader)?;
+        Self::deserialize_form_count(reader, form, count)
+    }
+
+    fn deserialize_form_count<R: io::Read>(
+        reader: &mut R,
+        form: MaterialForm,
+        count: u32,
+    ) -> Result<Vec<Material>, io::Error> {
         let mut materials: Vec<Material> = Vec::with_capacity(count as usize);
         for _ in 0..count {
             // decode the owned name first so registries can be loaded from disk.
@@ -224,6 +274,12 @@ impl MaterialRegistry {
                     body_push_speed: f32::from_bits(Self::read_u32(reader)?),
                     density: f32::from_bits(Self::read_u32(reader)?),
                     viscosity: f32::from_bits(Self::read_u32(reader)?),
+                },
+                MaterialForm::Gas => Material::Gas { name, graphics,
+                    density: f32::from_bits(Self::read_u32(reader)?),
+                    diffusivity: f32::from_bits(Self::read_u32(reader)?),
+                    extinction: f32::from_bits(Self::read_u32(reader)?),
+                    dissipation: f32::from_bits(Self::read_u32(reader)?),
                 },
             };
             if !Self::material_is_valid(&material) {
@@ -296,6 +352,12 @@ impl MaterialRegistry {
                     writer.write_all(&density.to_bits().to_le_bytes())?;
                     writer.write_all(&viscosity.to_bits().to_le_bytes())?;
                 }
+                Material::Gas { density, diffusivity, extinction, dissipation, .. } => {
+                    writer.write_all(&density.to_bits().to_le_bytes())?;
+                    writer.write_all(&diffusivity.to_bits().to_le_bytes())?;
+                    writer.write_all(&extinction.to_bits().to_le_bytes())?;
+                    writer.write_all(&dissipation.to_bits().to_le_bytes())?;
+                }
             }
         }
         Ok(())
@@ -335,8 +397,44 @@ impl Index<MaterialIdentifier> for MaterialRegistry {
             MaterialForm::CellularStatic    => &self.cellular_statics[index],
             MaterialForm::CellularDynamic   => &self.cellular_dynamics[index],
             MaterialForm::Fluid             => &self.fluids[index],
-
+            MaterialForm::Gas               => &self.gases[index],
         }
+    }
+
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    #[test]
+    fn gas_round_trips_and_three_form_registry_remains_readable() {
+        let mut registry: MaterialRegistry = MaterialRegistry::new();
+        let identifier: MaterialIdentifier = registry.register(Material::Gas {
+            name: "Test Gas".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(1, 2, 3)),
+            density: 0.75,
+            diffusivity: 0.2,
+            extinction: 0.1,
+            dissipation: 0.3,
+        });
+        let mut bytes: Vec<u8> = Vec::new();
+        registry.serialize(&mut bytes).unwrap();
+        let mut reader: &[u8] = &bytes;
+        let loaded: MaterialRegistry = MaterialRegistry::deserialize(&mut reader).unwrap();
+        assert!(matches!(loaded.get(identifier), Some(Material::Gas {
+            name, density, diffusivity, extinction, dissipation, ..
+        }) if name == "Test Gas" && *density == 0.75 && *diffusivity == 0.2 &&
+            *extinction == 0.1 && *dissipation == 0.3));
+
+        let empty_registry: MaterialRegistry = MaterialRegistry::new();
+        let mut old_bytes: Vec<u8> = Vec::new();
+        empty_registry.serialize(&mut old_bytes).unwrap();
+        old_bytes.truncate(old_bytes.len() - 4);
+        let mut old_reader: &[u8] = &old_bytes;
+        let old_loaded: MaterialRegistry = MaterialRegistry::deserialize(&mut old_reader).unwrap();
+        assert!(old_loaded.gases.is_empty());
     }
 
 }

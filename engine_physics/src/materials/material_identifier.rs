@@ -11,6 +11,9 @@ impl MaterialIdentifier {
     /// Used to represent empty cells that contain no material
     pub const NULL: MaterialIdentifier = MaterialIdentifier(0);
 
+    /// The 2-bit tag used to identify `Gas` `MaterialIdentifier`s
+    const GAS_TAG: u32 = 0b000000_00;
+
     /// The 2-bit tag used to identify `CellularStatic` `MaterialIdentifier`s
     const CELLULAR_STATIC_TAG: u32 = 0b000000_01;
 
@@ -22,13 +25,17 @@ impl MaterialIdentifier {
 
     /// Creates a new `MaterialIdentifier` from a `MaterialForm` and an index
     pub const fn new(form: MaterialForm, index: u32) -> Self {
-        assert!(index == index & 0b00111111_11111111_11111111_11111111);
-        let tag: u32 = match form {
-            MaterialForm::CellularStatic    => Self::CELLULAR_STATIC_TAG,
-            MaterialForm::CellularDynamic   => Self::CELLULAR_DYNAMIC_TAG,
-            MaterialForm::Fluid             => Self::FLUID_TAG,
+        let (tag, encoded_index): (u32, u32) = match form {
+            MaterialForm::Gas => {
+                assert!(index < 0b00111111_11111111_11111111_11111111);
+                (Self::GAS_TAG, index + 1)
+            }
+            MaterialForm::CellularStatic => (Self::CELLULAR_STATIC_TAG, index),
+            MaterialForm::CellularDynamic => (Self::CELLULAR_DYNAMIC_TAG, index),
+            MaterialForm::Fluid => (Self::FLUID_TAG, index),
         };
-        Self(tag << 30 | index)
+        assert!(encoded_index == encoded_index & 0b00111111_11111111_11111111_11111111);
+        Self(tag << 30 | encoded_index)
     }
 
     /// Returns the `MaterialForm` of the `Material` represented by this `MaterialIdentifier`
@@ -38,7 +45,9 @@ impl MaterialIdentifier {
 
     /// Returns the `MaterialForm`, or `None` for an invalid identifier
     pub const fn form_checked(self) -> Option<MaterialForm> {
+        if self.0 == 0 { return None; }
         match self.0 >> 30 {
+            Self::GAS_TAG => Some(MaterialForm::Gas),
             Self::CELLULAR_STATIC_TAG => Some(MaterialForm::CellularStatic),
             Self::CELLULAR_DYNAMIC_TAG => Some(MaterialForm::CellularDynamic),
             Self::FLUID_TAG => Some(MaterialForm::Fluid),
@@ -47,12 +56,39 @@ impl MaterialIdentifier {
     }
 
     /// Returns the form-specific index of the `Material` represented by this `MaterialIdentifier`
-    pub const fn index(self) -> u32 { self.0 & 0b00111111_11111111_11111111_11111111 }
+    pub const fn index(self) -> u32 {
+        let index: u32 = self.0 & 0b00111111_11111111_11111111_11111111;
+        if self.0 >> 30 == Self::GAS_TAG { index.saturating_sub(1) } else { index }
+    }
 
     /// Creates a `MaterialIdentifier` from a `u32`
     pub const fn from_u32(u32: u32) -> MaterialIdentifier { Self(u32) }
 
     /// Returns a `MaterialIdentifier` as a `u32`
     pub const fn as_u32(self) -> u32 { self.0 }
+
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    #[test]
+    fn gas_uses_nonzero_tag_zero_identifiers_without_changing_existing_forms() {
+        assert!(MaterialIdentifier::NULL.as_u32() == 0);
+        assert!(MaterialIdentifier::NULL.form_checked().is_none());
+        assert!(MaterialIdentifier::NULL.index() == 0);
+        assert!(MaterialIdentifier::new(MaterialForm::Gas, 0).as_u32() == 0x00000001);
+        assert!(MaterialIdentifier::new(MaterialForm::Gas, 1).as_u32() == 0x00000002);
+        assert!(MaterialIdentifier::new(MaterialForm::Gas, 1).form_checked() ==
+            Some(MaterialForm::Gas));
+        assert!(MaterialIdentifier::new(MaterialForm::Gas, 1).index() == 1);
+        assert!(MaterialIdentifier::new(MaterialForm::Gas, 0x3ffffffe).as_u32() == 0x3fffffff);
+        assert!(MaterialIdentifier::new(MaterialForm::Gas, 0x3ffffffe).index() == 0x3ffffffe);
+        assert!(MaterialIdentifier::new(MaterialForm::CellularStatic, 0).as_u32() == 0x40000000);
+        assert!(MaterialIdentifier::new(MaterialForm::CellularDynamic, 0).as_u32() == 0x80000000);
+        assert!(MaterialIdentifier::new(MaterialForm::Fluid, 0).as_u32() == 0xc0000000);
+    }
 
 }

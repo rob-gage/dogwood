@@ -98,6 +98,7 @@ impl Widget for EditorInterface {
                         (EditorViewMode::MaterialForm, "Material form"),
                         (EditorViewMode::Pressure, "Pressure"),
                         (EditorViewMode::Temperature, "Temperature"),
+                        (EditorViewMode::Gas, "Gas"),
                     ] {
                         if ui.radio(self.view_mode == mode, label).clicked() {
                             self.view_mode_requested.set(mode);
