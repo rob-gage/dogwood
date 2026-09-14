@@ -715,24 +715,24 @@ impl Scene {
         let possessed_position: Option<ScenePosition> = self.possessed_actor()
             .and_then(|actor| self.actor_registry.get_position(actor)).copied();
         if let Some(position) = possessed_position { self.follow_position(position); }
+        let buffer_size: i32 = i32::from(self.simulation_buffer_size);
+        let dimensions: u16 = u16::from(self.simulation_buffer_size) * 2;
+        let rigid_body_states: Vec<([f32; 2], f32, [f32; 2], f32, [f32; 2])> =
+            self.rigid_cellular_bodies.iter().filter_map(|body| {
+                self.physics_world.rigid_cellular_body_state(body)
+            }).collect();
+        self.cellular_physics_body_proxy.rasterize(
+            self.accelerator.as_ref(), TileCoordinates { x: self.origin.x - buffer_size, y: self.origin.y - buffer_size },
+            self.simulation_width + dimensions, self.simulation_height + dimensions, self.tiles_ring_offset_x,
+            self.tiles_ring_offset_y, self.gravity, current_walking_pawn,
+            current_pawn_fluid_permeable,
+            &self.rigid_cellular_bodies,
+            &rigid_body_states,
+            self.rigid_cellular_topology_revision,
+        );
         if is_simulation_active {
-            let buffer_size: i32 = i32::from(self.simulation_buffer_size);
-            let dimensions: u16 = u16::from(self.simulation_buffer_size) * 2;
             let fluid_active_area: TileArea = self.area_fluid_active();
             let fluid_active_dimensions: [u16; 2] = fluid_active_area.dimensions();
-            let rigid_body_states: Vec<([f32; 2], f32, [f32; 2], f32, [f32; 2])> =
-                self.rigid_cellular_bodies.iter().filter_map(|body| {
-                    self.physics_world.rigid_cellular_body_state(body)
-                }).collect();
-            self.cellular_physics_body_proxy.rasterize(
-                self.accelerator.as_ref(), TileCoordinates { x: self.origin.x - buffer_size, y: self.origin.y - buffer_size },
-                self.simulation_width + dimensions, self.simulation_height + dimensions, self.tiles_ring_offset_x,
-                self.tiles_ring_offset_y, self.gravity, current_walking_pawn,
-                current_pawn_fluid_permeable,
-                &self.rigid_cellular_bodies,
-                &rigid_body_states,
-                self.rigid_cellular_topology_revision,
-            );
             self.cellular_pressure.simulate(
                 self.accelerator.as_ref(), TileCoordinates { x: self.origin.x - buffer_size, y: self.origin.y - buffer_size },
                 self.simulation_width + dimensions, self.simulation_height + dimensions, self.tiles_ring_offset_x,
@@ -823,26 +823,39 @@ impl Scene {
         let origin_y: i32 = snapshot.origin.y * 8;
         let width: i32 = i32::from(snapshot.width) * 8;
         let height: i32 = i32::from(snapshot.height) * 8;
-        let mut visited: HashSet<[i32; 2]> = HashSet::new();
+        let mut occupancy: Vec<u8> = vec![0; (width * height) as usize];
+        for y in origin_y..origin_y + height {
+            for x in origin_x..origin_x + width {
+                let index: usize = ((y - origin_y) * width + x - origin_x) as usize;
+                occupancy[index] = u8::from(
+                    snapshot.is_static_cell_occupied(x, y) == Some(true),
+                );
+            }
+        }
         let mut candidates: Vec<Vec<CellCoordinates>> = Vec::new();
         for y in origin_y..origin_y + height {
             for x in origin_x..origin_x + width {
-                if visited.contains(&[x, y]) || snapshot.is_static_cell_occupied(x, y) != Some(true) {
-                    continue;
-                }
+                let index: usize = ((y - origin_y) * width + x - origin_x) as usize;
+                if occupancy[index] != 1 { continue; }
                 let mut queue: VecDeque<[i32; 2]> = VecDeque::from([[x, y]]);
                 let mut component: Vec<CellCoordinates> = Vec::new();
                 let mut anchored: bool = false;
-                visited.insert([x, y]);
+                occupancy[index] = 2;
                 while let Some([cell_x, cell_y]) = queue.pop_front() {
                     component.push(CellCoordinates { x: cell_x, y: cell_y });
                     anchored |= cell_x == origin_x || cell_y == origin_y ||
                         cell_x == origin_x + width - 1 || cell_y == origin_y + height - 1;
                     for neighbor in [[cell_x - 1, cell_y], [cell_x + 1, cell_y],
                             [cell_x, cell_y - 1], [cell_x, cell_y + 1]] {
-                        if !visited.contains(&neighbor) &&
-                                snapshot.is_static_cell_occupied(neighbor[0], neighbor[1]) == Some(true) {
-                            visited.insert(neighbor);
+                        if neighbor[0] < origin_x || neighbor[1] < origin_y ||
+                                neighbor[0] >= origin_x + width ||
+                                neighbor[1] >= origin_y + height {
+                            continue;
+                        }
+                        let neighbor_index: usize = ((neighbor[1] - origin_y) * width +
+                            neighbor[0] - origin_x) as usize;
+                        if occupancy[neighbor_index] == 1 {
+                            occupancy[neighbor_index] = 2;
                             queue.push_back(neighbor);
                         }
                     }
