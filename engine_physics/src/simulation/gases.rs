@@ -16,10 +16,10 @@ use crate::{
 };
 use engine_compute::{Accelerator, AcceleratorBuffer};
 
-const PRESSURE_ITERATION_COUNT: u32 = 10;
+const PRESSURE_ITERATION_COUNT: u32 = 12;
 const VORTICITY_CONFINEMENT: f32 = 0.2;
-const BUOYANCY_COEFFICIENT: f32 = 1.0;
-const MAXIMUM_SPEED_CELLS_PER_SECOND: f32 = 24.0;
+const BUOYANCY_COEFFICIENT: f32 = 0.05;
+const MAXIMUM_SPEED_CELLS_PER_SECOND: f32 = 8.0;
 const FLUID_OBSTACLE_COVERAGE: f32 = 0.85;
 const AMBIENT_DENSITY: f32 = 1.0;
 const AUTHORED_CONCENTRATION: f32 = 1.0;
@@ -461,7 +461,7 @@ mod tests {
     };
 
     #[test]
-    fn coexisting_species_rise_smoothly_and_respect_a_solid_barrier() {
+    fn coexisting_species_remain_spread_inside_a_circular_enclosure_for_one_minute() {
         let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
         let accelerator: Accelerator = Accelerator::new().unwrap();
         let mut materials: MaterialRegistry = MaterialRegistry::new();
@@ -469,17 +469,19 @@ mod tests {
             name: "Vapor".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(120, 160, 190)),
             density: 0.65,
-            diffusivity: 0.12,
+            diffusivity: 0.8,
             extinction: 0.08,
             dissipation: 0.0,
+            compressibility: 0.05,
         });
         let tracer: MaterialIdentifier = materials.register(Material::Gas {
             name: "Tracer".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(190, 120, 140)),
             density: 0.65,
-            diffusivity: 0.12,
+            diffusivity: 0.8,
             extinction: 0.2,
-            dissipation: 1.5,
+            dissipation: 0.0001,
+            compressibility: 0.1,
         });
         let graphics = materials.build_material_graphics(&accelerator);
         let width: u16 = 4;
@@ -506,13 +508,18 @@ mod tests {
         }
         gases.apply_edits(&accelerator, &edits, &[]);
         let solid: u32 = MaterialIdentifier::new(MaterialForm::CellularStatic, 0).as_u32();
-        for x in 0..32 {
-            accelerator.wgpu_queue().write_buffer(
-                cellular.wgpu_buffer(), physical_index(x, 20) as u64 * 4,
-                &solid.to_le_bytes(),
-            );
+        for y in 0..32 {
+            for x in 0..32 {
+                let offset_x: i32 = x as i32 - 16;
+                let offset_y: i32 = y as i32 - 16;
+                if offset_x * offset_x + offset_y * offset_y < 169 { continue; }
+                accelerator.wgpu_queue().write_buffer(
+                    cellular.wgpu_buffer(), physical_index(x, y) as u64 * 4,
+                    &solid.to_le_bytes(),
+                );
+            }
         }
-        for _ in 0..60 {
+        for _ in 0..3600 {
             gases.simulate(
                 &accelerator, TileCoordinates { x: 0, y: 0 }, width, height,
                 0, 0, [0.0, -18.0], 1.0 / 60.0,
@@ -551,20 +558,36 @@ mod tests {
             .filter(|(identifier, _)| *identifier == vapor).map(|(_, value)| value).sum();
         let tracer_total: f32 = cells.iter().flat_map(|cell| cell.species.iter())
             .filter(|(identifier, _)| *identifier == tracer).map(|(_, value)| value).sum();
+        let maximum: f32 = cells.iter().flat_map(|cell| cell.species.iter())
+            .filter(|(identifier, _)| *identifier == vapor)
+            .map(|(_, value)| *value).fold(0.0, f32::max);
         let center_y: f32 = cells.iter().map(|cell| {
             let concentration: f32 = cell.species.iter().filter(
                 |(identifier, _)| *identifier == vapor,
             ).map(|(_, value)| value).sum();
             (cell.coordinates.y as f32 + 0.5) * concentration
         }).sum::<f32>() / total;
+        let occupied_y: Vec<i32> = cells.iter().filter_map(|cell| {
+            cell.species.iter().find(|(identifier, concentration)| {
+                *identifier == vapor && *concentration > 0.01
+            }).map(|_| cell.coordinates.y)
+        }).collect();
+        assert!(total > 47.0);
+        assert!(maximum < 1.0);
         assert!(center_y > 8.5);
-        assert!(cells.iter().all(|cell| cell.coordinates.y < 20));
+        assert!(cells.iter().all(|cell| {
+            let offset_x: i32 = cell.coordinates.x - 16;
+            let offset_y: i32 = cell.coordinates.y - 16;
+            offset_x * offset_x + offset_y * offset_y < 169
+        }));
+        assert!(occupied_y.iter().max().unwrap() - occupied_y.iter().min().unwrap() >= 6);
         assert!(cells.iter().flat_map(|cell| &cell.species)
             .any(|(_, concentration)| (0.01..0.99).contains(concentration)));
         assert!(cells.iter().any(|cell| cell.species.len() == 2));
         assert!(cells.iter().any(|cell| cell.velocity[0] < -0.01));
         assert!(cells.iter().any(|cell| cell.velocity[0] > 0.01));
-        assert!(tracer_total < total * 0.4);
+        assert!(tracer_total > total * 0.98);
+        assert!(tracer_total < total);
         cellular.free();
         body.free();
         fluid.free();
@@ -584,6 +607,16 @@ mod tests {
             diffusivity: 0.12,
             extinction: 0.08,
             dissipation: 0.0,
+            compressibility: 0.05,
+        });
+        materials.register(Material::Gas {
+            name: "Smoke".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(68, 72, 76)),
+            density: 0.85,
+            diffusivity: 0.04,
+            extinction: 2.5,
+            dissipation: 0.0001,
+            compressibility: 0.1,
         });
         let graphics = materials.build_material_graphics(&accelerator);
         let width: u16 = 72;

@@ -37,6 +37,7 @@ struct Parameters {
 
 const INVALID_INDEX: u32 = 0xffffffffu;
 const CELLS_PER_TILE: f32 = 8.0;
+const INCOMPRESSIBILITY_MIXING: f32 = 1.0;
 
 // Semi-Lagrangian backtracing reads the immutable current field and writes separate scratch.
 @compute @workgroup_size(64)
@@ -85,7 +86,7 @@ fn apply_gas_forces(@builtin(global_invocation_id) invocation: vec3<u32>) {
     var density_offset: f32 = 0.0;
     for (var species: u32 = 0u; species < parameters.gas_count; species++) {
         density_offset += concentrations[concentration_index(species, index)] *
-            (gas_properties[species].x - parameters.ambient_density);
+            (gas_properties[species * 2u].x - parameters.ambient_density);
     }
     let curl_gradient: vec2<f32> = 0.5 * vec2<f32>(
         abs(curl_at(cell + vec2<i32>(1, 0))) - abs(curl_at(cell + vec2<i32>(-1, 0))),
@@ -165,7 +166,7 @@ fn solve_gas_pressure_b(@builtin(global_invocation_id) invocation: vec3<u32>) {
         pressure_a_at(cell + vec2<i32>(0, 1), center) - divergence[index]) * 0.25;
 }
 
-// Ten Jacobi iterations end in pressure B, which is the sole projection input.
+// Twelve Jacobi iterations end in pressure B, which is the sole projection input.
 @compute @workgroup_size(64)
 fn project_gas_velocity(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let logical_index: u32 = invocation.x;
@@ -204,18 +205,27 @@ fn advect_gas_concentrations(@builtin(global_invocation_id) invocation: vec3<u32
         concentration_scratch[output_index] = 0.0;
         return;
     }
-    let center: vec2<f32> = vec2<f32>(cell) + vec2<f32>(0.5);
-    let backtraced: vec2<f32> = center - velocity[index] * parameters.delta_time;
-    let advected: f32 = sample_concentration(species, backtraced);
-    let neighborhood: f32 = 0.25 * (
-        sample_concentration(species, backtraced + vec2<f32>(-1.0, 0.0)) +
-        sample_concentration(species, backtraced + vec2<f32>(1.0, 0.0)) +
-        sample_concentration(species, backtraced + vec2<f32>(0.0, -1.0)) +
-        sample_concentration(species, backtraced + vec2<f32>(0.0, 1.0))
+    let current: f32 = concentrations[output_index];
+    let transported: f32 = current - parameters.delta_time * (
+        concentration_flux_x(species, cell) -
+            concentration_flux_x(species, cell + vec2<i32>(-1, 0)) +
+        concentration_flux_y(species, cell) -
+            concentration_flux_y(species, cell + vec2<i32>(0, -1))
     );
-    let mixing: f32 = 1.0 - exp(-max(gas_properties[species].y, 0.0) * parameters.delta_time);
-    let remaining: f32 = exp(-max(gas_properties[species].w, 0.0) * parameters.delta_time);
-    concentration_scratch[output_index] = max(0.0, mix(advected, neighborhood, mixing)) * remaining;
+    let properties: vec4<f32> = gas_properties[species * 2u];
+    let compressibility: f32 = clamp(gas_properties[species * 2u + 1u].x, 0.0, 1.0);
+    let mixing: f32 = min(
+        (max(properties.y, 0.0) + (1.0 - compressibility) * INCOMPRESSIBILITY_MIXING) *
+            parameters.delta_time, 0.24,
+    );
+    let mixed: f32 = transported + mixing * (
+        concentration_at(species, cell + vec2<i32>(-1, 0), current) +
+        concentration_at(species, cell + vec2<i32>(1, 0), current) +
+        concentration_at(species, cell + vec2<i32>(0, -1), current) +
+        concentration_at(species, cell + vec2<i32>(0, 1), current) - 4.0 * current
+    );
+    let remaining: f32 = exp(-max(properties.w, 0.0) * parameters.delta_time);
+    concentration_scratch[output_index] = max(0.0, mixed) * remaining;
 }
 
 @compute @workgroup_size(64)
@@ -265,25 +275,30 @@ fn sample_velocity(position: vec2<f32>) -> vec2<f32> {
     return mix(bottom, top, fraction.y);
 }
 
-fn sample_concentration(species: u32, position: vec2<f32>) -> f32 {
-    let shifted: vec2<f32> = position - vec2<f32>(0.5);
-    let base: vec2<i32> = vec2<i32>(floor(shifted));
-    let fraction: vec2<f32> = fract(shifted);
-    let bottom: f32 = mix(
-        concentration_at(species, base),
-        concentration_at(species, base + vec2<i32>(1, 0)), fraction.x,
-    );
-    let top: f32 = mix(
-        concentration_at(species, base + vec2<i32>(0, 1)),
-        concentration_at(species, base + vec2<i32>(1, 1)), fraction.x,
-    );
-    return mix(bottom, top, fraction.y);
+fn concentration_flux_x(species: u32, left: vec2<i32>) -> f32 {
+    let right: vec2<i32> = left + vec2<i32>(1, 0);
+    if is_obstacle(left) || is_obstacle(right) { return 0.0; }
+    let face_velocity: f32 = 0.5 * (velocity_at(left).x + velocity_at(right).x);
+    let upstream: vec2<i32> = select(right, left, face_velocity >= 0.0);
+    return face_velocity * concentrations[concentration_index(
+        species, physical_cell_index(upstream),
+    )];
 }
 
-fn concentration_at(species: u32, cell: vec2<i32>) -> f32 {
-    if is_obstacle(cell) { return 0.0; }
+fn concentration_flux_y(species: u32, bottom: vec2<i32>) -> f32 {
+    let top: vec2<i32> = bottom + vec2<i32>(0, 1);
+    if is_obstacle(bottom) || is_obstacle(top) { return 0.0; }
+    let face_velocity: f32 = 0.5 * (velocity_at(bottom).y + velocity_at(top).y);
+    let upstream: vec2<i32> = select(top, bottom, face_velocity >= 0.0);
+    return face_velocity * concentrations[concentration_index(
+        species, physical_cell_index(upstream),
+    )];
+}
+
+fn concentration_at(species: u32, cell: vec2<i32>, boundary: f32) -> f32 {
+    if is_obstacle(cell) { return boundary; }
     let index: u32 = physical_cell_index(cell);
-    if index == INVALID_INDEX { return 0.0; }
+    if index == INVALID_INDEX { return boundary; }
     return concentrations[concentration_index(species, index)];
 }
 

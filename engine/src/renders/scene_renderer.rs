@@ -368,6 +368,7 @@ mod tests {
             diffusivity: 0.1,
             extinction: 0.1,
             dissipation: 0.0,
+            compressibility: 0.05,
         });
         let scene: Scene = Scene::new(
             &accelerator,

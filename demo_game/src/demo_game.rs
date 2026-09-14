@@ -108,11 +108,21 @@ impl DemoGame {
         });
         let water_vapor: MaterialIdentifier = materials.register(Material::Gas {
             name: "Water Vapor".into(),
-            graphics: MaterialAppearance::from_color(Color::new_rgb(132, 174, 196)),
-            density: 0.65,
-            diffusivity: 0.12,
-            extinction: 0.08,
+            graphics: MaterialAppearance::from_color(Color::new_rgb(176, 205, 220)),
+            density: 0.622,
+            diffusivity: 0.8,
+            extinction: 0.75,
             dissipation: 0.0,
+            compressibility: 0.05,
+        });
+        let smoke: MaterialIdentifier = materials.register(Material::Gas {
+            name: "Smoke".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(68, 72, 76)),
+            density: 0.85,
+            diffusivity: 0.5,
+            extinction: 2.5,
+            dissipation: 0.0001,
+            compressibility: 0.1,
         });
         let data: SceneData = SceneData::new_temporary(materials)?;
         let mut scene: Scene = Scene::load_with_generator(
@@ -133,15 +143,22 @@ impl DemoGame {
                 stone_integrity: 20.0,
             },
         )?;
-        let mut vapor_edits: SceneEditBatch = SceneEditBatch::new();
-        vapor_edits.place_material(
+        let mut gas_edits: SceneEditBatch = SceneEditBatch::new();
+        gas_edits.place_material(
             water_vapor,
             CellularAppearance::NEUTRAL,
             (8..20).flat_map(|y| {
                 (-56..-40).map(move |x| CellCoordinates { x, y })
             }).collect(),
         );
-        scene.apply_edits(&mut vapor_edits)?;
+        gas_edits.place_material(
+            smoke,
+            CellularAppearance::NEUTRAL,
+            (8..20).flat_map(|y| {
+                (-44..-28).map(move |x| CellCoordinates { x, y })
+            }).collect(),
+        );
+        scene.apply_edits(&mut gas_edits)?;
         let mut pawn_configuration: ActorPawn = ActorPawn::new();
         pawn_configuration.walking = Some(ActorPawnWalkingConfiguration {
             speed: 4.0,

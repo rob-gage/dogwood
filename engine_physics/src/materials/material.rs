@@ -80,6 +80,8 @@ pub enum Material {
         extinction: f32,
         /// Exponential concentration decay rate per second; zero preserves the species
         dissipation: f32,
+        /// Fraction of local flow convergence that changes this species' concentration
+        compressibility: f32,
     },
 }
 

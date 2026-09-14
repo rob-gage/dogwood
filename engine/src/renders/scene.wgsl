@@ -194,7 +194,7 @@ fn gas_scattering(cell_position: vec2<f32>) -> vec4<f32> {
     var weighted_color: vec3<f32> = vec3<f32>(0.0);
     for (var species: u32 = 0u; species < uniforms.gas_count; species++) {
         let concentration: f32 = sample_gas_concentration(species, cell_position);
-        let extinction: f32 = max(gas_properties[species].z, 0.0);
+        let extinction: f32 = max(gas_properties[species * 2u].z, 0.0);
         let weight: f32 = concentration * extinction;
         optical_depth += weight;
         weighted_color += unpack_color(gases[species].color_freezing).rgb * weight;

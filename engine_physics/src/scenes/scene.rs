@@ -2225,6 +2225,7 @@ mod tests {
             diffusivity: 0.12,
             extinction: 0.08,
             dissipation: 0.0,
+            compressibility: 0.05,
         });
         let mut scene: Scene = Scene::new(
             &accelerator,

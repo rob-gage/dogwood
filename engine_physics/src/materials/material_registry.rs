@@ -90,11 +90,12 @@ impl MaterialRegistry {
                 body_push_speed.is_finite() && *body_push_speed >= 0.0 &&
                 density.is_finite() && *density > 0.0 &&
                 viscosity.is_finite() && *viscosity >= 0.0,
-            Material::Gas { density, diffusivity, extinction, dissipation, .. } =>
+            Material::Gas { density, diffusivity, extinction, dissipation, compressibility, .. } =>
                 density.is_finite() && *density > 0.0 &&
                 diffusivity.is_finite() && *diffusivity >= 0.0 &&
                 extinction.is_finite() && *extinction >= 0.0 &&
-                dissipation.is_finite() && *dissipation >= 0.0,
+                dissipation.is_finite() && *dissipation >= 0.0 &&
+                compressibility.is_finite() && (0.0..=1.0).contains(compressibility),
         }
     }
 
@@ -142,8 +143,9 @@ impl MaterialRegistry {
                 _ => unreachable!(),
             }).collect(),
             self.gases.iter().map(|material| match material {
-                Material::Gas { density, diffusivity, extinction, dissipation, .. } =>
-                    [*density, *diffusivity, *extinction, *dissipation],
+                Material::Gas { density, diffusivity, extinction, dissipation, compressibility, .. } =>
+                    [*density, *diffusivity, *extinction, *dissipation, *compressibility, 0.0,
+                        0.0, 0.0],
                 _ => unreachable!(),
             }).collect(),
         )
@@ -280,6 +282,7 @@ impl MaterialRegistry {
                     diffusivity: f32::from_bits(Self::read_u32(reader)?),
                     extinction: f32::from_bits(Self::read_u32(reader)?),
                     dissipation: f32::from_bits(Self::read_u32(reader)?),
+                    compressibility: f32::from_bits(Self::read_u32(reader)?),
                 },
             };
             if !Self::material_is_valid(&material) {
@@ -352,11 +355,12 @@ impl MaterialRegistry {
                     writer.write_all(&density.to_bits().to_le_bytes())?;
                     writer.write_all(&viscosity.to_bits().to_le_bytes())?;
                 }
-                Material::Gas { density, diffusivity, extinction, dissipation, .. } => {
+                Material::Gas { density, diffusivity, extinction, dissipation, compressibility, .. } => {
                     writer.write_all(&density.to_bits().to_le_bytes())?;
                     writer.write_all(&diffusivity.to_bits().to_le_bytes())?;
                     writer.write_all(&extinction.to_bits().to_le_bytes())?;
                     writer.write_all(&dissipation.to_bits().to_le_bytes())?;
+                    writer.write_all(&compressibility.to_bits().to_le_bytes())?;
                 }
             }
         }
@@ -418,15 +422,16 @@ mod tests {
             diffusivity: 0.2,
             extinction: 0.1,
             dissipation: 0.3,
+            compressibility: 0.2,
         });
         let mut bytes: Vec<u8> = Vec::new();
         registry.serialize(&mut bytes).unwrap();
         let mut reader: &[u8] = &bytes;
         let loaded: MaterialRegistry = MaterialRegistry::deserialize(&mut reader).unwrap();
         assert!(matches!(loaded.get(identifier), Some(Material::Gas {
-            name, density, diffusivity, extinction, dissipation, ..
+            name, density, diffusivity, extinction, dissipation, compressibility, ..
         }) if name == "Test Gas" && *density == 0.75 && *diffusivity == 0.2 &&
-            *extinction == 0.1 && *dissipation == 0.3));
+            *extinction == 0.1 && *dissipation == 0.3 && *compressibility == 0.2));
 
         let empty_registry: MaterialRegistry = MaterialRegistry::new();
         let mut old_bytes: Vec<u8> = Vec::new();
