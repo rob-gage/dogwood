@@ -165,3 +165,100 @@ impl Drop for CellularPhysicsBodyProxy {
         self.parameters.destroy();
     }
 }
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+    use crate::{
+        materials::{
+            MaterialForm,
+            MaterialIdentifier,
+        },
+        tiles::CellularAppearance,
+    };
+    use rapier2d::prelude::RigidBodyHandle;
+    use std::{
+        sync::mpsc,
+        time::{
+            Duration,
+            Instant,
+        },
+    };
+
+    #[test]
+    fn axis_aligned_rigid_block_raster_has_every_cell_once() {
+        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let accelerator = Accelerator::new().unwrap();
+        let material = MaterialIdentifier::new(MaterialForm::CellularStatic, 3);
+        let body = RigidCellularBody {
+            handle: RigidBodyHandle::invalid(),
+            cells: (2..6).flat_map(|y| (2..6).map(move |x| {
+                ([x, y], material, CellularAppearance::NEUTRAL)
+            })).collect(),
+        };
+        assert!(std::mem::size_of::<[u32; 8]>() == 32);
+        println!("rigid bodies: 1, rigid cells: {}", body.cells.len());
+        let buffered_cell_count: usize = 72 * 51 * 64;
+        let mut proxy = CellularPhysicsBodyProxy::new(&accelerator, buffered_cell_count);
+        let bodies = [body];
+        let body_states = [([0.0; 2], 0.0, [0.0; 2], 0.0, [0.5; 2])];
+        proxy.rasterize(
+            &accelerator,
+            TileCoordinates { x: -12, y: -12 },
+            72,
+            51,
+            0,
+            0,
+            [0.0, -1.0],
+            None,
+            false,
+            &bodies,
+            &body_states,
+            0,
+        );
+        let readback = accelerator.wgpu_device().create_buffer(&wgpu::BufferDescriptor {
+            label: Some("rigid material raster test readback"),
+            size: buffered_cell_count as u64 * 4,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = accelerator.wgpu_device().create_command_encoder(
+            &wgpu::CommandEncoderDescriptor { label: Some("rigid material raster test copy") },
+        );
+        encoder.copy_buffer_to_buffer(
+            proxy.rigid_material_identifiers.wgpu_buffer(), 0, &readback, 0,
+            buffered_cell_count as u64 * 4,
+        );
+        accelerator.wgpu_queue().submit(Some(encoder.finish()));
+        let (sender, receiver) = mpsc::sync_channel(1);
+        readback.slice(..).map_async(wgpu::MapMode::Read, move |result| {
+            sender.send(result).unwrap();
+        });
+        let started = Instant::now();
+        loop {
+            accelerator.poll().unwrap();
+            if let Ok(result) = receiver.try_recv() {
+                result.unwrap();
+                break;
+            }
+            assert!(started.elapsed() < Duration::from_secs(5));
+            std::thread::yield_now();
+        }
+        let mapped = readback.slice(..).get_mapped_range().unwrap();
+        let actual: Vec<u32> = mapped.chunks_exact(4).map(|bytes| {
+            u32::from_le_bytes(bytes.try_into().unwrap())
+        }).collect();
+        drop(mapped);
+        readback.unmap();
+        assert!(actual.iter().filter(|identifier| **identifier != 0).count() == 16);
+        for y in 2..6 {
+            for x in 2..6 {
+                let index = (12 * 72 + 12) * 64 + y * 8 + x;
+                assert!(actual[index] == material.as_u32(),
+                    "missing rigid raster at world cell ({x}, {y})");
+            }
+        }
+    }
+
+}

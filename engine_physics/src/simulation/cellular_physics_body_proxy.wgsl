@@ -15,7 +15,7 @@ struct Parameters {
 
 struct RigidCell {
     local: vec2<i32>, body: u32, material_identifier: u32,
-    appearance: u32, padding: vec3<u32>,
+    appearance: u32, padding_0: u32, padding_1: u32, padding_2: u32,
 }
 
 @group(0) @binding(0) var<storage, read_write> occupancy: array<u32>;
@@ -69,8 +69,22 @@ fn rigid_cell_world_bounds(index: u32) -> vec4<i32> {
         transform.w * local_center.x + transform.z * local_center.y);
     let extent: f32 = (abs(transform.z) + abs(transform.w)) * 0.5;
     let minimum: vec2<i32> = vec2<i32>(floor(center * CELLS_PER_TILE_FLOAT - extent));
-    let maximum: vec2<i32> = vec2<i32>(floor(center * CELLS_PER_TILE_FLOAT + extent));
+    let maximum: vec2<i32> = vec2<i32>(ceil(center * CELLS_PER_TILE_FLOAT + extent));
     return vec4<i32>(minimum, maximum);
+}
+
+// Maps a candidate world-cell center back into body-local cell space
+fn rigid_source_contains_world_cell(source: u32, world_cell: vec2<i32>) -> bool {
+    let cell: RigidCell = rigid_cells[source];
+    let transform: vec4<f32> = rigid_transforms[cell.body * 3u];
+    let world_center: vec2<f32> =
+        (vec2<f32>(world_cell) + vec2<f32>(0.5)) / CELLS_PER_TILE_FLOAT;
+    let relative: vec2<f32> = world_center - transform.xy;
+    let local: vec2<f32> = vec2<f32>(
+        transform.z * relative.x + transform.w * relative.y,
+        -transform.w * relative.x + transform.z * relative.y,
+    );
+    return all(vec2<i32>(floor(local * CELLS_PER_TILE_FLOAT)) == cell.local);
 }
 
 @compute @workgroup_size(64)
@@ -78,11 +92,12 @@ fn claim_rigid_cell_proxy(@builtin(global_invocation_id) invocation: vec3<u32>) 
     let source: u32 = invocation.x;
     if source >= parameters.rigid_cell_count { return; }
     let bounds: vec4<i32> = rigid_cell_world_bounds(source);
-    for (var y: i32 = bounds.y; y <= bounds.w; y++) {
-        for (var x: i32 = bounds.x; x <= bounds.z; x++) {
+    for (var y: i32 = bounds.y; y < bounds.w; y++) {
+        for (var x: i32 = bounds.x; x < bounds.z; x++) {
             let index: u32 = physical_cell_index_from_world_cell(vec2<i32>(x, y),
                 parameters.buffered_origin, parameters.buffered_tile_size, parameters.ring_offset);
-            if index != INVALID_PHYSICAL_CELL_INDEX && occupancy[index] == 0u {
+            if index != INVALID_PHYSICAL_CELL_INDEX && occupancy[index] == 0u &&
+                    rigid_source_contains_world_cell(source, vec2<i32>(x, y)) {
                 atomicMin(&rigid_claims[index], source);
             }
         }
@@ -97,8 +112,8 @@ fn resolve_rigid_cell_proxy(@builtin(global_invocation_id) invocation: vec3<u32>
     let motion: vec4<f32> = rigid_transforms[cell.body * 3u + 1u];
     let center_of_mass: vec2<f32> = rigid_transforms[cell.body * 3u + 2u].xy;
     let bounds: vec4<i32> = rigid_cell_world_bounds(source);
-    for (var y: i32 = bounds.y; y <= bounds.w; y++) {
-        for (var x: i32 = bounds.x; x <= bounds.z; x++) {
+    for (var y: i32 = bounds.y; y < bounds.w; y++) {
+        for (var x: i32 = bounds.x; x < bounds.z; x++) {
             let index: u32 = physical_cell_index_from_world_cell(vec2<i32>(x, y),
                 parameters.buffered_origin, parameters.buffered_tile_size, parameters.ring_offset);
             if index == INVALID_PHYSICAL_CELL_INDEX ||
