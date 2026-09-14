@@ -95,6 +95,52 @@ impl ScenePhysicsWorld {
         ))
     }
 
+    /// Returns conservative world-cell collision regions for the next rigid-body step
+    pub(crate) fn rigid_cellular_body_collision_regions(
+        &self,
+        bodies: &[RigidCellularBody],
+        delta_time: f32,
+    ) -> Vec<[i32; 4]> {
+        bodies.iter().filter_map(|body| {
+            let rigid_body = self.rapier.bodies.get(body.handle)?;
+            let mut bounds: Option<[f32; 4]> = None;
+            for handle in rigid_body.colliders() {
+                let collider = self.rapier.colliders.get(*handle)?;
+                let aabb = collider.compute_aabb();
+                bounds = Some(bounds.map_or(
+                    [aabb.mins.x, aabb.mins.y, aabb.maxs.x, aabb.maxs.y],
+                    |current| [
+                        current[0].min(aabb.mins.x),
+                        current[1].min(aabb.mins.y),
+                        current[2].max(aabb.maxs.x),
+                        current[3].max(aabb.maxs.y),
+                    ],
+                ));
+            }
+            let bounds = bounds?;
+            let center = rigid_body.center_of_mass();
+            let radius: f32 = [
+                [bounds[0], bounds[1]],
+                [bounds[0], bounds[3]],
+                [bounds[2], bounds[1]],
+                [bounds[2], bounds[3]],
+            ].into_iter().map(|corner| {
+                (corner[0] - center.x).hypot(corner[1] - center.y)
+            }).fold(0.0, f32::max);
+            let angle: f32 = (rigid_body.angvel().abs() * delta_time)
+                .min(std::f32::consts::PI);
+            let rotational_margin: f32 = radius * 2.0 * (angle * 0.5).sin();
+            let motion = rigid_body.linvel() * delta_time;
+            let margin: f32 = 1.0 / 8.0 + rotational_margin;
+            Some([
+                ((bounds[0] + motion.x.min(0.0) - margin) * 8.0).floor() as i32,
+                ((bounds[1] + motion.y.min(0.0) - margin) * 8.0).floor() as i32,
+                ((bounds[2] + motion.x.max(0.0) + margin) * 8.0).ceil() as i32,
+                ((bounds[3] + motion.y.max(0.0) + margin) * 8.0).ceil() as i32,
+            ])
+        }).collect()
+    }
+
     /// Removes one rigid body and all attached colliders
     #[allow(dead_code)]
     pub(crate) fn remove_rigid_cellular_body(&mut self, body: &RigidCellularBody) {
@@ -132,11 +178,12 @@ impl ScenePhysicsWorld {
         self.cellular_terrain_snapshot = Some(snapshot);
     }
 
-    /// Updates dynamic cellular collision only inside current pawn query regions
+    /// Updates dynamic cellular collision only inside current local query regions
     pub(crate) fn update_dynamic_cellular_terrain(&mut self, regions: &[[i32; 4]]) {
         let Some(snapshot) = self.cellular_terrain_snapshot.as_ref() else { return; };
+        let regions: Vec<[i32; 4]> = Self::merge_collision_regions(regions);
         if self.dynamic_cellular_terrain_state.as_ref().is_some_and(|(sequence, current)| {
-            *sequence == snapshot.sequence && current == regions
+            *sequence == snapshot.sequence && current.as_slice() == regions
         }) { return; }
         let shapes: Vec<Option<SharedShape>> = regions.iter().map(|region| {
             Self::cellular_collision_shape(snapshot, *region, true)
@@ -150,7 +197,34 @@ impl ScenePhysicsWorld {
         for (handle, shape) in self.dynamic_cellular_terrain.iter_mut().zip(shapes) {
             Self::replace_cellular_collider(&mut self.rapier, handle, shape);
         }
-        self.dynamic_cellular_terrain_state = Some((snapshot.sequence, regions.to_vec()));
+        self.dynamic_cellular_terrain_state = Some((snapshot.sequence, regions));
+    }
+
+    /// Coalesces touching query regions so their derived fixed colliders cannot overlap
+    fn merge_collision_regions(regions: &[[i32; 4]]) -> Vec<[i32; 4]> {
+        let mut merged: Vec<[i32; 4]> = Vec::new();
+        for mut region in regions.iter().copied() {
+            let mut index: usize = 0;
+            while index < merged.len() {
+                let current: [i32; 4] = merged[index];
+                if region[0] <= current[2] && region[1] <= current[3] &&
+                        region[2] >= current[0] && region[3] >= current[1] {
+                    region = [
+                        region[0].min(current[0]),
+                        region[1].min(current[1]),
+                        region[2].max(current[2]),
+                        region[3].max(current[3]),
+                    ];
+                    merged.swap_remove(index);
+                    index = 0;
+                } else {
+                    index += 1;
+                }
+            }
+            merged.push(region);
+        }
+        merged.sort_unstable();
+        merged
     }
 
     /// Builds greedy cellular rectangles inside one world-cell area

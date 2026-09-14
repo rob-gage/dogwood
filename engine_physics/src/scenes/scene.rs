@@ -693,11 +693,18 @@ impl Scene {
             self.detach_unanchored_static_components(&mut snapshot)?;
             self.physics_world.update_cellular_terrain(snapshot);
         }
-        let cellular_collision_regions: Vec<[i32; 4]> = self.actor_registry
-            .cellular_collision_regions(self.gravity, 1.0 / TICK_RATE as f32);
+        let delta_time: f32 = 1.0 / TICK_RATE as f32;
+        let mut cellular_collision_regions: Vec<[i32; 4]> = self.actor_registry
+            .cellular_collision_regions(self.gravity, delta_time);
+        cellular_collision_regions.extend(
+            self.physics_world.rigid_cellular_body_collision_regions(
+                &self.rigid_cellular_bodies,
+                delta_time,
+            ),
+        );
         self.physics_world.update_dynamic_cellular_terrain(&cellular_collision_regions);
         if is_simulation_active {
-            self.physics_world.step(self.gravity, 1.0 / TICK_RATE as f32);
+            self.physics_world.step(self.gravity, delta_time);
         }
         self.actor_registry.simulate_actor_pawns(
             1.0 / TICK_RATE as f32,
