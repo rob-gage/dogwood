@@ -60,6 +60,16 @@ pub struct GameApplication<G: Game> {
     camera_velocity: [f32; 2],
     /// The time at which the previous application update occurred
     update_time: std::time::Instant,
+    /// The start of the current editor performance-rate sample
+    performance_sample_time: std::time::Instant,
+    /// Successfully presented frames in the current performance-rate sample
+    rendered_frames: u32,
+    /// Fixed simulation ticks completed in the current performance-rate sample
+    simulation_ticks: u32,
+    /// Successfully presented frames per second in the preceding sample
+    frames_per_second: u32,
+    /// Fixed simulation ticks per second in the preceding sample
+    ticks_per_second: u32,
 }
 
 impl<G: Game> GameApplication<G> {
@@ -98,6 +108,11 @@ impl<G: Game> GameApplication<G> {
             camera_position: [0.5, 0.5],
             camera_velocity: [0.0, 0.0],
             update_time: std::time::Instant::now(),
+            performance_sample_time: std::time::Instant::now(),
+            rendered_frames: 0,
+            simulation_ticks: 0,
+            frames_per_second: 0,
+            ticks_per_second: 0,
         }
     }
 
@@ -156,6 +171,7 @@ impl<G: Game> GameApplication<G> {
 
         self.accelerator.wgpu_queue().submit(Some(command_encoder.finish()));
         self.accelerator.wgpu_queue().present(frame);
+        self.rendered_frames = self.rendered_frames.saturating_add(1);
     }
 
     /// Reconfigures the graphics surface for a new window size
@@ -197,6 +213,11 @@ impl<G: Game> GameApplication<G> {
     /// Enables or disables ordinary scene simulation for this application host
     pub fn set_simulation_enabled(&mut self, is_enabled: bool) {
         self.is_simulation_enabled = is_enabled;
+    }
+
+    /// Returns the latest sampled rendered-frame and fixed-simulation rates
+    pub const fn performance_rates(&self) -> [u32; 2] {
+        [self.frames_per_second, self.ticks_per_second]
     }
 
     /// Configures editor-only scene visualization without changing scene state
@@ -258,10 +279,25 @@ impl<G: Game> GameApplication<G> {
         self.update_time = update_time;
         let simulation_active: bool = self.is_simulation_enabled && !self.game.is_paused();
         if let Some(scene) = self.game.scene_mutable() {
-            scene.update(elapsed, simulation_active)?;
+            self.simulation_ticks = self.simulation_ticks.saturating_add(
+                scene.update(elapsed, simulation_active)?,
+            );
         }
+        self.update_performance_rates(update_time);
         self.update_camera(elapsed.as_secs_f32());
         Ok(())
+    }
+
+    /// Updates the reported rates after each approximately one-second sample interval
+    fn update_performance_rates(&mut self, update_time: std::time::Instant) {
+        let elapsed: std::time::Duration = update_time.duration_since(self.performance_sample_time);
+        if elapsed < std::time::Duration::from_secs(1) { return; }
+        let seconds: f64 = elapsed.as_secs_f64();
+        self.frames_per_second = (f64::from(self.rendered_frames) / seconds).round() as u32;
+        self.ticks_per_second = (f64::from(self.simulation_ticks) / seconds).round() as u32;
+        self.performance_sample_time = update_time;
+        self.rendered_frames = 0;
+        self.simulation_ticks = 0;
     }
 
     /// Updates the camera position to follow the game's camera target

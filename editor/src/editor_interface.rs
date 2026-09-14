@@ -13,6 +13,8 @@ use std::{
 /// The docked editor chrome displayed around the scene viewport
 pub struct EditorInterface {
     pub is_playing: bool,
+    pub frames_per_second: u32,
+    pub ticks_per_second: u32,
     pub free_fly_enabled: bool,
     pub return_enabled: bool,
     pub brush_is_square: bool,
@@ -131,6 +133,11 @@ impl Widget for EditorInterface {
                 ui.label(egui::RichText::new("DOGWOOD").small().strong());
                 ui.separator();
                 ui.label(egui::RichText::new(if self.is_playing { "SIMULATING" } else { "PAUSED" }).small());
+                ui.separator();
+                ui.label(egui::RichText::new(format!("FPS {}", self.frames_per_second)).small());
+                ui.separator();
+                ui.label(egui::RichText::new(format!("TPS {}", self.ticks_per_second)).small());
+                ui.separator();
             });
         });
         egui::Panel::left("editor_tools").exact_size(190.0).resizable(false).show(ui, |ui| {

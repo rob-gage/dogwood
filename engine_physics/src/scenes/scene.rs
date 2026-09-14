@@ -545,12 +545,12 @@ impl Scene {
         );
     }
 
-    /// Handles `Scene` streaming and fixed-rate simulation
+    /// Handles Scene streaming and returns the number of completed fixed-rate ticks
     pub fn update(
         &mut self,
         elapsed: Duration,
         is_simulation_active: bool,
-    ) -> Result<(), io::Error> {
+    ) -> Result<u32, io::Error> {
         if let Some(origin_target) = self.area_request.take() {
             self.origin_target = origin_target;
         } else {
@@ -573,11 +573,13 @@ impl Scene {
         self.tile_uploads_clean()?;
         self.tick_time += elapsed;
         let tick_time: Duration = Duration::from_secs(1) / TICK_RATE;
+        let mut ticks: u32 = 0;
         while self.tick_time >= tick_time {
             self.tick(is_simulation_active)?;
             self.tick_time -= tick_time;
+            ticks = ticks.saturating_add(1);
         }
-        Ok(())
+        Ok(ticks)
     }
 
     /// Returns progress from the previous fixed tick to the current fixed tick

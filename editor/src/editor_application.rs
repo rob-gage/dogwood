@@ -346,8 +346,11 @@ impl<G: Game> EditorApplication<G> {
         let view_mode_requested = Rc::new(Cell::new(self.view_mode));
         let tile_borders_requested = Rc::new(Cell::new(self.show_tile_borders));
         let chunk_borders_requested = Rc::new(Cell::new(self.show_chunk_borders));
+        let [frames_per_second, ticks_per_second]: [u32; 2] = self.application.performance_rates();
         let mut layout = EditorInterface {
             is_playing: self.is_playing,
+            frames_per_second,
+            ticks_per_second,
             free_fly_enabled,
             return_enabled,
             brush_is_square: self.brush.is_square(),
