@@ -38,6 +38,7 @@ struct StaticProperties {
 @group(0) @binding(11) var<storage, read> external_body_velocity: array<vec4<f32>>;
 @group(0) @binding(12) var<storage, read> external_body_count: array<atomic<u32>>;
 @group(0) @binding(13) var<uniform> parameters: Parameters;
+@group(0) @binding(14) var<storage, read_write> active_pressure_tiles: array<atomic<u32>>;
 
 const EMPTY: u32 = 0u;
 const CELLULAR_STATIC_FORM: u32 = 1u;
@@ -46,6 +47,57 @@ const MATERIAL_INDEX_MASK: u32 = 0x3fffffffu;
 const INVALID_INDEX: u32 = 0xffffffffu;
 const IMMOVABLE_CONTACT_MASS: f32 = 1000000.0;
 const CONTACT_PRESSURE_TRANSFER: f32 = 0.02;
+
+// Clears the transient coarse mask before current pressure sources are discovered
+@compute @workgroup_size(64)
+fn clear_active_pressure_tiles(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let tile_count: u32 = parameters.buffered_tile_size.x * parameters.buffered_tile_size.y;
+    if invocation.x < tile_count { atomicStore(&active_pressure_tiles[invocation.x], 0u); }
+}
+
+// Marks source tiles and the one-tile halo reachable by the fixed six-pass stencil
+@compute @workgroup_size(64)
+fn mark_active_pressure_tiles(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let logical_tile_index: u32 = invocation.x;
+    let tile_count: u32 = parameters.buffered_tile_size.x * parameters.buffered_tile_size.y;
+    if logical_tile_index >= tile_count { return; }
+    let logical_tile: vec2<u32> = vec2<u32>(
+        logical_tile_index % parameters.buffered_tile_size.x,
+        logical_tile_index / parameters.buffered_tile_size.x,
+    );
+    let physical_tile: vec2<u32> =
+        (logical_tile + parameters.ring_offset) % parameters.buffered_tile_size;
+    let cell_start: u32 =
+        (physical_tile.y * parameters.buffered_tile_size.x + physical_tile.x) * 64u;
+    var has_source: bool = false;
+    for (var local: u32 = 0u; local < 64u; local++) {
+        let index: u32 = cell_start + local;
+        if any(pending_pressure[index] != vec4<f32>(0.0)) ||
+                external_body_occupancy[index] != 0u {
+            has_source = true;
+            break;
+        }
+        let material: u32 = cellular_material_identifiers[index];
+        if material >> 30u == CELLULAR_DYNAMIC_FORM &&
+                any(cellular_kinematics[index].xy != vec2<f32>(0.0)) {
+            has_source = true;
+            break;
+        }
+    }
+    if !has_source { return; }
+    for (var offset_y: i32 = -1; offset_y <= 1; offset_y++) {
+        for (var offset_x: i32 = -1; offset_x <= 1; offset_x++) {
+            let active_tile: vec2<i32> = vec2<i32>(logical_tile) +
+                vec2<i32>(offset_x, offset_y);
+            if any(active_tile < vec2<i32>(0)) ||
+                    active_tile.x >= i32(parameters.buffered_tile_size.x) ||
+                    active_tile.y >= i32(parameters.buffered_tile_size.y) { continue; }
+            atomicStore(&active_pressure_tiles[
+                u32(active_tile.y) * parameters.buffered_tile_size.x + u32(active_tile.x)
+            ], 1u);
+        }
+    }
+}
 
 // Queues editor impulse pressure without bypassing material transmission or mass response
 @compute @workgroup_size(64)
@@ -73,6 +125,7 @@ fn queue_cellular_radial_impulse(@builtin(global_invocation_id) invocation: vec3
 fn copy_contact_velocity(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let logical_index: u32 = invocation.x;
     if logical_index >= parameters.buffered_cell_count { return; }
+    if !pressure_tile_is_active(logical_index) { return; }
     let index: u32 = physical_index(world_cell(logical_index));
     if index == INVALID_INDEX { return; }
     pressure_b[index] = vec4<f32>(cellular_kinematics[index].xy, 0.0, 0.0);
@@ -83,6 +136,7 @@ fn copy_contact_velocity(@builtin(global_invocation_id) invocation: vec3<u32>) {
 fn resolve_cellular_contacts(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let logical_index: u32 = invocation.x;
     if logical_index >= parameters.buffered_cell_count { return; }
+    if !pressure_tile_is_active(logical_index) { return; }
     let cell: vec2<i32> = world_cell(logical_index);
     let index: u32 = physical_index(cell);
     if index == INVALID_INDEX { return; }
@@ -100,6 +154,7 @@ fn resolve_cellular_contacts(@builtin(global_invocation_id) invocation: vec3<u32
 fn seed_cellular_pressure(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let logical_index: u32 = invocation.x;
     if logical_index >= parameters.buffered_cell_count { return; }
+    if !pressure_tile_is_active(logical_index) { return; }
     let index: u32 = physical_index(world_cell(logical_index));
     if index == INVALID_INDEX { return; }
     retained_pressure[index] = vec4<f32>(0.0);
@@ -133,6 +188,7 @@ fn propagate_pressure_b(@builtin(global_invocation_id) invocation: vec3<u32>) {
 fn apply_retained_pressure(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let logical_index: u32 = invocation.x;
     if logical_index >= parameters.buffered_cell_count { return; }
+    if !pressure_tile_is_active(logical_index) { return; }
     let cell: vec2<i32> = world_cell(logical_index);
     let index: u32 = physical_index(cell);
     if index == INVALID_INDEX { return; }
@@ -265,6 +321,7 @@ fn apply_static_pressure(
 // Retains pressure that the source material or blocked stencil routes cannot transmit
 fn propagate_pressure(logical_index: u32, from_a: bool) {
     if logical_index >= parameters.buffered_cell_count { return; }
+    if !pressure_tile_is_active(logical_index) { return; }
     let cell: vec2<i32> = world_cell(logical_index);
     let index: u32 = physical_index(cell);
     if index == INVALID_INDEX { return; }
@@ -454,6 +511,11 @@ fn physical_index(cell: vec2<i32>) -> u32 {
 fn floor_divide(value: i32, divisor: i32) -> i32 {
     if value < 0 { return (value - divisor + 1) / divisor; }
     return value / divisor;
+}
+
+// Returns whether this logical cell lies in the coarse pressure work region
+fn pressure_tile_is_active(logical_index: u32) -> bool {
+    return atomicLoad(&active_pressure_tiles[logical_index / 64u]) != 0u;
 }
 
 // Produces a deterministic per-cell random value for fracture yield decisions
