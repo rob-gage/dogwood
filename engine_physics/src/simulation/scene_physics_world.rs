@@ -1,6 +1,9 @@
 // Copyright Rob Gage 2026
 
-use super::CollisionOccupancySnapshot;
+use super::{
+    CollisionOccupancySnapshot,
+    RigidCellularBody,
+};
 use rapier2d::{
     control::{
         CharacterCollision,
@@ -12,6 +15,8 @@ use rapier2d::{
         ColliderHandle,
         PhysicsWorld,
         Pose,
+        RigidBodyBuilder,
+        RigidBodyHandle,
         Shape,
         SharedShape,
         Vector,
@@ -42,6 +47,58 @@ impl ScenePhysicsWorld {
             cellular_terrain_snapshot: None,
             dynamic_cellular_terrain_state: None,
         }
+    }
+
+    /// Inserts one dynamic body-local cellular compound
+    pub(crate) fn insert_rigid_cellular_body(
+        &mut self,
+        position: [f32; 2],
+        angle: f32,
+        cells: Vec<([i32; 2], crate::materials::MaterialIdentifier,
+            crate::tiles::CellularAppearance)>,
+        friction: f32,
+        restitution: f32,
+        linear_velocity: [f32; 2],
+        angular_velocity: f32,
+    ) -> RigidCellularBody {
+        let handle: RigidBodyHandle = self.rapier.insert_body(
+            RigidBodyBuilder::dynamic()
+                .translation(Vector::new(position[0], position[1]))
+                .rotation(angle)
+                .linvel(Vector::new(linear_velocity[0], linear_velocity[1]))
+                .angvel(angular_velocity),
+        );
+        self.rapier.insert_collider(
+            ColliderBuilder::new(RigidCellularBody::collision_shape(&cells))
+                .density(64.0)
+                .friction(friction)
+                .restitution(restitution),
+            Some(handle),
+        );
+        RigidCellularBody { handle, cells }
+    }
+
+    /// Returns transform and velocities needed to derive a body's world-cell proxy
+    pub(crate) fn rigid_cellular_body_state(
+        &self,
+        body: &RigidCellularBody,
+    ) -> Option<([f32; 2], f32, [f32; 2], f32, [f32; 2])> {
+        let rigid_body = self.rapier.bodies.get(body.handle)?;
+        let position = rigid_body.position();
+        let center = rigid_body.center_of_mass();
+        Some((
+            [position.translation.x, position.translation.y],
+            position.rotation.angle(),
+            [rigid_body.linvel().x, rigid_body.linvel().y],
+            rigid_body.angvel(),
+            [center.x, center.y],
+        ))
+    }
+
+    /// Removes one rigid body and all attached colliders
+    #[allow(dead_code)]
+    pub(crate) fn remove_rigid_cellular_body(&mut self, body: &RigidCellularBody) {
+        self.rapier.remove_body(body.handle);
     }
 
     /// Updates world-scale Rapier terrain only when static cellular occupancy changes

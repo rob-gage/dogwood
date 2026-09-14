@@ -11,6 +11,10 @@ pub struct SceneGraphics<'a> {
     pub cellular_material_identifiers: &'a AcceleratorBuffer,
     /// The parallel `Accelerator` buffer containing persistent cell appearances
     pub cellular_appearances: &'a AcceleratorBuffer,
+    /// The transient static material identifier rasterized from rigid bodies
+    pub rigid_material_identifiers: &'a AcceleratorBuffer,
+    /// The transient appearance rasterized from rigid bodies
+    pub rigid_appearances: &'a AcceleratorBuffer,
     /// The transient fluid material identifier derived for each physical cell
     pub fluid_material_identifiers: &'a AcceleratorBuffer,
     /// The transient fluid coverage derived for each physical cell

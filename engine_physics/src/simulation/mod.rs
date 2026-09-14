@@ -13,6 +13,7 @@ mod gases;
 mod scene_simulation;
 mod scene_simulation_configuration;
 mod scene_physics_world;
+mod rigid_cellular_body;
 
 fn create_simulation_shader_module(
     device: &wgpu::Device,
@@ -34,3 +35,4 @@ pub use gases::Gases;
 pub use scene_simulation::SceneSimulation;
 pub use scene_simulation_configuration::SceneSimulationConfiguration;
 pub use scene_physics_world::ScenePhysicsWorld;
+pub(crate) use rigid_cellular_body::RigidCellularBody;

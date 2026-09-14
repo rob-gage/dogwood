@@ -49,6 +49,7 @@ struct SceneCellSample {
     material_identifier: u32,
     fluid_coverage: f32,
     is_fluid: bool,
+    appearance: u32,
 }
 
 const CELLS_PER_CHUNK_EDGE: i32 = 512;
@@ -75,6 +76,8 @@ const CELLS_PER_CHUNK_EDGE: i32 = 512;
 @group(0) @binding(10) var<storage, read> gas_properties: array<vec4<f32>>;
 
 @group(0) @binding(11) var<storage, read> gas_concentrations: array<f32>;
+@group(0) @binding(12) var<storage, read> rigid_material_identifiers: array<u32>;
+@group(0) @binding(13) var<storage, read> rigid_appearances: array<u32>;
 
 // A fullscreen triangle delegates all scene lookup to the fragment shader
 @vertex
@@ -139,6 +142,11 @@ fn resolve_scene_cellular_or_fluid_sample(
     cell_index: u32,
 ) -> SceneCellSample {
     var material_identifier: u32 = cellular_material_identifiers[cell_index];
+    var appearance: u32 = cellular_appearances[cell_index];
+    if rigid_material_identifiers[cell_index] != EMPTY_MATERIAL_IDENTIFIER {
+        material_identifier = rigid_material_identifiers[cell_index];
+        appearance = rigid_appearances[cell_index];
+    }
     var coverage: f32 = fluid_coverage[cell_index];
     var fluid_material_identifier: u32 = fluid_material_identifiers[cell_index];
     if material_identifier == EMPTY_MATERIAL_IDENTIFIER {
@@ -170,7 +178,7 @@ fn resolve_scene_cellular_or_fluid_sample(
     }
     let is_fluid: bool = material_identifier == EMPTY_MATERIAL_IDENTIFIER && coverage > 0.0;
     if is_fluid { material_identifier = fluid_material_identifier; }
-    return SceneCellSample(material_identifier, coverage, is_fluid);
+    return SceneCellSample(material_identifier, coverage, is_fluid, appearance);
 }
 
 // Renders the selected material-form, pressure, temperature, or gas diagnostic
@@ -232,9 +240,7 @@ fn render_scene_material_color(scene_cell: SceneCellSample, cell_index: u32) -> 
         case FLUID_MATERIAL_FORM: { properties = fluids[material_index]; }
         default: { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }
     }
-    let packed_appearance: u32 = select(
-        cellular_appearances[cell_index], 0u, scene_cell.is_fluid,
-    );
+    let packed_appearance: u32 = select(scene_cell.appearance, 0u, scene_cell.is_fluid);
     var appearance_sample: vec4<f32> = vec4<f32>(0.0);
     for (var channel: u32 = 0u; channel < 4u; channel++) {
         let byte: u32 = (packed_appearance >> (channel * 8u)) & 0xffu;

@@ -76,14 +76,12 @@ impl TileData {
     }
 
     /// Returns one local cell's material identifier
-    #[cfg(test)]
-    pub const fn cell_material_identifier(&self, x: usize, y: usize) -> MaterialIdentifier {
+    pub(crate) const fn cell_material_identifier(&self, x: usize, y: usize) -> MaterialIdentifier {
         self.cell_material_identifiers[y][x]
     }
 
     /// Returns one local cell's persistent appearance
-    #[cfg(test)]
-    pub const fn cell_appearance(&self, x: usize, y: usize) -> CellularAppearance {
+    pub(crate) const fn cell_appearance(&self, x: usize, y: usize) -> CellularAppearance {
         self.cell_appearances[y][x]
     }
 

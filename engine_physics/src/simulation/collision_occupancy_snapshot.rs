@@ -3,6 +3,7 @@
 use crate::tiles::TileCoordinates;
 
 #[allow(dead_code)]
+#[derive(Clone)]
 /// A completed CPU collision snapshot in logical buffered-tile order
 pub struct CollisionOccupancySnapshot {
     /// The dispatch order used to reject older out-of-order completions
@@ -42,6 +43,17 @@ impl CollisionOccupancySnapshot {
         let tile: usize = tile_y as usize * usize::from(self.width) + tile_x as usize;
         let cell: usize = y.rem_euclid(8) as usize * 8 + x.rem_euclid(8) as usize;
         Some(masks[tile][cell / 32] & (1 << (cell % 32)) != 0)
+    }
+
+    /// Removes one static cell from this derived snapshot
+    pub(crate) fn clear_static_cell(&mut self, x: i32, y: i32) {
+        let tile_x: i32 = x.div_euclid(8) - self.origin.x;
+        let tile_y: i32 = y.div_euclid(8) - self.origin.y;
+        if tile_x < 0 || tile_y < 0 || tile_x >= i32::from(self.width) ||
+                tile_y >= i32::from(self.height) { return; }
+        let tile: usize = tile_y as usize * usize::from(self.width) + tile_x as usize;
+        let cell: usize = y.rem_euclid(8) as usize * 8 + x.rem_euclid(8) as usize;
+        self.static_masks[tile][cell / 32] &= !(1 << (cell % 32));
     }
 
 }

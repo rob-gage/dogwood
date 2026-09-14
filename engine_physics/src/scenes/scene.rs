@@ -20,8 +20,10 @@ use crate::simulation::{
     CellularPhysicsBodyProxy,
     CellularDynamic,
     CellularPressure,
+    CollisionOccupancySnapshot,
     Fluids,
     Gases,
+    RigidCellularBody,
     SceneSimulationConfiguration,
     ScenePhysicsWorld,
 };
@@ -63,6 +65,7 @@ use std::{
     collections::{
         HashMap,
         HashSet,
+        VecDeque,
     },
     error::Error,
     future::poll_fn,
@@ -84,6 +87,9 @@ pub const CHUNK_STREAMING_QUEUE_CAPACITY: usize = 64;
 
 /// The fixed scene tick rate
 const TICK_RATE: u32 = 60;
+
+const RIGID_DETACHMENT_MINIMUM_CELLS: usize = 4;
+const RIGID_DETACHMENT_MAXIMUM_CELLS: usize = 1024;
 
 /// A scene that can be simulated by the engine
 pub struct Scene {
@@ -159,6 +165,12 @@ pub struct Scene {
     cellular_integrities: AcceleratorBuffer,
     /// Transient rasterized possessed-pawn interaction geometry
     cellular_physics_body_proxy: CellularPhysicsBodyProxy,
+    /// Authoritative body-local cellular matter paired with Rapier bodies
+    rigid_cellular_bodies: Vec<RigidCellularBody>,
+    /// Changes whenever rigid body-local topology changes
+    rigid_cellular_topology_revision: u64,
+    /// Prior static snapshot used to ignore initial islands and detect topology changes
+    rigid_detachment_snapshot: Option<CollisionOccupancySnapshot>,
     /// GPU-authoritative fluid particles and their transient cellular representation
     fluids: Fluids,
     /// GPU-authoritative shared gas velocity and per-species concentrations
@@ -356,6 +368,9 @@ impl Scene {
             cellular_appearances,
             cellular_integrities,
             cellular_physics_body_proxy,
+            rigid_cellular_bodies: Vec::new(),
+            rigid_cellular_topology_revision: 0,
+            rigid_detachment_snapshot: None,
             fluids,
             gases,
             cellular_dynamic,
@@ -399,6 +414,9 @@ impl Scene {
             material_graphics: &self.material_graphics,
             cellular_material_identifiers: &self.cellular_material_identifiers,
             cellular_appearances: &self.cellular_appearances,
+            rigid_material_identifiers: self.cellular_physics_body_proxy
+                .rigid_material_identifiers_buffer(),
+            rigid_appearances: self.cellular_physics_body_proxy.rigid_appearances_buffer(),
             fluid_material_identifiers: self.fluids.material_identifiers_buffer(),
             fluid_coverage: self.fluids.coverage_buffer(),
             gas_concentrations: self.gases.concentrations_buffer(),
@@ -671,7 +689,8 @@ impl Scene {
 
     /// Runs one fixed-rate physics simulation tick
     fn tick(&mut self, is_simulation_active: bool) -> Result<(), io::Error> {
-        if let Some(snapshot) = self.cellular_collision.latest.take() {
+        if let Some(mut snapshot) = self.cellular_collision.latest.take() {
+            self.detach_unanchored_static_components(&mut snapshot)?;
             self.physics_world.update_cellular_terrain(snapshot);
         }
         let cellular_collision_regions: Vec<[i32; 4]> = self.actor_registry
@@ -701,11 +720,18 @@ impl Scene {
             let dimensions: u16 = u16::from(self.simulation_buffer_size) * 2;
             let fluid_active_area: TileArea = self.area_fluid_active();
             let fluid_active_dimensions: [u16; 2] = fluid_active_area.dimensions();
+            let rigid_body_states: Vec<([f32; 2], f32, [f32; 2], f32, [f32; 2])> =
+                self.rigid_cellular_bodies.iter().filter_map(|body| {
+                    self.physics_world.rigid_cellular_body_state(body)
+                }).collect();
             self.cellular_physics_body_proxy.rasterize(
                 self.accelerator.as_ref(), TileCoordinates { x: self.origin.x - buffer_size, y: self.origin.y - buffer_size },
                 self.simulation_width + dimensions, self.simulation_height + dimensions, self.tiles_ring_offset_x,
                 self.tiles_ring_offset_y, self.gravity, current_walking_pawn,
                 current_pawn_fluid_permeable,
+                &self.rigid_cellular_bodies,
+                &rigid_body_states,
+                self.rigid_cellular_topology_revision,
             );
             self.cellular_pressure.simulate(
                 self.accelerator.as_ref(), TileCoordinates { x: self.origin.x - buffer_size, y: self.origin.y - buffer_size },
@@ -773,6 +799,157 @@ impl Scene {
             self.tiles_ring_offset_y,
         )? { self.cellular_collision_dirty = false; }
         Ok(())
+    }
+
+    /// Transfers newly disconnected static components into authoritative body-local matter
+    fn detach_unanchored_static_components(
+        &mut self,
+        snapshot: &mut CollisionOccupancySnapshot,
+    ) -> Result<(), io::Error> {
+        let Some(previous) = self.rigid_detachment_snapshot.take() else {
+            self.rigid_detachment_snapshot = Some(snapshot.clone());
+            return Ok(());
+        };
+        if previous.origin != snapshot.origin || previous.width != snapshot.width ||
+                previous.height != snapshot.height {
+            self.rigid_detachment_snapshot = Some(snapshot.clone());
+            return Ok(());
+        }
+        if previous.static_masks == snapshot.static_masks {
+            self.rigid_detachment_snapshot = Some(snapshot.clone());
+            return Ok(());
+        }
+        let origin_x: i32 = snapshot.origin.x * 8;
+        let origin_y: i32 = snapshot.origin.y * 8;
+        let width: i32 = i32::from(snapshot.width) * 8;
+        let height: i32 = i32::from(snapshot.height) * 8;
+        let mut visited: HashSet<[i32; 2]> = HashSet::new();
+        let mut candidates: Vec<Vec<CellCoordinates>> = Vec::new();
+        for y in origin_y..origin_y + height {
+            for x in origin_x..origin_x + width {
+                if visited.contains(&[x, y]) || snapshot.is_static_cell_occupied(x, y) != Some(true) {
+                    continue;
+                }
+                let mut queue: VecDeque<[i32; 2]> = VecDeque::from([[x, y]]);
+                let mut component: Vec<CellCoordinates> = Vec::new();
+                let mut anchored: bool = false;
+                visited.insert([x, y]);
+                while let Some([cell_x, cell_y]) = queue.pop_front() {
+                    component.push(CellCoordinates { x: cell_x, y: cell_y });
+                    anchored |= cell_x == origin_x || cell_y == origin_y ||
+                        cell_x == origin_x + width - 1 || cell_y == origin_y + height - 1;
+                    for neighbor in [[cell_x - 1, cell_y], [cell_x + 1, cell_y],
+                            [cell_x, cell_y - 1], [cell_x, cell_y + 1]] {
+                        if !visited.contains(&neighbor) &&
+                                snapshot.is_static_cell_occupied(neighbor[0], neighbor[1]) == Some(true) {
+                            visited.insert(neighbor);
+                            queue.push_back(neighbor);
+                        }
+                    }
+                }
+                if !anchored && (RIGID_DETACHMENT_MINIMUM_CELLS..=
+                        RIGID_DETACHMENT_MAXIMUM_CELLS).contains(&component.len()) {
+                    candidates.push(component);
+                }
+            }
+        }
+        let capacity: usize = usize::from(snapshot.width) * usize::from(snapshot.height) * 64;
+        for component in candidates {
+            let represented: usize = self.rigid_cellular_bodies.iter()
+                .map(|body| body.cells.len()).sum();
+            if represented + component.len() > capacity { continue; }
+            let minimum_x: i32 = component.iter().map(|cell| cell.x).min().unwrap();
+            let minimum_y: i32 = component.iter().map(|cell| cell.y).min().unwrap();
+            let mut cells = Vec::with_capacity(component.len());
+            let mut friction: f32 = 0.0;
+            let mut restitution: f32 = 0.0;
+            for coordinates in &component {
+                let tile_coordinates: TileCoordinates = coordinates.tile_coordinates();
+                let [x, y] = coordinates.local_tile_coordinates();
+                let Some(ChunkEntry::Active { chunk, .. }) =
+                    self.chunks.get(&tile_coordinates.chunk_coordinates()) else { continue; };
+                let Ok(tile) = chunk.get_tile(tile_coordinates) else { continue; };
+                let material_identifier = tile.cell_material_identifier(x, y);
+                let Some(Material::CellularStatic { friction: cell_friction,
+                    restitution: cell_restitution, .. }) =
+                    self.data.materials().get(material_identifier) else { continue; };
+                friction += *cell_friction;
+                restitution += *cell_restitution;
+                cells.push((
+                    [coordinates.x - minimum_x, coordinates.y - minimum_y],
+                    material_identifier,
+                    tile.cell_appearance(x, y),
+                ));
+            }
+            if cells.len() != component.len() { continue; }
+            let divisor: f32 = cells.len() as f32;
+            let mut edits = SceneEditBatch::new();
+            edits.erase(component.clone());
+            self.apply_edits(&mut edits)?;
+            for coordinates in &component { snapshot.clear_static_cell(coordinates.x, coordinates.y); }
+            self.rigid_cellular_bodies.push(self.physics_world.insert_rigid_cellular_body(
+                [minimum_x as f32 / 8.0, minimum_y as f32 / 8.0], 0.0, cells,
+                friction / divisor, restitution / divisor, [0.0; 2], 0.0,
+            ));
+            self.rigid_cellular_topology_revision =
+                self.rigid_cellular_topology_revision.wrapping_add(1);
+        }
+        self.rigid_detachment_snapshot = Some(snapshot.clone());
+        Ok(())
+    }
+
+    /// Removes body-local cells and replaces the body with its remaining connected pieces
+    #[allow(dead_code)]
+    fn remove_rigid_cellular_body_cells(
+        &mut self,
+        body_index: usize,
+        removed: &HashSet<[i32; 2]>,
+    ) {
+        if body_index >= self.rigid_cellular_bodies.len() || removed.is_empty() { return; }
+        let body = self.rigid_cellular_bodies.swap_remove(body_index);
+        let Some((translation, angle, linear_velocity, angular_velocity, center_of_mass)) =
+            self.physics_world.rigid_cellular_body_state(&body) else { return; };
+        self.physics_world.remove_rigid_cellular_body(&body);
+        let remaining = body.cells.into_iter().filter(|cell| !removed.contains(&cell.0)).collect();
+        for cells in RigidCellularBody::connected_components(remaining) {
+            if cells.is_empty() { continue; }
+            let local_center = cells.iter().fold([0.0; 2], |sum, cell| [
+                sum[0] + (cell.0[0] as f32 + 0.5) / 8.0,
+                sum[1] + (cell.0[1] as f32 + 0.5) / 8.0,
+            ]);
+            let divisor = cells.len() as f32;
+            let local_center = [local_center[0] / divisor, local_center[1] / divisor];
+            let child_center = [
+                translation[0] + angle.cos() * local_center[0] - angle.sin() * local_center[1],
+                translation[1] + angle.sin() * local_center[0] + angle.cos() * local_center[1],
+            ];
+            let offset = [child_center[0] - center_of_mass[0], child_center[1] - center_of_mass[1]];
+            let child_velocity = [
+                linear_velocity[0] - angular_velocity * offset[1],
+                linear_velocity[1] + angular_velocity * offset[0],
+            ];
+            let (friction, restitution) = self.rigid_cellular_material_response(&cells);
+            self.rigid_cellular_bodies.push(self.physics_world.insert_rigid_cellular_body(
+                translation, angle, cells, friction, restitution, child_velocity, angular_velocity,
+            ));
+        }
+        self.rigid_cellular_topology_revision =
+            self.rigid_cellular_topology_revision.wrapping_add(1);
+    }
+
+    /// Averages the existing static material response for one concrete body
+    fn rigid_cellular_material_response(
+        &self,
+        cells: &[([i32; 2], MaterialIdentifier, CellularAppearance)],
+    ) -> (f32, f32) {
+        let (friction, restitution) = cells.iter().fold((0.0, 0.0),
+            |sum, (_, identifier, _)| match self.data.materials().get(*identifier) {
+                Some(Material::CellularStatic { friction, restitution, .. }) =>
+                    (sum.0 + friction, sum.1 + restitution),
+                _ => sum,
+            });
+        let divisor = cells.len().max(1) as f32;
+        (friction / divisor, restitution / divisor)
     }
 
     /// Resolves one world cell to a resident physical GPU cell
@@ -2324,6 +2501,77 @@ mod tests {
         );
         scene.apply_edits(&mut edits).unwrap();
         scene.update(Duration::from_secs(1) / 60, true).unwrap();
+        accelerator.poll().unwrap();
+    }
+
+    #[test]
+    fn disconnected_static_component_becomes_one_falling_rigid_body() {
+        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let accelerator: Arc<Accelerator> = Arc::new(Accelerator::new().unwrap());
+        let mut materials: MaterialRegistry = MaterialRegistry::new();
+        let stone: MaterialIdentifier = materials.register(Material::CellularStatic {
+            name: "Stone".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(110, 105, 100)),
+            pressure_ignore_threshold: 1.0,
+            default_integrity: 1.0,
+            debris_material: None,
+            debris_yield_rate: 0.0,
+            pressure_transmission: 0.5,
+            friction: 0.7,
+            restitution: 0.05,
+        });
+        let mut scene: Scene = Scene::new(
+            &accelerator,
+            materials,
+            SceneSimulationConfiguration {
+                gravity: [0.0, -8.0], width: 1, height: 1,
+                buffer_size: 2, streaming_batch_size: 1,
+            },
+        ).unwrap();
+        let cells: Vec<CellCoordinates> = (2..=5).flat_map(|x| {
+            (3..=4).map(move |y| CellCoordinates { x, y })
+        }).chain((0..=2).map(|y| CellCoordinates { x: 3, y })).collect();
+        let mut edits = SceneEditBatch::new();
+        edits.place_material(stone, CellularAppearance::NEUTRAL, cells.clone());
+        scene.apply_edits(&mut edits).unwrap();
+        let mut static_masks = vec![[0u32; 2]; 25];
+        for cell in &cells {
+            let tile_x = cell.x.div_euclid(8) + 2;
+            let tile_y = cell.y.div_euclid(8) + 2;
+            let tile = (tile_y * 5 + tile_x) as usize;
+            let local = (cell.y.rem_euclid(8) * 8 + cell.x.rem_euclid(8)) as usize;
+            static_masks[tile][local / 32] |= 1 << (local % 32);
+        }
+        let baseline = CollisionOccupancySnapshot {
+            sequence: 0,
+            origin: TileCoordinates { x: -2, y: -2 },
+            width: 5,
+            height: 5,
+            static_masks: static_masks.into_boxed_slice(),
+            dynamic_masks: vec![[0, 0]; 25].into_boxed_slice(),
+        };
+        scene.detach_unanchored_static_components(&mut baseline.clone()).unwrap();
+        assert!(scene.rigid_cellular_bodies.is_empty());
+        let mut separated = baseline.clone();
+        separated.sequence = 1;
+        separated.clear_static_cell(3, 2);
+        scene.detach_unanchored_static_components(&mut separated).unwrap();
+        assert!(scene.rigid_cellular_bodies.len() == 1);
+        assert!(scene.rigid_cellular_bodies[0].cells.len() == 8);
+        let initial_y = scene.physics_world.rigid_cellular_body_state(
+            &scene.rigid_cellular_bodies[0],
+        ).unwrap().0[1];
+        scene.physics_world.update_cellular_terrain(separated);
+        for _ in 0..8 { scene.physics_world.step(scene.gravity, 1.0 / TICK_RATE as f32); }
+        let state = scene.physics_world.rigid_cellular_body_state(
+            &scene.rigid_cellular_bodies[0],
+        ).unwrap();
+        assert!(state.0[1] < initial_y);
+        scene.cellular_physics_body_proxy.rasterize(
+            accelerator.as_ref(), TileCoordinates { x: -2, y: -2 }, 5, 5, 0, 0,
+            scene.gravity, None, false, &scene.rigid_cellular_bodies, &[state],
+            scene.rigid_cellular_topology_revision,
+        );
         accelerator.poll().unwrap();
     }
 
