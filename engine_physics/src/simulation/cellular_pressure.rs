@@ -70,7 +70,6 @@ impl CellularPressure {
         external_body_occupancy: &AcceleratorBuffer,
         external_body_velocity: &AcceleratorBuffer,
         external_body_count: &AcceleratorBuffer,
-        cellular_dynamic_active_tiles: &AcceleratorBuffer,
         buffered_cell_count: usize,
     ) -> Self {
         let device: &wgpu::Device = accelerator.wgpu_device();
@@ -193,7 +192,6 @@ impl CellularPressure {
                     },
                     Self::storage_layout_entry(14, false),
                     Self::storage_layout_entry(15, false),
-                    Self::storage_layout_entry(16, false),
                 ],
             },
         );
@@ -225,8 +223,7 @@ impl CellularPressure {
                         resource: parameters.as_entire_binding(),
                     },
                     Self::binding(14, &active_tiles),
-                    Self::binding(15, cellular_dynamic_active_tiles),
-                    Self::binding(16, &active_tile_indices),
+                    Self::binding(15, &active_tile_indices),
                 ],
             },
         );

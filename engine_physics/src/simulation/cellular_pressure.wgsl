@@ -39,8 +39,7 @@ struct StaticProperties {
 @group(0) @binding(12) var<storage, read> external_body_count: array<atomic<u32>>;
 @group(0) @binding(13) var<uniform> parameters: Parameters;
 @group(0) @binding(14) var<storage, read_write> active_pressure_tiles: array<atomic<u32>>;
-@group(0) @binding(15) var<storage, read_write> active_cellular_dynamic_tiles: array<atomic<u32>>;
-@group(0) @binding(16) var<storage, read_write> active_pressure_tile_indices: array<u32>;
+@group(0) @binding(15) var<storage, read_write> active_pressure_tile_indices: array<u32>;
 @group(1) @binding(0) var<storage, read_write> pressure_indirect_dispatch: array<atomic<u32>>;
 
 const EMPTY: u32 = 0u;
@@ -50,7 +49,6 @@ const MATERIAL_INDEX_MASK: u32 = 0x3fffffffu;
 const INVALID_INDEX: u32 = 0xffffffffu;
 const IMMOVABLE_CONTACT_MASS: f32 = 1000000.0;
 const CONTACT_PRESSURE_TRANSFER: f32 = 0.02;
-const CELLULAR_DYNAMIC_ACTIVE_COUNTDOWN: u32 = 8u;
 
 // Clears the transient coarse mask before current pressure sources are discovered
 @compute @workgroup_size(64)
@@ -99,12 +97,6 @@ fn mark_active_pressure_tiles(@builtin(global_invocation_id) invocation: vec3<u3
             atomicStore(&active_pressure_tiles[
                 u32(active_tile.y) * parameters.buffered_tile_size.x + u32(active_tile.x)
             ], 1u);
-            let physical_tile: vec2<u32> =
-                (vec2<u32>(active_tile) + parameters.ring_offset) %
-                    parameters.buffered_tile_size;
-            atomicMax(&active_cellular_dynamic_tiles[
-                physical_tile.y * parameters.buffered_tile_size.x + physical_tile.x
-            ], CELLULAR_DYNAMIC_ACTIVE_COUNTDOWN);
         }
     }
 }

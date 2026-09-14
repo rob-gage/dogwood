@@ -280,7 +280,6 @@ impl Scene {
             cellular_physics_body_proxy.occupancy_buffer(),
             cellular_physics_body_proxy.velocity_buffer(),
             cellular_physics_body_proxy.count_buffer(),
-            cellular_dynamic.active_tiles_buffer(),
             buffered_cell_count,
         );
         let cellular_collision: CellularCollision = CellularCollision::new(
@@ -715,10 +714,14 @@ impl Scene {
             );
             self.cellular_dynamic.simulate_cellular_dynamic_tick(
                 self.accelerator.as_ref(),
+                &self.cellular_material_identifiers,
+                &self.cellular_appearances,
                 TileCoordinates {
                     x: self.origin.x - buffer_size,
                     y: self.origin.y - buffer_size,
                 },
+                self.simulation_width + dimensions,
+                self.simulation_height + dimensions,
                 self.tiles_ring_offset_x,
                 self.tiles_ring_offset_y,
                 self.gravity,
