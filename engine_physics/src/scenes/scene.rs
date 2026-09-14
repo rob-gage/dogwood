@@ -675,6 +675,9 @@ impl Scene {
         if let Some(snapshot) = self.cellular_collision.latest.take() {
             self.physics_world.update_cellular_terrain(snapshot);
         }
+        let cellular_collision_regions: Vec<[i32; 4]> = self.actor_registry
+            .cellular_collision_regions(self.gravity, 1.0 / TICK_RATE as f32);
+        self.physics_world.update_dynamic_cellular_terrain(&cellular_collision_regions);
         if is_simulation_active {
             self.physics_world.step(self.gravity, 1.0 / TICK_RATE as f32);
         }

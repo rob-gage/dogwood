@@ -248,6 +248,61 @@ impl ActorRegistry {
         self.set_control_state(identifier, ActorControlState::default())
     }
 
+    /// Returns world-cell regions needed by walking and swimming pawn collision queries
+    pub(crate) fn cellular_collision_regions(
+        &self,
+        gravity: [f32; 2],
+        delta_time: f32,
+    ) -> Vec<[i32; 4]> {
+        self.world.iter_entities().filter_map(|entity| {
+            let pawn: &ActorPawn = entity.get::<ActorPawn>()?;
+            if !matches!(
+                pawn.movement,
+                Some(ActorPawnMovement::Walking | ActorPawnMovement::Swimming),
+            ) { return None; }
+            let walking: ActorPawnWalkingConfiguration = pawn.walking?;
+            let position: ScenePosition = *entity.get::<ScenePosition>()?;
+            let velocity: SceneVelocity = *entity.get::<SceneVelocity>()?;
+            if !walking.collider_width.is_finite() || !walking.collider_height.is_finite() ||
+                    walking.collider_width <= 0.0 || walking.collider_height <= 0.0 {
+                return None;
+            }
+            let gravity_magnitude: f32 = gravity[0].hypot(gravity[1]);
+            let up: [f32; 2] = if gravity_magnitude > 0.0 {
+                [-gravity[0] / gravity_magnitude, -gravity[1] / gravity_magnitude]
+            } else {
+                [0.0, 1.0]
+            };
+            let radius: f32 = walking.collider_width.min(walking.collider_height) * 0.5;
+            let half_segment: f32 = (walking.collider_height - radius * 2.0) * 0.5;
+            let extent: [f32; 2] = [
+                radius + up[0].abs() * half_segment,
+                radius + up[1].abs() * half_segment,
+            ];
+            let lookahead: f32 = 2.0 / 8.0;
+            let slope_rise: f32 = lookahead * walking.maximum_slope_angle.tan();
+            let slope_rise: f32 = if slope_rise.is_finite() {
+                slope_rise.max(0.0)
+            } else { 0.0 };
+            let movement: f32 = velocity.x.hypot(velocity.y) * delta_time +
+                gravity_magnitude * delta_time * delta_time +
+                walking.acceleration.abs() * delta_time * delta_time +
+                walking.jump_velocity.abs() * delta_time;
+            // Covers the capsule sweep, ground snap, and gravity-relative ramp probes.
+            let margin: f32 = movement + 1.0 / 8.0 + lookahead + slope_rise + 1.0 / 1024.0;
+            let center: [f32; 2] = [
+                position.tile_coordinates.x as f32 + position.x_offset,
+                position.tile_coordinates.y as f32 + position.y_offset,
+            ];
+            Some([
+                ((center[0] - extent[0] - margin) * 8.0).floor() as i32,
+                ((center[1] - extent[1] - margin) * 8.0).floor() as i32,
+                ((center[0] + extent[0] + margin) * 8.0).ceil() as i32,
+                ((center[1] + extent[1] + margin) * 8.0).ceil() as i32,
+            ])
+        }).collect()
+    }
+
     /// Advances configured pawn movement by one fixed simulation step
     pub fn simulate_actor_pawns(
         &mut self,

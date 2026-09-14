@@ -22,7 +22,7 @@ const READBACK_SLOT_COUNT: usize = 3;
 
 /// Derives compact collision occupancy from the authoritative GPU cellular state
 pub struct CellularCollision {
-    /// The GPU buffer containing two occupancy words per logical buffered tile
+    /// The GPU buffer containing static and dynamic occupancy words per logical buffered tile
     occupancy: AcceleratorBuffer,
     /// The buffered dimensions and tile-ring offsets used by the compute shader
     parameters: wgpu::Buffer,
@@ -38,6 +38,8 @@ pub struct CellularCollision {
     tile_count: u32,
     /// The sequence assigned to the next dispatched snapshot
     sequence_next: u64,
+    /// The newest completion accepted even after its snapshot is consumed
+    sequence_latest: Option<u64>,
 }
 
 impl CellularCollision {
@@ -53,8 +55,8 @@ impl CellularCollision {
         // size the occupancy and readback storage for the full buffered area
         let device: &wgpu::Device = accelerator.wgpu_device();
         let tile_count: u32 = u32::from(width) * u32::from(height);
-        let byte_size: u64 = u64::from(tile_count) * 8;
-        let occupancy: AcceleratorBuffer = accelerator.allocate::<[u32; 2]>(tile_count as usize);
+        let byte_size: u64 = u64::from(tile_count) * 16;
+        let occupancy: AcceleratorBuffer = accelerator.allocate::<[u32; 4]>(tile_count as usize);
         let parameters: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("cellular collision parameters"),
             size: 64,
@@ -171,6 +173,7 @@ impl CellularCollision {
             latest: None,
             tile_count,
             sequence_next: 0,
+            sequence_latest: None,
         }
     }
 
@@ -186,7 +189,8 @@ impl CellularCollision {
                     std::mem::replace(&mut *status, CollisionReadbackStatus::Available)
                 else { unreachable!() };
                 let snapshot: CollisionOccupancySnapshot = result.map_err(io::Error::other)?;
-                if self.latest.as_ref().is_none_or(|latest| snapshot.sequence > latest.sequence) {
+                if self.sequence_latest.is_none_or(|latest| snapshot.sequence > latest) {
+                    self.sequence_latest = Some(snapshot.sequence);
                     self.latest = Some(snapshot);
                 }
             }
@@ -261,7 +265,7 @@ impl CellularCollision {
             0,
             &slot.buffer,
             0,
-            u64::from(self.tile_count) * 8,
+            u64::from(self.tile_count) * 16,
         );
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
         // decode the masks asynchronously with their dispatch-time logical metadata
@@ -273,12 +277,29 @@ impl CellularCollision {
                     let result: Result<CollisionOccupancySnapshot, String> =
                         mapped_buffer.slice(..).get_mapped_range()
                         .map_err(|error| error.to_string()).map(|mapped| {
-                            let masks: Box<[[u32; 2]]> = mapped.chunks_exact(8).map(|bytes| [
-                                u32::from_le_bytes(bytes[0..4].try_into().unwrap()),
-                                u32::from_le_bytes(bytes[4..8].try_into().unwrap()),
-                            ]).collect();
+                            let mut static_masks: Vec<[u32; 2]> =
+                                Vec::with_capacity(mapped.len() / 16);
+                            let mut dynamic_masks: Vec<[u32; 2]> =
+                                Vec::with_capacity(mapped.len() / 16);
+                            for bytes in mapped.chunks_exact(16) {
+                                static_masks.push([
+                                    u32::from_le_bytes(bytes[0..4].try_into().unwrap()),
+                                    u32::from_le_bytes(bytes[4..8].try_into().unwrap()),
+                                ]);
+                                dynamic_masks.push([
+                                    u32::from_le_bytes(bytes[8..12].try_into().unwrap()),
+                                    u32::from_le_bytes(bytes[12..16].try_into().unwrap()),
+                                ]);
+                            }
                             drop(mapped);
-                            CollisionOccupancySnapshot { sequence, origin, width, height, masks }
+                            CollisionOccupancySnapshot {
+                                sequence,
+                                origin,
+                                width,
+                                height,
+                                static_masks: static_masks.into_boxed_slice(),
+                                dynamic_masks: dynamic_masks.into_boxed_slice(),
+                            }
                         });
                     mapped_buffer.unmap();
                     result
