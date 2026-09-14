@@ -106,8 +106,8 @@ impl DemoGame {
             accelerator,
             SceneSimulationConfiguration {
                 gravity: [0.0, -18.0],
-                width: 16,
-                height: 9,
+                width: 48,
+                height: 27,
                 buffer_size: 12,
                 streaming_batch_size: 4,
             },
@@ -164,8 +164,8 @@ impl Game for DemoGame {
 
     fn camera(&self) -> Camera {
         Camera {
-            width: 16.0,
-            height: 9.0,
+            width: 48.0,
+            height: 27.0,
             zoom: 1.0,
             follow_acceleration: 0.0,
             follow_speed: 0.0,
