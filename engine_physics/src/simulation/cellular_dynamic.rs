@@ -258,11 +258,10 @@ impl CellularDynamic {
         let tile_count: u32 = self.buffered_cell_count / 64;
         encoder.clear_buffer(&self.indirect_dispatch, 0, None);
         {
-            let mut pass: wgpu::ComputePass<'_> =
-                encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("compact active cellular dynamic tiles"),
-                    timestamp_writes: None,
-                });
+            let mut pass: wgpu::ComputePass<'_> = accelerator.begin_compute_pass(
+                &mut encoder,
+                "compact active cellular dynamic tiles",
+            );
             pass.set_pipeline(&self.compact_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[0]);
             pass.set_bind_group(1, &self.indirect_bind_group, &[]);
@@ -278,10 +277,7 @@ impl CellularDynamic {
                     _ => "cellular dynamic group D",
                 };
                 let mut pass: wgpu::ComputePass<'_> =
-                    encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                        label: Some(label),
-                        timestamp_writes: None,
-                    });
+                    accelerator.begin_compute_pass(&mut encoder, label);
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, &self.bind_group, &[dynamic_offset]);
                 pass.dispatch_workgroups_indirect(

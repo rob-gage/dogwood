@@ -321,7 +321,9 @@ impl SceneRenderer {
                     },
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes: accelerator.render_pass_timestamp_writes(
+                    "Scene render pass",
+                ),
                 occlusion_query_set: None,
                 multiview_mask: None,
             },

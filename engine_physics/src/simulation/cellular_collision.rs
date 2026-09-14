@@ -248,11 +248,10 @@ impl CellularCollision {
             &wgpu::CommandEncoderDescriptor { label: Some("cellular collision extraction") },
         );
         {
-            let mut pass: wgpu::ComputePass<'_> =
-                encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("cellular collision occupancy extraction"),
-                    timestamp_writes: None,
-                });
+            let mut pass: wgpu::ComputePass<'_> = accelerator.begin_compute_pass(
+                &mut encoder,
+                "cellular collision occupancy extraction",
+            );
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.dispatch_workgroups(self.tile_count, 1, 1);

@@ -917,6 +917,7 @@ dependencies = [
 name = "engine_compute"
 version = "0.0.0"
 dependencies = [
+ "engine_diagnostics",
  "pollster",
  "tracing",
  "wgpu",

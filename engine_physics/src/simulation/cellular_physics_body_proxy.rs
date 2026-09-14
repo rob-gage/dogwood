@@ -105,9 +105,7 @@ impl CellularPhysicsBodyProxy {
             });
         for (pipeline, label) in [(&self.clear_pipeline, "clear cellular physics body proxy"),
                 (&self.raster_pipeline, "rasterize cellular physics body proxy")] {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some(label), timestamp_writes: None,
-            });
+            let mut pass = accelerator.begin_compute_pass(&mut encoder, label);
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.dispatch_workgroups(self.buffered_cell_count.div_ceil(64), 1, 1);

@@ -364,21 +364,17 @@ impl CellularPressure {
             (&self.mark_active_tiles_pipeline, "mark active cellular pressure tiles"),
         ] {
             let mut pass: wgpu::ComputePass<'_> =
-                encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some(label),
-                    timestamp_writes: None,
-                });
+                accelerator.begin_compute_pass(&mut encoder, label);
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.dispatch_workgroups(tile_count.div_ceil(64), 1, 1);
         }
         encoder.clear_buffer(&self.indirect_dispatch, 0, None);
         {
-            let mut pass: wgpu::ComputePass<'_> =
-                encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("compact active cellular pressure tiles"),
-                    timestamp_writes: None,
-                });
+            let mut pass: wgpu::ComputePass<'_> = accelerator.begin_compute_pass(
+                &mut encoder,
+                "compact active cellular pressure tiles",
+            );
             pass.set_pipeline(&self.compact_active_tiles_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.set_bind_group(1, &self.indirect_bind_group, &[]);
@@ -397,10 +393,7 @@ impl CellularPressure {
             (&self.apply_pipeline, "apply retained cellular pressure"),
         ] {
             let mut pass: wgpu::ComputePass<'_> =
-                encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some(label),
-                    timestamp_writes: None,
-                });
+                accelerator.begin_compute_pass(&mut encoder, label);
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.dispatch_workgroups_indirect(&self.indirect_dispatch, 0);
@@ -436,10 +429,7 @@ impl CellularPressure {
         let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device()
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
         let mut pass: wgpu::ComputePass<'_> =
-            encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some(label),
-                timestamp_writes: None,
-            });
+            accelerator.begin_compute_pass(&mut encoder, label);
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.dispatch_workgroups(self.buffered_cell_count.div_ceil(64), 1, 1);

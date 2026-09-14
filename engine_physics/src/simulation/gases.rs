@@ -256,15 +256,18 @@ impl Gases {
         let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
             &wgpu::CommandEncoderDescriptor { label: Some("gas simulation") },
         );
-        self.dispatch(&mut encoder, &self.advect_velocity_pipeline, self.buffered_cell_count,
+        self.dispatch(accelerator, &mut encoder, &self.advect_velocity_pipeline,
+            self.buffered_cell_count,
             "advect gas velocity");
-        self.dispatch(&mut encoder, &self.curl_pipeline, self.buffered_cell_count,
+        self.dispatch(accelerator, &mut encoder, &self.curl_pipeline, self.buffered_cell_count,
             "calculate gas curl");
-        self.dispatch(&mut encoder, &self.force_pipeline, self.buffered_cell_count,
+        self.dispatch(accelerator, &mut encoder, &self.force_pipeline, self.buffered_cell_count,
             "apply gas buoyancy and vorticity confinement");
-        self.dispatch(&mut encoder, &self.divergence_pipeline, self.buffered_cell_count,
+        self.dispatch(accelerator, &mut encoder, &self.divergence_pipeline,
+            self.buffered_cell_count,
             "calculate gas divergence");
-        self.dispatch(&mut encoder, &self.pressure_clear_pipeline, self.buffered_cell_count,
+        self.dispatch(accelerator, &mut encoder, &self.pressure_clear_pipeline,
+            self.buffered_cell_count,
             "clear gas pressure");
         for iteration in 0..PRESSURE_ITERATION_COUNT {
             let (pipeline, label): (&wgpu::ComputePipeline, &str) = if iteration % 2 == 0 {
@@ -272,11 +275,12 @@ impl Gases {
             } else {
                 (&self.pressure_b_pipeline, "solve gas pressure into B")
             };
-            self.dispatch(&mut encoder, pipeline, self.buffered_cell_count, label);
+            self.dispatch(accelerator, &mut encoder, pipeline, self.buffered_cell_count, label);
         }
-        self.dispatch(&mut encoder, &self.projection_pipeline, self.buffered_cell_count,
+        self.dispatch(accelerator, &mut encoder, &self.projection_pipeline,
+            self.buffered_cell_count,
             "project gas velocity");
-        self.dispatch(&mut encoder, &self.concentration_pipeline,
+        self.dispatch(accelerator, &mut encoder, &self.concentration_pipeline,
             self.buffered_cell_count * self.gas_count, "advect gas concentrations");
         encoder.copy_buffer_to_buffer(
             self.concentration_scratch.wgpu_buffer(), 0,
@@ -307,7 +311,10 @@ impl Gases {
         let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
             &wgpu::CommandEncoderDescriptor { label: Some("gas streamed area clear") },
         );
-        self.dispatch(&mut encoder, &self.clear_area_pipeline, count, "clear incoming gas area");
+        self.dispatch(
+            accelerator, &mut encoder, &self.clear_area_pipeline, count,
+            "clear incoming gas area",
+        );
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
 
@@ -357,7 +364,10 @@ impl Gases {
         let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
             &wgpu::CommandEncoderDescriptor { label: Some("gas export") },
         );
-        self.dispatch(&mut encoder, &self.export_pipeline, count, "export outgoing gas area");
+        self.dispatch(
+            accelerator, &mut encoder, &self.export_pipeline, count,
+            "export outgoing gas area",
+        );
         encoder.copy_buffer_to_buffer(
             self.streaming_data.wgpu_buffer(), 0, &download.buffer, 0, byte_count,
         );
@@ -366,14 +376,14 @@ impl Gases {
 
     fn dispatch(
         &self,
+        accelerator: &Accelerator,
         encoder: &mut wgpu::CommandEncoder,
         pipeline: &wgpu::ComputePipeline,
         count: u32,
         label: &str,
     ) {
-        let mut pass: wgpu::ComputePass<'_> = encoder.begin_compute_pass(
-            &wgpu::ComputePassDescriptor { label: Some(label), timestamp_writes: None },
-        );
+        let mut pass: wgpu::ComputePass<'_> =
+            accelerator.begin_compute_pass(encoder, label);
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.dispatch_workgroups(count.div_ceil(64), 1, 1);

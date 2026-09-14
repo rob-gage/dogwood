@@ -10,3 +10,6 @@ license.workspace = true
 pollster = { workspace = true }
 tracing = { workspace = true }
 wgpu = { workspace = true }
+
+[dev-dependencies]
+engine_diagnostics = { version = "0.0.0", path = "../engine_diagnostics" }

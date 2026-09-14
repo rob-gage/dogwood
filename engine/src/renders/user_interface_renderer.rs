@@ -67,7 +67,9 @@ impl UserInterfaceRenderer {
                     },
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes: accelerator.render_pass_timestamp_writes(
+                    "User Interface Render Pass",
+                ),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });

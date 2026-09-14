@@ -359,13 +359,16 @@ impl Fluids {
         let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
             &wgpu::CommandEncoderDescriptor { label: Some("fluid edits") },
         );
-        self.dispatch(&mut encoder, &self.edit_remove_pipeline, self.particle_capacity,
+        self.dispatch(accelerator, &mut encoder, &self.edit_remove_pipeline,
+            self.particle_capacity,
             "remove edited fluid particles");
-        self.dispatch(&mut encoder, &self.edit_spawn_pipeline, self.buffered_cell_count,
+        self.dispatch(accelerator, &mut encoder, &self.edit_spawn_pipeline,
+            self.buffered_cell_count,
             "spawn edited fluid particles");
-        self.dispatch(&mut encoder, &self.edit_clear_pipeline, self.buffered_cell_count,
+        self.dispatch(accelerator, &mut encoder, &self.edit_clear_pipeline,
+            self.buffered_cell_count,
             "clear fluid edits");
-        self.encode_rebuild(&mut encoder);
+        self.encode_rebuild(accelerator, &mut encoder);
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
 
@@ -392,41 +395,52 @@ impl Fluids {
         let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
             &wgpu::CommandEncoderDescriptor { label: Some("fluid simulation") },
         );
-        self.dispatch(&mut encoder, &self.classify_active_pipeline, self.particle_capacity,
+        self.dispatch(accelerator, &mut encoder, &self.classify_active_pipeline,
+            self.particle_capacity,
             "classify active fluid particles");
         for _ in 0..PBF_SUBSTEP_COUNT {
-            self.dispatch(&mut encoder, &self.predict_pipeline, self.particle_capacity,
+            self.dispatch(accelerator, &mut encoder, &self.predict_pipeline,
+                self.particle_capacity,
                 "predict fluid particles");
             for _ in 0..PBF_CONSTRAINT_ITERATION_COUNT {
-                self.dispatch(&mut encoder, &self.clear_buckets_pipeline, self.bucket_count,
+                self.dispatch(accelerator, &mut encoder, &self.clear_buckets_pipeline,
+                    self.bucket_count,
                     "clear predicted fluid buckets");
-                self.dispatch(&mut encoder, &self.insert_predicted_buckets_pipeline,
+                self.dispatch(accelerator, &mut encoder, &self.insert_predicted_buckets_pipeline,
                     self.particle_capacity, "insert predicted fluid particles into buckets");
-                self.dispatch(&mut encoder, &self.lambda_pipeline, self.particle_capacity,
+                self.dispatch(accelerator, &mut encoder, &self.lambda_pipeline,
+                    self.particle_capacity,
                     "calculate fluid lambdas");
-                self.dispatch(&mut encoder, &self.position_correction_pipeline,
+                self.dispatch(accelerator, &mut encoder, &self.position_correction_pipeline,
                     self.particle_capacity, "calculate fluid position corrections");
-                self.dispatch(&mut encoder, &self.apply_position_correction_pipeline,
+                self.dispatch(accelerator, &mut encoder, &self.apply_position_correction_pipeline,
                     self.particle_capacity, "apply fluid position corrections");
             }
-            self.dispatch(&mut encoder, &self.commit_pipeline, self.particle_capacity,
+            self.dispatch(accelerator, &mut encoder, &self.commit_pipeline,
+                self.particle_capacity,
                 "commit fluid particles");
         }
-        self.dispatch(&mut encoder, &self.clear_buckets_pipeline, self.bucket_count,
+        self.dispatch(accelerator, &mut encoder, &self.clear_buckets_pipeline, self.bucket_count,
             "clear final fluid buckets");
-        self.dispatch(&mut encoder, &self.insert_buckets_pipeline, self.particle_capacity,
+        self.dispatch(accelerator, &mut encoder, &self.insert_buckets_pipeline,
+            self.particle_capacity,
             "insert final fluid particles into buckets");
-        self.dispatch(&mut encoder, &self.velocity_smoothing_pipeline, self.particle_capacity,
+        self.dispatch(accelerator, &mut encoder, &self.velocity_smoothing_pipeline,
+            self.particle_capacity,
             "calculate fluid velocity smoothing");
-        self.dispatch(&mut encoder, &self.apply_velocity_smoothing_pipeline,
+        self.dispatch(accelerator, &mut encoder, &self.apply_velocity_smoothing_pipeline,
             self.particle_capacity, "apply fluid velocity smoothing");
-        self.dispatch(&mut encoder, &self.raster_pipeline, self.buffered_cell_count,
+        self.dispatch(accelerator, &mut encoder, &self.raster_pipeline,
+            self.buffered_cell_count,
             "rasterize derived fluid cells");
-        self.dispatch(&mut encoder, &self.cell_contact_pipeline, self.buffered_cell_count,
+        self.dispatch(accelerator, &mut encoder, &self.cell_contact_pipeline,
+            self.buffered_cell_count,
             "resolve fluid cell interactions");
-        self.dispatch(&mut encoder, &self.apply_cell_contact_pipeline, self.particle_capacity,
+        self.dispatch(accelerator, &mut encoder, &self.apply_cell_contact_pipeline,
+            self.particle_capacity,
             "apply fluid cell contacts");
-        self.dispatch(&mut encoder, &self.raster_pipeline, self.buffered_cell_count,
+        self.dispatch(accelerator, &mut encoder, &self.raster_pipeline,
+            self.buffered_cell_count,
             "refresh contacted fluid cells");
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
@@ -457,7 +471,7 @@ impl Fluids {
         let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
             &wgpu::CommandEncoderDescriptor { label: Some("pawn fluid sample") },
         );
-        self.dispatch(&mut encoder, &self.sample_pipeline, 1, "sample pawn fluid");
+        self.dispatch(accelerator, &mut encoder, &self.sample_pipeline, 1, "sample pawn fluid");
         encoder.copy_buffer_to_buffer(
             self.sample_output.wgpu_buffer(), 0, output, 0, 32,
         );
@@ -485,7 +499,7 @@ impl Fluids {
         let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
             &wgpu::CommandEncoderDescriptor { label: Some("fluid cellular refresh") },
         );
-        self.encode_rebuild(&mut encoder);
+        self.encode_rebuild(accelerator, &mut encoder);
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
 
@@ -525,7 +539,7 @@ impl Fluids {
         let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
             &wgpu::CommandEncoderDescriptor { label: Some("fluid export") },
         );
-        self.dispatch(&mut encoder, &self.export_pipeline, self.particle_capacity,
+        self.dispatch(accelerator, &mut encoder, &self.export_pipeline, self.particle_capacity,
             "compact outgoing fluid particles");
         encoder.copy_buffer_to_buffer(
             self.streaming_count.wgpu_buffer(), 0, &download.buffer, 0, 4,
@@ -570,9 +584,10 @@ impl Fluids {
         let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
             &wgpu::CommandEncoderDescriptor { label: Some("fluid import") },
         );
-        self.dispatch(&mut encoder, &self.import_pipeline, upload.particles.len() as u32,
+        self.dispatch(accelerator, &mut encoder, &self.import_pipeline,
+            upload.particles.len() as u32,
             "import dormant fluid particles");
-        self.encode_rebuild(&mut encoder);
+        self.encode_rebuild(accelerator, &mut encoder);
         encoder.copy_buffer_to_buffer(
             self.streaming_results.wgpu_buffer(), 0, &upload.buffer, 0,
             upload.particles.len() as u64 * 4,
@@ -580,25 +595,26 @@ impl Fluids {
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
 
-    fn encode_rebuild(&self, encoder: &mut wgpu::CommandEncoder) {
-        self.dispatch(encoder, &self.clear_buckets_pipeline, self.bucket_count,
+    fn encode_rebuild(&self, accelerator: &Accelerator, encoder: &mut wgpu::CommandEncoder) {
+        self.dispatch(accelerator, encoder, &self.clear_buckets_pipeline, self.bucket_count,
             "clear fluid buckets");
-        self.dispatch(encoder, &self.insert_buckets_pipeline, self.particle_capacity,
+        self.dispatch(accelerator, encoder, &self.insert_buckets_pipeline,
+            self.particle_capacity,
             "insert fluid particles into buckets");
-        self.dispatch(encoder, &self.raster_pipeline, self.buffered_cell_count,
+        self.dispatch(accelerator, encoder, &self.raster_pipeline, self.buffered_cell_count,
             "rasterize derived fluid cells");
     }
 
     fn dispatch(
         &self,
+        accelerator: &Accelerator,
         encoder: &mut wgpu::CommandEncoder,
         pipeline: &wgpu::ComputePipeline,
         count: u32,
         label: &str,
     ) {
-        let mut pass: wgpu::ComputePass<'_> = encoder.begin_compute_pass(
-            &wgpu::ComputePassDescriptor { label: Some(label), timestamp_writes: None },
-        );
+        let mut pass: wgpu::ComputePass<'_> =
+            accelerator.begin_compute_pass(encoder, label);
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.dispatch_workgroups(count.div_ceil(64), 1, 1);
