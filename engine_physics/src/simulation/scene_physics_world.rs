@@ -292,6 +292,7 @@ impl ScenePhysicsWorld {
         let up = controller.up;
         let primitive = shape.rapier_shape();
         let rapier_pose = shape.pose(position.translation, up);
+        let walkable_normal = controller.max_slope_climb_angle.cos();
         let mut candidate = desired_translation;
         let mut grounded = false;
         let mut sliding = false;
@@ -303,7 +304,7 @@ impl ScenePhysicsWorld {
             grounded |= rapier.grounded;
             sliding |= rapier.is_sliding_down_slope;
             let dynamic = self.resolve_dynamic_cells(shape, position, rapier.translation,
-                1.0 / 1024.0, up, &mut collisions);
+                1.0 / 1024.0, up, walkable_normal, &mut collisions);
             grounded |= dynamic.1;
             if (dynamic.0 - rapier.translation).length_squared() < 1e-10 {
                 candidate = dynamic.0;
@@ -321,7 +322,7 @@ impl ScenePhysicsWorld {
             if snap > 0.0 && !grounded {
                 let snap_position = Pose::new(position.translation + candidate, position.rotation.angle());
                 let snapped = self.resolve_dynamic_cells(shape, &snap_position, -up * snap,
-                    1.0 / 1024.0, up, &mut collisions);
+                    1.0 / 1024.0, up, walkable_normal, &mut collisions);
                 if snapped.1 {
                     candidate += snapped.0;
                     grounded = true;
@@ -339,6 +340,7 @@ impl ScenePhysicsWorld {
         desired: Vector,
         offset: f32,
         up: Vector,
+        walkable_normal: f32,
         collisions: &mut impl FnMut(Vector),
     ) -> (Vector, bool) {
         let Some(snapshot) = self.cellular_terrain_snapshot.as_ref() else {
@@ -392,7 +394,7 @@ impl ScenePhysicsWorld {
             remaining -= advance;
             for normal in &normals[..normal_count] {
                 collisions(*normal);
-                grounded |= normal.dot(up) >= 0.5;
+                grounded |= normal.dot(up) >= walkable_normal;
                 let inward = remaining.dot(*normal);
                 if inward < 0.0 { remaining -= *normal * inward; }
             }
