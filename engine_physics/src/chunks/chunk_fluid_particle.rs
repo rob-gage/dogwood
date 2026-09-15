@@ -1,10 +1,7 @@
 // Copyright Rob Gage 2026
 
 use crate::{
-    materials::{
-        MaterialForm,
-        MaterialIdentifier,
-    },
+    materials::{MaterialForm, MaterialIdentifier},
     tiles::TileCoordinates,
 };
 use std::io;
@@ -21,7 +18,6 @@ pub struct ChunkFluidParticle {
 }
 
 impl ChunkFluidParticle {
-
     /// The aligned size of the matching GPU particle record
     pub const GPU_SIZE: usize = 32;
 
@@ -35,9 +31,8 @@ impl ChunkFluidParticle {
 
     /// Reads one persistent dormant particle record
     pub fn deserialize<R: io::Read>(reader: &mut R) -> Result<Self, io::Error> {
-        let material_identifier: MaterialIdentifier = MaterialIdentifier::from_u32(
-            Self::read_u32(reader)?,
-        );
+        let material_identifier: MaterialIdentifier =
+            MaterialIdentifier::from_u32(Self::read_u32(reader)?);
         let particle: Self = Self {
             material_identifier,
             position: [
@@ -106,8 +101,13 @@ impl ChunkFluidParticle {
     }
 
     fn validate(&self) -> Result<(), io::Error> {
-        if self.material_identifier.form_checked() != Some(MaterialForm::Fluid) ||
-                !self.position.into_iter().chain(self.velocity).all(f32::is_finite) {
+        if self.material_identifier.form_checked() != Some(MaterialForm::Fluid)
+            || !self
+                .position
+                .into_iter()
+                .chain(self.velocity)
+                .all(f32::is_finite)
+        {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Invalid dormant fluid particle",
@@ -115,5 +115,4 @@ impl ChunkFluidParticle {
         }
         Ok(())
     }
-
 }

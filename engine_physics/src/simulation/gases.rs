@@ -1,18 +1,9 @@
 // Copyright Rob Gage 2026
 
 use crate::{
-    materials::{
-        Material,
-        MaterialRegistry,
-    },
-    scenes::{
-        GasDownload,
-        GasUpload,
-    },
-    tiles::{
-        TileArea,
-        TileCoordinates,
-    },
+    materials::{Material, MaterialRegistry},
+    scenes::{GasDownload, GasUpload},
+    tiles::{TileArea, TileCoordinates},
 };
 use engine_compute::{Accelerator, AcceleratorBuffer};
 
@@ -64,7 +55,6 @@ pub struct Gases {
 }
 
 impl Gases {
-
     /// Creates dense gas fields matching the physical cellular tile ring
     pub fn new(
         accelerator: &Accelerator,
@@ -76,16 +66,24 @@ impl Gases {
         buffered_cell_count: usize,
     ) -> Self {
         let device: &wgpu::Device = accelerator.wgpu_device();
-        let buffered_cell_count: u32 = buffered_cell_count.try_into()
+        let buffered_cell_count: u32 = buffered_cell_count
+            .try_into()
             .expect("Gas buffer exceeds GPU indexing range");
-        let gas_count: u32 = materials.iter().filter(|(_, material)| {
-            matches!(material, Material::Gas { .. })
-        }).count().try_into().expect("Gas species count exceeds GPU indexing range");
-        let concentration_count: u32 = buffered_cell_count.checked_mul(gas_count)
+        let gas_count: u32 = materials
+            .iter()
+            .filter(|(_, material)| matches!(material, Material::Gas { .. }))
+            .count()
+            .try_into()
+            .expect("Gas species count exceeds GPU indexing range");
+        let concentration_count: u32 = buffered_cell_count
+            .checked_mul(gas_count)
             .expect("Gas concentration buffer exceeds GPU indexing range");
-        let streaming_value_count: u32 = buffered_cell_count.checked_mul(
-            4u32.checked_add(gas_count).expect("Gas streaming record is too large"),
-        ).expect("Gas streaming buffer exceeds GPU indexing range");
+        let streaming_value_count: u32 = buffered_cell_count
+            .checked_mul(
+                4u32.checked_add(gas_count)
+                    .expect("Gas streaming record is too large"),
+            )
+            .expect("Gas streaming buffer exceeds GPU indexing range");
         let velocity: AcceleratorBuffer =
             accelerator.allocate::<[f32; 2]>(buffered_cell_count as usize);
         let velocity_scratch: AcceleratorBuffer =
@@ -94,9 +92,12 @@ impl Gases {
             accelerator.allocate::<f32>(concentration_count.max(1) as usize);
         let concentration_scratch: AcceleratorBuffer =
             accelerator.allocate::<f32>(concentration_count.max(1) as usize);
-        let divergence: AcceleratorBuffer = accelerator.allocate::<f32>(buffered_cell_count as usize);
-        let pressure_a: AcceleratorBuffer = accelerator.allocate::<f32>(buffered_cell_count as usize);
-        let pressure_b: AcceleratorBuffer = accelerator.allocate::<f32>(buffered_cell_count as usize);
+        let divergence: AcceleratorBuffer =
+            accelerator.allocate::<f32>(buffered_cell_count as usize);
+        let pressure_a: AcceleratorBuffer =
+            accelerator.allocate::<f32>(buffered_cell_count as usize);
+        let pressure_b: AcceleratorBuffer =
+            accelerator.allocate::<f32>(buffered_cell_count as usize);
         let curl: AcceleratorBuffer = accelerator.allocate::<f32>(buffered_cell_count as usize);
         let streaming_data: AcceleratorBuffer =
             accelerator.allocate::<u32>(streaming_value_count as usize);
@@ -116,13 +117,22 @@ impl Gases {
             },
             count: None,
         };
-        let layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
-            &wgpu::BindGroupLayoutDescriptor {
+        let layout: wgpu::BindGroupLayout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("gas simulation bind group layout"),
                 entries: &[
-                    storage(0, false), storage(1, false), storage(2, false), storage(3, false),
-                    storage(4, false), storage(5, false), storage(6, false), storage(7, false),
-                    storage(8, true), storage(9, true), storage(10, true), storage(11, true),
+                    storage(0, false),
+                    storage(1, false),
+                    storage(2, false),
+                    storage(3, false),
+                    storage(4, false),
+                    storage(5, false),
+                    storage(6, false),
+                    storage(7, false),
+                    storage(8, true),
+                    storage(9, true),
+                    storage(10, true),
+                    storage(11, true),
                     storage(12, false),
                     wgpu::BindGroupLayoutEntry {
                         binding: 13,
@@ -135,20 +145,28 @@ impl Gases {
                         count: None,
                     },
                 ],
-            },
-        );
+            });
         let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("gas simulation bind group"),
             layout: &layout,
             entries: &[
-                Self::binding(0, &velocity), Self::binding(1, &velocity_scratch),
-                Self::binding(2, &concentrations), Self::binding(3, &concentration_scratch),
-                Self::binding(4, &divergence), Self::binding(5, &pressure_a),
-                Self::binding(6, &pressure_b), Self::binding(7, &curl),
+                Self::binding(0, &velocity),
+                Self::binding(1, &velocity_scratch),
+                Self::binding(2, &concentrations),
+                Self::binding(3, &concentration_scratch),
+                Self::binding(4, &divergence),
+                Self::binding(5, &pressure_a),
+                Self::binding(6, &pressure_b),
+                Self::binding(7, &curl),
                 Self::binding(8, cellular_material_identifiers),
-                Self::binding(9, external_body_occupancy), Self::binding(10, fluid_coverage),
-                Self::binding(11, gas_properties), Self::binding(12, &streaming_data),
-                wgpu::BindGroupEntry { binding: 13, resource: parameters.as_entire_binding() },
+                Self::binding(9, external_body_occupancy),
+                Self::binding(10, fluid_coverage),
+                Self::binding(11, gas_properties),
+                Self::binding(12, &streaming_data),
+                wgpu::BindGroupEntry {
+                    binding: 13,
+                    resource: parameters.as_entire_binding(),
+                },
             ],
         });
         let shader: wgpu::ShaderModule = super::create_simulation_shader_module(
@@ -157,23 +175,22 @@ impl Gases {
             include_str!("gases.wgsl"),
             "engine_physics/src/simulation/gases.wgsl",
         );
-        let pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
-            &wgpu::PipelineLayoutDescriptor {
+        let pipeline_layout: wgpu::PipelineLayout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("gas simulation pipeline layout"),
                 bind_group_layouts: &[Some(&layout)],
                 immediate_size: 0,
-            },
-        );
-        let pipeline = |entry_point, label| device.create_compute_pipeline(
-            &wgpu::ComputePipelineDescriptor {
+            });
+        let pipeline = |entry_point, label| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(label),
                 layout: Some(&pipeline_layout),
                 module: &shader,
                 entry_point: Some(entry_point),
                 compilation_options: Default::default(),
                 cache: None,
-            },
-        );
+            })
+        };
         Self {
             velocity,
             velocity_scratch,
@@ -186,16 +203,24 @@ impl Gases {
             streaming_data,
             parameters,
             bind_group,
-            advect_velocity_pipeline: pipeline("advect_gas_velocity", "gas velocity advection pipeline"),
+            advect_velocity_pipeline: pipeline(
+                "advect_gas_velocity",
+                "gas velocity advection pipeline",
+            ),
             curl_pipeline: pipeline("calculate_gas_curl", "gas curl pipeline"),
             force_pipeline: pipeline("apply_gas_forces", "gas force pipeline"),
             divergence_pipeline: pipeline("calculate_gas_divergence", "gas divergence pipeline"),
             pressure_clear_pipeline: pipeline("clear_gas_pressure", "gas pressure clear pipeline"),
             pressure_a_pipeline: pipeline("solve_gas_pressure_a", "gas pressure A pipeline"),
             pressure_b_pipeline: pipeline("solve_gas_pressure_b", "gas pressure B pipeline"),
-            projection_pipeline: pipeline("project_gas_velocity", "gas velocity projection pipeline"),
-            concentration_pipeline: pipeline("advect_gas_concentrations",
-                "gas concentration advection pipeline"),
+            projection_pipeline: pipeline(
+                "project_gas_velocity",
+                "gas velocity projection pipeline",
+            ),
+            concentration_pipeline: pipeline(
+                "advect_gas_concentrations",
+                "gas concentration advection pipeline",
+            ),
             clear_area_pipeline: pipeline("clear_gas_area", "gas streamed area clear pipeline"),
             export_pipeline: pipeline("export_gas_area", "gas streamed area export pipeline"),
             buffered_cell_count,
@@ -204,10 +229,14 @@ impl Gases {
     }
 
     /// Returns the authoritative species-major concentration allocation
-    pub const fn concentrations_buffer(&self) -> &AcceleratorBuffer { &self.concentrations }
+    pub const fn concentrations_buffer(&self) -> &AcceleratorBuffer {
+        &self.concentrations
+    }
 
     /// Returns the number of independently registered gas species
-    pub const fn gas_count(&self) -> u32 { self.gas_count }
+    pub const fn gas_count(&self) -> u32 {
+        self.gas_count
+    }
 
     /// Applies stable authored concentrations and explicit cell clears
     pub fn apply_edits(
@@ -217,25 +246,46 @@ impl Gases {
         clear_cells: &[usize],
     ) {
         fn runs(indices: &[usize], mut write: impl FnMut(usize, usize)) {
-            let mut start = 0; while start < indices.len() { let mut end = start + 1;
-                while end < indices.len() && indices[end] == indices[end - 1] + 1 { end += 1; }
-                write(indices[start], end - start); start = end;
+            let mut start = 0;
+            while start < indices.len() {
+                let mut end = start + 1;
+                while end < indices.len() && indices[end] == indices[end - 1] + 1 {
+                    end += 1;
+                }
+                write(indices[start], end - start);
+                start = end;
             }
         }
-        runs(clear_cells, |index, count| accelerator.wgpu_queue().write_buffer(
-            self.velocity.wgpu_buffer(), index as u64 * 8, &vec![0; count * 8]));
+        runs(clear_cells, |index, count| {
+            accelerator.wgpu_queue().write_buffer(
+                self.velocity.wgpu_buffer(),
+                index as u64 * 8,
+                &vec![0; count * 8],
+            )
+        });
         for species in 0..self.gas_count {
-            runs(clear_cells, |index, count| accelerator.wgpu_queue().write_buffer(
-                self.concentrations.wgpu_buffer(),
-                (u64::from(species) * u64::from(self.buffered_cell_count) + index as u64) * 4,
-                &vec![0; count * 4]));
-            let mut authored: Vec<usize> = concentrations.iter().filter_map(|(cell, value)|
-                (*value == species).then_some(*cell)).collect();
+            runs(clear_cells, |index, count| {
+                accelerator.wgpu_queue().write_buffer(
+                    self.concentrations.wgpu_buffer(),
+                    (u64::from(species) * u64::from(self.buffered_cell_count) + index as u64) * 4,
+                    &vec![0; count * 4],
+                )
+            });
+            let mut authored: Vec<usize> = concentrations
+                .iter()
+                .filter_map(|(cell, value)| (*value == species).then_some(*cell))
+                .collect();
             authored.sort_unstable();
-            runs(&authored, |index, count| accelerator.wgpu_queue().write_buffer(
-                self.concentrations.wgpu_buffer(),
-                (u64::from(species) * u64::from(self.buffered_cell_count) + index as u64) * 4,
-                &vec![AUTHORED_CONCENTRATION.to_bits().to_le_bytes(); count].into_iter().flatten().collect::<Vec<_>>()));
+            runs(&authored, |index, count| {
+                accelerator.wgpu_queue().write_buffer(
+                    self.concentrations.wgpu_buffer(),
+                    (u64::from(species) * u64::from(self.buffered_cell_count) + index as u64) * 4,
+                    &vec![AUTHORED_CONCENTRATION.to_bits().to_le_bytes(); count]
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>(),
+                )
+            });
         }
     }
 
@@ -251,12 +301,22 @@ impl Gases {
         gravity: [f32; 2],
         delta_time: f32,
     ) {
-        self.simulate_pre_coupling(accelerator, buffered_origin, buffered_width,
-            buffered_height, ring_offset_x, ring_offset_y, gravity, delta_time);
+        self.simulate_pre_coupling(
+            accelerator,
+            buffered_origin,
+            buffered_width,
+            buffered_height,
+            ring_offset_x,
+            ring_offset_y,
+            gravity,
+            delta_time,
+        );
         self.simulate_post_coupling(accelerator);
     }
 
-    pub(crate) const fn velocity_buffer(&self) -> &AcceleratorBuffer { &self.velocity }
+    pub(crate) const fn velocity_buffer(&self) -> &AcceleratorBuffer {
+        &self.velocity
+    }
 
     pub(crate) fn simulate_pre_coupling(
         &self,
@@ -269,51 +329,107 @@ impl Gases {
         gravity: [f32; 2],
         delta_time: f32,
     ) {
-        if self.gas_count == 0 { return; }
+        if self.gas_count == 0 {
+            return;
+        }
         self.write_parameters(
-            accelerator, buffered_origin, buffered_width, buffered_height,
-            ring_offset_x, ring_offset_y, gravity, delta_time, None,
+            accelerator,
+            buffered_origin,
+            buffered_width,
+            buffered_height,
+            ring_offset_x,
+            ring_offset_y,
+            gravity,
+            delta_time,
+            None,
         );
-        let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: Some("gas simulation") },
-        );
-        self.dispatch(accelerator, &mut encoder, &self.advect_velocity_pipeline,
+        let mut encoder: wgpu::CommandEncoder =
+            accelerator
+                .wgpu_device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("gas simulation"),
+                });
+        self.dispatch(
+            accelerator,
+            &mut encoder,
+            &self.advect_velocity_pipeline,
             self.buffered_cell_count,
-            "advect gas velocity");
-        self.dispatch(accelerator, &mut encoder, &self.curl_pipeline, self.buffered_cell_count,
-            "calculate gas curl");
-        self.dispatch(accelerator, &mut encoder, &self.force_pipeline, self.buffered_cell_count,
-            "apply gas buoyancy and vorticity confinement");
+            "advect gas velocity",
+        );
+        self.dispatch(
+            accelerator,
+            &mut encoder,
+            &self.curl_pipeline,
+            self.buffered_cell_count,
+            "calculate gas curl",
+        );
+        self.dispatch(
+            accelerator,
+            &mut encoder,
+            &self.force_pipeline,
+            self.buffered_cell_count,
+            "apply gas buoyancy and vorticity confinement",
+        );
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
 
     pub(crate) fn simulate_post_coupling(&self, accelerator: &Accelerator) {
-        if self.gas_count == 0 { return; }
-        let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: Some("gas projection and transport") },
+        if self.gas_count == 0 {
+            return;
+        }
+        let mut encoder: wgpu::CommandEncoder =
+            accelerator
+                .wgpu_device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("gas projection and transport"),
+                });
+        self.dispatch(
+            accelerator,
+            &mut encoder,
+            &self.divergence_pipeline,
+            self.buffered_cell_count,
+            "calculate gas divergence",
         );
-        self.dispatch(accelerator, &mut encoder, &self.divergence_pipeline,
+        self.dispatch(
+            accelerator,
+            &mut encoder,
+            &self.pressure_clear_pipeline,
             self.buffered_cell_count,
-            "calculate gas divergence");
-        self.dispatch(accelerator, &mut encoder, &self.pressure_clear_pipeline,
-            self.buffered_cell_count,
-            "clear gas pressure");
+            "clear gas pressure",
+        );
         for iteration in 0..PRESSURE_ITERATION_COUNT {
             let (pipeline, label): (&wgpu::ComputePipeline, &str) = if iteration % 2 == 0 {
                 (&self.pressure_a_pipeline, "solve gas pressure into A")
             } else {
                 (&self.pressure_b_pipeline, "solve gas pressure into B")
             };
-            self.dispatch(accelerator, &mut encoder, pipeline, self.buffered_cell_count, label);
+            self.dispatch(
+                accelerator,
+                &mut encoder,
+                pipeline,
+                self.buffered_cell_count,
+                label,
+            );
         }
-        self.dispatch(accelerator, &mut encoder, &self.projection_pipeline,
+        self.dispatch(
+            accelerator,
+            &mut encoder,
+            &self.projection_pipeline,
             self.buffered_cell_count,
-            "project gas velocity");
-        self.dispatch(accelerator, &mut encoder, &self.concentration_pipeline,
-            self.buffered_cell_count * self.gas_count, "advect gas concentrations");
+            "project gas velocity",
+        );
+        self.dispatch(
+            accelerator,
+            &mut encoder,
+            &self.concentration_pipeline,
+            self.buffered_cell_count * self.gas_count,
+            "advect gas concentrations",
+        );
         encoder.copy_buffer_to_buffer(
-            self.concentration_scratch.wgpu_buffer(), 0,
-            self.concentrations.wgpu_buffer(), 0,
+            self.concentration_scratch.wgpu_buffer(),
+            0,
+            self.concentrations.wgpu_buffer(),
+            0,
             u64::from(self.buffered_cell_count) * u64::from(self.gas_count) * 4,
         );
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
@@ -330,18 +446,33 @@ impl Gases {
         ring_offset_x: u16,
         ring_offset_y: u16,
     ) {
-        if self.gas_count == 0 { return; }
+        if self.gas_count == 0 {
+            return;
+        }
         self.write_parameters(
-            accelerator, buffered_origin, buffered_width, buffered_height,
-            ring_offset_x, ring_offset_y, [0.0; 2], 0.0, Some(area),
+            accelerator,
+            buffered_origin,
+            buffered_width,
+            buffered_height,
+            ring_offset_x,
+            ring_offset_y,
+            [0.0; 2],
+            0.0,
+            Some(area),
         );
         let dimensions: [u16; 2] = area.dimensions();
         let count: u32 = u32::from(dimensions[0]) * u32::from(dimensions[1]) * 64;
-        let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: Some("gas streamed area clear") },
-        );
+        let mut encoder: wgpu::CommandEncoder =
+            accelerator
+                .wgpu_device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("gas streamed area clear"),
+                });
         self.dispatch(
-            accelerator, &mut encoder, &self.clear_area_pipeline, count,
+            accelerator,
+            &mut encoder,
+            &self.clear_area_pipeline,
+            count,
             "clear incoming gas area",
         );
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
@@ -357,15 +488,21 @@ impl Gases {
         assert!(upload.cells.len() == physical_indices.len());
         for (physical_index, cell) in physical_indices.iter().zip(&upload.cells) {
             let mut velocity: Vec<u8> = Vec::with_capacity(8);
-            for value in cell.velocity { velocity.extend_from_slice(&value.to_bits().to_le_bytes()); }
+            for value in cell.velocity {
+                velocity.extend_from_slice(&value.to_bits().to_le_bytes());
+            }
             accelerator.wgpu_queue().write_buffer(
-                self.velocity.wgpu_buffer(), *physical_index as u64 * 8, &velocity,
+                self.velocity.wgpu_buffer(),
+                *physical_index as u64 * 8,
+                &velocity,
             );
             for (identifier, concentration) in &cell.species {
-                let index: u64 = u64::from(identifier.index()) * u64::from(self.buffered_cell_count) +
-                    *physical_index as u64;
+                let index: u64 = u64::from(identifier.index())
+                    * u64::from(self.buffered_cell_count)
+                    + *physical_index as u64;
                 accelerator.wgpu_queue().write_buffer(
-                    self.concentrations.wgpu_buffer(), index * 4,
+                    self.concentrations.wgpu_buffer(),
+                    index * 4,
                     &concentration.to_bits().to_le_bytes(),
                 );
             }
@@ -384,21 +521,38 @@ impl Gases {
         ring_offset_y: u16,
     ) {
         self.write_parameters(
-            accelerator, buffered_origin, buffered_width, buffered_height,
-            ring_offset_x, ring_offset_y, [0.0; 2], 0.0, Some(download.area),
+            accelerator,
+            buffered_origin,
+            buffered_width,
+            buffered_height,
+            ring_offset_x,
+            ring_offset_y,
+            [0.0; 2],
+            0.0,
+            Some(download.area),
         );
         let dimensions: [u16; 2] = download.area.dimensions();
         let count: u32 = u32::from(dimensions[0]) * u32::from(dimensions[1]) * 64;
         let byte_count: u64 = u64::from(count) * u64::from(4 + self.gas_count) * 4;
-        let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: Some("gas export") },
-        );
+        let mut encoder: wgpu::CommandEncoder =
+            accelerator
+                .wgpu_device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("gas export"),
+                });
         self.dispatch(
-            accelerator, &mut encoder, &self.export_pipeline, count,
+            accelerator,
+            &mut encoder,
+            &self.export_pipeline,
+            count,
             "export outgoing gas area",
         );
         encoder.copy_buffer_to_buffer(
-            self.streaming_data.wgpu_buffer(), 0, &download.buffer, 0, byte_count,
+            self.streaming_data.wgpu_buffer(),
+            0,
+            &download.buffer,
+            0,
+            byte_count,
         );
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
@@ -411,8 +565,7 @@ impl Gases {
         count: u32,
         label: &str,
     ) {
-        let mut pass: wgpu::ComputePass<'_> =
-            accelerator.begin_compute_pass(encoder, label);
+        let mut pass: wgpu::ComputePass<'_> = accelerator.begin_compute_pass(encoder, label);
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.dispatch_workgroups(count.div_ceil(64), 1, 1);
@@ -430,36 +583,52 @@ impl Gases {
         delta_time: f32,
         streaming_area: Option<TileArea>,
     ) {
-        let streaming_origin: TileCoordinates = streaming_area.map_or(
-            TileCoordinates { x: 0, y: 0 }, TileArea::origin,
-        );
+        let streaming_origin: TileCoordinates =
+            streaming_area.map_or(TileCoordinates { x: 0, y: 0 }, TileArea::origin);
         let streaming_dimensions: [u16; 2] = streaming_area.map_or([0, 0], TileArea::dimensions);
-        let streaming_cell_count: u32 = u32::from(streaming_dimensions[0]) *
-            u32::from(streaming_dimensions[1]) * 64;
+        let streaming_cell_count: u32 =
+            u32::from(streaming_dimensions[0]) * u32::from(streaming_dimensions[1]) * 64;
         let values: [u32; 24] = [
-            buffered_origin.x as u32, buffered_origin.y as u32,
-            u32::from(buffered_width), u32::from(buffered_height),
-            u32::from(ring_offset_x), u32::from(ring_offset_y),
-            gravity[0].to_bits(), gravity[1].to_bits(), delta_time.to_bits(),
-            self.buffered_cell_count, self.gas_count, streaming_cell_count,
-            streaming_origin.x as u32, streaming_origin.y as u32,
-            u32::from(streaming_dimensions[0]), u32::from(streaming_dimensions[1]),
-            VORTICITY_CONFINEMENT.to_bits(), BUOYANCY_COEFFICIENT.to_bits(),
-            MAXIMUM_SPEED_CELLS_PER_SECOND.to_bits(), FLUID_OBSTACLE_COVERAGE.to_bits(),
-            AMBIENT_DENSITY.to_bits(), 0, 0, 0,
+            buffered_origin.x as u32,
+            buffered_origin.y as u32,
+            u32::from(buffered_width),
+            u32::from(buffered_height),
+            u32::from(ring_offset_x),
+            u32::from(ring_offset_y),
+            gravity[0].to_bits(),
+            gravity[1].to_bits(),
+            delta_time.to_bits(),
+            self.buffered_cell_count,
+            self.gas_count,
+            streaming_cell_count,
+            streaming_origin.x as u32,
+            streaming_origin.y as u32,
+            u32::from(streaming_dimensions[0]),
+            u32::from(streaming_dimensions[1]),
+            VORTICITY_CONFINEMENT.to_bits(),
+            BUOYANCY_COEFFICIENT.to_bits(),
+            MAXIMUM_SPEED_CELLS_PER_SECOND.to_bits(),
+            FLUID_OBSTACLE_COVERAGE.to_bits(),
+            AMBIENT_DENSITY.to_bits(),
+            0,
+            0,
+            0,
         ];
         let bytes: Vec<u8> = values.into_iter().flat_map(u32::to_le_bytes).collect();
-        accelerator.wgpu_queue().write_buffer(&self.parameters, 0, &bytes);
+        accelerator
+            .wgpu_queue()
+            .write_buffer(&self.parameters, 0, &bytes);
     }
 
     fn binding(binding: u32, buffer: &AcceleratorBuffer) -> wgpu::BindGroupEntry<'_> {
-        wgpu::BindGroupEntry { binding, resource: buffer.wgpu_buffer().as_entire_binding() }
+        wgpu::BindGroupEntry {
+            binding,
+            resource: buffer.wgpu_buffer().as_entire_binding(),
+        }
     }
-
 }
 
 impl Drop for Gases {
-
     fn drop(&mut self) {
         self.velocity.free();
         self.velocity_scratch.free();
@@ -472,7 +641,6 @@ impl Drop for Gases {
         self.streaming_data.free();
         self.parameters.destroy();
     }
-
 }
 
 #[cfg(test)]
@@ -481,22 +649,13 @@ mod tests {
     use super::*;
     use crate::{
         chunks::ChunkGasCell,
-        materials::{
-            MaterialForm,
-            MaterialIdentifier,
-        },
+        materials::{MaterialForm, MaterialIdentifier},
         scenes::GasDownload,
     };
-    use engine_graphics::{
-        Color,
-        MaterialAppearance,
-    };
+    use engine_graphics::{Color, MaterialAppearance};
     use std::{
         sync::mpsc,
-        time::{
-            Duration,
-            Instant,
-        },
+        time::{Duration, Instant},
     };
 
     #[test]
@@ -530,8 +689,13 @@ mod tests {
         let body: AcceleratorBuffer = accelerator.allocate::<u32>(cell_count);
         let fluid: AcceleratorBuffer = accelerator.allocate::<f32>(cell_count);
         let gases: Gases = Gases::new(
-            &accelerator, &materials, &cellular, &body, &fluid,
-            &graphics.gas_properties, cell_count,
+            &accelerator,
+            &materials,
+            &cellular,
+            &body,
+            &fluid,
+            &graphics.gas_properties,
+            cell_count,
         );
         let physical_index = |x: u32, y: u32| -> usize {
             let tile_x: u32 = x / 8;
@@ -551,30 +715,48 @@ mod tests {
             for x in 0..32 {
                 let offset_x: i32 = x as i32 - 16;
                 let offset_y: i32 = y as i32 - 16;
-                if offset_x * offset_x + offset_y * offset_y < 169 { continue; }
+                if offset_x * offset_x + offset_y * offset_y < 169 {
+                    continue;
+                }
                 accelerator.wgpu_queue().write_buffer(
-                    cellular.wgpu_buffer(), physical_index(x, y) as u64 * 4,
+                    cellular.wgpu_buffer(),
+                    physical_index(x, y) as u64 * 4,
                     &solid.to_le_bytes(),
                 );
             }
         }
         for _ in 0..3600 {
             gases.simulate(
-                &accelerator, TileCoordinates { x: 0, y: 0 }, width, height,
-                0, 0, [0.0, -18.0], 1.0 / 60.0,
+                &accelerator,
+                TileCoordinates { x: 0, y: 0 },
+                width,
+                height,
+                0,
+                0,
+                [0.0, -18.0],
+                1.0 / 60.0,
             );
         }
         let area: TileArea = TileArea::new(TileCoordinates { x: 0, y: 0 }, width, height);
-        let download: GasDownload = GasDownload::new(
-            &accelerator, area, cell_count as u32, gases.gas_count(),
+        let download: GasDownload =
+            GasDownload::new(&accelerator, area, cell_count as u32, gases.gas_count());
+        gases.export(
+            &accelerator,
+            &download,
+            TileCoordinates { x: 0, y: 0 },
+            width,
+            height,
+            0,
+            0,
         );
-        gases.export(&accelerator, &download, TileCoordinates { x: 0, y: 0 },
-            width, height, 0, 0);
         let byte_count: u64 = cell_count as u64 * u64::from(4 + gases.gas_count()) * 4;
         let (sender, receiver) = mpsc::sync_channel(1);
-        download.buffer.slice(0..byte_count).map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).unwrap();
-        });
+        download
+            .buffer
+            .slice(0..byte_count)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                sender.send(result).unwrap();
+            });
         let started: Instant = Instant::now();
         loop {
             accelerator.poll().unwrap();
@@ -585,32 +767,59 @@ mod tests {
             assert!(started.elapsed() < Duration::from_secs(5));
             std::thread::yield_now();
         }
-        let mapped = download.buffer.slice(0..byte_count).get_mapped_range().unwrap();
+        let mapped = download
+            .buffer
+            .slice(0..byte_count)
+            .get_mapped_range()
+            .unwrap();
         let bytes: Vec<u8> = mapped.to_vec();
         drop(mapped);
         download.buffer.unmap();
-        let cells: Vec<ChunkGasCell> = GasDownload::deserialize(
-            &bytes, area, &[vapor, tracer],
-        ).unwrap();
+        let cells: Vec<ChunkGasCell> =
+            GasDownload::deserialize(&bytes, area, &[vapor, tracer]).unwrap();
         assert!(!cells.is_empty());
-        let total: f32 = cells.iter().flat_map(|cell| cell.species.iter())
-            .filter(|(identifier, _)| *identifier == vapor).map(|(_, value)| value).sum();
-        let tracer_total: f32 = cells.iter().flat_map(|cell| cell.species.iter())
-            .filter(|(identifier, _)| *identifier == tracer).map(|(_, value)| value).sum();
-        let maximum: f32 = cells.iter().flat_map(|cell| cell.species.iter())
+        let total: f32 = cells
+            .iter()
+            .flat_map(|cell| cell.species.iter())
             .filter(|(identifier, _)| *identifier == vapor)
-            .map(|(_, value)| *value).fold(0.0, f32::max);
-        let center_y: f32 = cells.iter().map(|cell| {
-            let concentration: f32 = cell.species.iter().filter(
-                |(identifier, _)| *identifier == vapor,
-            ).map(|(_, value)| value).sum();
-            (cell.coordinates.y as f32 + 0.5) * concentration
-        }).sum::<f32>() / total;
-        let occupied_y: Vec<i32> = cells.iter().filter_map(|cell| {
-            cell.species.iter().find(|(identifier, concentration)| {
-                *identifier == vapor && *concentration > 0.01
-            }).map(|_| cell.coordinates.y)
-        }).collect();
+            .map(|(_, value)| value)
+            .sum();
+        let tracer_total: f32 = cells
+            .iter()
+            .flat_map(|cell| cell.species.iter())
+            .filter(|(identifier, _)| *identifier == tracer)
+            .map(|(_, value)| value)
+            .sum();
+        let maximum: f32 = cells
+            .iter()
+            .flat_map(|cell| cell.species.iter())
+            .filter(|(identifier, _)| *identifier == vapor)
+            .map(|(_, value)| *value)
+            .fold(0.0, f32::max);
+        let center_y: f32 = cells
+            .iter()
+            .map(|cell| {
+                let concentration: f32 = cell
+                    .species
+                    .iter()
+                    .filter(|(identifier, _)| *identifier == vapor)
+                    .map(|(_, value)| value)
+                    .sum();
+                (cell.coordinates.y as f32 + 0.5) * concentration
+            })
+            .sum::<f32>()
+            / total;
+        let occupied_y: Vec<i32> = cells
+            .iter()
+            .filter_map(|cell| {
+                cell.species
+                    .iter()
+                    .find(|(identifier, concentration)| {
+                        *identifier == vapor && *concentration > 0.01
+                    })
+                    .map(|_| cell.coordinates.y)
+            })
+            .collect();
         assert!(total > 47.0);
         assert!(maximum < 1.0);
         assert!(center_y > 8.5);
@@ -620,8 +829,12 @@ mod tests {
             offset_x * offset_x + offset_y * offset_y < 169
         }));
         assert!(occupied_y.iter().max().unwrap() - occupied_y.iter().min().unwrap() >= 6);
-        assert!(cells.iter().flat_map(|cell| &cell.species)
-            .any(|(_, concentration)| (0.01..0.99).contains(concentration)));
+        assert!(
+            cells
+                .iter()
+                .flat_map(|cell| &cell.species)
+                .any(|(_, concentration)| (0.01..0.99).contains(concentration))
+        );
         assert!(cells.iter().any(|cell| cell.species.len() == 2));
         assert!(cells.iter().any(|cell| cell.velocity[0] < -0.01));
         assert!(cells.iter().any(|cell| cell.velocity[0] > 0.01));
@@ -637,7 +850,10 @@ mod tests {
     fn full_demo_sized_gas_field_runs_sixty_ticks() {
         let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
         let accelerator: Accelerator = Accelerator::new().unwrap();
-        eprintln!("gas performance adapter: {:?}", accelerator.wgpu_adapter().get_info());
+        eprintln!(
+            "gas performance adapter: {:?}",
+            accelerator.wgpu_adapter().get_info()
+        );
         let mut materials: MaterialRegistry = MaterialRegistry::new();
         materials.register(Material::Gas {
             name: "Vapor".into(),
@@ -665,17 +881,31 @@ mod tests {
         let body: AcceleratorBuffer = accelerator.allocate::<u32>(cell_count);
         let fluid: AcceleratorBuffer = accelerator.allocate::<f32>(cell_count);
         let gases: Gases = Gases::new(
-            &accelerator, &materials, &cellular, &body, &fluid,
-            &graphics.gas_properties, cell_count,
+            &accelerator,
+            &materials,
+            &cellular,
+            &body,
+            &fluid,
+            &graphics.gas_properties,
+            cell_count,
         );
         let started: Instant = Instant::now();
         for _ in 0..60 {
             gases.simulate(
-                &accelerator, TileCoordinates { x: -12, y: -12 }, width, height,
-                0, 0, [0.0, -18.0], 1.0 / 60.0,
+                &accelerator,
+                TileCoordinates { x: -12, y: -12 },
+                width,
+                height,
+                0,
+                0,
+                [0.0, -18.0],
+                1.0 / 60.0,
             );
         }
-        accelerator.wgpu_device().poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        accelerator
+            .wgpu_device()
+            .poll(wgpu::PollType::wait_indefinitely())
+            .unwrap();
         let elapsed: Duration = started.elapsed();
         eprintln!("full demo-sized gas 60-tick GPU smoke: {elapsed:?}");
         assert!(elapsed < Duration::from_secs(30));
@@ -683,5 +913,4 @@ mod tests {
         body.free();
         fluid.free();
     }
-
 }

@@ -1,9 +1,6 @@
 // Copyright Rob Gage 2026
 
-use crate::{
-    chunks::ChunkFluidParticle,
-    tiles::TileArea,
-};
+use crate::{chunks::ChunkFluidParticle, tiles::TileArea};
 use engine_compute::Accelerator;
 use std::io;
 
@@ -20,18 +17,18 @@ pub struct FluidDownload {
 }
 
 impl FluidDownload {
-
     /// Creates a pending fixed-capacity fluid export
     pub fn new(accelerator: &Accelerator, area: TileArea, particle_capacity: u32) -> Self {
         Self {
             area,
-            buffer: accelerator.wgpu_device().create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Fluid download buffer"),
-                size: 16 + u64::from(particle_capacity) *
-                    ChunkFluidParticle::GPU_SIZE as u64,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
+            buffer: accelerator
+                .wgpu_device()
+                .create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("Fluid download buffer"),
+                    size: 16 + u64::from(particle_capacity) * ChunkFluidParticle::GPU_SIZE as u64,
+                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }),
             is_started: false,
             result: None,
         }
@@ -56,12 +53,13 @@ impl FluidDownload {
                 "Downloaded fluid particle count exceeds pool capacity",
             ));
         }
-        (0..count).map(|index| {
-            let start: usize = 16 + index * ChunkFluidParticle::GPU_SIZE;
-            ChunkFluidParticle::deserialize_gpu(
-                &bytes[start..start + ChunkFluidParticle::GPU_SIZE],
-            )
-        }).collect()
+        (0..count)
+            .map(|index| {
+                let start: usize = 16 + index * ChunkFluidParticle::GPU_SIZE;
+                ChunkFluidParticle::deserialize_gpu(
+                    &bytes[start..start + ChunkFluidParticle::GPU_SIZE],
+                )
+            })
+            .collect()
     }
-
 }

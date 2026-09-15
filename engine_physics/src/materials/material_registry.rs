@@ -1,20 +1,9 @@
 // Copyright Rob Gage 2026
 
-use super::{
-    Material,
-    MaterialForm,
-    MaterialIdentifier
-};
+use super::{Material, MaterialForm, MaterialIdentifier};
 use engine_compute::Accelerator;
-use engine_graphics::{
-    Color,
-    MaterialAppearance,
-    MaterialGraphics,
-};
-use std::{
-    io,
-    ops::Index,
-};
+use engine_graphics::{Color, MaterialAppearance, MaterialGraphics};
+use std::{io, ops::Index};
 
 /// Registers `Material`s to `MaterialIdentifier`s
 pub struct MaterialRegistry {
@@ -29,7 +18,6 @@ pub struct MaterialRegistry {
 }
 
 impl MaterialRegistry {
-
     /// Creates a new empty `MaterialRegistry`
     pub const fn new() -> Self {
         Self {
@@ -60,7 +48,10 @@ impl MaterialRegistry {
                 MaterialIdentifier::new(MaterialForm::Fluid, index)
             }
             material @ Material::Gas { .. } => {
-                let index: u32 = self.gases.len().try_into()
+                let index: u32 = self
+                    .gases
+                    .len()
+                    .try_into()
                     .expect("Too many registered gas materials");
                 self.gases.push(material);
                 MaterialIdentifier::new(MaterialForm::Gas, index)
@@ -71,32 +62,85 @@ impl MaterialRegistry {
     /// Returns whether all simulation properties of a material are valid
     fn material_is_valid(material: &Material) -> bool {
         match material {
-            Material::CellularStatic { mass, pressure_transmission, friction, restitution, .. } =>
-                mass.is_finite() && *mass > 0.0 && pressure_transmission.is_finite() &&
-                (0.0..=1.0).contains(pressure_transmission) &&
-                friction.is_finite() && (0.0..=1.0).contains(friction) &&
-                restitution.is_finite() && (0.0..=1.0).contains(restitution),
-            Material::CellularDynamic { mass, pressure_transmission, friction, restitution, .. } =>
-                mass.is_finite() && *mass > 0.0 && pressure_transmission.is_finite() &&
-                    (0.0..=1.0).contains(pressure_transmission) && friction.is_finite() &&
-                    (0.0..=1.0).contains(friction) && restitution.is_finite() &&
-                    (0.0..=1.0).contains(restitution),
-            Material::Fluid { friction, restitution, rest_density, artificial_pressure,
-                xsph_smoothing, body_push_speed, density, viscosity, .. } =>
-                friction.is_finite() && (0.0..=1.0).contains(friction) &&
-                restitution.is_finite() && (0.0..=1.0).contains(restitution) &&
-                rest_density.is_finite() && *rest_density > 0.0 &&
-                artificial_pressure.is_finite() && *artificial_pressure >= 0.0 &&
-                xsph_smoothing.is_finite() && (0.0..=1.0).contains(xsph_smoothing) &&
-                body_push_speed.is_finite() && *body_push_speed >= 0.0 &&
-                density.is_finite() && *density > 0.0 &&
-                viscosity.is_finite() && *viscosity >= 0.0,
-            Material::Gas { density, diffusivity, extinction, dissipation, compressibility, .. } =>
-                density.is_finite() && *density > 0.0 &&
-                diffusivity.is_finite() && *diffusivity >= 0.0 &&
-                extinction.is_finite() && *extinction >= 0.0 &&
-                dissipation.is_finite() && *dissipation >= 0.0 &&
-                compressibility.is_finite() && (0.0..=1.0).contains(compressibility),
+            Material::CellularStatic {
+                mass,
+                pressure_transmission,
+                friction,
+                restitution,
+                ..
+            } => {
+                mass.is_finite()
+                    && *mass > 0.0
+                    && pressure_transmission.is_finite()
+                    && (0.0..=1.0).contains(pressure_transmission)
+                    && friction.is_finite()
+                    && (0.0..=1.0).contains(friction)
+                    && restitution.is_finite()
+                    && (0.0..=1.0).contains(restitution)
+            }
+            Material::CellularDynamic {
+                mass,
+                pressure_transmission,
+                friction,
+                restitution,
+                ..
+            } => {
+                mass.is_finite()
+                    && *mass > 0.0
+                    && pressure_transmission.is_finite()
+                    && (0.0..=1.0).contains(pressure_transmission)
+                    && friction.is_finite()
+                    && (0.0..=1.0).contains(friction)
+                    && restitution.is_finite()
+                    && (0.0..=1.0).contains(restitution)
+            }
+            Material::Fluid {
+                friction,
+                restitution,
+                rest_density,
+                artificial_pressure,
+                xsph_smoothing,
+                body_push_speed,
+                density,
+                viscosity,
+                ..
+            } => {
+                friction.is_finite()
+                    && (0.0..=1.0).contains(friction)
+                    && restitution.is_finite()
+                    && (0.0..=1.0).contains(restitution)
+                    && rest_density.is_finite()
+                    && *rest_density > 0.0
+                    && artificial_pressure.is_finite()
+                    && *artificial_pressure >= 0.0
+                    && xsph_smoothing.is_finite()
+                    && (0.0..=1.0).contains(xsph_smoothing)
+                    && body_push_speed.is_finite()
+                    && *body_push_speed >= 0.0
+                    && density.is_finite()
+                    && *density > 0.0
+                    && viscosity.is_finite()
+                    && *viscosity >= 0.0
+            }
+            Material::Gas {
+                density,
+                diffusivity,
+                extinction,
+                dissipation,
+                compressibility,
+                ..
+            } => {
+                density.is_finite()
+                    && *density > 0.0
+                    && diffusivity.is_finite()
+                    && *diffusivity >= 0.0
+                    && extinction.is_finite()
+                    && *extinction >= 0.0
+                    && dissipation.is_finite()
+                    && *dissipation >= 0.0
+                    && compressibility.is_finite()
+                    && (0.0..=1.0).contains(compressibility)
+            }
         }
     }
 
@@ -113,42 +157,109 @@ impl MaterialRegistry {
 
     /// Iterates over every registered material and its assigned identifier
     pub fn iter(&self) -> impl Iterator<Item = (MaterialIdentifier, &Material)> {
-        self.cellular_statics.iter().enumerate().map(|(index, material)| (
-            MaterialIdentifier::new(MaterialForm::CellularStatic, index as u32),
-            material,
-        )).chain(self.cellular_dynamics.iter().enumerate().map(|(index, material)| (
-            MaterialIdentifier::new(MaterialForm::CellularDynamic, index as u32),
-            material,
-        ))).chain(self.fluids.iter().enumerate().map(|(index, material)| (
-            MaterialIdentifier::new(MaterialForm::Fluid, index as u32),
-            material,
-        ))).chain(self.gases.iter().enumerate().map(|(index, material)| (
-            MaterialIdentifier::new(MaterialForm::Gas, index as u32),
-            material,
-        )))
+        self.cellular_statics
+            .iter()
+            .enumerate()
+            .map(|(index, material)| {
+                (
+                    MaterialIdentifier::new(MaterialForm::CellularStatic, index as u32),
+                    material,
+                )
+            })
+            .chain(
+                self.cellular_dynamics
+                    .iter()
+                    .enumerate()
+                    .map(|(index, material)| {
+                        (
+                            MaterialIdentifier::new(MaterialForm::CellularDynamic, index as u32),
+                            material,
+                        )
+                    }),
+            )
+            .chain(self.fluids.iter().enumerate().map(|(index, material)| {
+                (
+                    MaterialIdentifier::new(MaterialForm::Fluid, index as u32),
+                    material,
+                )
+            }))
+            .chain(self.gases.iter().enumerate().map(|(index, material)| {
+                (
+                    MaterialIdentifier::new(MaterialForm::Gas, index as u32),
+                    material,
+                )
+            }))
     }
 
     /// Builds graphics properties for all registered materials
     pub fn build_material_graphics(&self, accelerator: &Accelerator) -> MaterialGraphics {
         MaterialGraphics::new(
             accelerator,
-            self.cellular_statics.iter().map(|material| *material.appearance()).collect(),
-            self.cellular_dynamics.iter().map(|material| *material.appearance()).collect(),
-            self.fluids.iter().map(|material| *material.appearance()).collect(),
-            self.gases.iter().map(|material| *material.appearance()).collect(),
-            self.fluids.iter().map(|material| match material {
-                Material::Fluid { rest_density, artificial_pressure, xsph_smoothing,
-                    body_push_speed, friction, restitution, density, viscosity, .. } => [*rest_density,
-                    *artificial_pressure, *xsph_smoothing, *body_push_speed, *friction,
-                    *restitution, *density, *viscosity],
-                _ => unreachable!(),
-            }).collect(),
-            self.gases.iter().map(|material| match material {
-                Material::Gas { density, diffusivity, extinction, dissipation, compressibility, .. } =>
-                    [*density, *diffusivity, *extinction, *dissipation, *compressibility, 0.0,
-                        0.0, 0.0],
-                _ => unreachable!(),
-            }).collect(),
+            self.cellular_statics
+                .iter()
+                .map(|material| *material.appearance())
+                .collect(),
+            self.cellular_dynamics
+                .iter()
+                .map(|material| *material.appearance())
+                .collect(),
+            self.fluids
+                .iter()
+                .map(|material| *material.appearance())
+                .collect(),
+            self.gases
+                .iter()
+                .map(|material| *material.appearance())
+                .collect(),
+            self.fluids
+                .iter()
+                .map(|material| match material {
+                    Material::Fluid {
+                        rest_density,
+                        artificial_pressure,
+                        xsph_smoothing,
+                        body_push_speed,
+                        friction,
+                        restitution,
+                        density,
+                        viscosity,
+                        ..
+                    } => [
+                        *rest_density,
+                        *artificial_pressure,
+                        *xsph_smoothing,
+                        *body_push_speed,
+                        *friction,
+                        *restitution,
+                        *density,
+                        *viscosity,
+                    ],
+                    _ => unreachable!(),
+                })
+                .collect(),
+            self.gases
+                .iter()
+                .map(|material| match material {
+                    Material::Gas {
+                        density,
+                        diffusivity,
+                        extinction,
+                        dissipation,
+                        compressibility,
+                        ..
+                    } => [
+                        *density,
+                        *diffusivity,
+                        *extinction,
+                        *dissipation,
+                        *compressibility,
+                        0.0,
+                        0.0,
+                        0.0,
+                    ],
+                    _ => unreachable!(),
+                })
+                .collect(),
         )
     }
 
@@ -168,18 +279,30 @@ impl MaterialRegistry {
         let fluids = Self::deserialize_form(reader, MaterialForm::Fluid)?;
         let gases = Self::deserialize_optional_form(reader, MaterialForm::Gas)?;
         for material in &cellular_statics {
-            if let Material::CellularStatic { debris_material: Some(identifier), .. } = material {
-                if identifier.form_checked() != Some(MaterialForm::CellularDynamic) ||
-                        !matches!(
-                            cellular_dynamics.get(identifier.index() as usize),
-                            Some(Material::CellularDynamic { .. })
-                        ) {
-                            return Err(io::Error::new(io::ErrorKind::InvalidData,
-                                "Static material debris identifier is not a dynamic material"));
-                        }
+            if let Material::CellularStatic {
+                debris_material: Some(identifier),
+                ..
+            } = material
+            {
+                if identifier.form_checked() != Some(MaterialForm::CellularDynamic)
+                    || !matches!(
+                        cellular_dynamics.get(identifier.index() as usize),
+                        Some(Material::CellularDynamic { .. })
+                    )
+                {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Static material debris identifier is not a dynamic material",
+                    ));
+                }
             }
         }
-        Ok(Self { cellular_statics, cellular_dynamics, fluids, gases })
+        Ok(Self {
+            cellular_statics,
+            cellular_dynamics,
+            fluids,
+            gases,
+        })
     }
 
     /// Writes this `MaterialRegistry` in identifier-index order
@@ -197,12 +320,16 @@ impl MaterialRegistry {
         form: MaterialForm,
     ) -> Result<Vec<Material>, io::Error> {
         let mut first_count_byte: [u8; 1] = [0];
-        if reader.read(&mut first_count_byte)? == 0 { return Ok(Vec::new()); }
+        if reader.read(&mut first_count_byte)? == 0 {
+            return Ok(Vec::new());
+        }
         let mut remaining_count_bytes: [u8; 3] = [0; 3];
         reader.read_exact(&mut remaining_count_bytes)?;
         let count: u32 = u32::from_le_bytes([
-            first_count_byte[0], remaining_count_bytes[0],
-            remaining_count_bytes[1], remaining_count_bytes[2],
+            first_count_byte[0],
+            remaining_count_bytes[0],
+            remaining_count_bytes[1],
+            remaining_count_bytes[2],
         ]);
         Self::deserialize_form_count(reader, form, count)
     }
@@ -227,9 +354,8 @@ impl MaterialRegistry {
             let name_length: u32 = Self::read_u32(reader)?;
             let mut name_bytes: Vec<u8> = vec![0; name_length as usize];
             reader.read_exact(&mut name_bytes)?;
-            let name: String = String::from_utf8(name_bytes).map_err(|error| {
-                io::Error::new(io::ErrorKind::InvalidData, error)
-            })?;
+            let name: String = String::from_utf8(name_bytes)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
             // decode the four packed RGBA colors comprising the appearance.
             let color_freezing: Color = Self::read_color(reader)?;
             let color_melting: Color = Self::read_color(reader)?;
@@ -243,9 +369,10 @@ impl MaterialRegistry {
                 color_melting,
                 radiance_freezing,
                 radiance_melting,
-            ).with_variation(variation)
-                .with_color_influence(color_influence)
-                .with_radiance_influence(radiance_influence);
+            )
+            .with_variation(variation)
+            .with_color_influence(color_influence)
+            .with_radiance_influence(radiance_influence);
             let material = match form {
                 MaterialForm::CellularStatic => {
                     let mass = f32::from_bits(Self::read_u32(reader)?);
@@ -258,17 +385,30 @@ impl MaterialRegistry {
                     let pressure_transmission = f32::from_bits(Self::read_u32(reader)?);
                     let friction = f32::from_bits(Self::read_u32(reader)?);
                     let restitution = f32::from_bits(Self::read_u32(reader)?);
-                    Material::CellularStatic { name, graphics, mass, pressure_ignore_threshold,
-                        default_integrity, debris_material, debris_yield_rate, pressure_transmission,
-                        friction, restitution }
+                    Material::CellularStatic {
+                        name,
+                        graphics,
+                        mass,
+                        pressure_ignore_threshold,
+                        default_integrity,
+                        debris_material,
+                        debris_yield_rate,
+                        pressure_transmission,
+                        friction,
+                        restitution,
+                    }
                 }
-                MaterialForm::CellularDynamic => Material::CellularDynamic { name, graphics,
+                MaterialForm::CellularDynamic => Material::CellularDynamic {
+                    name,
+                    graphics,
                     mass: f32::from_bits(Self::read_u32(reader)?),
                     pressure_transmission: f32::from_bits(Self::read_u32(reader)?),
                     friction: f32::from_bits(Self::read_u32(reader)?),
                     restitution: f32::from_bits(Self::read_u32(reader)?),
                 },
-                MaterialForm::Fluid => Material::Fluid { name, graphics,
+                MaterialForm::Fluid => Material::Fluid {
+                    name,
+                    graphics,
                     pressure_transmission: f32::from_bits(Self::read_u32(reader)?),
                     friction: f32::from_bits(Self::read_u32(reader)?),
                     restitution: f32::from_bits(Self::read_u32(reader)?),
@@ -279,7 +419,9 @@ impl MaterialRegistry {
                     density: f32::from_bits(Self::read_u32(reader)?),
                     viscosity: f32::from_bits(Self::read_u32(reader)?),
                 },
-                MaterialForm::Gas => Material::Gas { name, graphics,
+                MaterialForm::Gas => Material::Gas {
+                    name,
+                    graphics,
                     density: f32::from_bits(Self::read_u32(reader)?),
                     diffusivity: f32::from_bits(Self::read_u32(reader)?),
                     extinction: f32::from_bits(Self::read_u32(reader)?),
@@ -324,30 +466,62 @@ impl MaterialRegistry {
                 graphics.variation(),
                 graphics.color_influence(),
                 graphics.radiance_influence(),
-            ].into_iter().flatten() {
+            ]
+            .into_iter()
+            .flatten()
+            {
                 writer.write_all(&value.to_bits().to_le_bytes())?;
             }
             match material {
-                Material::CellularStatic { mass, pressure_ignore_threshold, default_integrity,
-                    debris_material, debris_yield_rate, pressure_transmission, friction, restitution, .. } => {
+                Material::CellularStatic {
+                    mass,
+                    pressure_ignore_threshold,
+                    default_integrity,
+                    debris_material,
+                    debris_yield_rate,
+                    pressure_transmission,
+                    friction,
+                    restitution,
+                    ..
+                } => {
                     writer.write_all(&mass.to_bits().to_le_bytes())?;
                     writer.write_all(&pressure_ignore_threshold.to_bits().to_le_bytes())?;
                     writer.write_all(&default_integrity.to_bits().to_le_bytes())?;
-                    writer.write_all(&debris_material.unwrap_or(MaterialIdentifier::NULL).as_u32().to_le_bytes())?;
+                    writer.write_all(
+                        &debris_material
+                            .unwrap_or(MaterialIdentifier::NULL)
+                            .as_u32()
+                            .to_le_bytes(),
+                    )?;
                     writer.write_all(&debris_yield_rate.to_bits().to_le_bytes())?;
                     writer.write_all(&pressure_transmission.to_bits().to_le_bytes())?;
                     writer.write_all(&friction.to_bits().to_le_bytes())?;
                     writer.write_all(&restitution.to_bits().to_le_bytes())?;
                 }
-                Material::CellularDynamic { mass, pressure_transmission, friction, restitution, .. } => {
+                Material::CellularDynamic {
+                    mass,
+                    pressure_transmission,
+                    friction,
+                    restitution,
+                    ..
+                } => {
                     writer.write_all(&mass.to_bits().to_le_bytes())?;
                     writer.write_all(&pressure_transmission.to_bits().to_le_bytes())?;
                     writer.write_all(&friction.to_bits().to_le_bytes())?;
                     writer.write_all(&restitution.to_bits().to_le_bytes())?;
                 }
-                Material::Fluid { pressure_transmission, friction, restitution,
-                    rest_density, artificial_pressure, xsph_smoothing, body_push_speed,
-                    density, viscosity, .. } => {
+                Material::Fluid {
+                    pressure_transmission,
+                    friction,
+                    restitution,
+                    rest_density,
+                    artificial_pressure,
+                    xsph_smoothing,
+                    body_push_speed,
+                    density,
+                    viscosity,
+                    ..
+                } => {
                     writer.write_all(&pressure_transmission.to_bits().to_le_bytes())?;
                     writer.write_all(&friction.to_bits().to_le_bytes())?;
                     writer.write_all(&restitution.to_bits().to_le_bytes())?;
@@ -358,7 +532,14 @@ impl MaterialRegistry {
                     writer.write_all(&density.to_bits().to_le_bytes())?;
                     writer.write_all(&viscosity.to_bits().to_le_bytes())?;
                 }
-                Material::Gas { density, diffusivity, extinction, dissipation, compressibility, .. } => {
+                Material::Gas {
+                    density,
+                    diffusivity,
+                    extinction,
+                    dissipation,
+                    compressibility,
+                    ..
+                } => {
                     writer.write_all(&density.to_bits().to_le_bytes())?;
                     writer.write_all(&diffusivity.to_bits().to_le_bytes())?;
                     writer.write_all(&extinction.to_bits().to_le_bytes())?;
@@ -391,23 +572,20 @@ impl MaterialRegistry {
         }
         Ok(values)
     }
-
 }
 
 impl Index<MaterialIdentifier> for MaterialRegistry {
-
     type Output = Material;
 
     fn index(&self, identifier: MaterialIdentifier) -> &Self::Output {
         let index: usize = identifier.index() as usize;
         match identifier.form() {
-            MaterialForm::CellularStatic    => &self.cellular_statics[index],
-            MaterialForm::CellularDynamic   => &self.cellular_dynamics[index],
-            MaterialForm::Fluid             => &self.fluids[index],
-            MaterialForm::Gas               => &self.gases[index],
+            MaterialForm::CellularStatic => &self.cellular_statics[index],
+            MaterialForm::CellularDynamic => &self.cellular_dynamics[index],
+            MaterialForm::Fluid => &self.fluids[index],
+            MaterialForm::Gas => &self.gases[index],
         }
     }
-
 }
 
 #[cfg(test)]
@@ -444,5 +622,4 @@ mod tests {
         let old_loaded: MaterialRegistry = MaterialRegistry::deserialize(&mut old_reader).unwrap();
         assert!(old_loaded.gases.is_empty());
     }
-
 }

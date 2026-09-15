@@ -1,21 +1,14 @@
 // Copyright Rob Gage 2026
 
 use super::{
-    collision_readback_slot::CollisionReadbackSlot,
+    CollisionOccupancySnapshot, collision_readback_slot::CollisionReadbackSlot,
     collision_readback_status::CollisionReadbackStatus,
-    CollisionOccupancySnapshot,
 };
 use crate::tiles::TileCoordinates;
-use engine_compute::{
-    Accelerator,
-    AcceleratorBuffer,
-};
+use engine_compute::{Accelerator, AcceleratorBuffer};
 use std::{
     io,
-    sync::{
-        Arc,
-        Mutex,
-    },
+    sync::{Arc, Mutex},
 };
 
 const READBACK_SLOT_COUNT: usize = 3;
@@ -43,7 +36,6 @@ pub struct CellularCollision {
 }
 
 impl CellularCollision {
-
     /// Creates the collision extraction pipeline and its fixed-size buffers
     pub fn new(
         accelerator: &Accelerator,
@@ -105,7 +97,9 @@ impl CellularCollision {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: cellular_material_identifiers.wgpu_buffer().as_entire_binding(),
+                    resource: cellular_material_identifiers
+                        .wgpu_buffer()
+                        .as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -140,8 +134,8 @@ impl CellularCollision {
                 cache: None,
             });
         // allocate fixed staging slots so readback never blocks a simulation tick
-        let readback_slots: Box<[CollisionReadbackSlot]> = (0..READBACK_SLOT_COUNT).map(|_| {
-            CollisionReadbackSlot {
+        let readback_slots: Box<[CollisionReadbackSlot]> = (0..READBACK_SLOT_COUNT)
+            .map(|_| CollisionReadbackSlot {
                 buffer: device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("cellular collision readback"),
                     size: byte_size,
@@ -149,8 +143,8 @@ impl CellularCollision {
                     mapped_at_creation: false,
                 }),
                 status: Arc::new(Mutex::new(CollisionReadbackStatus::Available)),
-            }
-        }).collect();
+            })
+            .collect();
         Self {
             occupancy,
             parameters,
@@ -169,14 +163,19 @@ impl CellularCollision {
         for slot in &self.readback_slots {
             let mut status: std::sync::MutexGuard<'_, CollisionReadbackStatus> =
                 slot.status.lock().map_err(|_| {
-                io::Error::other("Cellular collision readback state is unavailable")
-            })?;
+                    io::Error::other("Cellular collision readback state is unavailable")
+                })?;
             if matches!(*status, CollisionReadbackStatus::Complete(_)) {
                 let CollisionReadbackStatus::Complete(result): CollisionReadbackStatus =
                     std::mem::replace(&mut *status, CollisionReadbackStatus::Available)
-                else { unreachable!() };
+                else {
+                    unreachable!()
+                };
                 let snapshot: CollisionOccupancySnapshot = result.map_err(io::Error::other)?;
-                if self.sequence_latest.is_none_or(|latest| snapshot.sequence > latest) {
+                if self
+                    .sequence_latest
+                    .is_none_or(|latest| snapshot.sequence > latest)
+                {
                     self.sequence_latest = Some(snapshot.sequence);
                     self.latest = Some(snapshot);
                 }
@@ -197,15 +196,19 @@ impl CellularCollision {
     ) -> Result<bool, io::Error> {
         // claim a free staging slot or skip this snapshot without waiting
         let Some(slot): Option<&CollisionReadbackSlot> = self.readback_slots.iter().find(|slot| {
-            slot.status.lock().is_ok_and(|status| {
-                matches!(*status, CollisionReadbackStatus::Available)
-            })
-        }) else { return Ok(false); };
-        let mut status: std::sync::MutexGuard<'_, CollisionReadbackStatus> =
-            slot.status.lock().map_err(|_| {
-                io::Error::other("Cellular collision readback state is unavailable")
-            })?;
-        if !matches!(*status, CollisionReadbackStatus::Available) { return Ok(false); }
+            slot.status
+                .lock()
+                .is_ok_and(|status| matches!(*status, CollisionReadbackStatus::Available))
+        }) else {
+            return Ok(false);
+        };
+        let mut status: std::sync::MutexGuard<'_, CollisionReadbackStatus> = slot
+            .status
+            .lock()
+            .map_err(|_| io::Error::other("Cellular collision readback state is unavailable"))?;
+        if !matches!(*status, CollisionReadbackStatus::Available) {
+            return Ok(false);
+        }
         *status = CollisionReadbackStatus::Mapping;
         drop(status);
         let sequence: u64 = self.sequence_next;
@@ -233,16 +236,19 @@ impl CellularCollision {
         for (index, value) in values.into_iter().enumerate() {
             bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes());
         }
-        accelerator.wgpu_queue().write_buffer(&self.parameters, 0, &bytes);
+        accelerator
+            .wgpu_queue()
+            .write_buffer(&self.parameters, 0, &bytes);
         // derive occupancy and copy only the compact masks to the staging slot
-        let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: Some("cellular collision extraction") },
-        );
+        let mut encoder: wgpu::CommandEncoder =
+            accelerator
+                .wgpu_device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("cellular collision extraction"),
+                });
         {
-            let mut pass: wgpu::ComputePass<'_> = accelerator.begin_compute_pass(
-                &mut encoder,
-                "cellular collision occupancy extraction",
-            );
+            let mut pass: wgpu::ComputePass<'_> = accelerator
+                .begin_compute_pass(&mut encoder, "cellular collision occupancy extraction");
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.dispatch_workgroups(self.tile_count, 1, 1);
@@ -258,57 +264,60 @@ impl CellularCollision {
         // decode the masks asynchronously with their dispatch-time logical metadata
         let mapped_buffer: wgpu::Buffer = slot.buffer.clone();
         let callback_status: Arc<Mutex<CollisionReadbackStatus>> = slot.status.clone();
-        slot.buffer.slice(..).map_async(wgpu::MapMode::Read, move |result| {
-            let result: Result<CollisionOccupancySnapshot, String> = match result {
-                Ok(()) => {
-                    let result: Result<CollisionOccupancySnapshot, String> =
-                        mapped_buffer.slice(..).get_mapped_range()
-                        .map_err(|error| error.to_string()).map(|mapped| {
-                            let mut static_masks: Vec<[u32; 2]> =
-                                Vec::with_capacity(mapped.len() / 16);
-                            let mut dynamic_masks: Vec<[u32; 2]> =
-                                Vec::with_capacity(mapped.len() / 16);
-                            for bytes in mapped.chunks_exact(16) {
-                                static_masks.push([
-                                    u32::from_le_bytes(bytes[0..4].try_into().unwrap()),
-                                    u32::from_le_bytes(bytes[4..8].try_into().unwrap()),
-                                ]);
-                                dynamic_masks.push([
-                                    u32::from_le_bytes(bytes[8..12].try_into().unwrap()),
-                                    u32::from_le_bytes(bytes[12..16].try_into().unwrap()),
-                                ]);
-                            }
-                            drop(mapped);
-                            CollisionOccupancySnapshot {
-                                sequence,
-                                origin,
-                                width,
-                                height,
-                                static_masks: static_masks.into_boxed_slice(),
-                                dynamic_masks: dynamic_masks.into_boxed_slice(),
-                            }
-                        });
-                    mapped_buffer.unmap();
-                    result
+        slot.buffer
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                let result: Result<CollisionOccupancySnapshot, String> = match result {
+                    Ok(()) => {
+                        let result: Result<CollisionOccupancySnapshot, String> = mapped_buffer
+                            .slice(..)
+                            .get_mapped_range()
+                            .map_err(|error| error.to_string())
+                            .map(|mapped| {
+                                let mut static_masks: Vec<[u32; 2]> =
+                                    Vec::with_capacity(mapped.len() / 16);
+                                let mut dynamic_masks: Vec<[u32; 2]> =
+                                    Vec::with_capacity(mapped.len() / 16);
+                                for bytes in mapped.chunks_exact(16) {
+                                    static_masks.push([
+                                        u32::from_le_bytes(bytes[0..4].try_into().unwrap()),
+                                        u32::from_le_bytes(bytes[4..8].try_into().unwrap()),
+                                    ]);
+                                    dynamic_masks.push([
+                                        u32::from_le_bytes(bytes[8..12].try_into().unwrap()),
+                                        u32::from_le_bytes(bytes[12..16].try_into().unwrap()),
+                                    ]);
+                                }
+                                drop(mapped);
+                                CollisionOccupancySnapshot {
+                                    sequence,
+                                    origin,
+                                    width,
+                                    height,
+                                    static_masks: static_masks.into_boxed_slice(),
+                                    dynamic_masks: dynamic_masks.into_boxed_slice(),
+                                }
+                            });
+                        mapped_buffer.unmap();
+                        result
+                    }
+                    Err(_) => Err("Cellular collision readback failed".to_owned()),
+                };
+                if let Ok(mut status) = callback_status.lock() {
+                    *status = CollisionReadbackStatus::Complete(result);
                 }
-                Err(_) => Err("Cellular collision readback failed".to_owned()),
-            };
-            if let Ok(mut status) = callback_status.lock() {
-                *status = CollisionReadbackStatus::Complete(result);
-            }
-        });
+            });
         Ok(true)
     }
-
 }
 
 impl Drop for CellularCollision {
-
     /// Destroys the GPU buffers owned by this collision bridge
     fn drop(&mut self) {
         self.occupancy.free();
         self.parameters.destroy();
-        for slot in &self.readback_slots { slot.buffer.destroy(); }
+        for slot in &self.readback_slots {
+            slot.buffer.destroy();
+        }
     }
-
 }

@@ -1,9 +1,6 @@
 // Copyright Rob Gage 2026
 
-use crate::{
-    chunks::ChunkFluidParticle,
-    tiles::TileArea,
-};
+use crate::{chunks::ChunkFluidParticle, tiles::TileArea};
 use engine_compute::Accelerator;
 use std::io;
 
@@ -22,7 +19,6 @@ pub struct FluidUpload {
 }
 
 impl FluidUpload {
-
     /// Creates a pending fluid import
     pub fn new(
         accelerator: &Accelerator,
@@ -31,12 +27,14 @@ impl FluidUpload {
     ) -> Self {
         Self {
             area,
-            buffer: accelerator.wgpu_device().create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Fluid upload result buffer"),
-                size: particles.len() as u64 * 4,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
+            buffer: accelerator
+                .wgpu_device()
+                .create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("Fluid upload result buffer"),
+                    size: particles.len() as u64 * 4,
+                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }),
             particles,
             is_started: false,
             result: None,
@@ -55,14 +53,15 @@ impl FluidUpload {
         for (index, particle) in self.particles.iter().enumerate() {
             match u32::from_le_bytes(bytes[index * 4..index * 4 + 4].try_into().unwrap()) {
                 0 => failed.push(*particle),
-                1 => { },
-                _ => return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Invalid fluid upload result",
-                )),
+                1 => {}
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Invalid fluid upload result",
+                    ));
+                }
             }
         }
         Ok(failed)
     }
-
 }

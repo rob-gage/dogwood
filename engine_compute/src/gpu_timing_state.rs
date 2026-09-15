@@ -1,9 +1,6 @@
 // Copyright Rob Gage 2026
 
-use super::{
-    gpu_timing_readback::GpuTimingReadback,
-    gpu_timing_record::GpuTimingRecord,
-};
+use super::{gpu_timing_readback::GpuTimingReadback, gpu_timing_record::GpuTimingRecord};
 use std::time::Instant;
 
 /// CPU metadata for the current and pending GPU timing samples.
@@ -18,7 +15,6 @@ pub(crate) struct GpuTimingState {
 }
 
 impl GpuTimingState {
-
     pub(crate) fn new(readbacks: Vec<GpuTimingReadback>) -> Self {
         Self {
             active_slot: None,
@@ -30,5 +26,4 @@ impl GpuTimingState {
             records: Vec::new(),
         }
     }
-
 }

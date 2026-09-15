@@ -5,7 +5,6 @@
 pub struct CellularAppearance(pub u32);
 
 impl CellularAppearance {
-
     /// No appearance variation on any channel
     pub const NEUTRAL: Self = Self(0);
 
@@ -36,5 +35,4 @@ impl CellularAppearance {
             (i32::from(value).max(-127) as f32) / 127.0
         })
     }
-
 }

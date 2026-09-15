@@ -1,15 +1,9 @@
 // Copyright Rob Gage 2026
 
-use super::{
-    SceneEditCellPlacement,
-    SceneEdit,
-};
+use super::{SceneEdit, SceneEditCellPlacement};
 use crate::{
     materials::MaterialIdentifier,
-    tiles::{
-        CellCoordinates,
-        CellularAppearance,
-    },
+    tiles::{CellCoordinates, CellularAppearance},
 };
 
 /// Pending requested material mutations of a `Scene`
@@ -18,9 +12,10 @@ pub struct SceneEditBatch {
 }
 
 impl SceneEditBatch {
-
     /// Creates an empty `SceneEditBatch`
-    pub const fn new() -> Self { Self { edits: Vec::new() } }
+    pub const fn new() -> Self {
+        Self { edits: Vec::new() }
+    }
 
     /// Adds a request to place a material in cells
     pub fn place_material(
@@ -29,11 +24,16 @@ impl SceneEditBatch {
         appearance: CellularAppearance,
         cells: Vec<CellCoordinates>,
     ) {
-        self.place_cells(cells.into_iter().map(|coordinates| SceneEditCellPlacement {
-            coordinates,
-            material_identifier,
-            appearance,
-        }).collect());
+        self.place_cells(
+            cells
+                .into_iter()
+                .map(|coordinates| SceneEditCellPlacement {
+                    coordinates,
+                    material_identifier,
+                    appearance,
+                })
+                .collect(),
+        );
     }
 
     /// Adds a request to place explicit state in cells
@@ -56,9 +56,12 @@ impl SceneEditBatch {
         self.edits.drain(..)
     }
 
-    pub const fn is_empty(&self) -> bool { self.edits.is_empty() }
+    pub const fn is_empty(&self) -> bool {
+        self.edits.is_empty()
+    }
 
     /// Appends requests without changing their producer ordering.
-    pub fn append(&mut self, mut other: Self) { self.edits.append(&mut other.edits); }
-
+    pub fn append(&mut self, mut other: Self) {
+        self.edits.append(&mut other.edits);
+    }
 }

@@ -23,13 +23,16 @@ pub struct CollisionOccupancySnapshot {
 impl CollisionOccupancySnapshot {
     pub(crate) fn static_patch_masks(&self, patch_x: i32, patch_y: i32) -> [[u32; 2]; 16] {
         let mut result = [[0; 2]; 16];
-        for y in 0..4 { for x in 0..4 {
-            let tx = patch_x * 4 + x - self.origin.x;
-            let ty = patch_y * 4 + y - self.origin.y;
-            if tx >= 0 && ty >= 0 && tx < i32::from(self.width) && ty < i32::from(self.height) {
-                result[(y * 4 + x) as usize] = self.static_masks[ty as usize * usize::from(self.width) + tx as usize];
+        for y in 0..4 {
+            for x in 0..4 {
+                let tx = patch_x * 4 + x - self.origin.x;
+                let ty = patch_y * 4 + y - self.origin.y;
+                if tx >= 0 && ty >= 0 && tx < i32::from(self.width) && ty < i32::from(self.height) {
+                    result[(y * 4 + x) as usize] =
+                        self.static_masks[ty as usize * usize::from(self.width) + tx as usize];
+                }
             }
-        }}
+        }
         result
     }
 
@@ -38,17 +41,15 @@ impl CollisionOccupancySnapshot {
         self.is_cell_occupied(&self.static_masks, x, y)
     }
 
-    /// Returns whether a world cell contains dynamic material
-    pub(crate) fn is_dynamic_cell_occupied(&self, x: i32, y: i32) -> Option<bool> {
-        self.is_cell_occupied(&self.dynamic_masks, x, y)
-    }
-
     /// Looks up one world cell in a provided logical tile-mask array
     fn is_cell_occupied(&self, masks: &[[u32; 2]], x: i32, y: i32) -> Option<bool> {
         let tile_x: i32 = x.div_euclid(8) - self.origin.x;
         let tile_y: i32 = y.div_euclid(8) - self.origin.y;
-        if tile_x < 0 || tile_y < 0 || tile_x >= i32::from(self.width) ||
-                tile_y >= i32::from(self.height) {
+        if tile_x < 0
+            || tile_y < 0
+            || tile_x >= i32::from(self.width)
+            || tile_y >= i32::from(self.height)
+        {
             return None;
         }
         let tile: usize = tile_y as usize * usize::from(self.width) + tile_x as usize;
@@ -60,11 +61,15 @@ impl CollisionOccupancySnapshot {
     pub(crate) fn clear_static_cell(&mut self, x: i32, y: i32) {
         let tile_x: i32 = x.div_euclid(8) - self.origin.x;
         let tile_y: i32 = y.div_euclid(8) - self.origin.y;
-        if tile_x < 0 || tile_y < 0 || tile_x >= i32::from(self.width) ||
-                tile_y >= i32::from(self.height) { return; }
+        if tile_x < 0
+            || tile_y < 0
+            || tile_x >= i32::from(self.width)
+            || tile_y >= i32::from(self.height)
+        {
+            return;
+        }
         let tile: usize = tile_y as usize * usize::from(self.width) + tile_x as usize;
         let cell: usize = y.rem_euclid(8) as usize * 8 + x.rem_euclid(8) as usize;
         self.static_masks[tile][cell / 32] &= !(1 << (cell % 32));
     }
-
 }

@@ -1,32 +1,18 @@
 // Copyright Rob Gage 2026
 
-use crate::{
-    materials::{
-        Material,
-        MaterialIdentifier,
-        MaterialRegistry,
-    },
-    tiles::{
-        CellCoordinates,
-        TileCoordinates,
-    },
-};
-use engine_compute::{
-    Accelerator,
-    AcceleratorBuffer,
-};
 use super::{
-    rigid_granular_readback_slot::RigidGranularReadbackSlot,
+    RigidGranularReactionBatch, rigid_granular_readback_slot::RigidGranularReadbackSlot,
     rigid_granular_readback_status::RigidGranularReadbackStatus,
-    RigidGranularReactionBatch,
 };
+use crate::{
+    materials::{Material, MaterialIdentifier, MaterialRegistry},
+    tiles::{CellCoordinates, TileCoordinates},
+};
+use engine_compute::{Accelerator, AcceleratorBuffer};
 use std::{
     collections::BTreeMap,
     io,
-    sync::{
-        Arc,
-        Mutex,
-    },
+    sync::{Arc, Mutex},
 };
 
 const PRESSURE_DAMAGE_RATE: f32 = 10.0;
@@ -83,7 +69,6 @@ pub struct CellularPressure {
 }
 
 impl CellularPressure {
-
     /// Returns the transient retained-pressure field for viewport visualization
     pub(crate) const fn retained_pressure(&self) -> &AcceleratorBuffer {
         &self.retained_pressure
@@ -111,8 +96,9 @@ impl CellularPressure {
         buffered_cell_count: usize,
     ) -> Self {
         let device: &wgpu::Device = accelerator.wgpu_device();
-        let static_values: Vec<[u32; 8]> = materials.iter().filter_map(
-            |(_, material)| match material {
+        let static_values: Vec<[u32; 8]> = materials
+            .iter()
+            .filter_map(|(_, material)| match material {
                 Material::CellularStatic {
                     pressure_ignore_threshold,
                     pressure_transmission,
@@ -132,32 +118,33 @@ impl CellularPressure {
                     0,
                 ]),
                 _ => None,
-            },
-        ).collect();
-        let dynamic_values: Vec<[f32; 4]> = materials.iter().filter_map(
-            |(_, material)| match material {
+            })
+            .collect();
+        let dynamic_values: Vec<[f32; 4]> = materials
+            .iter()
+            .filter_map(|(_, material)| match material {
                 Material::CellularDynamic {
                     mass,
                     pressure_transmission,
                     friction,
                     restitution,
                     ..
-                } => Some([
-                    *mass,
-                    *pressure_transmission,
-                    *friction,
-                    *restitution,
-                ]),
+                } => Some([*mass, *pressure_transmission, *friction, *restitution]),
                 _ => None,
-            },
-        ).collect();
-        let fluid_values: Vec<[f32; 4]> = materials.iter().filter_map(
-            |(_, material)| match material {
-                Material::Fluid { pressure_transmission, friction, restitution, .. } =>
-                    Some([*pressure_transmission, *friction, *restitution, 0.0]),
+            })
+            .collect();
+        let fluid_values: Vec<[f32; 4]> = materials
+            .iter()
+            .filter_map(|(_, material)| match material {
+                Material::Fluid {
+                    pressure_transmission,
+                    friction,
+                    restitution,
+                    ..
+                } => Some([*pressure_transmission, *friction, *restitution, 0.0]),
                 _ => None,
-            },
-        ).collect();
+            })
+            .collect();
         let static_properties: AcceleratorBuffer =
             accelerator.allocate::<[u32; 8]>(static_values.len().max(1));
         let dynamic_properties: AcceleratorBuffer =
@@ -168,29 +155,34 @@ impl CellularPressure {
             accelerator.wgpu_queue().write_buffer(
                 static_properties.wgpu_buffer(),
                 0,
-                &static_values.iter().flat_map(|values| {
-                    values.iter().flat_map(|value| value.to_le_bytes())
-                }).collect::<Vec<_>>(),
+                &static_values
+                    .iter()
+                    .flat_map(|values| values.iter().flat_map(|value| value.to_le_bytes()))
+                    .collect::<Vec<_>>(),
             );
         }
         if !dynamic_values.is_empty() {
             accelerator.wgpu_queue().write_buffer(
                 dynamic_properties.wgpu_buffer(),
                 0,
-                &dynamic_values.iter().flat_map(|values| {
-                    values.iter().flat_map(|value| value.to_le_bytes())
-                }).collect::<Vec<_>>(),
+                &dynamic_values
+                    .iter()
+                    .flat_map(|values| values.iter().flat_map(|value| value.to_le_bytes()))
+                    .collect::<Vec<_>>(),
             );
         }
         if !fluid_values.is_empty() {
             accelerator.wgpu_queue().write_buffer(
-                fluid_properties.wgpu_buffer(), 0,
-                &fluid_values.iter().flat_map(|values| {
-                    values.iter().flat_map(|value| value.to_le_bytes())
-                }).collect::<Vec<_>>(),
+                fluid_properties.wgpu_buffer(),
+                0,
+                &fluid_values
+                    .iter()
+                    .flat_map(|values| values.iter().flat_map(|value| value.to_le_bytes()))
+                    .collect::<Vec<_>>(),
             );
         }
-        let buffered_cell_count: u32 = buffered_cell_count.try_into()
+        let buffered_cell_count: u32 = buffered_cell_count
+            .try_into()
             .expect("Cellular pressure buffer exceeds GPU indexing range");
         let buffered_tile_count: u32 = buffered_cell_count / 64;
         let pending_impulses: AcceleratorBuffer =
@@ -208,8 +200,9 @@ impl CellularPressure {
         let indirect_dispatch: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("cellular pressure indirect dispatch"),
             size: 12,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT |
-                wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::INDIRECT
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let rigid_body_capacity: usize = INITIAL_RIGID_BODY_CAPACITY;
@@ -225,8 +218,8 @@ impl CellularPressure {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
-            &wgpu::BindGroupLayoutDescriptor {
+        let layout: wgpu::BindGroupLayout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("cellular pressure bind group layout"),
                 entries: &[
                     Self::storage_layout_entry(0, false),
@@ -267,8 +260,7 @@ impl CellularPressure {
                     Self::storage_layout_entry(29, true),
                     Self::storage_layout_entry(30, false),
                 ],
-            },
-        );
+            });
         let indirect_bind_group_layout: wgpu::BindGroupLayout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("cellular pressure indirect bind group layout"),
@@ -303,42 +295,39 @@ impl CellularPressure {
             (29, rigid_cells.wgpu_buffer().clone()),
             (30, rigid_predicted_motion.wgpu_buffer().clone()),
         ];
-        let bind_group: wgpu::BindGroup = Self::create_bind_group(
-            device, &layout, &parameters, &bound_buffers,
-        );
-        let indirect_bind_group: wgpu::BindGroup = device.create_bind_group(
-            &wgpu::BindGroupDescriptor {
+        let bind_group: wgpu::BindGroup =
+            Self::create_bind_group(device, &layout, &parameters, &bound_buffers);
+        let indirect_bind_group: wgpu::BindGroup =
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("cellular pressure indirect bind group"),
                 layout: &indirect_bind_group_layout,
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
                     resource: indirect_dispatch.as_entire_binding(),
                 }],
-            },
-        );
+            });
         let shader: wgpu::ShaderModule = super::create_simulation_shader_module(
             device,
             "cellular pressure shader",
             include_str!("cellular_pressure.wgsl"),
             "engine_physics/src/simulation/cellular_pressure.wgsl",
         );
-        let pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
-            &wgpu::PipelineLayoutDescriptor {
+        let pipeline_layout: wgpu::PipelineLayout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("cellular pressure pipeline layout"),
                 bind_group_layouts: &[Some(&layout)],
                 immediate_size: 0,
-            },
-        );
-        let compact_pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
-            &wgpu::PipelineLayoutDescriptor {
+            });
+        let compact_pipeline_layout: wgpu::PipelineLayout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("cellular pressure compaction pipeline layout"),
                 bind_group_layouts: &[Some(&layout), Some(&indirect_bind_group_layout)],
                 immediate_size: 0,
-            },
-        );
+            });
         let reaction_readback_size: u64 = rigid_body_capacity as u64 * 128;
-        let rigid_reaction_readback_slots: Vec<RigidGranularReadbackSlot> =
-            (0..RIGID_REACTION_READBACK_SLOT_COUNT).map(|_| RigidGranularReadbackSlot {
+        let rigid_reaction_readback_slots: Vec<RigidGranularReadbackSlot> = (0
+            ..RIGID_REACTION_READBACK_SLOT_COUNT)
+            .map(|_| RigidGranularReadbackSlot {
                 buffer: device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("rigid granular reaction readback"),
                     size: reaction_readback_size,
@@ -346,7 +335,8 @@ impl CellularPressure {
                     mapped_at_creation: false,
                 }),
                 status: Arc::new(Mutex::new(RigidGranularReadbackStatus::Available)),
-            }).collect();
+            })
+            .collect();
         Self {
             static_properties,
             dynamic_properties,
@@ -373,55 +363,81 @@ impl CellularPressure {
             rigid_body_capacity,
             indirect_bind_group,
             impulse_pipeline: Self::create_pipeline(
-                device, &pipeline_layout, &shader,
-                "cellular impulse pipeline", "queue_cellular_radial_impulse",
+                device,
+                &pipeline_layout,
+                &shader,
+                "cellular impulse pipeline",
+                "queue_cellular_radial_impulse",
             ),
             clear_active_tiles_pipeline: Self::create_pipeline(
-                device, &pipeline_layout, &shader,
+                device,
+                &pipeline_layout,
+                &shader,
                 "cellular pressure active tile clear pipeline",
                 "clear_active_cellular_pressure_tiles",
             ),
             mark_active_tiles_pipeline: Self::create_pipeline(
-                device, &pipeline_layout, &shader,
+                device,
+                &pipeline_layout,
+                &shader,
                 "cellular pressure active tile marking pipeline",
                 "mark_active_cellular_pressure_tiles",
             ),
             compact_active_tiles_pipeline: Self::create_pipeline(
-                device, &compact_pipeline_layout, &shader,
+                device,
+                &compact_pipeline_layout,
+                &shader,
                 "cellular pressure active tile compaction pipeline",
                 "compact_active_cellular_pressure_tiles",
             ),
             gather_rigid_contacts_pipeline: Self::create_pipeline(
-                device, &pipeline_layout, &shader,
-                "gather rigid contacts", "gather_rigid_contacts",
+                device,
+                &pipeline_layout,
+                &shader,
+                "gather rigid contacts",
+                "gather_rigid_contacts",
             ),
             resolve_contacts_pipelines: [
                 "resolve_cellular_contacts_horizontal_even",
                 "resolve_cellular_contacts_horizontal_odd",
                 "resolve_cellular_contacts_vertical_even",
                 "resolve_cellular_contacts_vertical_odd",
-            ].map(|entry| Self::create_pipeline(
-                device, &pipeline_layout, &shader, entry, entry,
-            )),
+            ]
+            .map(|entry| Self::create_pipeline(device, &pipeline_layout, &shader, entry, entry)),
             rigid_contact_initialize_pipeline: Self::create_pipeline(
-                device, &pipeline_layout, &shader,
-                "initialize rigid contact state", "initialize_rigid_contact_state",
+                device,
+                &pipeline_layout,
+                &shader,
+                "initialize rigid contact state",
+                "initialize_rigid_contact_state",
             ),
             propagate_pending_pipeline: Self::create_pipeline(
-                device, &pipeline_layout, &shader,
-                "cellular pending pressure propagation", "propagate_pending_cellular_pressure",
+                device,
+                &pipeline_layout,
+                &shader,
+                "cellular pending pressure propagation",
+                "propagate_pending_cellular_pressure",
             ),
             propagate_a_pipeline: Self::create_pipeline(
-                device, &pipeline_layout, &shader,
-                "cellular pressure A propagation", "propagate_cellular_pressure_a",
+                device,
+                &pipeline_layout,
+                &shader,
+                "cellular pressure A propagation",
+                "propagate_cellular_pressure_a",
             ),
             propagate_b_pipeline: Self::create_pipeline(
-                device, &pipeline_layout, &shader,
-                "cellular pressure B propagation", "propagate_cellular_pressure_b",
+                device,
+                &pipeline_layout,
+                &shader,
+                "cellular pressure B propagation",
+                "propagate_cellular_pressure_b",
             ),
             finalize_pipeline: Self::create_pipeline(
-                device, &pipeline_layout, &shader,
-                "cellular pressure finalization", "finalize_cellular_pressure",
+                device,
+                &pipeline_layout,
+                &shader,
+                "cellular pressure finalization",
+                "finalize_cellular_pressure",
             ),
             buffered_cell_count,
             gas_count,
@@ -442,10 +458,25 @@ impl CellularPressure {
         strength: f32,
     ) {
         self.write_parameters(
-            accelerator, origin, width, height, ring_x, ring_y,
-            center, radius, strength, 0.0, [0.0; 2], 0, 0,
+            accelerator,
+            origin,
+            width,
+            height,
+            ring_x,
+            ring_y,
+            center,
+            radius,
+            strength,
+            0.0,
+            [0.0; 2],
+            0,
+            0,
         );
-        self.dispatch(accelerator, &self.impulse_pipeline, "queue cellular radial impulse");
+        self.dispatch(
+            accelerator,
+            &self.impulse_pipeline,
+            "queue cellular radial impulse",
+        );
     }
 
     pub fn simulate(
@@ -463,27 +494,47 @@ impl CellularPressure {
         rigid_topology_revision: u64,
     ) -> Result<(), io::Error> {
         self.ensure_rigid_body_capacity(accelerator, rigid_body_count);
-        let rigid_body_count: u32 = rigid_body_count.try_into()
+        let rigid_body_count: u32 = rigid_body_count
+            .try_into()
             .map_err(|_| io::Error::other("Rigid body count exceeds GPU indexing range"))?;
-        let rigid_cell_count: u32 = rigid_cell_count.try_into()
+        let rigid_cell_count: u32 = rigid_cell_count
+            .try_into()
             .map_err(|_| io::Error::other("Rigid cell count exceeds GPU indexing range"))?;
         self.write_parameters(
-            accelerator, origin, width, height, ring_x, ring_y,
-            CellCoordinates { x: 0, y: 0 }, 0.0, 0.0, delta_time,
-            gravity, rigid_body_count, rigid_cell_count,
+            accelerator,
+            origin,
+            width,
+            height,
+            ring_x,
+            ring_y,
+            CellCoordinates { x: 0, y: 0 },
+            0.0,
+            0.0,
+            delta_time,
+            gravity,
+            rigid_body_count,
+            rigid_cell_count,
         );
-        let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device()
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("cellular pressure simulation"),
-            });
+        let mut encoder: wgpu::CommandEncoder =
+            accelerator
+                .wgpu_device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("cellular pressure simulation"),
+                });
         if self.rigid_topology_revision != rigid_topology_revision {
             encoder.clear_buffer(self.rigid_reactions.wgpu_buffer(), 0, None);
             self.rigid_topology_revision = rigid_topology_revision;
         }
         let tile_count: u32 = self.buffered_cell_count / 64;
         for (pipeline, label) in [
-            (&self.clear_active_tiles_pipeline, "clear active cellular pressure tiles"),
-            (&self.mark_active_tiles_pipeline, "mark active cellular pressure tiles"),
+            (
+                &self.clear_active_tiles_pipeline,
+                "clear active cellular pressure tiles",
+            ),
+            (
+                &self.mark_active_tiles_pipeline,
+                "mark active cellular pressure tiles",
+            ),
         ] {
             let mut pass: wgpu::ComputePass<'_> =
                 accelerator.begin_compute_pass(&mut encoder, label);
@@ -498,45 +549,55 @@ impl CellularPressure {
         }
         encoder.clear_buffer(&self.indirect_dispatch, 0, None);
         {
-            let mut pass: wgpu::ComputePass<'_> = accelerator.begin_compute_pass(
-                &mut encoder,
-                "compact active cellular pressure tiles",
-            );
+            let mut pass: wgpu::ComputePass<'_> = accelerator
+                .begin_compute_pass(&mut encoder, "compact active cellular pressure tiles");
             pass.set_pipeline(&self.compact_active_tiles_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.set_bind_group(1, &self.indirect_bind_group, &[]);
             pass.dispatch_workgroups(tile_count.div_ceil(64), 1, 1);
         }
         {
-            let mut pass: wgpu::ComputePass<'_> = accelerator.begin_compute_pass(
-                &mut encoder, "initialize rigid contact state",
-            );
+            let mut pass: wgpu::ComputePass<'_> =
+                accelerator.begin_compute_pass(&mut encoder, "initialize rigid contact state");
             pass.set_pipeline(&self.rigid_contact_initialize_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.dispatch_workgroups(rigid_body_count.max(1).div_ceil(64), 1, 1);
         }
         {
-            let mut pass: wgpu::ComputePass<'_> = accelerator.begin_compute_pass(
-                &mut encoder, "gather rigid grid interfaces",
-            );
+            let mut pass: wgpu::ComputePass<'_> =
+                accelerator.begin_compute_pass(&mut encoder, "gather rigid grid interfaces");
             pass.set_pipeline(&self.gather_rigid_contacts_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.dispatch_workgroups_indirect(&self.indirect_dispatch, 0);
         }
         for pipeline in &self.resolve_contacts_pipelines {
-            let mut pass: wgpu::ComputePass<'_> = accelerator.begin_compute_pass(
-                &mut encoder, "resolve colored cellular faces",
-            );
+            let mut pass: wgpu::ComputePass<'_> =
+                accelerator.begin_compute_pass(&mut encoder, "resolve colored cellular faces");
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.dispatch_workgroups_indirect(&self.indirect_dispatch, 0);
         }
         for (pipeline, label) in [
-            (&self.propagate_pending_pipeline, "propagate pending cellular pressure"),
-            (&self.propagate_b_pipeline, "propagate cellular pressure B 1"),
-            (&self.propagate_a_pipeline, "propagate cellular pressure A 1"),
-            (&self.propagate_b_pipeline, "propagate cellular pressure B 2"),
-            (&self.propagate_a_pipeline, "propagate cellular pressure A 2"),
+            (
+                &self.propagate_pending_pipeline,
+                "propagate pending cellular pressure",
+            ),
+            (
+                &self.propagate_b_pipeline,
+                "propagate cellular pressure B 1",
+            ),
+            (
+                &self.propagate_a_pipeline,
+                "propagate cellular pressure A 1",
+            ),
+            (
+                &self.propagate_b_pipeline,
+                "propagate cellular pressure B 2",
+            ),
+            (
+                &self.propagate_a_pipeline,
+                "propagate cellular pressure A 2",
+            ),
             (&self.finalize_pipeline, "finalize cellular pressure"),
         ] {
             let mut pass: wgpu::ComputePass<'_> =
@@ -545,20 +606,28 @@ impl CellularPressure {
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.dispatch_workgroups_indirect(&self.indirect_dispatch, 0);
         }
-        let readback_slot_index: usize = self.rigid_reaction_readback_slots.iter().position(|slot| {
-                slot.status.lock().is_ok_and(|status| {
-                    matches!(*status, RigidGranularReadbackStatus::Available)
-                })
-            }).unwrap_or_else(|| {
+        let readback_slot_index: usize = self
+            .rigid_reaction_readback_slots
+            .iter()
+            .position(|slot| {
+                slot.status
+                    .lock()
+                    .is_ok_and(|status| matches!(*status, RigidGranularReadbackStatus::Available))
+            })
+            .unwrap_or_else(|| {
                 let size = self.rigid_body_capacity as u64 * 128;
-                self.rigid_reaction_readback_slots.push(RigidGranularReadbackSlot {
-                    buffer: accelerator.wgpu_device().create_buffer(&wgpu::BufferDescriptor {
-                        label: Some("rigid reaction readback backlog"), size,
-                        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                        mapped_at_creation: false,
-                    }),
-                    status: Arc::new(Mutex::new(RigidGranularReadbackStatus::Available)),
-                });
+                self.rigid_reaction_readback_slots
+                    .push(RigidGranularReadbackSlot {
+                        buffer: accelerator
+                            .wgpu_device()
+                            .create_buffer(&wgpu::BufferDescriptor {
+                                label: Some("rigid reaction readback backlog"),
+                                size,
+                                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                                mapped_at_creation: false,
+                            }),
+                        status: Arc::new(Mutex::new(RigidGranularReadbackStatus::Available)),
+                    });
                 self.rigid_reaction_readback_slots.len() - 1
             });
         let mut mapping = None;
@@ -577,14 +646,24 @@ impl CellularPressure {
                     let statistics_size: u64 = u64::from(rigid_body_count) * 48;
                     let statistics_offset: u64 = reaction_size;
                     encoder.copy_buffer_to_buffer(
-                        self.rigid_reactions.wgpu_buffer(), 0,
-                        &slot.buffer, 0, reaction_size,
+                        self.rigid_reactions.wgpu_buffer(),
+                        0,
+                        &slot.buffer,
+                        0,
+                        reaction_size,
                     );
                     encoder.copy_buffer_to_buffer(
-                        self.rigid_contact_statistics.wgpu_buffer(), 0,
-                        &slot.buffer, statistics_offset, statistics_size,
+                        self.rigid_contact_statistics.wgpu_buffer(),
+                        0,
+                        &slot.buffer,
+                        statistics_offset,
+                        statistics_size,
                     );
-                    encoder.clear_buffer(self.rigid_reactions.wgpu_buffer(), 0, Some(reaction_size));
+                    encoder.clear_buffer(
+                        self.rigid_reactions.wgpu_buffer(),
+                        0,
+                        Some(reaction_size),
+                    );
                     mapping = Some((slot, sequence, statistics_offset + statistics_size));
                 }
             }
@@ -598,20 +677,37 @@ impl CellularPressure {
                 wgpu::MapMode::Read,
                 move |result| {
                     let result: Result<RigidGranularReactionBatch, String> = match result {
-                        Ok(()) => mapped_buffer.slice(0..mapped_size).get_mapped_range()
-                            .map_err(|error| error.to_string()).and_then(|mapped| {
+                        Ok(()) => mapped_buffer
+                            .slice(0..mapped_size)
+                            .get_mapped_range()
+                            .map_err(|error| error.to_string())
+                            .and_then(|mapped| {
                                 let mut reactions = Vec::with_capacity(body_count);
                                 let mut constraints = Vec::with_capacity(body_count);
                                 let mut supports = Vec::with_capacity(body_count);
                                 let mut recovery = Vec::with_capacity(body_count);
                                 let mut source_motion = Vec::with_capacity(body_count);
                                 for bytes in mapped[..body_count * 80].chunks_exact(80) {
-                                    let state = |offset: usize| [
-                                        i32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as f32 / 65536.0,
-                                        i32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as f32 / 65536.0,
-                                        i32::from_le_bytes(bytes[offset + 8..offset + 12].try_into().unwrap()) as f32 / 65536.0,
-                                        u32::from_le_bytes(bytes[offset + 12..offset + 16].try_into().unwrap()) as f32 / 256.0,
-                                    ];
+                                    let state = |offset: usize| {
+                                        [
+                                            i32::from_le_bytes(
+                                                bytes[offset..offset + 4].try_into().unwrap(),
+                                            ) as f32
+                                                / 65536.0,
+                                            i32::from_le_bytes(
+                                                bytes[offset + 4..offset + 8].try_into().unwrap(),
+                                            ) as f32
+                                                / 65536.0,
+                                            i32::from_le_bytes(
+                                                bytes[offset + 8..offset + 12].try_into().unwrap(),
+                                            ) as f32
+                                                / 65536.0,
+                                            u32::from_le_bytes(
+                                                bytes[offset + 12..offset + 16].try_into().unwrap(),
+                                            ) as f32
+                                                / 256.0,
+                                        ]
+                                    };
                                     constraints.push(state(16));
                                     supports.push(state(32));
                                     recovery.push(state(48));
@@ -619,11 +715,11 @@ impl CellularPressure {
                                         f32::from_le_bytes(bytes[64..68].try_into().unwrap()),
                                         f32::from_le_bytes(bytes[68..72].try_into().unwrap()),
                                         f32::from_le_bytes(bytes[72..76].try_into().unwrap()),
-                                        u32::from_le_bytes(bytes[76..80].try_into().unwrap()) as f32,
+                                        u32::from_le_bytes(bytes[76..80].try_into().unwrap())
+                                            as f32,
                                     ]);
-                                    let overflow = i32::from_le_bytes(
-                                        bytes[12..16].try_into().unwrap(),
-                                    );
+                                    let overflow =
+                                        i32::from_le_bytes(bytes[12..16].try_into().unwrap());
                                     if overflow != 0 {
                                         drop(mapped);
                                         mapped_buffer.unmap();
@@ -633,41 +729,57 @@ impl CellularPressure {
                                         );
                                     }
                                     reactions.push([
-                                        i32::from_le_bytes(bytes[0..4].try_into().unwrap()) as f32 /
-                                            256.0,
-                                        i32::from_le_bytes(bytes[4..8].try_into().unwrap()) as f32 /
-                                            256.0,
-                                        i32::from_le_bytes(bytes[8..12].try_into().unwrap()) as f32 /
-                                            64.0,
+                                        i32::from_le_bytes(bytes[0..4].try_into().unwrap()) as f32
+                                            / 256.0,
+                                        i32::from_le_bytes(bytes[4..8].try_into().unwrap()) as f32
+                                            / 256.0,
+                                        i32::from_le_bytes(bytes[8..12].try_into().unwrap()) as f32
+                                            / 64.0,
                                     ]);
                                 }
                                 let statistics_start: usize = body_count * 80;
-                                let contact_counts = mapped[statistics_start..
-                                    statistics_start + body_count * 48].chunks_exact(48)
+                                let contact_counts = mapped
+                                    [statistics_start..statistics_start + body_count * 48]
+                                    .chunks_exact(48)
                                     .map(|bytes| {
                                         u32::from_le_bytes(bytes[0..4].try_into().unwrap())
-                                    }).collect::<Vec<_>>().into_boxed_slice();
-                                let static_contact_counts = mapped[statistics_start..
-                                    statistics_start + body_count * 48].chunks_exact(48)
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .into_boxed_slice();
+                                let static_contact_counts = mapped
+                                    [statistics_start..statistics_start + body_count * 48]
+                                    .chunks_exact(48)
                                     .map(|bytes| {
                                         u32::from_le_bytes(bytes[4..8].try_into().unwrap())
-                                    }).collect::<Vec<_>>().into_boxed_slice();
-                                let granular_contact_counts = mapped[statistics_start..
-                                    statistics_start + body_count * 48].chunks_exact(48)
-                                    .map(|bytes| u32::from_le_bytes(
-                                        bytes[12..16].try_into().unwrap()) & 0xffff)
-                                    .collect::<Vec<_>>().into_boxed_slice();
-                                let moving_contact_counts = mapped[statistics_start..
-                                    statistics_start + body_count * 48].chunks_exact(48)
-                                    .map(|bytes| u32::from_le_bytes(
-                                        bytes[12..16].try_into().unwrap()) >> 16)
-                                    .collect::<Vec<_>>().into_boxed_slice();
-                                let energy_budgets = mapped[statistics_start..
-                                    statistics_start + body_count * 48].chunks_exact(48)
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .into_boxed_slice();
+                                let granular_contact_counts = mapped
+                                    [statistics_start..statistics_start + body_count * 48]
+                                    .chunks_exact(48)
                                     .map(|bytes| {
-                                        u32::from_le_bytes(bytes[8..12].try_into().unwrap())
-                                            as f32 / 256.0
-                                    }).collect::<Vec<_>>().into_boxed_slice();
+                                        u32::from_le_bytes(bytes[12..16].try_into().unwrap())
+                                            & 0xffff
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .into_boxed_slice();
+                                let moving_contact_counts = mapped
+                                    [statistics_start..statistics_start + body_count * 48]
+                                    .chunks_exact(48)
+                                    .map(|bytes| {
+                                        u32::from_le_bytes(bytes[12..16].try_into().unwrap()) >> 16
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .into_boxed_slice();
+                                let energy_budgets = mapped
+                                    [statistics_start..statistics_start + body_count * 48]
+                                    .chunks_exact(48)
+                                    .map(|bytes| {
+                                        u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as f32
+                                            / 256.0
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .into_boxed_slice();
                                 drop(mapped);
                                 mapped_buffer.unmap();
                                 Ok(RigidGranularReactionBatch {
@@ -703,20 +815,25 @@ impl CellularPressure {
         &mut self,
     ) -> Result<Vec<RigidGranularReactionBatch>, io::Error> {
         for slot in &self.rigid_reaction_readback_slots {
-            let mut status = slot.status.lock().map_err(|_| {
-                io::Error::other("Rigid granular readback state is unavailable")
-            })?;
+            let mut status = slot
+                .status
+                .lock()
+                .map_err(|_| io::Error::other("Rigid granular readback state is unavailable"))?;
             if matches!(*status, RigidGranularReadbackStatus::Complete(_)) {
                 let RigidGranularReadbackStatus::Complete(result) =
                     std::mem::replace(&mut *status, RigidGranularReadbackStatus::Available)
-                else { unreachable!() };
+                else {
+                    unreachable!()
+                };
                 let batch = result.map_err(io::Error::other)?;
                 self.rigid_reaction_completed.insert(batch.sequence, batch);
             }
         }
         let mut ordered = Vec::new();
-        while let Some(batch) = self.rigid_reaction_completed
-                .remove(&self.rigid_reaction_sequence_apply_next) {
+        while let Some(batch) = self
+            .rigid_reaction_completed
+            .remove(&self.rigid_reaction_sequence_apply_next)
+        {
             ordered.push(batch);
             self.rigid_reaction_sequence_apply_next =
                 self.rigid_reaction_sequence_apply_next.wrapping_add(1);
@@ -738,20 +855,17 @@ impl CellularPressure {
             &self.pressure_b,
             &self.retained_pressure,
         ] {
-            accelerator.wgpu_queue().write_buffer(buffer.wgpu_buffer(), offset, &zeroes);
+            accelerator
+                .wgpu_queue()
+                .write_buffer(buffer.wgpu_buffer(), offset, &zeroes);
         }
     }
 
-    fn dispatch(
-        &self,
-        accelerator: &Accelerator,
-        pipeline: &wgpu::ComputePipeline,
-        label: &str,
-    ) {
-        let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device()
+    fn dispatch(&self, accelerator: &Accelerator, pipeline: &wgpu::ComputePipeline, label: &str) {
+        let mut encoder: wgpu::CommandEncoder = accelerator
+            .wgpu_device()
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
-        let mut pass: wgpu::ComputePass<'_> =
-            accelerator.begin_compute_pass(&mut encoder, label);
+        let mut pass: wgpu::ComputePass<'_> = accelerator.begin_compute_pass(&mut encoder, label);
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.dispatch_workgroups(self.buffered_cell_count.div_ceil(64), 1, 1);
@@ -798,41 +912,53 @@ impl CellularPressure {
             0,
         ];
         let bytes: Vec<u8> = values.into_iter().flat_map(u32::to_le_bytes).collect();
-        accelerator.wgpu_queue().write_buffer(&self.parameters, 0, &bytes);
+        accelerator
+            .wgpu_queue()
+            .write_buffer(&self.parameters, 0, &bytes);
     }
 
     fn ensure_rigid_body_capacity(&mut self, accelerator: &Accelerator, count: usize) {
-        if count <= self.rigid_body_capacity { return; }
+        if count <= self.rigid_body_capacity {
+            return;
+        }
         self.rigid_contact_statistics.free();
         self.rigid_reactions.free();
         self.rigid_predicted_motion.free();
         self.rigid_body_capacity = count.next_power_of_two();
-        self.rigid_contact_statistics =
-            accelerator.allocate::<[u32; 12]>(self.rigid_body_capacity);
+        self.rigid_contact_statistics = accelerator.allocate::<[u32; 12]>(self.rigid_body_capacity);
         self.rigid_reactions = accelerator.allocate::<[i32; 20]>(self.rigid_body_capacity);
         self.rigid_predicted_motion = accelerator.allocate::<[i32; 4]>(self.rigid_body_capacity);
         for (binding, buffer) in &mut self.bound_buffers {
-            if *binding == 27 { *buffer = self.rigid_reactions.wgpu_buffer().clone(); }
-            if *binding == 30 { *buffer = self.rigid_predicted_motion.wgpu_buffer().clone(); }
+            if *binding == 27 {
+                *buffer = self.rigid_reactions.wgpu_buffer().clone();
+            }
+            if *binding == 30 {
+                *buffer = self.rigid_predicted_motion.wgpu_buffer().clone();
+            }
             if *binding == 28 {
                 *buffer = self.rigid_contact_statistics.wgpu_buffer().clone();
             }
         }
         self.bind_group = Self::create_bind_group(
-            accelerator.wgpu_device(), &self.bind_group_layout,
-            &self.parameters, &self.bound_buffers,
+            accelerator.wgpu_device(),
+            &self.bind_group_layout,
+            &self.parameters,
+            &self.bound_buffers,
         );
         let size: u64 = self.rigid_body_capacity as u64 * 128;
-        self.rigid_reaction_readback_slots =
-            (0..RIGID_REACTION_READBACK_SLOT_COUNT).map(|_| RigidGranularReadbackSlot {
-                buffer: accelerator.wgpu_device().create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("rigid granular reaction readback"),
-                    size,
-                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                }),
+        self.rigid_reaction_readback_slots = (0..RIGID_REACTION_READBACK_SLOT_COUNT)
+            .map(|_| RigidGranularReadbackSlot {
+                buffer: accelerator
+                    .wgpu_device()
+                    .create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("rigid granular reaction readback"),
+                        size,
+                        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    }),
                 status: Arc::new(Mutex::new(RigidGranularReadbackStatus::Available)),
-            }).collect();
+            })
+            .collect();
         self.rigid_reaction_completed.clear();
         self.rigid_reaction_sequence_apply_next = self.rigid_reaction_sequence_next;
         self.rigid_topology_revision = u64::MAX;
@@ -844,12 +970,13 @@ impl CellularPressure {
         parameters: &wgpu::Buffer,
         buffers: &[(u32, wgpu::Buffer)],
     ) -> wgpu::BindGroup {
-        let mut entries: Vec<wgpu::BindGroupEntry<'_>> = buffers.iter().map(
-            |(binding, buffer)| wgpu::BindGroupEntry {
+        let mut entries: Vec<wgpu::BindGroupEntry<'_>> = buffers
+            .iter()
+            .map(|(binding, buffer)| wgpu::BindGroupEntry {
                 binding: *binding,
                 resource: buffer.as_entire_binding(),
-            },
-        ).collect();
+            })
+            .collect();
         entries.push(wgpu::BindGroupEntry {
             binding: 13,
             resource: parameters.as_entire_binding(),
@@ -890,11 +1017,9 @@ impl CellularPressure {
             cache: None,
         })
     }
-
 }
 
 impl Drop for CellularPressure {
-
     fn drop(&mut self) {
         self.static_properties.free();
         self.dynamic_properties.free();
@@ -910,9 +1035,10 @@ impl Drop for CellularPressure {
         self.rigid_predicted_motion.free();
         self.indirect_dispatch.destroy();
         self.parameters.destroy();
-        for slot in &self.rigid_reaction_readback_slots { slot.buffer.destroy(); }
+        for slot in &self.rigid_reaction_readback_slots {
+            slot.buffer.destroy();
+        }
     }
-
 }
 
 #[cfg(test)]
@@ -924,7 +1050,10 @@ mod tests {
 
     use super::*;
     use engine_graphics::{Color, MaterialAppearance};
-    use std::{sync::mpsc, time::{Duration, Instant}};
+    use std::{
+        sync::mpsc,
+        time::{Duration, Instant},
+    };
 
     #[test]
     fn colored_face_pipelines_compile_on_gpu() {
@@ -942,12 +1071,25 @@ mod tests {
         let transforms = accelerator.allocate::<[f32; 4]>(3);
         let rigid_cells = accelerator.allocate::<[u32; 8]>(1);
         let pressure = CellularPressure::new(
-            &accelerator, &materials, &cells, &appearances, &integrities,
-            &kinematics, &occupancy, &velocity, &owners, &rigid_materials,
-            &transforms, &rigid_cells, &accelerator.allocate::<[u32; 4]>(64),
-            &accelerator.allocate::<[f32; 2]>(64), &accelerator.allocate::<f32>(64),
-            &accelerator.allocate::<[f32; 4]>(2), &accelerator.allocate::<f32>(64),
-            0, 64,
+            &accelerator,
+            &materials,
+            &cells,
+            &appearances,
+            &integrities,
+            &kinematics,
+            &occupancy,
+            &velocity,
+            &owners,
+            &rigid_materials,
+            &transforms,
+            &rigid_cells,
+            &accelerator.allocate::<[u32; 4]>(64),
+            &accelerator.allocate::<[f32; 2]>(64),
+            &accelerator.allocate::<f32>(64),
+            &accelerator.allocate::<[f32; 4]>(2),
+            &accelerator.allocate::<f32>(64),
+            0,
+            64,
         );
         accelerator.poll().unwrap();
         drop(pressure);
@@ -961,14 +1103,22 @@ mod tests {
         let stone = materials.register(Material::CellularStatic {
             name: "Stone".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(90, 90, 90)),
-            mass: 1.0, pressure_ignore_threshold: 1000.0, default_integrity: 100.0,
-            debris_material: None, debris_yield_rate: 0.0,
-            pressure_transmission: 1.0, friction: 0.5, restitution: 0.0,
+            mass: 1.0,
+            pressure_ignore_threshold: 1000.0,
+            default_integrity: 100.0,
+            debris_material: None,
+            debris_yield_rate: 0.0,
+            pressure_transmission: 1.0,
+            friction: 0.5,
+            restitution: 0.0,
         });
         let sand = materials.register(Material::CellularDynamic {
             name: "Sand".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(200, 180, 130)),
-            mass: 1.0, pressure_transmission: 1.0, friction: 0.5, restitution: 0.0,
+            mass: 1.0,
+            pressure_transmission: 1.0,
+            friction: 0.5,
+            restitution: 0.0,
         });
         let cells = accelerator.allocate::<u32>(64);
         let appearances = accelerator.allocate::<u32>(64);
@@ -986,43 +1136,93 @@ mod tests {
         let gas_properties = accelerator.allocate::<[f32; 4]>(2);
         let fluid_coverage = accelerator.allocate::<f32>(64);
         let mut pressure = CellularPressure::new(
-            &accelerator, &materials, &cells, &appearances, &integrities,
-            &kinematics, &occupancy, &external_velocity, &owners, &rigid_materials,
-            &transforms, &rigid_cells, &fluid, &gas_velocity, &gas_concentrations,
-            &gas_properties, &fluid_coverage, 0, 64,
+            &accelerator,
+            &materials,
+            &cells,
+            &appearances,
+            &integrities,
+            &kinematics,
+            &occupancy,
+            &external_velocity,
+            &owners,
+            &rigid_materials,
+            &transforms,
+            &rigid_cells,
+            &fluid,
+            &gas_velocity,
+            &gas_concentrations,
+            &gas_properties,
+            &fluid_coverage,
+            0,
+            64,
         );
-        accelerator.wgpu_queue().write_buffer(cells.wgpu_buffer(), 0,
-            &stone.as_u32().to_le_bytes());
-        accelerator.wgpu_queue().write_buffer(cells.wgpu_buffer(), 8 * 4,
-            &sand.as_u32().to_le_bytes());
-        accelerator.wgpu_queue().write_buffer(kinematics.wgpu_buffer(), 8 * 16 + 4,
-            &(-1.0f32).to_le_bytes());
-        pressure.simulate(&accelerator, TileCoordinates { x: 0, y: 0 },
-            1, 1, 0, 0, 1.0 / 60.0, [0.0; 2], 0, 0, 0).unwrap();
-        let readback = accelerator.wgpu_device().create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cellular face check"), size: 64 * 16,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        let mut encoder = accelerator.wgpu_device().create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: Some("cellular face check") });
+        accelerator.wgpu_queue().write_buffer(
+            cells.wgpu_buffer(),
+            0,
+            &stone.as_u32().to_le_bytes(),
+        );
+        accelerator.wgpu_queue().write_buffer(
+            cells.wgpu_buffer(),
+            8 * 4,
+            &sand.as_u32().to_le_bytes(),
+        );
+        accelerator.wgpu_queue().write_buffer(
+            kinematics.wgpu_buffer(),
+            8 * 16 + 4,
+            &(-1.0f32).to_le_bytes(),
+        );
+        pressure
+            .simulate(
+                &accelerator,
+                TileCoordinates { x: 0, y: 0 },
+                1,
+                1,
+                0,
+                0,
+                1.0 / 60.0,
+                [0.0; 2],
+                0,
+                0,
+                0,
+            )
+            .unwrap();
+        let readback = accelerator
+            .wgpu_device()
+            .create_buffer(&wgpu::BufferDescriptor {
+                label: Some("cellular face check"),
+                size: 64 * 16,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+        let mut encoder =
+            accelerator
+                .wgpu_device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("cellular face check"),
+                });
         encoder.copy_buffer_to_buffer(kinematics.wgpu_buffer(), 0, &readback, 0, 64 * 16);
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
         let (sender, receiver) = mpsc::sync_channel(1);
-        readback.slice(..).map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).unwrap();
-        });
+        readback
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                sender.send(result).unwrap();
+            });
         let started = Instant::now();
         loop {
             accelerator.poll().unwrap();
-            if receiver.try_recv().is_ok() { break; }
+            if receiver.try_recv().is_ok() {
+                break;
+            }
             assert!(started.elapsed() < Duration::from_secs(5));
             std::thread::yield_now();
         }
         let mapped = readback.slice(..).get_mapped_range().unwrap();
-        let velocity_y = f32::from_le_bytes(mapped[8 * 16 + 4..8 * 16 + 8]
-            .try_into().unwrap());
-        assert!(velocity_y.abs() < 0.01, "unsupported pressure kick: {velocity_y}");
+        let velocity_y = f32::from_le_bytes(mapped[8 * 16 + 4..8 * 16 + 8].try_into().unwrap());
+        assert!(
+            velocity_y.abs() < 0.01,
+            "unsupported pressure kick: {velocity_y}"
+        );
     }
 
     #[test]
@@ -1033,9 +1233,14 @@ mod tests {
         let stone = materials.register(Material::CellularStatic {
             name: "Stone".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(90, 90, 90)),
-            mass: 1.0, pressure_ignore_threshold: 1000.0, default_integrity: 100.0,
-            debris_material: None, debris_yield_rate: 0.0,
-            pressure_transmission: 1.0, friction: 0.5, restitution: 0.0,
+            mass: 1.0,
+            pressure_ignore_threshold: 1000.0,
+            default_integrity: 100.0,
+            debris_material: None,
+            debris_yield_rate: 0.0,
+            pressure_transmission: 1.0,
+            friction: 0.5,
+            restitution: 0.0,
         });
         let cells = accelerator.allocate::<u32>(64);
         let appearances = accelerator.allocate::<u32>(64);
@@ -1053,37 +1258,71 @@ mod tests {
         let gas_properties = accelerator.allocate::<[f32; 4]>(2);
         let fluid_coverage = accelerator.allocate::<f32>(64);
         let mut pressure = CellularPressure::new(
-            &accelerator, &materials, &cells, &appearances, &integrities,
-            &kinematics, &occupancy, &external_velocity, &owners, &rigid_materials,
-            &transforms, &rigid_cells, &fluid, &gas_velocity, &gas_concentrations,
-            &gas_properties, &fluid_coverage, 0, 64,
+            &accelerator,
+            &materials,
+            &cells,
+            &appearances,
+            &integrities,
+            &kinematics,
+            &occupancy,
+            &external_velocity,
+            &owners,
+            &rigid_materials,
+            &transforms,
+            &rigid_cells,
+            &fluid,
+            &gas_velocity,
+            &gas_concentrations,
+            &gas_properties,
+            &fluid_coverage,
+            0,
+            64,
         );
         accelerator.wgpu_queue().write_buffer(
-            cells.wgpu_buffer(), 0, &stone.as_u32().to_le_bytes(),
+            cells.wgpu_buffer(),
+            0,
+            &stone.as_u32().to_le_bytes(),
         );
         let rigid_cell: [u32; 8] = [0, 0, 0, stone.as_u32(), 0, 0, 0, 0];
         accelerator.wgpu_queue().write_buffer(
-            rigid_cells.wgpu_buffer(), 0,
-            &rigid_cell.into_iter().flat_map(u32::to_le_bytes).collect::<Vec<_>>(),
+            rigid_cells.wgpu_buffer(),
+            0,
+            &rigid_cell
+                .into_iter()
+                .flat_map(u32::to_le_bytes)
+                .collect::<Vec<_>>(),
         );
         // The rigid cell overlaps the top of the static cell and is moving into it.
         let transform: [f32; 12] = [
-            0.0, 0.08, 1.0, 0.0,
-            0.0, -1.0, 0.0, 0.0,
-            0.0625, 0.1425, 1.0, 0.0,
+            0.0, 0.08, 1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0625, 0.1425, 1.0, 0.0,
         ];
         accelerator.wgpu_queue().write_buffer(
-            transforms.wgpu_buffer(), 0,
-            &transform.into_iter().flat_map(f32::to_le_bytes).collect::<Vec<_>>(),
+            transforms.wgpu_buffer(),
+            0,
+            &transform
+                .into_iter()
+                .flat_map(f32::to_le_bytes)
+                .collect::<Vec<_>>(),
         );
 
         // Do not poll while submitting: this deliberately occupies every initial
         // readback slot and proves later ticks receive distinct elastic slots.
         for _ in 0..5 {
-            pressure.simulate(
-                &accelerator, TileCoordinates { x: 0, y: 0 }, 1, 1, 0, 0,
-                1.0 / 60.0, [0.0, -9.8], 1, 1, 1,
-            ).unwrap();
+            pressure
+                .simulate(
+                    &accelerator,
+                    TileCoordinates { x: 0, y: 0 },
+                    1,
+                    1,
+                    0,
+                    0,
+                    1.0 / 60.0,
+                    [0.0, -9.8],
+                    1,
+                    1,
+                    1,
+                )
+                .unwrap();
         }
         assert!(pressure.rigid_reaction_readback_slots.len() >= 5);
         let started = Instant::now();
@@ -1100,8 +1339,11 @@ mod tests {
             assert!(batch.static_contact_counts[0] > 0);
             assert_eq!(batch.granular_contact_counts[0], 0);
             assert!(batch.constraints[0][1].is_finite() && batch.constraints[0][1] > 0.1);
-            assert!(batch.constraints[0][1] < 5.0, "explosive reaction: {:?}", batch.constraints[0]);
+            assert!(
+                batch.constraints[0][1] < 5.0,
+                "explosive reaction: {:?}",
+                batch.constraints[0]
+            );
         }
     }
-
 }

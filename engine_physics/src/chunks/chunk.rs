@@ -1,17 +1,9 @@
 // Copyright Rob Gage 2026
 
-use super::{
-    ChunkFluidParticle,
-    ChunkGasCell,
-};
+use super::{ChunkFluidParticle, ChunkGasCell};
 use crate::{
     materials::MaterialIdentifier,
-    tiles::{
-        CellularAppearance,
-        TileArea,
-        TileCoordinates,
-        TileData,
-    },
+    tiles::{CellularAppearance, TileArea, TileCoordinates, TileData},
 };
 use std::io;
 
@@ -28,7 +20,6 @@ pub struct Chunk {
 }
 
 impl Chunk {
-
     /// The width and height of a `Chunk` in tiles
     pub const WIDTH: u16 = 64;
 
@@ -37,7 +28,8 @@ impl Chunk {
         Self {
             tile_coordinates,
             tiles: (0..usize::from(Self::WIDTH) * usize::from(Self::WIDTH))
-                .map(|_| TileData::EMPTY).collect(),
+                .map(|_| TileData::EMPTY)
+                .collect(),
             dormant_fluid_particles: Vec::new(),
             dormant_gas_cells: Vec::new(),
         }
@@ -47,7 +39,9 @@ impl Chunk {
     pub fn deserialize<R: io::Read>(reader: &mut R) -> Result<Chunk, io::Error> {
         let mut magic: [u8; 8] = [0; 8];
         reader.read_exact(&mut magic)?;
-        if &magic != b"dogwood_" { return Err(io::ErrorKind::InvalidData.into()); }
+        if &magic != b"dogwood_" {
+            return Err(io::ErrorKind::InvalidData.into());
+        }
         let mut coordinate_data: [u8; 8] = [0; 8];
         reader.read_exact(&mut coordinate_data)?;
         let tile_coordinates: TileCoordinates = TileCoordinates {
@@ -55,7 +49,9 @@ impl Chunk {
             y: i32::from_le_bytes(coordinate_data[4..8].try_into().unwrap()),
         };
         let mut tile_data: Vec<TileData> = Vec::with_capacity(4096);
-        for _ in 0..4096 { tile_data.push(TileData::deserialize(reader)?); }
+        for _ in 0..4096 {
+            tile_data.push(TileData::deserialize(reader)?);
+        }
         let mut fluid_magic: [u8; 8] = [0; 8];
         if reader.read(&mut fluid_magic[..1])? == 0 {
             return Ok(Self {
@@ -66,14 +62,21 @@ impl Chunk {
             });
         }
         reader.read_exact(&mut fluid_magic[1..])?;
-        if &fluid_magic != b"fluid___" { return Err(io::ErrorKind::InvalidData.into()); }
+        if &fluid_magic != b"fluid___" {
+            return Err(io::ErrorKind::InvalidData.into());
+        }
         let mut count_data: [u8; 4] = [0; 4];
         reader.read_exact(&mut count_data)?;
         let count: usize = u32::from_le_bytes(count_data) as usize;
         let mut dormant_fluid_particles: Vec<ChunkFluidParticle> = Vec::new();
-        dormant_fluid_particles.try_reserve_exact(count).map_err(|_| {
-            io::Error::new(io::ErrorKind::InvalidData, "Dormant fluid particle count is too large")
-        })?;
+        dormant_fluid_particles
+            .try_reserve_exact(count)
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Dormant fluid particle count is too large",
+                )
+            })?;
         for _ in 0..count {
             let particle: ChunkFluidParticle = ChunkFluidParticle::deserialize(reader)?;
             if particle.tile_coordinates().chunk_coordinates() != tile_coordinates {
@@ -94,12 +97,17 @@ impl Chunk {
             });
         }
         reader.read_exact(&mut gas_magic[1..])?;
-        if &gas_magic != b"gas_____" { return Err(io::ErrorKind::InvalidData.into()); }
+        if &gas_magic != b"gas_____" {
+            return Err(io::ErrorKind::InvalidData.into());
+        }
         reader.read_exact(&mut count_data)?;
         let count: usize = u32::from_le_bytes(count_data) as usize;
         let mut dormant_gas_cells: Vec<ChunkGasCell> = Vec::new();
         dormant_gas_cells.try_reserve_exact(count).map_err(|_| {
-            io::Error::new(io::ErrorKind::InvalidData, "Dormant gas cell count is too large")
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Dormant gas cell count is too large",
+            )
         })?;
         for _ in 0..count {
             let cell: ChunkGasCell = ChunkGasCell::deserialize(reader)?;
@@ -124,31 +132,40 @@ impl Chunk {
         writer.write_all(b"dogwood_")?;
         writer.write_all(&self.tile_coordinates.x.to_le_bytes())?;
         writer.write_all(&self.tile_coordinates.y.to_le_bytes())?;
-        for tile in &self.tiles { tile.serialize(writer)?; }
+        for tile in &self.tiles {
+            tile.serialize(writer)?;
+        }
         writer.write_all(b"fluid___")?;
         let count: u32 = self.dormant_fluid_particles.len().try_into().map_err(|_| {
-            io::Error::new(io::ErrorKind::InvalidData, "Too many dormant fluid particles")
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Too many dormant fluid particles",
+            )
         })?;
         writer.write_all(&count.to_le_bytes())?;
-        for particle in &self.dormant_fluid_particles { particle.serialize(writer)?; }
+        for particle in &self.dormant_fluid_particles {
+            particle.serialize(writer)?;
+        }
         writer.write_all(b"gas_____")?;
         let count: u32 = self.dormant_gas_cells.len().try_into().map_err(|_| {
             io::Error::new(io::ErrorKind::InvalidData, "Too many dormant gas cells")
         })?;
         writer.write_all(&count.to_le_bytes())?;
-        for cell in &self.dormant_gas_cells { cell.serialize(writer)?; }
+        for cell in &self.dormant_gas_cells {
+            cell.serialize(writer)?;
+        }
         Ok(())
     }
 
     /// Returns the `TileData` at a given position in this `Chunk` if it is not out of bounds
     pub fn get_tile(&self, position: TileCoordinates) -> Result<&TileData, ()> {
-        let x: usize = usize::try_from(
-            position.x.checked_sub(self.tile_coordinates.x).ok_or(())?
-        ).map_err(|_| ())?;
-        let y: usize = usize::try_from(
-            position.y.checked_sub(self.tile_coordinates.y).ok_or(())?
-        ).map_err(|_| ())?;
-        if x >= usize::from(Self::WIDTH) || y >= usize::from(Self::WIDTH) { return Err(()); }
+        let x: usize = usize::try_from(position.x.checked_sub(self.tile_coordinates.x).ok_or(())?)
+            .map_err(|_| ())?;
+        let y: usize = usize::try_from(position.y.checked_sub(self.tile_coordinates.y).ok_or(())?)
+            .map_err(|_| ())?;
+        if x >= usize::from(Self::WIDTH) || y >= usize::from(Self::WIDTH) {
+            return Err(());
+        }
         Ok(&self.tiles[y * usize::from(Self::WIDTH) + x])
     }
 
@@ -159,13 +176,13 @@ impl Chunk {
 
     /// Sets a provided `TileData` at a given position in this `Chunk` if it is not out of bounds
     pub fn set_tile(&mut self, position: TileCoordinates, tile: TileData) -> Result<(), ()> {
-        let x: usize = usize::try_from(
-            position.x.checked_sub(self.tile_coordinates.x).ok_or(())?
-        ).map_err(|_| ())?;
-        let y: usize = usize::try_from(
-            position.y.checked_sub(self.tile_coordinates.y).ok_or(())?
-        ).map_err(|_| ())?;
-        if x >= usize::from(Self::WIDTH) || y >= usize::from(Self::WIDTH) { return Err(()); }
+        let x: usize = usize::try_from(position.x.checked_sub(self.tile_coordinates.x).ok_or(())?)
+            .map_err(|_| ())?;
+        let y: usize = usize::try_from(position.y.checked_sub(self.tile_coordinates.y).ok_or(())?)
+            .map_err(|_| ())?;
+        if x >= usize::from(Self::WIDTH) || y >= usize::from(Self::WIDTH) {
+            return Err(());
+        }
         self.tiles[y * usize::from(Self::WIDTH) + x] = tile;
         Ok(())
     }
@@ -198,12 +215,12 @@ impl Chunk {
         appearance: CellularAppearance,
         integrity: f32,
     ) -> Result<(), ()> {
-        let tile_x: usize = usize::try_from(
-            position.x.checked_sub(self.tile_coordinates.x).ok_or(())?
-        ).map_err(|_| ())?;
-        let tile_y: usize = usize::try_from(
-            position.y.checked_sub(self.tile_coordinates.y).ok_or(())?
-        ).map_err(|_| ())?;
+        let tile_x: usize =
+            usize::try_from(position.x.checked_sub(self.tile_coordinates.x).ok_or(())?)
+                .map_err(|_| ())?;
+        let tile_y: usize =
+            usize::try_from(position.y.checked_sub(self.tile_coordinates.y).ok_or(())?)
+                .map_err(|_| ())?;
         if tile_x >= usize::from(Self::WIDTH) || tile_y >= usize::from(Self::WIDTH) {
             return Err(());
         }
@@ -218,10 +235,7 @@ impl Chunk {
     }
 
     /// Removes and returns dormant fluid belonging to an area
-    pub fn take_dormant_fluid_particles(
-        &mut self,
-        area: TileArea,
-    ) -> Vec<ChunkFluidParticle> {
+    pub fn take_dormant_fluid_particles(&mut self, area: TileArea) -> Vec<ChunkFluidParticle> {
         // ponytail: linear sparse scan; index by local tile if dormant chunk density becomes costly
         let mut particles: Vec<ChunkFluidParticle> = Vec::new();
         let mut index: usize = 0;
@@ -270,7 +284,6 @@ impl Chunk {
         self.dormant_gas_cells.push(cell);
         Ok(())
     }
-
 }
 
 #[cfg(test)]
@@ -299,16 +312,14 @@ mod tests {
         chunk.serialize(&mut bytes).unwrap();
         let mut reader: &[u8] = &bytes;
         let mut loaded: Chunk = Chunk::deserialize(&mut reader).unwrap();
-        let loaded_particles: Vec<ChunkFluidParticle> = loaded.take_dormant_fluid_particles(
-            TileArea::new(TileCoordinates { x: -1, y: -64 }, 1, 1),
-        );
+        let loaded_particles: Vec<ChunkFluidParticle> = loaded
+            .take_dormant_fluid_particles(TileArea::new(TileCoordinates { x: -1, y: -64 }, 1, 1));
         assert!(loaded_particles.len() == 1);
         assert!(loaded_particles[0].material_identifier == particle.material_identifier);
         assert!(loaded_particles[0].position == particle.position);
         assert!(loaded_particles[0].velocity == particle.velocity);
-        let loaded_gas: Vec<ChunkGasCell> = loaded.take_dormant_gas_cells(
-            TileArea::new(TileCoordinates { x: -1, y: -64 }, 1, 1),
-        );
+        let loaded_gas: Vec<ChunkGasCell> =
+            loaded.take_dormant_gas_cells(TileArea::new(TileCoordinates { x: -1, y: -64 }, 1, 1));
         assert!(loaded_gas.len() == 1);
         assert!(loaded_gas[0].coordinates == gas_cell.coordinates);
         assert!(loaded_gas[0].velocity == gas_cell.velocity);
@@ -327,5 +338,4 @@ mod tests {
         assert!(old_chunk.dormant_fluid_particles.is_empty());
         assert!(old_chunk.dormant_gas_cells.is_empty());
     }
-
 }

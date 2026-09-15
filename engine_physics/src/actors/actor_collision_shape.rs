@@ -14,14 +14,15 @@ pub enum ActorCollisionShape {
 }
 
 impl ActorCollisionShape {
-
     pub(crate) fn is_valid(self) -> bool {
         match self {
             Self::Circle { radius } => radius.is_finite() && radius > 0.0,
-            Self::Capsule { radius, height } => radius.is_finite() && radius > 0.0 &&
-                height.is_finite() && height >= radius * 2.0,
-            Self::Rectangle { width, height } => width.is_finite() && width > 0.0 &&
-                height.is_finite() && height > 0.0,
+            Self::Capsule { radius, height } => {
+                radius.is_finite() && radius > 0.0 && height.is_finite() && height >= radius * 2.0
+            }
+            Self::Rectangle { width, height } => {
+                width.is_finite() && width > 0.0 && height.is_finite() && height > 0.0
+            }
         }
     }
 
@@ -33,25 +34,12 @@ impl ActorCollisionShape {
         }
     }
 
-    pub(crate) fn world_extent(self, up: Vector) -> Vector {
-        let tangent = Vector::new(up.y, -up.x);
-        match self {
-            Self::Circle { radius } => Vector::splat(radius),
-            Self::Capsule { radius, height } => {
-                let half_segment = height * 0.5 - radius;
-                tangent.abs() * radius + up.abs() * (half_segment + radius)
-            }
-            Self::Rectangle { width, height } =>
-                tangent.abs() * (width * 0.5) + up.abs() * (height * 0.5),
-        }
-    }
-
     pub(crate) fn rapier_shape(self) -> SharedShape {
         match self {
             Self::Circle { radius } => SharedShape::ball(radius),
-            Self::Capsule { radius, height } => SharedShape::capsule_y(
-                height * 0.5 - radius, radius,
-            ),
+            Self::Capsule { radius, height } => {
+                SharedShape::capsule_y(height * 0.5 - radius, radius)
+            }
             Self::Rectangle { width, height } => SharedShape::cuboid(width * 0.5, height * 0.5),
         }
     }
@@ -72,5 +60,4 @@ impl ActorCollisionShape {
             Self::Rectangle { width, height } => [width, height],
         }
     }
-
 }

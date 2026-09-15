@@ -3,15 +3,9 @@
 use super::ScenePhysicsWorld;
 use crate::{
     actors::{
-        ActorControlState,
-        ActorCollisionShape,
-        ActorPawn,
-        ActorPawnMovement,
-        ActorPawnNoclipConfiguration,
-        ActorPawnSwimmingConfiguration,
-        ActorPawnSwimmingState,
-        ActorPawnWalkingConfiguration,
-        ActorPawnWalkingState,
+        ActorCollisionShape, ActorControlState, ActorPawn, ActorPawnMovement,
+        ActorPawnNoclipConfiguration, ActorPawnSwimmingConfiguration,
+        ActorPawnSwimmingState, ActorPawnWalkingConfiguration, ActorPawnWalkingState,
         ActorPreviousPosition,
     },
     scenes::{Scene, ScenePosition, SceneVelocity},
@@ -22,7 +16,6 @@ const CELLULAR_DRIVE_TRANSFER: f32 = 0.08;
 
 /// Implements the fixed-rate systems that advance a `Scene`
 pub trait SceneSimulation {
-
     /// Advances every configured Dogwood actor pawn by one fixed simulation step
     fn simulate_actor_pawns(
         world: &mut bevy_ecs::world::World,
@@ -40,11 +33,20 @@ pub trait SceneSimulation {
             &mut ScenePosition,
             &mut SceneVelocity,
         )> = world.query();
-        for (pawn, control, swimming_state, mut walking_state, mut previous,
-                mut position, mut velocity) in
-                query.iter_mut(world) {
+        for (
+            pawn,
+            control,
+            swimming_state,
+            mut walking_state,
+            mut previous,
+            mut position,
+            mut velocity,
+        ) in query.iter_mut(world)
+        {
             previous.0 = *position;
-            if !is_simulation_active && !pawn.simulate_when_paused { continue; }
+            if !is_simulation_active && !pawn.simulate_when_paused {
+                continue;
+            }
             if !matches!(pawn.movement, Some(ActorPawnMovement::Walking)) {
                 walking_state.cellular_drive_impulse = [0.0; 2];
                 walking_state.grounded = false;
@@ -52,14 +54,18 @@ pub trait SceneSimulation {
             match pawn.movement {
                 Some(ActorPawnMovement::Noclip) => {
                     let Some(configuration): Option<ActorPawnNoclipConfiguration> = pawn.noclip
-                        else { continue; };
+                    else {
+                        continue;
+                    };
                     velocity.x = control.0.locomotion_x * configuration.speed;
                     velocity.y = control.0.locomotion_y * configuration.speed;
                     Self::integrate_actor_position(&mut position, &velocity, delta_time);
                 }
                 Some(ActorPawnMovement::Walking) => {
                     let Some(configuration): Option<ActorPawnWalkingConfiguration> = pawn.walking
-                        else { continue; };
+                    else {
+                        continue;
+                    };
                     Self::simulate_actor_pawn_walking(
                         &control.0,
                         &configuration,
@@ -74,7 +80,9 @@ pub trait SceneSimulation {
                 }
                 Some(ActorPawnMovement::Swimming) => {
                     let Some(configuration): Option<ActorPawnSwimmingConfiguration> = pawn.swimming
-                        else { continue; };
+                    else {
+                        continue;
+                    };
                     Self::simulate_actor_pawn_swimming(
                         &control.0,
                         &configuration,
@@ -104,11 +112,18 @@ pub trait SceneSimulation {
         physics_world: &ScenePhysicsWorld,
         delta_time: f32,
     ) {
-        let Some(collision_shape) = collision_shape else { return; };
-        if !configuration.mass.is_finite() || configuration.mass <= 0.0 { return; }
+        let Some(collision_shape) = collision_shape else {
+            return;
+        };
+        if !configuration.mass.is_finite() || configuration.mass <= 0.0 {
+            return;
+        }
         let gravity_magnitude: f32 = gravity[0].hypot(gravity[1]);
         let up: Vector = if gravity_magnitude > 0.0 {
-            Vector::new(-gravity[0] / gravity_magnitude, -gravity[1] / gravity_magnitude)
+            Vector::new(
+                -gravity[0] / gravity_magnitude,
+                -gravity[1] / gravity_magnitude,
+            )
         } else {
             Vector::Y
         };
@@ -118,52 +133,80 @@ pub trait SceneSimulation {
         let world_x: f32 = position.tile_coordinates.x as f32 + position.x_offset;
         let world_y: f32 = position.tile_coordinates.y as f32 + position.y_offset;
         let previous_up_velocity: f32 = velocity.x * up.x + velocity.y * up.y;
-        let landing_impulse: f32 = (-previous_up_velocity).max(0.0) * configuration.mass *
-            CELLULAR_DRIVE_TRANSFER;
+        let landing_impulse: f32 =
+            (-previous_up_velocity).max(0.0) * configuration.mass * CELLULAR_DRIVE_TRANSFER;
         let current_tangent_speed: f32 = velocity.x * tangent.x + velocity.y * tangent.y;
         let travel_direction: f32 = if control.locomotion_x.abs() > 1e-4 {
             control.locomotion_x.signum()
         } else if current_tangent_speed.abs() > 1e-4 {
             current_tangent_speed.signum()
-        } else { 0.0 };
-        let surface_direction: Option<Vector> = if was_grounded && !jump_requested &&
-                travel_direction != 0.0 {
-            Self::probe_actor_pawn_walking_surface(
+        } else {
+            0.0
+        };
+        let surface_direction: Option<Vector> =
+            if was_grounded && !jump_requested && travel_direction != 0.0 {
+                Self::probe_actor_pawn_walking_surface(
+                    physics_world,
+                    collision_shape,
+                    Vector::new(world_x, world_y),
+                    tangent,
+                    up,
+                    travel_direction,
+                    configuration.maximum_slope_angle,
+                    delta_time,
+                )
+            } else {
+                None
+            };
+        let stationary_support: bool = was_grounded
+            && !jump_requested
+            && travel_direction == 0.0
+            && (Self::probe_actor_pawn_walking_surface(
                 physics_world,
                 collision_shape,
                 Vector::new(world_x, world_y),
                 tangent,
                 up,
-                travel_direction,
+                1.0,
                 configuration.maximum_slope_angle,
                 delta_time,
             )
-        } else { None };
-        let stationary_support: bool = was_grounded && !jump_requested &&
-            travel_direction == 0.0 && (
-                Self::probe_actor_pawn_walking_surface(
-                    physics_world, collision_shape,
-                    Vector::new(world_x, world_y), tangent, up, 1.0,
-                    configuration.maximum_slope_angle, delta_time,
-                ).is_some() ||
-                Self::probe_actor_pawn_walking_surface(
-                    physics_world, collision_shape,
-                    Vector::new(world_x, world_y), tangent, up, -1.0,
-                    configuration.maximum_slope_angle, delta_time,
-                ).is_some() || {
+            .is_some()
+                || Self::probe_actor_pawn_walking_surface(
+                    physics_world,
+                    collision_shape,
+                    Vector::new(world_x, world_y),
+                    tangent,
+                    up,
+                    -1.0,
+                    configuration.maximum_slope_angle,
+                    delta_time,
+                )
+                .is_some()
+                || {
                     let mut supported = false;
-                    let (_, grounded) = physics_world.move_actor(collision_shape,
-                        Vector::new(world_x, world_y), -up * (1.0 / 8.0), up,
-                        configuration.maximum_slope_angle.cos(), 0.0, None,
-                        &mut |normal| { supported |= normal.dot(up) > 1e-4; });
+                    let (_, grounded) = physics_world.move_actor(
+                        collision_shape,
+                        Vector::new(world_x, world_y),
+                        -up * (1.0 / 8.0),
+                        up,
+                        configuration.maximum_slope_angle.cos(),
+                        0.0,
+                        &mut |normal| {
+                            supported |= normal.dot(up) > 1e-4;
+                        },
+                    );
                     supported || grounded
-                }
-            );
+                });
         let locomotion_direction: Vector = surface_direction.unwrap_or(tangent * travel_direction);
         let mut desired_velocity: Vector;
         if was_grounded && !jump_requested {
-            let current_surface_speed: f32 = if travel_direction == 0.0 { 0.0 } else {
-                Vector::new(velocity.x, velocity.y).dot(locomotion_direction).max(0.0)
+            let current_surface_speed: f32 = if travel_direction == 0.0 {
+                0.0
+            } else {
+                Vector::new(velocity.x, velocity.y)
+                    .dot(locomotion_direction)
+                    .max(0.0)
             };
             let target_surface_speed: f32 = control.locomotion_x.abs() * configuration.speed;
             let change: f32 = (target_surface_speed - current_surface_speed).clamp(
@@ -182,15 +225,24 @@ pub trait SceneSimulation {
             desired_velocity += tangent * change + Vector::new(gravity[0], gravity[1]) * delta_time;
         }
         state.cellular_drive_impulse = [
-            locomotion_direction.x * control.locomotion_x.abs() * configuration.acceleration *
-                configuration.mass * delta_time * CELLULAR_DRIVE_TRANSFER,
-            locomotion_direction.y * control.locomotion_x.abs() * configuration.acceleration *
-                configuration.mass * delta_time * CELLULAR_DRIVE_TRANSFER,
+            locomotion_direction.x
+                * control.locomotion_x.abs()
+                * configuration.acceleration
+                * configuration.mass
+                * delta_time
+                * CELLULAR_DRIVE_TRANSFER,
+            locomotion_direction.y
+                * control.locomotion_x.abs()
+                * configuration.acceleration
+                * configuration.mass
+                * delta_time
+                * CELLULAR_DRIVE_TRANSFER,
         ];
         if jump_requested {
             let up_velocity: f32 = desired_velocity.dot(up);
-            let jump_impulse: f32 = (configuration.jump_velocity - up_velocity) *
-                configuration.mass * CELLULAR_DRIVE_TRANSFER;
+            let jump_impulse: f32 = (configuration.jump_velocity - up_velocity)
+                * configuration.mass
+                * CELLULAR_DRIVE_TRANSFER;
             state.cellular_drive_impulse[0] += up.x * jump_impulse;
             state.cellular_drive_impulse[1] += up.y * jump_impulse;
             desired_velocity += up * (configuration.jump_velocity - up_velocity);
@@ -201,20 +253,38 @@ pub trait SceneSimulation {
         let desired_translation: Vector = desired_velocity * delta_time;
         let virtual_surface = was_grounded && !jump_requested && surface_direction.is_some();
         let mut collisions = |normal: Vector| {
-                let normal_up: f32 = normal.dot(up);
-                if normal_up >= walkable_normal { contacted_walkable_surface = true; }
-                else if normal_up > -walkable_normal { contacted_wall = true; }
-            };
-        let (resolved_translation, collision_grounded) = if virtual_surface {
-            Self::traverse_actor_pawn_virtual_surface(physics_world, collision_shape,
-                Vector::new(world_x, world_y), desired_translation, tangent, up,
-                walkable_normal, &mut collisions)
-        } else {
-            physics_world.move_actor(collision_shape, Vector::new(world_x, world_y),
-                desired_translation, up, walkable_normal, 1.0 / 8.0, None, &mut collisions)
+            let normal_up: f32 = normal.dot(up);
+            if normal_up >= walkable_normal {
+                contacted_walkable_surface = true;
+            } else if normal_up > -walkable_normal {
+                contacted_wall = true;
+            }
         };
-        let virtual_surface_complete = virtual_surface && (resolved_translation - desired_translation)
-            .length_squared() <= 4.0 / (1024.0 * 1024.0);
+        let (resolved_translation, collision_grounded) = if virtual_surface {
+            Self::traverse_actor_pawn_virtual_surface(
+                physics_world,
+                collision_shape,
+                Vector::new(world_x, world_y),
+                desired_translation,
+                tangent,
+                up,
+                walkable_normal,
+                &mut collisions,
+            )
+        } else {
+            physics_world.move_actor(
+                collision_shape,
+                Vector::new(world_x, world_y),
+                desired_translation,
+                up,
+                walkable_normal,
+                1.0 / 8.0,
+                &mut collisions,
+            )
+        };
+        let virtual_surface_complete = virtual_surface
+            && (resolved_translation - desired_translation).length_squared()
+                <= 4.0 / (1024.0 * 1024.0);
         Self::integrate_actor_position(
             position,
             &SceneVelocity {
@@ -224,13 +294,19 @@ pub trait SceneSimulation {
             1.0,
         );
         // wall seams can produce tiny upward normals that Rapier reports as grounded
-        state.grounded = stationary_support || virtual_surface_complete ||
-            contacted_walkable_surface || (collision_grounded && !contacted_wall);
+        state.grounded = stationary_support
+            || virtual_surface_complete
+            || contacted_walkable_surface
+            || (collision_grounded && !contacted_wall);
         if state.grounded && !jump_requested {
             let requested_distance: f32 = desired_velocity.length() * delta_time;
             let resolved_locomotion_distance: f32 = if requested_distance > 0.0 {
-                resolved_translation.dot(locomotion_direction).clamp(0.0, requested_distance)
-            } else { 0.0 };
+                resolved_translation
+                    .dot(locomotion_direction)
+                    .clamp(0.0, requested_distance)
+            } else {
+                0.0
+            };
             let resolved_surface_speed: f32 = if virtual_surface_complete {
                 desired_velocity.length()
             } else {
@@ -262,18 +338,32 @@ pub trait SceneSimulation {
         let midpoint_run: f32 = 1.0 / 8.0;
         let lookahead_run: f32 = 2.0 / 8.0;
         let midpoint_rise: f32 = Self::probe_actor_pawn_support_rise(
-            physics_world, collision_shape, position, tangent, up, direction,
-            midpoint_run, maximum_slope_angle, delta_time,
+            physics_world,
+            collision_shape,
+            position,
+            tangent,
+            up,
+            direction,
+            midpoint_run,
+            maximum_slope_angle,
+            delta_time,
         )?;
         let lookahead_rise: f32 = Self::probe_actor_pawn_support_rise(
-            physics_world, collision_shape, position, tangent, up, direction,
-            lookahead_run, maximum_slope_angle, delta_time,
+            physics_world,
+            collision_shape,
+            position,
+            tangent,
+            up,
+            direction,
+            lookahead_run,
+            maximum_slope_angle,
+            delta_time,
         )?;
         let maximum_midpoint_rise: f32 = midpoint_run * maximum_slope_angle.tan();
-        if midpoint_rise.abs() > maximum_midpoint_rise + 1.0 / 1024.0 ||
-                (lookahead_rise - midpoint_rise).abs() >
-                    maximum_midpoint_rise + 1.0 / 1024.0 ||
-                lookahead_rise.atan2(lookahead_run).abs() > maximum_slope_angle {
+        if midpoint_rise.abs() > maximum_midpoint_rise + 1.0 / 1024.0
+            || (lookahead_rise - midpoint_rise).abs() > maximum_midpoint_rise + 1.0 / 1024.0
+            || lookahead_rise.atan2(lookahead_run).abs() > maximum_slope_angle
+        {
             return None;
         }
         Some((tangent * direction * lookahead_run + up * lookahead_rise).normalize())
@@ -293,13 +383,33 @@ pub trait SceneSimulation {
         let requested_rise = desired.dot(up);
         // A canonical cell is the maximum discrete riser accepted by the validated probe.
         let clearance = 1.0 / 8.0 + requested_rise.max(0.0);
-        let (raised, _) = physics_world.move_actor(collision_shape, position, up * clearance,
-            up, walkable_normal, 0.0, None, collisions);
-        if raised.dot(up) < clearance - 1.0 / 1024.0 { return (raised, false); }
-        let (forward, _) = physics_world.move_actor(collision_shape, position + raised,
-            tangent * desired.dot(tangent), up, walkable_normal, 0.0, None, collisions);
-        let (settled, grounded) = physics_world.resolve_actor_support(collision_shape,
-            position + raised + forward, clearance - requested_rise, up);
+        let (raised, _) = physics_world.move_actor(
+            collision_shape,
+            position,
+            up * clearance,
+            up,
+            walkable_normal,
+            0.0,
+            collisions,
+        );
+        if raised.dot(up) < clearance - 1.0 / 1024.0 {
+            return (raised, false);
+        }
+        let (forward, _) = physics_world.move_actor(
+            collision_shape,
+            position + raised,
+            tangent * desired.dot(tangent),
+            up,
+            walkable_normal,
+            0.0,
+            collisions,
+        );
+        let (settled, grounded) = physics_world.resolve_actor_support(
+            collision_shape,
+            position + raised + forward,
+            clearance - requested_rise,
+            up,
+        );
         (raised + forward + settled, grounded)
     }
 
@@ -316,21 +426,45 @@ pub trait SceneSimulation {
         _delta_time: f32,
     ) -> Option<f32> {
         let maximum_rise: f32 = run * maximum_slope_angle.tan();
-        if !maximum_rise.is_finite() || maximum_rise <= 0.0 { return None; }
+        if !maximum_rise.is_finite() || maximum_rise <= 0.0 {
+            return None;
+        }
         let rise_clearance: f32 = maximum_rise + 1.0 / 8.0;
-        let (probe_up, _) = physics_world.move_actor(collision_shape, position,
-            up * rise_clearance, up, maximum_slope_angle.cos(), 0.0, None, &mut |_| { });
-        if probe_up.dot(up) < rise_clearance - 1.0 / 1024.0 { return None; }
+        let (probe_up, _) = physics_world.move_actor(
+            collision_shape,
+            position,
+            up * rise_clearance,
+            up,
+            maximum_slope_angle.cos(),
+            0.0,
+            &mut |_| {},
+        );
+        if probe_up.dot(up) < rise_clearance - 1.0 / 1024.0 {
+            return None;
+        }
         let raised_position: Vector = position + probe_up;
-        let (probe_forward, _) = physics_world.move_actor(collision_shape, raised_position,
-            tangent * direction * run, up, maximum_slope_angle.cos(), 0.0, None, &mut |_| { });
+        let (probe_forward, _) = physics_world.move_actor(
+            collision_shape,
+            raised_position,
+            tangent * direction * run,
+            up,
+            maximum_slope_angle.cos(),
+            0.0,
+            &mut |_| {},
+        );
         if probe_forward.dot(tangent) * direction < run - 1.0 / 1024.0 {
             return None;
         }
         let forward_position: Vector = raised_position + probe_forward;
-        let (probe_down, grounded) = physics_world.resolve_actor_support(collision_shape,
-            forward_position, rise_clearance + maximum_rise + 1.0 / 8.0, up);
-        if !grounded { return None; }
+        let (probe_down, grounded) = physics_world.resolve_actor_support(
+            collision_shape,
+            forward_position,
+            rise_clearance + maximum_rise + 1.0 / 8.0,
+            up,
+        );
+        if !grounded {
+            return None;
+        }
         Some((probe_up + probe_forward + probe_down).dot(up))
     }
 
@@ -346,10 +480,15 @@ pub trait SceneSimulation {
         physics_world: &ScenePhysicsWorld,
         delta_time: f32,
     ) {
-        let Some(collision_shape) = collision_shape else { return; };
+        let Some(collision_shape) = collision_shape else {
+            return;
+        };
         let gravity_magnitude: f32 = gravity[0].hypot(gravity[1]);
         let up: Vector = if gravity_magnitude > 0.0 {
-            Vector::new(-gravity[0] / gravity_magnitude, -gravity[1] / gravity_magnitude)
+            Vector::new(
+                -gravity[0] / gravity_magnitude,
+                -gravity[1] / gravity_magnitude,
+            )
         } else {
             Vector::Y
         };
@@ -359,17 +498,16 @@ pub trait SceneSimulation {
         velocity.x += gravity[0] * (1.0 - buoyancy_ratio) * delta_time;
         velocity.y += gravity[1] * (1.0 - buoyancy_ratio) * delta_time;
 
-        let fluid_velocity: Vector = Vector::new(
-            state.fluid_velocity[0],
-            state.fluid_velocity[1],
-        );
+        let fluid_velocity: Vector = Vector::new(state.fluid_velocity[0], state.fluid_velocity[1]);
         let mut relative_velocity: Vector = Vector::new(velocity.x, velocity.y) - fluid_velocity;
-        let drag: f32 = (-state.fluid_viscosity * configuration.drag * immersion *
-            delta_time).exp();
+        let drag: f32 =
+            (-state.fluid_viscosity * configuration.drag * immersion * delta_time).exp();
         relative_velocity *= drag;
         let mut input: Vector = tangent * control.locomotion_x + up * control.locomotion_y;
         let input_magnitude: f32 = input.length();
-        if input_magnitude > 1.0 { input /= input_magnitude; }
+        if input_magnitude > 1.0 {
+            input /= input_magnitude;
+        }
         relative_velocity += input * configuration.acceleration * delta_time;
         let relative_speed: f32 = relative_velocity.length();
         if relative_speed > configuration.maximum_speed {
@@ -381,16 +519,21 @@ pub trait SceneSimulation {
 
         let world_x: f32 = position.tile_coordinates.x as f32 + position.x_offset;
         let world_y: f32 = position.tile_coordinates.y as f32 + position.y_offset;
-        let (movement, _) = physics_world.move_actor(collision_shape,
-            Vector::new(world_x, world_y), Vector::new(velocity.x, velocity.y) * delta_time,
-            up, 1.0, 0.0, None, &mut |normal| {
-                let normal_speed: f32 = velocity.x * normal.x +
-                    velocity.y * normal.y;
+        let (movement, _) = physics_world.move_actor(
+            collision_shape,
+            Vector::new(world_x, world_y),
+            Vector::new(velocity.x, velocity.y) * delta_time,
+            up,
+            1.0,
+            0.0,
+            &mut |normal| {
+                let normal_speed: f32 = velocity.x * normal.x + velocity.y * normal.y;
                 if normal_speed < 0.0 {
                     velocity.x -= normal.x * normal_speed;
                     velocity.y -= normal.y * normal_speed;
                 }
-            });
+            },
+        );
         Self::integrate_actor_position(
             position,
             &SceneVelocity {
@@ -407,10 +550,10 @@ pub trait SceneSimulation {
         velocity: &SceneVelocity,
         delta_time: f32,
     ) {
-        let x: f32 = position.tile_coordinates.x as f32 + position.x_offset +
-            velocity.x * delta_time;
-        let y: f32 = position.tile_coordinates.y as f32 + position.y_offset +
-            velocity.y * delta_time;
+        let x: f32 =
+            position.tile_coordinates.x as f32 + position.x_offset + velocity.x * delta_time;
+        let y: f32 =
+            position.tile_coordinates.y as f32 + position.y_offset + velocity.y * delta_time;
         let tile_x: f32 = x.floor();
         let tile_y: f32 = y.floor();
         position.tile_coordinates.x = tile_x as i32;
@@ -418,16 +561,16 @@ pub trait SceneSimulation {
         position.x_offset = x - tile_x;
         position.y_offset = y - tile_y;
     }
-
 }
 
-impl SceneSimulation for Scene { }
+impl SceneSimulation for Scene {}
 
 #[cfg(test)]
 mod tests {
 
     use super::*;
     use crate::{
+        actors::ActorCellularProxyState,
         simulation::CollisionOccupancySnapshot,
         tiles::TileCoordinates,
     };
@@ -436,16 +579,21 @@ mod tests {
         let origin = TileCoordinates { x: -1, y: -1 };
         let width = 3u16;
         let height_tiles = 3u16;
-        let mut dynamic_masks = vec![[0u32; 2]; usize::from(width * height_tiles)];
+        let mut static_masks = vec![[0u32; 2]; usize::from(width * height_tiles)];
         for x in -8..16 {
             for y in -8..height(x) {
                 let tile_x = x.div_euclid(8) - origin.x;
                 let tile_y = y.div_euclid(8) - origin.y;
-                if tile_x < 0 || tile_y < 0 || tile_x >= i32::from(width) ||
-                        tile_y >= i32::from(height_tiles) { continue; }
+                if tile_x < 0
+                    || tile_y < 0
+                    || tile_x >= i32::from(width)
+                    || tile_y >= i32::from(height_tiles)
+                {
+                    continue;
+                }
                 let tile = tile_y as usize * usize::from(width) + tile_x as usize;
                 let cell = y.rem_euclid(8) as usize * 8 + x.rem_euclid(8) as usize;
-                dynamic_masks[tile][cell / 32] |= 1 << (cell % 32);
+                static_masks[tile][cell / 32] |= 1 << (cell % 32);
             }
         }
         CollisionOccupancySnapshot {
@@ -453,17 +601,45 @@ mod tests {
             origin,
             width,
             height: height_tiles,
-            static_masks: vec![[0; 2]; usize::from(width * height_tiles)].into_boxed_slice(),
-            dynamic_masks: dynamic_masks.into_boxed_slice(),
+            static_masks: static_masks.into_boxed_slice(),
+            dynamic_masks: vec![[0; 2]; usize::from(width * height_tiles)].into_boxed_slice(),
         }
+    }
+
+    fn prepare_staircase_terrain(
+        physics: &mut ScenePhysicsWorld,
+        shape: ActorCollisionShape,
+        center: Vector,
+    ) {
+        let actor = ActorCellularProxyState {
+            center: [center.x, center.y],
+            velocity: [0.0; 2],
+            drive: [0.0; 2],
+            shape,
+            occupancy_kind: 1,
+            mass: 0.0,
+        };
+        physics.prepare_cellular_terrain(&[], &[actor], [0.0; 2], 1.0 / 60.0);
+        physics.step([0.0; 2], 1.0 / 60.0);
     }
 
     fn probe_staircase(height: impl Fn(i32) -> i32) -> Option<Vector> {
         let mut physics = ScenePhysicsWorld::new();
         physics.update_cellular_snapshot(staircase_snapshot(height));
+        prepare_staircase_terrain(
+            &mut physics,
+            ActorCollisionShape::Rectangle {
+                width: 0.05,
+                height: 0.5,
+            },
+            Vector::new(0.0625, 0.251),
+        );
         Scene::probe_actor_pawn_walking_surface(
             &physics,
-            ActorCollisionShape::Rectangle { width: 0.05, height: 0.5 },
+            ActorCollisionShape::Rectangle {
+                width: 0.05,
+                height: 0.5,
+            },
             Vector::new(0.0625, 0.251),
             Vector::X,
             Vector::Y,
@@ -496,17 +672,49 @@ mod tests {
     fn virtual_surface_traversal_clears_a_riser_without_losing_surface_distance() {
         let mut physics = ScenePhysicsWorld::new();
         physics.update_cellular_snapshot(staircase_snapshot(|x| x));
-        let surface = Scene::probe_actor_pawn_walking_surface(&physics,
-            ActorCollisionShape::Rectangle { width: 0.05, height: 0.5 },
+        prepare_staircase_terrain(
+            &mut physics,
+            ActorCollisionShape::Rectangle {
+                width: 0.05,
+                height: 0.5,
+            },
+            Vector::new(0.1, 0.2885),
+        );
+        let surface = Scene::probe_actor_pawn_walking_surface(
+            &physics,
+            ActorCollisionShape::Rectangle {
+                width: 0.05,
+                height: 0.5,
+            },
             Vector::new(0.0625, 0.251),
-            Vector::X, Vector::Y, 1.0, 50.0_f32.to_radians(), 1.0 / 60.0)
-            .expect("45 degree staircase");
+            Vector::X,
+            Vector::Y,
+            1.0,
+            50.0_f32.to_radians(),
+            1.0 / 60.0,
+        )
+        .expect("45 degree staircase");
         let position = Vector::new(0.1, 0.2885);
         let desired = surface * 0.1;
-        let (movement, _) = Scene::traverse_actor_pawn_virtual_surface(&physics,
-            ActorCollisionShape::Rectangle { width: 0.05, height: 0.5 }, position, desired,
-            Vector::X, Vector::Y, 50.0_f32.to_radians().cos(), &mut |_| { });
-        assert!((movement - desired).length() < 1.0 / 1024.0);
+        let (movement, grounded) = Scene::traverse_actor_pawn_virtual_surface(
+            &physics,
+            ActorCollisionShape::Rectangle {
+                width: 0.05,
+                height: 0.5,
+            },
+            position,
+            desired,
+            Vector::X,
+            Vector::Y,
+            50.0_f32.to_radians().cos(),
+            &mut |_| {},
+        );
+        assert!(
+            grounded
+                && (movement.x - desired.x).abs() < 1.0 / 1024.0
+                && movement.y >= desired.y
+                && movement.y <= desired.y + 1.0 / 8.0,
+            "movement={movement:?}, desired={desired:?}"
+        );
     }
-
 }

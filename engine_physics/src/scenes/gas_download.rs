@@ -3,10 +3,7 @@
 use crate::{
     chunks::ChunkGasCell,
     materials::MaterialIdentifier,
-    tiles::{
-        CellCoordinates,
-        TileArea,
-    },
+    tiles::{CellCoordinates, TileArea},
 };
 use engine_compute::Accelerator;
 use std::io;
@@ -26,7 +23,6 @@ pub struct GasDownload {
 }
 
 impl GasDownload {
-
     /// Creates reusable staging storage for the largest streamed strip
     pub fn new(
         accelerator: &Accelerator,
@@ -36,12 +32,14 @@ impl GasDownload {
     ) -> Self {
         Self {
             area,
-            buffer: accelerator.wgpu_device().create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Gas download buffer"),
-                size: u64::from(maximum_cell_count) * u64::from(4 + gas_count) * 4,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
+            buffer: accelerator
+                .wgpu_device()
+                .create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("Gas download buffer"),
+                    size: u64::from(maximum_cell_count) * u64::from(4 + gas_count) * 4,
+                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }),
             is_started: false,
             result: None,
         }
@@ -64,7 +62,10 @@ impl GasDownload {
         let cell_count: usize = usize::from(dimensions[0]) * usize::from(dimensions[1]) * 64;
         let stride: usize = 4 + gas_identifiers.len();
         if bytes.len() != cell_count * stride * 4 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid gas download size"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Invalid gas download size",
+            ));
         }
         let mut cells: Vec<ChunkGasCell> = Vec::new();
         for cell_index in 0..cell_count {
@@ -91,10 +92,8 @@ impl GasDownload {
             }
             let mut species: Vec<(MaterialIdentifier, f32)> = Vec::new();
             for (species_index, identifier) in gas_identifiers.iter().enumerate() {
-                let concentration: f32 = f32::from_bits(Self::u32_at(
-                    bytes,
-                    offset + (4 + species_index) * 4,
-                ));
+                let concentration: f32 =
+                    f32::from_bits(Self::u32_at(bytes, offset + (4 + species_index) * 4));
                 if !concentration.is_finite() || concentration < 0.0 {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
@@ -105,7 +104,13 @@ impl GasDownload {
                     species.push((*identifier, concentration));
                 }
             }
-            if !species.is_empty() { cells.push(ChunkGasCell { coordinates, velocity, species }); }
+            if !species.is_empty() {
+                cells.push(ChunkGasCell {
+                    coordinates,
+                    velocity,
+                    species,
+                });
+            }
         }
         Ok(cells)
     }
@@ -113,5 +118,4 @@ impl GasDownload {
     fn u32_at(bytes: &[u8], offset: usize) -> u32 {
         u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
     }
-
 }

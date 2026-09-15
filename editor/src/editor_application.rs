@@ -1,27 +1,17 @@
 // Copyright Rob Gage 2026
 
+use crate::{
+    editor_brush::EditorBrush, editor_interface::EditorInterface, editor_tool::EditorTool,
+    editor_view_mode::EditorViewMode,
+};
 use engine::{
-    Game,
-    GameApplication,
+    Game, GameApplication,
     physics::{
-        actors::{
-            Actor,
-            ActorPawn,
-            ActorPawnMovement,
-            ActorPawnNoclipConfiguration,
-        },
-        materials::MaterialIdentifier,
+        actors::{Actor, ActorPawn, ActorPawnMovement, ActorPawnNoclipConfiguration},
         materials::Material,
-        scenes::{
-            SceneEditCellPlacement,
-            SceneEditBatch,
-            ScenePosition,
-            SceneVelocity,
-        },
-        tiles::{
-            CellularAppearance,
-            CellCoordinates,
-        },
+        materials::MaterialIdentifier,
+        scenes::{SceneEditBatch, SceneEditCellPlacement, ScenePosition, SceneVelocity},
+        tiles::{CellCoordinates, CellularAppearance},
     },
 };
 use engine_graphics::Color;
@@ -32,12 +22,6 @@ use std::{
     rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
-};
-use crate::{
-    editor_brush::EditorBrush,
-    editor_interface::EditorInterface,
-    editor_tool::EditorTool,
-    editor_view_mode::EditorViewMode,
 };
 
 const RIGID_BODY_PLACEMENT_INTERVAL: Duration = Duration::from_millis(150);
@@ -83,12 +67,11 @@ pub struct EditorApplication<G: Game> {
 }
 
 impl<G: Game> EditorApplication<G> {
-
     fn new(accelerator: Arc<engine::compute::Accelerator>, game: G) -> Self {
         let mut application: GameApplication<G> = GameApplication::new_with_title(
             accelerator,
             game,
-            format!("Engine Editor: {}", G::TITLE)
+            format!("Engine Editor: {}", G::TITLE),
         );
         application.set_simulation_enabled(false);
         Self {
@@ -115,7 +98,8 @@ impl<G: Game> EditorApplication<G> {
 
     /// Returns the cell currently beneath the cursor in the rendered Scene viewport
     fn hovered_cell(&self) -> Option<CellCoordinates> {
-        self.application.scene_world_position(self.cursor_position?)
+        self.application
+            .scene_world_position(self.cursor_position?)
             .map(CellCoordinates::from_world_position)
     }
 
@@ -128,34 +112,49 @@ impl<G: Game> EditorApplication<G> {
             EditorTool::Material(material_identifier) => Some(material_identifier),
             _ => None,
         };
-        let color: Color = material_identifier.and_then(|material_identifier| {
-            self.application.game().scene().and_then(|scene| {
-                scene.materials().get(material_identifier).map(|material| {
-                    let color: Color = material.appearance().base_color();
-                    Color::new_rgba(color.red(), color.green(), color.blue(), 96)
+        let color: Color = material_identifier
+            .and_then(|material_identifier| {
+                self.application.game().scene().and_then(|scene| {
+                    scene.materials().get(material_identifier).map(|material| {
+                        let color: Color = material.appearance().base_color();
+                        Color::new_rgba(color.red(), color.green(), color.blue(), 96)
+                    })
                 })
             })
-        }).unwrap_or(if matches!(self.tool, EditorTool::Impulse) {
-            Color::new_rgba(255, 190, 60, 0)
-        } else { Color::new_rgba(255, 80, 80, 96) });
-        let cells: Vec<[f32; 4]> = self.brush.cells(anchor).into_iter().filter_map(|coordinates| {
-            self.application.scene_surface_rectangle([
-                coordinates.x as f32 / 8.0,
-                coordinates.y as f32 / 8.0,
-                (coordinates.x as f32 + 1.0) / 8.0,
-                (coordinates.y as f32 + 1.0) / 8.0,
-            ])
-        }).collect();
+            .unwrap_or(if matches!(self.tool, EditorTool::Impulse) {
+                Color::new_rgba(255, 190, 60, 0)
+            } else {
+                Color::new_rgba(255, 80, 80, 96)
+            });
+        let cells: Vec<[f32; 4]> = self
+            .brush
+            .cells(anchor)
+            .into_iter()
+            .filter_map(|coordinates| {
+                self.application.scene_surface_rectangle([
+                    coordinates.x as f32 / 8.0,
+                    coordinates.y as f32 / 8.0,
+                    (coordinates.x as f32 + 1.0) / 8.0,
+                    (coordinates.y as f32 + 1.0) / 8.0,
+                ])
+            })
+            .collect();
         (cells, color)
     }
 
     /// Applies the current brush stroke through the scene edit boundary
     fn paint_hovered_cells(&mut self) {
-        if !self.is_primary_scene_interaction_held { return; }
-        if self.rigid_body_placement_enabled && matches!(self.tool, EditorTool::Material(identifier)
+        if !self.is_primary_scene_interaction_held {
+            return;
+        }
+        if self.rigid_body_placement_enabled
+            && matches!(self.tool, EditorTool::Material(identifier)
             if self.application.game().scene().is_some_and(|scene| matches!(
                 scene.materials().get(identifier), Some(Material::CellularStatic { .. })
-            ))) { return; }
+            )))
+        {
+            return;
+        }
         let Some(anchor): Option<CellCoordinates> = self.hovered_cell() else {
             self.stroke_anchor = None;
             return;
@@ -164,7 +163,9 @@ impl<G: Game> EditorApplication<G> {
             None => vec![anchor],
             Some(previous) if previous == anchor => return,
             Some(previous) => EditorBrush::stroke_anchors(previous, anchor)
-                .into_iter().skip(1).collect(),
+                .into_iter()
+                .skip(1)
+                .collect(),
         };
         let mut cells: HashSet<CellCoordinates> = HashSet::new();
         for anchor in &anchors {
@@ -175,7 +176,9 @@ impl<G: Game> EditorApplication<G> {
             EditorTool::Impulse => EditorTool::Impulse,
             EditorTool::Material(material_identifier) => EditorTool::Material(material_identifier),
         };
-        let Some(scene) = self.application.game_mutable().scene_mutable() else { return; };
+        let Some(scene) = self.application.game_mutable().scene_mutable() else {
+            return;
+        };
         if matches!(tool, EditorTool::Impulse) {
             let radius_cells: f32 = (self.brush.size() as f32 * 0.5).max(0.75);
             let strength: f32 = self.brush.size() as f32 * 1.25;
@@ -188,16 +191,23 @@ impl<G: Game> EditorApplication<G> {
         let mut edits: SceneEditBatch = SceneEditBatch::new();
         match tool {
             EditorTool::Material(material_identifier) => {
-                let Some(material) = scene.materials().get(material_identifier) else { return; };
+                let Some(material) = scene.materials().get(material_identifier) else {
+                    return;
+                };
                 let variation: [f32; 4] = material.appearance().variation();
-                edits.place_cells(cells.into_iter().map(|coordinates| SceneEditCellPlacement {
-                    coordinates,
-                    material_identifier,
-                    appearance: CellularAppearance::from_seed(
-                        coordinates.appearance_seed(),
-                        variation,
-                    ),
-                }).collect());
+                edits.place_cells(
+                    cells
+                        .into_iter()
+                        .map(|coordinates| SceneEditCellPlacement {
+                            coordinates,
+                            material_identifier,
+                            appearance: CellularAppearance::from_seed(
+                                coordinates.appearance_seed(),
+                                variation,
+                            ),
+                        })
+                        .collect(),
+                );
             }
             EditorTool::Eraser => edits.erase(cells.into_iter().collect()),
             EditorTool::Impulse => unreachable!(),
@@ -208,20 +218,41 @@ impl<G: Game> EditorApplication<G> {
 
     /// Queues one body for one accepted static-material click.
     fn place_requested_rigid_body(&mut self) {
-        let Some(anchor) = self.rigid_body_placement_requested.take() else { return; };
-        let EditorTool::Material(material_identifier) = self.tool else { return; };
-        let Some(scene) = self.application.game().scene() else { return; };
-        let Some(Material::CellularStatic { graphics, .. }) = scene.materials().get(material_identifier) else { return; };
+        let Some(anchor) = self.rigid_body_placement_requested.take() else {
+            return;
+        };
+        let EditorTool::Material(material_identifier) = self.tool else {
+            return;
+        };
+        let Some(scene) = self.application.game().scene() else {
+            return;
+        };
+        let Some(Material::CellularStatic { graphics, .. }) =
+            scene.materials().get(material_identifier)
+        else {
+            return;
+        };
         let now = Instant::now();
-        if self.last_rigid_body_placement.is_some_and(|last|
-            now.duration_since(last) < RIGID_BODY_PLACEMENT_INTERVAL) { return; }
+        if self
+            .last_rigid_body_placement
+            .is_some_and(|last| now.duration_since(last) < RIGID_BODY_PLACEMENT_INTERVAL)
+        {
+            return;
+        }
         let variation = graphics.variation();
-        let cells = self.brush.cells(anchor).into_iter().map(|coordinates| SceneEditCellPlacement {
-            coordinates,
-            material_identifier,
-            appearance: CellularAppearance::from_seed(coordinates.appearance_seed(), variation),
-        }).collect();
-        let Some(scene) = self.application.game_mutable().scene_mutable() else { return; };
+        let cells = self
+            .brush
+            .cells(anchor)
+            .into_iter()
+            .map(|coordinates| SceneEditCellPlacement {
+                coordinates,
+                material_identifier,
+                appearance: CellularAppearance::from_seed(coordinates.appearance_seed(), variation),
+            })
+            .collect();
+        let Some(scene) = self.application.game_mutable().scene_mutable() else {
+            return;
+        };
         let mut edits = SceneEditBatch::new();
         edits.place_rigid_body(cells);
         scene.queue_edits(edits);
@@ -230,16 +261,14 @@ impl<G: Game> EditorApplication<G> {
 
     /// Adjusts the brush size and restarts the current stamp when it changes
     fn adjust_brush_size(&mut self, adjustment: i32) {
-        if self.brush.adjust_size(adjustment) { self.stroke_anchor = None; }
+        if self.brush.adjust_size(adjustment) {
+            self.stroke_anchor = None;
+        }
     }
 
     /// Updates the editor's pointer state after the user interface handles an event
     fn handle_pointer_event(&mut self, event: &winit::event::WindowEvent, ui_consumed: bool) {
-        use winit::event::{
-            ElementState,
-            MouseButton,
-            WindowEvent::*,
-        };
+        use winit::event::{ElementState, MouseButton, WindowEvent::*};
         match event {
             CursorMoved { position, .. } => {
                 self.cursor_position = Some([position.x as f32, position.y as f32]);
@@ -249,17 +278,29 @@ impl<G: Game> EditorApplication<G> {
                 self.stroke_anchor = None;
                 self.rigid_body_placement_requested = None;
             }
-            MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
-                if ui_consumed && self.hovered_cell().is_none() { return; }
+            MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Left,
+                ..
+            } => {
+                if ui_consumed && self.hovered_cell().is_none() {
+                    return;
+                }
                 if !self.is_primary_scene_interaction_held {
-                    self.is_primary_scene_interaction_held =
-                        self.hovered_cell().is_some();
+                    self.is_primary_scene_interaction_held = self.hovered_cell().is_some();
                     if self.is_primary_scene_interaction_held {
                         self.stroke_anchor = None;
                         let static_material = match self.tool {
-                            EditorTool::Material(material_identifier) => self.application.game().scene()
-                                .filter(|scene| matches!(scene.materials().get(material_identifier),
-                                    Some(Material::CellularStatic { .. })))
+                            EditorTool::Material(material_identifier) => self
+                                .application
+                                .game()
+                                .scene()
+                                .filter(|scene| {
+                                    matches!(
+                                        scene.materials().get(material_identifier),
+                                        Some(Material::CellularStatic { .. })
+                                    )
+                                })
                                 .map(|_| material_identifier),
                             _ => None,
                         };
@@ -269,12 +310,18 @@ impl<G: Game> EditorApplication<G> {
                     }
                 }
             }
-            MouseInput { state: ElementState::Released, button: MouseButton::Left, .. } => {
+            MouseInput {
+                state: ElementState::Released,
+                button: MouseButton::Left,
+                ..
+            } => {
                 self.is_primary_scene_interaction_held = false;
                 self.stroke_anchor = None;
             }
             MouseWheel { delta, .. } => {
-                if ui_consumed && self.hovered_cell().is_none() { return; }
+                if ui_consumed && self.hovered_cell().is_none() {
+                    return;
+                }
                 if self.hovered_cell().is_none() {
                     self.pixel_scroll_y = 0.0;
                     return;
@@ -305,15 +352,20 @@ impl<G: Game> EditorApplication<G> {
     /// Enters free-fly using the reusable editor noclip pawn
     fn enter_free_fly(&mut self) {
         let position: ScenePosition = self.application.game().camera_target();
-        let Some(scene) = self.application.game_mutable().scene_mutable() else { return; };
-        if scene.possessed_actor() == self.editor_pawn { return; }
+        let Some(scene) = self.application.game_mutable().scene_mutable() else {
+            return;
+        };
+        if scene.possessed_actor() == self.editor_pawn {
+            return;
+        }
         self.original_pawn = scene.possessed_actor();
-        self.original_pawn_position = self.original_pawn.and_then(|actor| {
-            scene.actor_registry().get_position(actor).copied()
-        });
-        let editor_pawn: Actor = match self.editor_pawn.filter(|actor| {
-            scene.actor_registry().contains(*actor)
-        }) {
+        self.original_pawn_position = self
+            .original_pawn
+            .and_then(|actor| scene.actor_registry().get_position(actor).copied());
+        let editor_pawn: Actor = match self
+            .editor_pawn
+            .filter(|actor| scene.actor_registry().contains(*actor))
+        {
             Some(actor) => actor,
             None => {
                 let mut pawn: ActorPawn = ActorPawn::new();
@@ -329,30 +381,42 @@ impl<G: Game> EditorApplication<G> {
                 actor
             }
         };
-        scene.actor_registry_mutable().set_position(editor_pawn, position);
-        scene.actor_registry_mutable().set_velocity(
-            editor_pawn,
-            SceneVelocity { x: 0.0, y: 0.0 },
-        );
+        scene
+            .actor_registry_mutable()
+            .set_position(editor_pawn, position);
+        scene
+            .actor_registry_mutable()
+            .set_velocity(editor_pawn, SceneVelocity { x: 0.0, y: 0.0 });
         scene.possess_actor(editor_pawn);
     }
 
     /// Requests the saved pawn's area and restores possession when it is resident
     fn update_return(&mut self) {
-        let Some(original_pawn) = self.original_pawn else { return; };
-        let Some(scene) = self.application.game_mutable().scene_mutable() else { return; };
-        if !scene.actor_registry().contains(original_pawn) ||
-                !scene.actor_registry().is_possessable(original_pawn) {
+        let Some(original_pawn) = self.original_pawn else {
+            return;
+        };
+        let Some(scene) = self.application.game_mutable().scene_mutable() else {
+            return;
+        };
+        if !scene.actor_registry().contains(original_pawn)
+            || !scene.actor_registry().is_possessable(original_pawn)
+        {
             self.original_pawn = None;
             self.original_pawn_position = None;
             self.is_return_pending = false;
             return;
         }
-        if !self.is_return_pending { return; }
-        let Some(position): Option<ScenePosition> = self.original_pawn_position else { return; };
+        if !self.is_return_pending {
+            return;
+        }
+        let Some(position): Option<ScenePosition> = self.original_pawn_position else {
+            return;
+        };
         scene.request_area_around(position);
         if scene.is_position_resident(position) {
-            scene.actor_registry_mutable().set_position(original_pawn, position);
+            scene
+                .actor_registry_mutable()
+                .set_position(original_pawn, position);
             scene.possess_actor(original_pawn);
             self.is_return_pending = false;
         }
@@ -361,16 +425,19 @@ impl<G: Game> EditorApplication<G> {
     /// Builds the editor layout and handles free-fly controls for this frame
     fn display(&mut self) {
         self.update_return();
-        let free_fly_enabled: bool = self.application.game().scene().is_some_and(|scene| {
-            scene.possessed_actor() != self.editor_pawn
-        });
-        let return_enabled: bool = !self.is_return_pending &&
-            self.application.game().scene().is_some_and(|scene| {
-            scene.possessed_actor() == self.editor_pawn && self.original_pawn.is_some_and(|actor| {
-                scene.actor_registry().contains(actor) &&
-                    scene.actor_registry().is_possessable(actor)
-            })
-        });
+        let free_fly_enabled: bool = self
+            .application
+            .game()
+            .scene()
+            .is_some_and(|scene| scene.possessed_actor() != self.editor_pawn);
+        let return_enabled: bool = !self.is_return_pending
+            && self.application.game().scene().is_some_and(|scene| {
+                scene.possessed_actor() == self.editor_pawn
+                    && self.original_pawn.is_some_and(|actor| {
+                        scene.actor_registry().contains(actor)
+                            && scene.actor_registry().is_possessable(actor)
+                    })
+            });
         let free_fly_requested: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         let return_requested: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         let play_requested: Rc<Cell<bool>> = Rc::new(Cell::new(false));
@@ -386,12 +453,23 @@ impl<G: Game> EditorApplication<G> {
         let square_action: Rc<Cell<bool>> = square_requested.clone();
         let circle_action: Rc<Cell<bool>> = circle_requested.clone();
         let eraser_action: Rc<Cell<bool>> = eraser_requested.clone();
-        let material_entries: Vec<(MaterialIdentifier, String, Color)> = self.application.game().scene()
-            .map_or_else(Vec::new, |scene| scene.materials().iter().map(|(
-                material_identifier,
-                material,
-            )| (material_identifier, material.name().into(), material.appearance().base_color()))
-                .collect());
+        let material_entries: Vec<(MaterialIdentifier, String, Color)> = self
+            .application
+            .game()
+            .scene()
+            .map_or_else(Vec::new, |scene| {
+                scene
+                    .materials()
+                    .iter()
+                    .map(|(material_identifier, material)| {
+                        (
+                            material_identifier,
+                            material.name().into(),
+                            material.appearance().base_color(),
+                        )
+                    })
+                    .collect()
+            });
         let viewport_bounds: Rc<Cell<Option<[u32; 4]>>> = Rc::new(Cell::new(None));
         let (preview_cells, preview_color): (Vec<[f32; 4]>, Color) = self.brush_preview();
         let view_mode_requested = Rc::new(Cell::new(self.view_mode));
@@ -406,7 +484,10 @@ impl<G: Game> EditorApplication<G> {
             return_enabled,
             brush_is_square: self.brush.is_square(),
             brush_size: self.brush.size(),
-            selected_tool: match self.tool { EditorTool::Material(identifier) => Some(identifier), _ => None },
+            selected_tool: match self.tool {
+                EditorTool::Material(identifier) => Some(identifier),
+                _ => None,
+            },
             eraser_selected: matches!(self.tool, EditorTool::Eraser),
             impulse_selected: matches!(self.tool, EditorTool::Impulse),
             rigid_body_placement_enabled: self.rigid_body_placement_enabled,
@@ -431,7 +512,8 @@ impl<G: Game> EditorApplication<G> {
             chunk_borders_requested: chunk_borders_requested.clone(),
         };
         self.application.add_widget(&mut layout);
-        self.application.set_scene_viewport_bounds(viewport_bounds.get());
+        self.application
+            .set_scene_viewport_bounds(viewport_bounds.get());
         if eraser_requested.get() {
             self.tool = EditorTool::Eraser;
             self.stroke_anchor = None;
@@ -451,8 +533,12 @@ impl<G: Game> EditorApplication<G> {
             self.stroke_anchor = None;
             self.rigid_body_placement_requested = None;
         }
-        if square_requested.get() && self.brush.select_square() { self.stroke_anchor = None; }
-        if circle_requested.get() && self.brush.select_circle() { self.stroke_anchor = None; }
+        if square_requested.get() && self.brush.select_square() {
+            self.stroke_anchor = None;
+        }
+        if circle_requested.get() && self.brush.select_circle() {
+            self.stroke_anchor = None;
+        }
         self.view_mode = view_mode_requested.get();
         self.show_tile_borders = tile_borders_requested.get();
         self.show_chunk_borders = chunk_borders_requested.get();
@@ -465,7 +551,9 @@ impl<G: Game> EditorApplication<G> {
             self.is_playing = !self.is_playing;
             self.application.set_simulation_enabled(self.is_playing);
         }
-        if free_fly_requested.get() { self.enter_free_fly(); }
+        if free_fly_requested.get() {
+            self.enter_free_fly();
+        }
         if return_requested.get() {
             self.is_return_pending = true;
             self.update_return();
@@ -477,26 +565,22 @@ impl<G: Game> EditorApplication<G> {
         accelerator: Arc<engine::compute::Accelerator>,
         game: G,
     ) -> Result<(), Box<dyn Error>> {
-        let _application_span = tracing::info_span!(
-            "application",
-            title = G::TITLE,
-            kind = "editor",
-        ).entered();
+        let _application_span =
+            tracing::info_span!("application", title = G::TITLE, kind = "editor",).entered();
         tracing::info!("launching editor");
-        let event_loop: winit::event_loop::EventLoop<()> =
-            winit::event_loop::EventLoop::builder().build()
-                .inspect_err(|error| tracing::error!(%error, "failed to create event loop"))?;
+        let event_loop: winit::event_loop::EventLoop<()> = winit::event_loop::EventLoop::builder()
+            .build()
+            .inspect_err(|error| tracing::error!(%error, "failed to create event loop"))?;
         let mut application: EditorApplication<G> = Self::new(accelerator, game);
         event_loop.run_app(&mut application)?;
         application.application.finish()
     }
-
 }
 
 impl<G: Game> winit::application::ApplicationHandler for EditorApplication<G> {
-
-    fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop)
-    { self.application.window_initialize(event_loop); }
+    fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        self.application.window_initialize(event_loop);
+    }
 
     fn window_event(
         &mut self,
@@ -512,5 +596,4 @@ impl<G: Game> winit::application::ApplicationHandler for EditorApplication<G> {
         self.display();
         winit::application::ApplicationHandler::about_to_wait(&mut self.application, event_loop);
     }
-
 }

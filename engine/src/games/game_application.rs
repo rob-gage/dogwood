@@ -1,22 +1,13 @@
 // Copyright Rob Gage 2026
 
-use crate::renders::{
-    SceneRenderer,
-    UserInterfaceRenderer
-};
 use super::Game;
+use crate::renders::{SceneRenderer, UserInterfaceRenderer};
 use engine_compute::Accelerator;
 use engine_graphics::Camera;
-use engine_input::{
-    InputTranslator,
-    KeyboardInputState,
-};
+use engine_input::{InputTranslator, KeyboardInputState};
 use engine_physics::scenes::ScenePosition;
 use engine_user_interface::Widget;
-use std::{
-    error::Error,
-    sync::Arc,
-};
+use std::{error::Error, sync::Arc};
 
 /// A `winit` application used to run a `Game` implementor
 pub struct GameApplication<G: Game> {
@@ -73,7 +64,6 @@ pub struct GameApplication<G: Game> {
 }
 
 impl<G: Game> GameApplication<G> {
-
     /// Creates a `GameApplication` from a `Game`
     pub fn new(accelerator: Arc<Accelerator>, game: G) -> Self {
         Self::new_with_title(accelerator, game, G::TITLE)
@@ -117,38 +107,49 @@ impl<G: Game> GameApplication<G> {
     }
 
     /// Returns the error produced while running the application, if any
-    pub fn finish(self) -> Result<(), Box<dyn Error>> { self.error.map_or(Ok(()), Err) }
+    pub fn finish(self) -> Result<(), Box<dyn Error>> {
+        self.error.map_or(Ok(()), Err)
+    }
 
     /// Acquires the next window frame, renders it, and presents it
     fn render(&mut self) {
         use wgpu::CurrentSurfaceTexture::*;
-        let frame: wgpu::SurfaceTexture = match self.surface.as_ref()
-                .map(wgpu::Surface::get_current_texture) {
-                    None => return,
-                    Some(Success(frame)) | Some(Suboptimal(frame)) => frame,
-                    Some(Outdated) | Some(Lost) => {
-                        tracing::warn!("reconfiguring unavailable rendering surface");
-                        let (Some(surface), Some(configuration)) = (
-                            self.surface.as_ref(),
-                            self.surface_configuration.as_ref(),
-                        ) else { return; };
-                        surface.configure(self.accelerator.wgpu_device(), configuration);
-                        return;
-                    }
-                    Some(Validation) => {
-                        tracing::error!("rendering surface validation failed");
-                        return;
-                    }
-                    Some(Timeout) | Some(Occluded) => return,
+        let frame: wgpu::SurfaceTexture = match self
+            .surface
+            .as_ref()
+            .map(wgpu::Surface::get_current_texture)
+        {
+            None => return,
+            Some(Success(frame)) | Some(Suboptimal(frame)) => frame,
+            Some(Outdated) | Some(Lost) => {
+                tracing::warn!("reconfiguring unavailable rendering surface");
+                let (Some(surface), Some(configuration)) =
+                    (self.surface.as_ref(), self.surface_configuration.as_ref())
+                else {
+                    return;
                 };
-        let view: wgpu::TextureView =
-            frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let mut command_encoder: wgpu::CommandEncoder = {
-            self.accelerator.wgpu_device().create_command_encoder(
-                &wgpu::CommandEncoderDescriptor { label: Some("frame") },
-            )
+                surface.configure(self.accelerator.wgpu_device(), configuration);
+                return;
+            }
+            Some(Validation) => {
+                tracing::error!("rendering surface validation failed");
+                return;
+            }
+            Some(Timeout) | Some(Occluded) => return,
         };
-        let Some(configuration) = self.surface_configuration.as_ref() else { return; };
+        let view: wgpu::TextureView = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut command_encoder: wgpu::CommandEncoder = {
+            self.accelerator
+                .wgpu_device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("frame"),
+                })
+        };
+        let Some(configuration) = self.surface_configuration.as_ref() else {
+            return;
+        };
         let viewport: [u32; 4] = self.scene_viewport(configuration);
         let camera_size: [f32; 2] = self.scene_camera_size(viewport);
         self.scene_renderer.render(
@@ -174,8 +175,11 @@ impl<G: Game> GameApplication<G> {
             &view,
         );
 
-        self.accelerator.gpu_timing_resolve_sample(&mut command_encoder);
-        self.accelerator.wgpu_queue().submit(Some(command_encoder.finish()));
+        self.accelerator
+            .gpu_timing_resolve_sample(&mut command_encoder);
+        self.accelerator
+            .wgpu_queue()
+            .submit(Some(command_encoder.finish()));
         self.accelerator.gpu_timing_map_sample();
         self.accelerator.wgpu_queue().present(frame);
         self.rendered_frames = self.rendered_frames.saturating_add(1);
@@ -183,11 +187,14 @@ impl<G: Game> GameApplication<G> {
 
     /// Reconfigures the graphics surface for a new window size
     fn resize(&mut self, width: u32, height: u32) {
-        if width == 0 || height == 0 { return; }
-        let (Some(surface), Some(configuration)) = (
-            self.surface.as_ref(),
-            self.surface_configuration.as_mut(),
-        ) else { return; };
+        if width == 0 || height == 0 {
+            return;
+        }
+        let (Some(surface), Some(configuration)) =
+            (self.surface.as_ref(), self.surface_configuration.as_mut())
+        else {
+            return;
+        };
         configuration.width = width;
         configuration.height = height;
         surface.configure(self.accelerator.wgpu_device(), configuration);
@@ -195,10 +202,11 @@ impl<G: Game> GameApplication<G> {
 
     /// Adds a widget to the game's user interface.
     pub fn add_widget(&mut self, widget: &mut impl Widget) {
-        let (Some(configuration), Some(window)) = (
-            self.surface_configuration.as_ref(),
-            self.window.as_ref(),
-        ) else { return; };
+        let (Some(configuration), Some(window)) =
+            (self.surface_configuration.as_ref(), self.window.as_ref())
+        else {
+            return;
+        };
         self.game.user_interface_context().add_widget(
             widget,
             [configuration.width, configuration.height],
@@ -207,10 +215,14 @@ impl<G: Game> GameApplication<G> {
     }
 
     /// Returns the game run by this application
-    pub const fn game(&self) -> &G { &self.game }
+    pub const fn game(&self) -> &G {
+        &self.game
+    }
 
     /// Returns mutable access to the game run by this application
-    pub const fn game_mutable(&mut self) -> &mut G { &mut self.game }
+    pub const fn game_mutable(&mut self) -> &mut G {
+        &mut self.game
+    }
 
     /// Sets the editor content rectangle in which the game scene is rendered
     pub fn set_scene_viewport_bounds(&mut self, bounds: Option<[u32; 4]>) {
@@ -260,18 +272,18 @@ impl<G: Game> GameApplication<G> {
         let configuration: &wgpu::SurfaceConfiguration = self.surface_configuration.as_ref()?;
         let viewport: [u32; 4] = self.scene_viewport(configuration);
         let camera_size: [f32; 2] = self.scene_camera_size(viewport);
-        let left: f32 = viewport[0] as f32 + (
-            (rectangle[0] - self.camera_position[0]) / camera_size[0] + 0.5
-        ) * viewport[2] as f32;
-        let right: f32 = viewport[0] as f32 + (
-            (rectangle[2] - self.camera_position[0]) / camera_size[0] + 0.5
-        ) * viewport[2] as f32;
-        let top: f32 = viewport[1] as f32 + (
-            0.5 - (rectangle[3] - self.camera_position[1]) / camera_size[1]
-        ) * viewport[3] as f32;
-        let bottom: f32 = viewport[1] as f32 + (
-            0.5 - (rectangle[1] - self.camera_position[1]) / camera_size[1]
-        ) * viewport[3] as f32;
+        let left: f32 = viewport[0] as f32
+            + ((rectangle[0] - self.camera_position[0]) / camera_size[0] + 0.5)
+                * viewport[2] as f32;
+        let right: f32 = viewport[0] as f32
+            + ((rectangle[2] - self.camera_position[0]) / camera_size[0] + 0.5)
+                * viewport[2] as f32;
+        let top: f32 = viewport[1] as f32
+            + (0.5 - (rectangle[3] - self.camera_position[1]) / camera_size[1])
+                * viewport[3] as f32;
+        let bottom: f32 = viewport[1] as f32
+            + (0.5 - (rectangle[1] - self.camera_position[1]) / camera_size[1])
+                * viewport[3] as f32;
         let left: f32 = left.max(viewport[0] as f32);
         let top: f32 = top.max(viewport[1] as f32);
         let right: f32 = right.min((viewport[0] + viewport[2]) as f32);
@@ -286,9 +298,9 @@ impl<G: Game> GameApplication<G> {
         self.update_time = update_time;
         let simulation_active: bool = self.is_simulation_enabled && !self.game.is_paused();
         if let Some(scene) = self.game.scene_mutable() {
-            self.simulation_ticks = self.simulation_ticks.saturating_add(
-                scene.update(elapsed, simulation_active)?,
-            );
+            self.simulation_ticks = self
+                .simulation_ticks
+                .saturating_add(scene.update(elapsed, simulation_active)?);
         }
         self.update_performance_rates(update_time);
         self.update_camera(elapsed.as_secs_f32());
@@ -298,7 +310,9 @@ impl<G: Game> GameApplication<G> {
     /// Updates the reported rates after each approximately one-second sample interval
     fn update_performance_rates(&mut self, update_time: std::time::Instant) {
         let elapsed: std::time::Duration = update_time.duration_since(self.performance_sample_time);
-        if elapsed < std::time::Duration::from_secs(1) { return; }
+        if elapsed < std::time::Duration::from_secs(1) {
+            return;
+        }
         let seconds: f64 = elapsed.as_secs_f64();
         self.frames_per_second = (f64::from(self.rendered_frames) / seconds).round() as u32;
         self.ticks_per_second = (f64::from(self.simulation_ticks) / seconds).round() as u32;
@@ -335,8 +349,9 @@ impl<G: Game> GameApplication<G> {
         let distance: f32 = distance_squared.sqrt();
         let direction_x: f32 = difference_x / distance;
         let direction_y: f32 = difference_y / distance;
-        if self.camera.follow_distance_maximum > 0.0 &&
-                distance > self.camera.follow_distance_maximum {
+        if self.camera.follow_distance_maximum > 0.0
+            && distance > self.camera.follow_distance_maximum
+        {
             self.camera_position[0] = target[0] - direction_x * self.camera.follow_distance_maximum;
             self.camera_position[1] = target[1] - direction_y * self.camera.follow_distance_maximum;
             self.camera_velocity = [0.0, 0.0];
@@ -344,8 +359,8 @@ impl<G: Game> GameApplication<G> {
         }
         self.camera_velocity[0] += direction_x * self.camera.follow_acceleration * delta_time;
         self.camera_velocity[1] += direction_y * self.camera.follow_acceleration * delta_time;
-        let velocity_squared: f32 = self.camera_velocity[0] * self.camera_velocity[0] +
-            self.camera_velocity[1] * self.camera_velocity[1];
+        let velocity_squared: f32 = self.camera_velocity[0] * self.camera_velocity[0]
+            + self.camera_velocity[1] * self.camera_velocity[1];
         let speed: f32 = velocity_squared.sqrt();
         if speed > self.camera.follow_speed {
             self.camera_velocity[0] = self.camera_velocity[0] / speed * self.camera.follow_speed;
@@ -360,12 +375,9 @@ impl<G: Game> GameApplication<G> {
             self.camera_velocity = [0.0, 0.0];
         }
     }
-
 }
 
-
 impl<G: Game> GameApplication<G> {
-
     /// Handles window lifecycle, resize, and redraw events
     pub fn handle_window_event(
         &mut self,
@@ -374,13 +386,16 @@ impl<G: Game> GameApplication<G> {
     ) -> bool {
         use winit::event::WindowEvent::*;
         let ui_consumed: bool = self.window.as_ref().is_some_and(|window| {
-            self.game.user_interface_context().process_window_event(window, event)
+            self.game
+                .user_interface_context()
+                .process_window_event(window, event)
         });
         match event {
             CloseRequested => event_loop.exit(),
             Resized(size) => self.resize(size.width, size.height),
-            KeyboardInput { event, .. } if !ui_consumed =>
-                self.keyboard_input_state.process_event(event),
+            KeyboardInput { event, .. } if !ui_consumed => {
+                self.keyboard_input_state.process_event(event)
+            }
             RedrawRequested => self.render(),
             _ => {}
         }
@@ -389,20 +404,26 @@ impl<G: Game> GameApplication<G> {
 
     /// Requests another redraw when the event loop is idle
     pub fn redraw(&self) {
-        if let Some(window) = self.window.as_ref() { window.request_redraw(); }
+        if let Some(window) = self.window.as_ref() {
+            window.request_redraw();
+        }
     }
 
     /// Creates the application window and initializes its graphics resources
     pub fn window_initialize(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        if self.window.is_some() { return; }
+        if self.window.is_some() {
+            return;
+        }
         let attributes: winit::window::WindowAttributes =
             winit::window::WindowAttributes::default().with_title(&self.title);
         match event_loop.create_window(attributes) {
             Ok(window) => {
                 let window: Arc<winit::window::Window> = Arc::new(window);
-                let surface: wgpu::Surface = match self.accelerator.wgpu_instance().create_surface(
-                    window.clone()
-                ) {
+                let surface: wgpu::Surface = match self
+                    .accelerator
+                    .wgpu_instance()
+                    .create_surface(window.clone())
+                {
                     Ok(surface) => surface,
                     Err(error) => {
                         tracing::error!(%error, "failed to create rendering surface");
@@ -425,7 +446,10 @@ impl<G: Game> GameApplication<G> {
                 surface.configure(self.accelerator.wgpu_device(), &configuration);
                 self.game.user_interface_context().initialize_window(
                     window.as_ref(),
-                    self.accelerator.wgpu_device().limits().max_texture_dimension_2d as usize,
+                    self.accelerator
+                        .wgpu_device()
+                        .limits()
+                        .max_texture_dimension_2d as usize,
                 );
                 self.surface = Some(surface);
                 self.surface_configuration = Some(configuration);
@@ -460,12 +484,15 @@ impl<G: Game> GameApplication<G> {
             |bounds| {
                 let x: u32 = bounds[0].min(configuration.width - 1);
                 let y: u32 = bounds[1].min(configuration.height - 1);
-                Self::fit_aspect_ratio([
-                    x,
-                    y,
-                    bounds[2].min(configuration.width - x).max(1),
-                    bounds[3].min(configuration.height - y).max(1),
-                ], self.camera.width / self.camera.height)
+                Self::fit_aspect_ratio(
+                    [
+                        x,
+                        y,
+                        bounds[2].min(configuration.width - x).max(1),
+                        bounds[3].min(configuration.height - y).max(1),
+                    ],
+                    self.camera.width / self.camera.height,
+                )
             },
         )
     }
@@ -485,11 +512,9 @@ impl<G: Game> GameApplication<G> {
         }
         camera_size
     }
-
 }
 
 impl<G: Game> winit::application::ApplicationHandler for GameApplication<G> {
-
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         self.window_initialize(event_loop);
     }
@@ -505,10 +530,8 @@ impl<G: Game> winit::application::ApplicationHandler for GameApplication<G> {
 
     fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         self.accelerator.gpu_timing_begin_sample();
-        self.game.pass_input(
-            &self.keyboard_input_state,
-            self.input_translator.as_ref(),
-        );
+        self.game
+            .pass_input(&self.keyboard_input_state, self.input_translator.as_ref());
         if let Err(error) = self.update() {
             tracing::error!(%error, "application update failed");
             self.error = Some(Box::new(error));
@@ -517,5 +540,4 @@ impl<G: Game> winit::application::ApplicationHandler for GameApplication<G> {
         }
         self.redraw();
     }
-
 }

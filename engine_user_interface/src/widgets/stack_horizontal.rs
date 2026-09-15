@@ -1,9 +1,6 @@
 // Copyright Rob Gage 2026
 
-use crate::{
-    UserInterface,
-    Widget
-};
+use crate::{UserInterface, Widget};
 use engine_graphics::Color;
 
 /// Arranges `Widget`s from left to right
@@ -19,10 +16,14 @@ pub struct StackHorizontal {
 }
 
 impl StackHorizontal {
-
     /// Creates an empty `StackHorizontal`
     pub const fn new() -> Self {
-        Self { children: Vec::new(), spacing: 0.0, background_color: None, height: None }
+        Self {
+            children: Vec::new(),
+            spacing: 0.0,
+            background_color: None,
+            height: None,
+        }
     }
 
     /// Adds a widget to the end of the `StackHorizontal`
@@ -48,21 +49,27 @@ impl StackHorizontal {
         self.height = Some(height);
         self
     }
-
 }
 
 impl Widget for StackHorizontal {
-
     fn display(&mut self, user_interface: &mut UserInterface) -> egui::Response {
         let available: egui::Rect = user_interface.available_rect();
         if let Some(background) = self.background_color {
-            user_interface.painter().rect_filled(available, 0.0, background);
+            user_interface
+                .painter()
+                .rect_filled(available, 0.0, background);
         }
         let spacing: f32 = self.spacing * self.children.len().saturating_sub(1) as f32;
-        let fixed: f32 = self.children.iter().filter_map(|child| child.desired_width())
+        let fixed: f32 = self
+            .children
+            .iter()
+            .filter_map(|child| child.desired_width())
             .sum::<f32>();
-        let flexible: usize =
-            self.children.iter().filter(|child| child.desired_width().is_none()).count();
+        let flexible: usize = self
+            .children
+            .iter()
+            .filter(|child| child.desired_width().is_none())
+            .count();
         let flexible_width: f32 =
             ((available.width() - spacing - fixed).max(0.0)) / flexible.max(1) as f32;
         let mut x: f32 = available.min.x;
@@ -74,13 +81,16 @@ impl Widget for StackHorizontal {
                 egui::pos2(x, available.min.y),
                 egui::pos2(x + width, available.max.y),
             );
-            response = user_interface.allocate_ui(rect, |ui| { child.display(ui); });
+            response = user_interface.allocate_ui(rect, |ui| {
+                child.display(ui);
+            });
             x += width + self.spacing;
         }
         response
     }
 
     /// Returns the configured height when this stack is contained vertically
-    fn desired_height(&self) -> Option<f32> { self.height }
-
+    fn desired_height(&self) -> Option<f32> {
+        self.height
+    }
 }

@@ -16,7 +16,6 @@ pub(crate) enum EditorViewMode {
 }
 
 impl EditorViewMode {
-
     /// Returns the value consumed by the scene shader
     pub const fn shader_value(self) -> u32 {
         match self {
@@ -27,5 +26,4 @@ impl EditorViewMode {
             Self::Gas => 4,
         }
     }
-
 }

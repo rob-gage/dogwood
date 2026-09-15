@@ -4,45 +4,21 @@ use super::DemoSceneGenerator;
 use engine::{
     Game,
     compute::Accelerator,
-    graphics::{
-        Camera,
-        Color,
-        MaterialAppearance,
-    },
+    graphics::{Camera, Color, MaterialAppearance},
     physics::{
         actors::{
-            ActorCollisionShape,
-            ActorPawn,
-            ActorPawnMovement,
-            ActorPawnSwimmingConfiguration,
+            ActorCollisionShape, ActorPawn, ActorPawnMovement, ActorPawnSwimmingConfiguration,
             ActorPawnWalkingConfiguration,
         },
-        materials::{
-            Material,
-            MaterialIdentifier,
-            MaterialRegistry,
-        },
-        scenes::{
-            Scene,
-            SceneData,
-            SceneEditBatch,
-            ScenePosition,
-            SceneVelocity,
-        },
+        materials::{Material, MaterialIdentifier, MaterialRegistry},
+        scenes::{Scene, SceneData, SceneEditBatch, ScenePosition, SceneVelocity},
         simulation::SceneSimulationConfiguration,
-        tiles::{
-            CellCoordinates,
-            CellularAppearance,
-            TileCoordinates,
-        },
+        tiles::{CellCoordinates, CellularAppearance, TileCoordinates},
     },
     user_interface::UserInterfaceContext,
 };
 
-use std::{
-    error::Error,
-    sync::Arc,
-};
+use std::{error::Error, sync::Arc};
 
 /// A minimal game used to test the engine
 pub struct DemoGame {
@@ -51,14 +27,13 @@ pub struct DemoGame {
 }
 
 impl DemoGame {
-
     /// Creates a `DemoGame` with a GPU-backed scene
     pub fn new(accelerator: &Arc<Accelerator>) -> Result<Self, Box<dyn Error>> {
         let mut materials: MaterialRegistry = MaterialRegistry::new();
-        let stone_debris_graphics: MaterialAppearance = MaterialAppearance::from_color(
-            Color::new_rgb(148, 148, 148),
-        ).with_variation([0.5, 0.5, 0.5, 0.0])
-            .with_color_influence([0.25, 0.25, 0.25, 0.0]);
+        let stone_debris_graphics: MaterialAppearance =
+            MaterialAppearance::from_color(Color::new_rgb(148, 148, 148))
+                .with_variation([0.5, 0.5, 0.5, 0.0])
+                .with_color_influence([0.25, 0.25, 0.25, 0.0]);
         let stone_debris: MaterialIdentifier = materials.register(Material::CellularDynamic {
             name: "Stone Debris".into(),
             graphics: stone_debris_graphics,
@@ -67,10 +42,10 @@ impl DemoGame {
             friction: 0.45,
             restitution: 0.15,
         });
-        let sand_graphics: MaterialAppearance = MaterialAppearance::from_color(
-            Color::new_rgb(194, 178, 128),
-        ).with_variation([0.5, 0.5, 0.5, 0.0])
-            .with_color_influence([0.20, 0.18, 0.12, 0.0]);
+        let sand_graphics: MaterialAppearance =
+            MaterialAppearance::from_color(Color::new_rgb(194, 178, 128))
+                .with_variation([0.5, 0.5, 0.5, 0.0])
+                .with_color_influence([0.20, 0.18, 0.12, 0.0]);
         let sand: MaterialIdentifier = materials.register(Material::CellularDynamic {
             name: "Sand".into(),
             graphics: sand_graphics,
@@ -79,10 +54,10 @@ impl DemoGame {
             friction: 0.65,
             restitution: 0.05,
         });
-        let stone_graphics: MaterialAppearance = MaterialAppearance::from_color(
-            Color::new_rgb(108, 108, 108),
-        ).with_variation([0.5, 0.5, 0.5, 0.0])
-            .with_color_influence([0.25, 0.25, 0.25, 0.0]);
+        let stone_graphics: MaterialAppearance =
+            MaterialAppearance::from_color(Color::new_rgb(108, 108, 108))
+                .with_variation([0.5, 0.5, 0.5, 0.0])
+                .with_color_influence([0.25, 0.25, 0.25, 0.0]);
         let stone: MaterialIdentifier = materials.register(Material::CellularStatic {
             name: "Stone".into(),
             graphics: stone_graphics,
@@ -149,22 +124,20 @@ impl DemoGame {
         gas_edits.place_material(
             water_vapor,
             CellularAppearance::NEUTRAL,
-            (8..20).flat_map(|y| {
-                (-56..-40).map(move |x| CellCoordinates { x, y })
-            }).collect(),
+            (8..20)
+                .flat_map(|y| (-56..-40).map(move |x| CellCoordinates { x, y }))
+                .collect(),
         );
         gas_edits.place_material(
             smoke,
             CellularAppearance::NEUTRAL,
-            (8..20).flat_map(|y| {
-                (-44..-28).map(move |x| CellCoordinates { x, y })
-            }).collect(),
+            (8..20)
+                .flat_map(|y| (-44..-28).map(move |x| CellCoordinates { x, y }))
+                .collect(),
         );
         scene.queue_edits(gas_edits);
         let mut pawn_configuration: ActorPawn = ActorPawn::new();
-        pawn_configuration.collision_shape = Some(ActorCollisionShape::Circle {
-            radius: 0.375,
-        });
+        pawn_configuration.collision_shape = Some(ActorCollisionShape::Circle { radius: 0.375 });
         pawn_configuration.walking = Some(ActorPawnWalkingConfiguration {
             speed: 4.0,
             acceleration: 24.0,
@@ -183,25 +156,23 @@ impl DemoGame {
         pawn_configuration.movement = Some(ActorPawnMovement::Walking);
         let pawn: engine::physics::actors::Actor =
             scene.actor_registry_mutable().spawn_possessable_pawn(
-            pawn_configuration,
-            ScenePosition {
-                tile_coordinates: TileCoordinates { x: 0, y: 1 },
-                x_offset: 0.5,
-                y_offset: 0.75,
-            },
-            SceneVelocity { x: 0.0, y: 0.0 },
-        );
+                pawn_configuration,
+                ScenePosition {
+                    tile_coordinates: TileCoordinates { x: 0, y: 1 },
+                    x_offset: 0.5,
+                    y_offset: 0.75,
+                },
+                SceneVelocity { x: 0.0, y: 0.0 },
+            );
         scene.possess_actor(pawn);
         Ok(Self {
             user_interface_context: UserInterfaceContext::new(),
             scene: Some(scene),
         })
     }
-
 }
 
 impl Game for DemoGame {
-
     const TITLE: &'static str = "Demo Game";
 
     fn camera(&self) -> Camera {
@@ -215,14 +186,19 @@ impl Game for DemoGame {
         }
     }
 
-    fn is_paused(&self) -> bool { false }
+    fn is_paused(&self) -> bool {
+        false
+    }
 
-    fn scene(&self) -> Option<&Scene> { self.scene.as_ref() }
+    fn scene(&self) -> Option<&Scene> {
+        self.scene.as_ref()
+    }
 
-    fn scene_mutable(&mut self) -> Option<&mut Scene> { self.scene.as_mut() }
+    fn scene_mutable(&mut self) -> Option<&mut Scene> {
+        self.scene.as_mut()
+    }
 
     fn user_interface_context(&mut self) -> &mut UserInterfaceContext {
         &mut self.user_interface_context
     }
-
 }

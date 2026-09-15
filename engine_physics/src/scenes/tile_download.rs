@@ -1,15 +1,8 @@
 // Copyright Rob Gage 2026
 
-use crate::tiles::{
-    Tile,
-    TileCoordinates,
-    TileData,
-};
+use crate::tiles::{Tile, TileCoordinates, TileData};
 use engine_compute::Accelerator;
-use std::{
-    io,
-    task::Waker,
-};
+use std::{io, task::Waker};
 
 /// Tracks a nonblocking `Accelerator`-to-native tile download
 pub struct TileDownload {
@@ -30,7 +23,6 @@ pub struct TileDownload {
 }
 
 impl TileDownload {
-
     /// Creates a pending tile download with a staging buffer sized for one `TileData`
     pub fn new(
         accelerator: &Accelerator,
@@ -40,17 +32,18 @@ impl TileDownload {
         Self {
             coordinates,
             physical_tile,
-            buffer: accelerator.wgpu_device().create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Tile download buffer"),
-                size: TileData::SERIALIZED_SIZE as u64,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
+            buffer: accelerator
+                .wgpu_device()
+                .create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("Tile download buffer"),
+                    size: TileData::SERIALIZED_SIZE as u64,
+                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }),
             is_started: false,
             is_complete: false,
             result: None,
             waker: None,
         }
     }
-
 }

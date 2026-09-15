@@ -18,7 +18,6 @@ pub struct SceneSimulationConfiguration {
 }
 
 impl SceneSimulationConfiguration {
-
     /// Validates that this configuration can create a streaming tile buffer
     pub fn validate(&self) -> Result<(), io::Error> {
         if !self.gravity.into_iter().all(f32::is_finite) {
@@ -39,8 +38,9 @@ impl SceneSimulationConfiguration {
                 "Simulation streaming batch size must not be zero",
             ));
         }
-        if u16::from(self.streaming_batch_size) > self.width ||
-                u16::from(self.streaming_batch_size) > self.height {
+        if u16::from(self.streaming_batch_size) > self.width
+            || u16::from(self.streaming_batch_size) > self.height
+        {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "Simulation streaming batch size exceeds the simulation dimensions",
@@ -52,16 +52,18 @@ impl SceneSimulationConfiguration {
                 "Simulation buffer size must be a multiple of streaming batch size",
             ));
         }
-        if u16::from(self.buffer_size) < u16::from(self.streaming_batch_size) +
-                u16::from(Fluids::minimum_buffer_tiles()) {
+        if u16::from(self.buffer_size)
+            < u16::from(self.streaming_batch_size) + u16::from(Fluids::minimum_buffer_tiles())
+        {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "Simulation buffer cannot contain fluid motion and boundary support",
             ));
         }
         let buffer_size: u16 = u16::from(self.buffer_size) * 2;
-        if self.width.checked_add(buffer_size).is_none() ||
-                self.height.checked_add(buffer_size).is_none() {
+        if self.width.checked_add(buffer_size).is_none()
+            || self.height.checked_add(buffer_size).is_none()
+        {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "Simulation buffer exceeds the maximum scene dimensions",
@@ -69,5 +71,4 @@ impl SceneSimulationConfiguration {
         }
         Ok(())
     }
-
 }

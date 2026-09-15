@@ -2,10 +2,7 @@
 
 use crate::{
     materials::MaterialIdentifier,
-    tiles::{
-        CellCoordinates,
-        CellularAppearance,
-    },
+    tiles::{CellCoordinates, CellularAppearance},
 };
 
 /// Explicit material state to place in one `Scene` cell

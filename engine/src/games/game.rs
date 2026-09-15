@@ -3,27 +3,17 @@
 use super::game_application::GameApplication;
 use engine_compute::Accelerator;
 use engine_graphics::Camera;
-use engine_input::{
-    InputTranslator,
-    KeyboardInputState,
-};
+use engine_input::{InputTranslator, KeyboardInputState};
 use engine_physics::actors::ActorControlState;
 use engine_physics::{
-    scenes::{
-        Scene,
-        ScenePosition,
-    },
+    scenes::{Scene, ScenePosition},
     tiles::TileCoordinates,
 };
 use engine_user_interface::UserInterfaceContext;
-use std::{
-    error::Error,
-    sync::Arc,
-};
+use std::{error::Error, sync::Arc};
 
 /// Implementors are games that run on this engine.
 pub trait Game {
-
     /// The title of the game.
     const TITLE: &'static str;
 
@@ -37,9 +27,15 @@ pub trait Game {
             x_offset: 0.5,
             y_offset: 0.5,
         };
-        let Some(scene) = self.scene() else { return static_position; };
-        let Some(actor) = scene.possessed_actor() else { return static_position; };
-        scene.actor_render_position(actor).unwrap_or(static_position)
+        let Some(scene) = self.scene() else {
+            return static_position;
+        };
+        let Some(actor) = scene.possessed_actor() else {
+            return static_position;
+        };
+        scene
+            .actor_render_position(actor)
+            .unwrap_or(static_position)
     }
 
     /// Returns the input translator used by this `Game`
@@ -53,12 +49,17 @@ pub trait Game {
         keyboard_input_state: &KeyboardInputState,
         input_translator: &dyn InputTranslator,
     ) {
-        let control_state: ActorControlState = ActorControlState(
-            input_translator.translate(keyboard_input_state)
-        );
-        let Some(scene) = self.scene_mutable() else { return; };
-        let Some(actor) = scene.possessed_actor() else { return; };
-        scene.actor_registry_mutable().set_control_state(actor, control_state);
+        let control_state: ActorControlState =
+            ActorControlState(input_translator.translate(keyboard_input_state));
+        let Some(scene) = self.scene_mutable() else {
+            return;
+        };
+        let Some(actor) = scene.possessed_actor() else {
+            return;
+        };
+        scene
+            .actor_registry_mutable()
+            .set_control_state(actor, control_state);
     }
 
     /// Launches this `Game`.
@@ -66,11 +67,8 @@ pub trait Game {
     where
         Self: Sized,
     {
-        let _application_span = tracing::info_span!(
-            "application",
-            title = Self::TITLE,
-            kind = "game",
-        ).entered();
+        let _application_span =
+            tracing::info_span!("application", title = Self::TITLE, kind = "game",).entered();
         tracing::info!("launching game");
         let mut event_loop_builder: winit::event_loop::EventLoopBuilder<()> =
             winit::event_loop::EventLoop::builder();
@@ -84,9 +82,7 @@ pub trait Game {
             feature = "x11",
             not(feature = "wayland"),
         ))]
-        winit::platform::x11::EventLoopBuilderExtX11::with_x11(
-            &mut event_loop_builder
-        );
+        winit::platform::x11::EventLoopBuilderExtX11::with_x11(&mut event_loop_builder);
         #[cfg(all(
             unix,
             not(target_os = "android"),
@@ -97,10 +93,9 @@ pub trait Game {
             feature = "wayland",
             not(feature = "x11"),
         ))]
-        winit::platform::wayland::EventLoopBuilderExtWayland::with_wayland(
-            &mut event_loop_builder,
-        );
-        let event_loop: winit::event_loop::EventLoop<()> = event_loop_builder.build()
+        winit::platform::wayland::EventLoopBuilderExtWayland::with_wayland(&mut event_loop_builder);
+        let event_loop: winit::event_loop::EventLoop<()> = event_loop_builder
+            .build()
             .inspect_err(|error| tracing::error!(%error, "failed to create event loop"))?;
         let mut application: GameApplication<Self> = GameApplication::new(accelerator, self);
         event_loop.run_app(&mut application)?;
@@ -118,5 +113,4 @@ pub trait Game {
 
     /// Returns a mutable reference to the active `UserInterfaceContext` of this `Game`
     fn user_interface_context(&mut self) -> &mut UserInterfaceContext;
-
 }

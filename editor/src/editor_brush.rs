@@ -12,15 +12,18 @@ pub enum EditorBrush {
 }
 
 impl EditorBrush {
-
     /// The maximum brush size used by this editor implementation
     const SIZE_MAXIMUM: u16 = 64;
 
     /// Creates a one-cell square brush
-    pub const fn new() -> Self { Self::Square { size: 1 } }
+    pub const fn new() -> Self {
+        Self::Square { size: 1 }
+    }
 
     /// Returns whether this brush is square
-    pub const fn is_square(self) -> bool { matches!(self, Self::Square { .. }) }
+    pub const fn is_square(self) -> bool {
+        matches!(self, Self::Square { .. })
+    }
 
     /// Returns the brush size in cells
     pub const fn size(self) -> u16 {
@@ -31,26 +34,33 @@ impl EditorBrush {
 
     /// Selects the square shape while preserving the current size
     pub fn select_square(&mut self) -> bool {
-        if self.is_square() { return false; }
+        if self.is_square() {
+            return false;
+        }
         *self = Self::Square { size: self.size() };
         true
     }
 
     /// Selects the circle shape while preserving the current size
     pub fn select_circle(&mut self) -> bool {
-        if !self.is_square() { return false; }
+        if !self.is_square() {
+            return false;
+        }
         *self = Self::Circle { size: self.size() };
         true
     }
 
     /// Adjusts the brush size within the supported range
     pub fn adjust_size(&mut self, adjustment: i32) -> bool {
-        let size: u16 = (i32::from(self.size()) + adjustment)
-            .clamp(1, i32::from(Self::SIZE_MAXIMUM)) as u16;
-        if size == self.size() { return false; }
+        let size: u16 =
+            (i32::from(self.size()) + adjustment).clamp(1, i32::from(Self::SIZE_MAXIMUM)) as u16;
+        if size == self.size() {
+            return false;
+        }
         match self {
-            Self::Square { size: current_size } | Self::Circle { size: current_size } =>
-                *current_size = size,
+            Self::Square { size: current_size } | Self::Circle { size: current_size } => {
+                *current_size = size
+            }
         }
         true
     }
@@ -63,16 +73,26 @@ impl EditorBrush {
         let mut cells: Vec<CellCoordinates> = Vec::with_capacity((size * size) as usize);
         for y in start_y..start_y + size {
             for x in start_x..start_x + size {
-                if x < i64::from(i32::MIN) || x > i64::from(i32::MAX) ||
-                        y < i64::from(i32::MIN) || y > i64::from(i32::MAX) { continue; }
+                if x < i64::from(i32::MIN)
+                    || x > i64::from(i32::MAX)
+                    || y < i64::from(i32::MIN)
+                    || y > i64::from(i32::MAX)
+                {
+                    continue;
+                }
                 if matches!(self, Self::Circle { .. }) {
                     let center2_x: i128 = 2 * i128::from(start_x) + i128::from(size);
                     let center2_y: i128 = 2 * i128::from(start_y) + i128::from(size);
                     let dx: i128 = 2 * i128::from(x) + 1 - center2_x;
                     let dy: i128 = 2 * i128::from(y) + 1 - center2_y;
-                    if dx * dx + dy * dy > i128::from(size * size) { continue; }
+                    if dx * dx + dy * dy > i128::from(size * size) {
+                        continue;
+                    }
                 }
-                cells.push(CellCoordinates { x: x as i32, y: y as i32 });
+                cells.push(CellCoordinates {
+                    x: x as i32,
+                    y: y as i32,
+                });
             }
         }
         cells
@@ -91,8 +111,13 @@ impl EditorBrush {
         let mut error: i64 = delta_x + delta_y;
         let mut anchors: Vec<CellCoordinates> = Vec::new();
         loop {
-            anchors.push(CellCoordinates { x: x as i32, y: y as i32 });
-            if x == end_x && y == end_y { break; }
+            anchors.push(CellCoordinates {
+                x: x as i32,
+                y: y as i32,
+            });
+            if x == end_x && y == end_y {
+                break;
+            }
             let error2: i64 = 2 * error;
             if error2 >= delta_y {
                 error += delta_y;
@@ -105,5 +130,4 @@ impl EditorBrush {
         }
         anchors
     }
-
 }

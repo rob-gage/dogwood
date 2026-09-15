@@ -7,7 +7,6 @@ use super::MaterialForm;
 pub struct MaterialIdentifier(u32);
 
 impl MaterialIdentifier {
-
     /// Used to represent empty cells that contain no material
     pub const NULL: MaterialIdentifier = MaterialIdentifier(0);
 
@@ -40,12 +39,17 @@ impl MaterialIdentifier {
 
     /// Returns the `MaterialForm` of the `Material` represented by this `MaterialIdentifier`
     pub const fn form(self) -> MaterialForm {
-        match self.form_checked() { Some(form) => form, None => unreachable!(), }
+        match self.form_checked() {
+            Some(form) => form,
+            None => unreachable!(),
+        }
     }
 
     /// Returns the `MaterialForm`, or `None` for an invalid identifier
     pub const fn form_checked(self) -> Option<MaterialForm> {
-        if self.0 == 0 { return None; }
+        if self.0 == 0 {
+            return None;
+        }
         match self.0 >> 30 {
             Self::GAS_TAG => Some(MaterialForm::Gas),
             Self::CELLULAR_STATIC_TAG => Some(MaterialForm::CellularStatic),
@@ -58,15 +62,22 @@ impl MaterialIdentifier {
     /// Returns the form-specific index of the `Material` represented by this `MaterialIdentifier`
     pub const fn index(self) -> u32 {
         let index: u32 = self.0 & 0b00111111_11111111_11111111_11111111;
-        if self.0 >> 30 == Self::GAS_TAG { index.saturating_sub(1) } else { index }
+        if self.0 >> 30 == Self::GAS_TAG {
+            index.saturating_sub(1)
+        } else {
+            index
+        }
     }
 
     /// Creates a `MaterialIdentifier` from a `u32`
-    pub const fn from_u32(u32: u32) -> MaterialIdentifier { Self(u32) }
+    pub const fn from_u32(u32: u32) -> MaterialIdentifier {
+        Self(u32)
+    }
 
     /// Returns a `MaterialIdentifier` as a `u32`
-    pub const fn as_u32(self) -> u32 { self.0 }
-
+    pub const fn as_u32(self) -> u32 {
+        self.0
+    }
 }
 
 #[cfg(test)]
@@ -81,8 +92,9 @@ mod tests {
         assert!(MaterialIdentifier::NULL.index() == 0);
         assert!(MaterialIdentifier::new(MaterialForm::Gas, 0).as_u32() == 0x00000001);
         assert!(MaterialIdentifier::new(MaterialForm::Gas, 1).as_u32() == 0x00000002);
-        assert!(MaterialIdentifier::new(MaterialForm::Gas, 1).form_checked() ==
-            Some(MaterialForm::Gas));
+        assert!(
+            MaterialIdentifier::new(MaterialForm::Gas, 1).form_checked() == Some(MaterialForm::Gas)
+        );
         assert!(MaterialIdentifier::new(MaterialForm::Gas, 1).index() == 1);
         assert!(MaterialIdentifier::new(MaterialForm::Gas, 0x3ffffffe).as_u32() == 0x3fffffff);
         assert!(MaterialIdentifier::new(MaterialForm::Gas, 0x3ffffffe).index() == 0x3ffffffe);
@@ -90,5 +102,4 @@ mod tests {
         assert!(MaterialIdentifier::new(MaterialForm::CellularDynamic, 0).as_u32() == 0x80000000);
         assert!(MaterialIdentifier::new(MaterialForm::Fluid, 0).as_u32() == 0xc0000000);
     }
-
 }

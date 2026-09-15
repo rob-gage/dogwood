@@ -6,15 +6,9 @@ use crate::tiles::CellCoordinates;
 /// A requested material mutation of cells in a `Scene`
 pub enum SceneEdit {
     /// Places explicit state in cells
-    PlaceCells {
-        cells: Vec<SceneEditCellPlacement>,
-    },
+    PlaceCells { cells: Vec<SceneEditCellPlacement> },
     /// Creates one authoritative body-local rigid cellular body.
-    PlaceRigidBody {
-        cells: Vec<SceneEditCellPlacement>,
-    },
+    PlaceRigidBody { cells: Vec<SceneEditCellPlacement> },
     /// Erases material from cells
-    Erase {
-        cells: Vec<CellCoordinates>,
-    },
+    Erase { cells: Vec<CellCoordinates> },
 }

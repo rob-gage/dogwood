@@ -1,9 +1,6 @@
 // Copyright Rob Gage 2026
 
-use crate::{
-    UserInterface,
-    Widget
-};
+use crate::{UserInterface, Widget};
 use engine_graphics::Color;
 
 /// Arranges `Widget`s from top to bottom
@@ -19,10 +16,14 @@ pub struct StackVertical {
 }
 
 impl StackVertical {
-
     /// Creates an empty `StackVertical`
     pub const fn new() -> Self {
-        Self { children: Vec::new(), spacing: 0.0, background_color: None, width: None }
+        Self {
+            children: Vec::new(),
+            spacing: 0.0,
+            background_color: None,
+            width: None,
+        }
     }
 
     /// Adds a widget to the end of the `StackVertical`
@@ -48,21 +49,27 @@ impl StackVertical {
         self.width = Some(width);
         self
     }
-
 }
 
 impl Widget for StackVertical {
-
     fn display(&mut self, user_interface: &mut UserInterface) -> egui::Response {
         let available: egui::Rect = user_interface.available_rect();
         if let Some(background) = self.background_color {
-            user_interface.painter().rect_filled(available, 0.0, background);
+            user_interface
+                .painter()
+                .rect_filled(available, 0.0, background);
         }
         let spacing: f32 = self.spacing * self.children.len().saturating_sub(1) as f32;
-        let fixed: f32 = self.children.iter().filter_map(|child| child.desired_height())
+        let fixed: f32 = self
+            .children
+            .iter()
+            .filter_map(|child| child.desired_height())
             .sum::<f32>();
-        let flexible: usize =
-            self.children.iter().filter(|child| child.desired_height().is_none()).count();
+        let flexible: usize = self
+            .children
+            .iter()
+            .filter(|child| child.desired_height().is_none())
+            .count();
         let flexible_height: f32 =
             ((available.height() - spacing - fixed).max(0.0)) / flexible.max(1) as f32;
         let mut y: f32 = available.min.y;
@@ -74,12 +81,15 @@ impl Widget for StackVertical {
                 egui::pos2(available.min.x, y),
                 egui::pos2(available.max.x, y + height),
             );
-            response = user_interface.allocate_ui(rect, |ui| { child.display(ui); });
+            response = user_interface.allocate_ui(rect, |ui| {
+                child.display(ui);
+            });
             y += height + self.spacing;
         }
         response
     }
 
-    fn desired_width(&self) -> Option<f32> { self.width }
-
+    fn desired_width(&self) -> Option<f32> {
+        self.width
+    }
 }

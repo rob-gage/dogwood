@@ -1,10 +1,7 @@
 // Copyright Rob Gage 2026
 
 use crate::tiles::TileCoordinates;
-use engine_compute::{
-    Accelerator,
-    AcceleratorBuffer,
-};
+use engine_compute::{Accelerator, AcceleratorBuffer};
 
 /// The maximum number of grid steps one particle may travel during a fixed tick
 const MAXIMUM_MOVEMENT_CELLS: u32 = 4;
@@ -38,8 +35,9 @@ pub struct CellularDynamic {
 }
 
 impl CellularDynamic {
-
-    pub const fn kinematics_buffer(&self) -> &AcceleratorBuffer { &self.kinematics }
+    pub const fn kinematics_buffer(&self) -> &AcceleratorBuffer {
+        &self.kinematics
+    }
 
     /// Creates the private cellular dynamic solver and its fixed-size GPU state
     pub fn new(
@@ -52,7 +50,8 @@ impl CellularDynamic {
     ) -> Self {
         // validate the cell count used by buffer indices and reversible claim tickets
         let buffered_cell_count: u32 = u32::from(buffered_width)
-            .checked_mul(u32::from(buffered_height)).and_then(|count| count.checked_mul(64))
+            .checked_mul(u32::from(buffered_height))
+            .and_then(|count| count.checked_mul(64))
             .expect("Cellular dynamic buffer exceeds GPU indexing range");
         assert!(buffered_cell_count <= u32::MAX / 2);
         let device: &wgpu::Device = accelerator.wgpu_device();
@@ -74,8 +73,8 @@ impl CellularDynamic {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
-            &wgpu::BindGroupLayoutDescriptor {
+        let bind_group_layout: wgpu::BindGroupLayout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("cellular dynamic bind group layout"),
                 entries: &[
                     Self::cellular_dynamic_storage_layout_entry(0, true),
@@ -97,53 +96,54 @@ impl CellularDynamic {
                     },
                     Self::cellular_dynamic_storage_layout_entry(8, true),
                 ],
-            },
-        );
+            });
         // bind immutable canonical inputs separately from resolved outputs and transient state
-        let bind_group: wgpu::BindGroup = device.create_bind_group(
-            &wgpu::BindGroupDescriptor {
-                label: Some("cellular dynamic bind group"),
-                layout: &bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: cellular_material_identifiers.wgpu_buffer().as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 8,
-                        resource: external_body_occupancy.wgpu_buffer().as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: cellular_appearances.wgpu_buffer().as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: kinematics.wgpu_buffer().as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: material_identifiers_output.wgpu_buffer().as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: appearances_output.wgpu_buffer().as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 5,
-                        resource: destination_claims.wgpu_buffer().as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 6,
-                        resource: proposals.wgpu_buffer().as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 7,
-                        resource: parameters.as_entire_binding(),
-                    },
-                ],
-            },
-        );
+        let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("cellular dynamic bind group"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: cellular_material_identifiers
+                        .wgpu_buffer()
+                        .as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: external_body_occupancy.wgpu_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: cellular_appearances.wgpu_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: kinematics.wgpu_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: material_identifiers_output
+                        .wgpu_buffer()
+                        .as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: appearances_output.wgpu_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: destination_claims.wgpu_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: proposals.wgpu_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: parameters.as_entire_binding(),
+                },
+            ],
+        });
         // build the three explicit pass pipelines from one cellular dynamic shader
         let shader: wgpu::ShaderModule = super::create_simulation_shader_module(
             device,
@@ -151,28 +151,33 @@ impl CellularDynamic {
             include_str!("cellular_dynamic.wgsl"),
             "engine_physics/src/simulation/cellular_dynamic.wgsl",
         );
-        let pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
-            &wgpu::PipelineLayoutDescriptor {
+        let pipeline_layout: wgpu::PipelineLayout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("cellular dynamic pipeline layout"),
                 bind_group_layouts: &[Some(&bind_group_layout)],
                 immediate_size: 0,
-            },
-        );
+            });
         let clear_claims_pipeline: wgpu::ComputePipeline =
             Self::create_cellular_dynamic_compute_pipeline(
-                device, &pipeline_layout, &shader,
+                device,
+                &pipeline_layout,
+                &shader,
                 "cellular dynamic clear claims pipeline",
                 "clear_cellular_dynamic_destination_claims",
             );
         let propose_pipeline: wgpu::ComputePipeline =
             Self::create_cellular_dynamic_compute_pipeline(
-                device, &pipeline_layout, &shader,
+                device,
+                &pipeline_layout,
+                &shader,
                 "cellular dynamic movement proposal pipeline",
                 "calculate_cellular_dynamic_movement_proposals",
             );
         let resolve_pipeline: wgpu::ComputePipeline =
             Self::create_cellular_dynamic_compute_pipeline(
-                device, &pipeline_layout, &shader,
+                device,
+                &pipeline_layout,
+                &shader,
                 "cellular dynamic movement resolution pipeline",
                 "resolve_cellular_dynamic_movement_proposals",
             );
@@ -207,17 +212,35 @@ impl CellularDynamic {
         delta_time: f32,
     ) {
         self.write_tick_parameters(
-            accelerator, buffered_origin, buffered_width, buffered_height,
-            ring_offset_x, ring_offset_y, gravity, delta_time,
+            accelerator,
+            buffered_origin,
+            buffered_width,
+            buffered_height,
+            ring_offset_x,
+            ring_offset_y,
+            gravity,
+            delta_time,
         );
-        let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: Some("cellular dynamic simulation") },
-        );
+        let mut encoder: wgpu::CommandEncoder =
+            accelerator
+                .wgpu_device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("cellular dynamic simulation"),
+                });
         let workgroup_count: u32 = self.buffered_cell_count.div_ceil(64);
         for (label, pipeline) in [
-            ("cellular dynamic clear destination claims", &self.clear_claims_pipeline),
-            ("cellular dynamic calculate proposals", &self.propose_pipeline),
-            ("cellular dynamic resolve movement proposals", &self.resolve_pipeline),
+            (
+                "cellular dynamic clear destination claims",
+                &self.clear_claims_pipeline,
+            ),
+            (
+                "cellular dynamic calculate proposals",
+                &self.propose_pipeline,
+            ),
+            (
+                "cellular dynamic resolve movement proposals",
+                &self.resolve_pipeline,
+            ),
         ] {
             let mut pass: wgpu::ComputePass<'_> =
                 accelerator.begin_compute_pass(&mut encoder, label);
@@ -227,12 +250,18 @@ impl CellularDynamic {
         }
         let cell_field_size: u64 = u64::from(self.buffered_cell_count) * 4;
         encoder.copy_buffer_to_buffer(
-            self.material_identifiers_output.wgpu_buffer(), 0,
-            cellular_material_identifiers.wgpu_buffer(), 0, cell_field_size,
+            self.material_identifiers_output.wgpu_buffer(),
+            0,
+            cellular_material_identifiers.wgpu_buffer(),
+            0,
+            cell_field_size,
         );
         encoder.copy_buffer_to_buffer(
-            self.appearances_output.wgpu_buffer(), 0,
-            cellular_appearances.wgpu_buffer(), 0, cell_field_size,
+            self.appearances_output.wgpu_buffer(),
+            0,
+            cellular_appearances.wgpu_buffer(),
+            0,
+            cell_field_size,
         );
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
         self.tick = self.tick.wrapping_add(1);
@@ -267,11 +296,22 @@ impl CellularDynamic {
             self.tick,
             self.buffered_cell_count,
             MAXIMUM_MOVEMENT_CELLS,
-            0, 0, 0, 0, 0, 0, 0, 0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
         ];
         let mut bytes: Vec<u8> = Vec::with_capacity(96);
-        for value in parameters { bytes.extend_from_slice(&value.to_le_bytes()); }
-        accelerator.wgpu_queue().write_buffer(&self.parameters, 0, &bytes);
+        for value in parameters {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        accelerator
+            .wgpu_queue()
+            .write_buffer(&self.parameters, 0, &bytes);
     }
 
     /// Clears motion state replaced by a CPU cell edit or tile upload
@@ -322,11 +362,9 @@ impl CellularDynamic {
             cache: None,
         })
     }
-
 }
 
 impl Drop for CellularDynamic {
-
     /// Releases every GPU allocation owned exclusively by cellular dynamic simulation
     fn drop(&mut self) {
         self.kinematics.free();
@@ -336,5 +374,4 @@ impl Drop for CellularDynamic {
         self.proposals.free();
         self.parameters.destroy();
     }
-
 }

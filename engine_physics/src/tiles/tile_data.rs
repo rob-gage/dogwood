@@ -15,7 +15,6 @@ pub struct TileData {
 }
 
 impl TileData {
-
     /// The size of serialized `TileData` in bytes
     pub const SERIALIZED_SIZE: usize = 8 * 8 * 4 * 3;
 
@@ -86,7 +85,10 @@ impl TileData {
     }
 
     /// Writes material identifiers in row-major GPU order
-    pub fn serialize_material_identifiers<W: io::Write>(&self, writer: &mut W) -> Result<(), io::Error> {
+    pub fn serialize_material_identifiers<W: io::Write>(
+        &self,
+        writer: &mut W,
+    ) -> Result<(), io::Error> {
         for row in &self.cell_material_identifiers {
             for material_identifier in row {
                 writer.write_all(&material_identifier.as_u32().to_le_bytes())?;
@@ -126,7 +128,11 @@ impl TileData {
         let mut material_reader = material_data.as_slice();
         let mut appearance_reader = appearance_data.as_slice();
         let mut integrity_reader = integrity_data.as_slice();
-        Self::deserialize_fields(&mut material_reader, &mut appearance_reader, &mut integrity_reader)
+        Self::deserialize_fields(
+            &mut material_reader,
+            &mut appearance_reader,
+            &mut integrity_reader,
+        )
     }
 
     /// Deserializes the two parallel cell fields from separate streams
@@ -140,9 +146,7 @@ impl TileData {
             for cell_material_identifier in row {
                 let mut data: [u8; 4] = [0; 4];
                 material_reader.read_exact(&mut data)?;
-                *cell_material_identifier = MaterialIdentifier::from_u32(
-                    u32::from_le_bytes(data)
-                );
+                *cell_material_identifier = MaterialIdentifier::from_u32(u32::from_le_bytes(data));
             }
         }
         for row in &mut tile_data.cell_appearances {
@@ -168,5 +172,4 @@ impl TileData {
         self.serialize_appearances(writer)?;
         self.serialize_integrities(writer)
     }
-
 }

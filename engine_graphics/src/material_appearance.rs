@@ -26,7 +26,6 @@ pub struct MaterialAppearance {
 }
 
 impl MaterialAppearance {
-
     /// Creates new material appearance information
     pub const fn new(
         color_freezing: Color,
@@ -64,13 +63,19 @@ impl MaterialAppearance {
     }
 
     /// Returns this material's per-channel persistent variation initialization amplitudes
-    pub const fn variation(self) -> [f32; 4] { self.variation }
+    pub const fn variation(self) -> [f32; 4] {
+        self.variation
+    }
 
     /// Returns this material's per-channel base-color modulation fractions
-    pub const fn color_influence(self) -> [f32; 4] { self.color_influence }
+    pub const fn color_influence(self) -> [f32; 4] {
+        self.color_influence
+    }
 
     /// Returns this material's per-channel radiance modulation fractions
-    pub const fn radiance_influence(self) -> [f32; 4] { self.radiance_influence }
+    pub const fn radiance_influence(self) -> [f32; 4] {
+        self.radiance_influence
+    }
 
     /// Creates material appearance information from a static color
     pub const fn from_color(color: Color) -> Self {
@@ -85,7 +90,9 @@ impl MaterialAppearance {
     }
 
     /// Returns this material's base color
-    pub const fn base_color(self) -> Color { self.color_freezing }
+    pub const fn base_color(self) -> Color {
+        self.color_freezing
+    }
 
     /// Returns this material's GPU representation
     pub fn accelerator_data(self) -> [u32; 16] {
@@ -107,5 +114,4 @@ impl MaterialAppearance {
         }
         data
     }
-
 }

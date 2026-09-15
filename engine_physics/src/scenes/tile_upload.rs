@@ -1,13 +1,7 @@
 // Copyright Rob Gage 2026
 
-use crate::tiles::{
-    TileCoordinates,
-    TileData,
-};
-use std::{
-    io,
-    task::Waker,
-};
+use crate::tiles::{TileCoordinates, TileData};
+use std::{io, task::Waker};
 
 /// Tracks a nonblocking native-to-`Accelerator` tile upload
 pub struct TileUpload {
@@ -28,18 +22,20 @@ pub struct TileUpload {
 }
 
 impl TileUpload {
-
     /// Creates a pending tile upload with serialized `TileData`
     pub fn new(coordinates: TileCoordinates, tile_data: &TileData) -> Self {
         let mut material_identifiers: Vec<u8> =
             Vec::with_capacity(TileData::CELL_FIELD_SERIALIZED_SIZE);
-        tile_data.serialize_material_identifiers(&mut material_identifiers)
+        tile_data
+            .serialize_material_identifiers(&mut material_identifiers)
             .expect("Writing to a Vec cannot fail");
         let mut appearances: Vec<u8> = Vec::with_capacity(TileData::CELL_FIELD_SERIALIZED_SIZE);
-        tile_data.serialize_appearances(&mut appearances)
+        tile_data
+            .serialize_appearances(&mut appearances)
             .expect("Writing to a Vec cannot fail");
         let mut integrities: Vec<u8> = Vec::with_capacity(TileData::CELL_FIELD_SERIALIZED_SIZE);
-        tile_data.serialize_integrities(&mut integrities)
+        tile_data
+            .serialize_integrities(&mut integrities)
             .expect("Writing to a Vec cannot fail");
         Self {
             coordinates,
@@ -51,5 +47,4 @@ impl TileUpload {
             waker: None,
         }
     }
-
 }

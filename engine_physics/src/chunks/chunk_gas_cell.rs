@@ -1,14 +1,8 @@
 // Copyright Rob Gage 2026
 
 use crate::{
-    materials::{
-        MaterialForm,
-        MaterialIdentifier,
-    },
-    tiles::{
-        CellCoordinates,
-        TileCoordinates,
-    },
+    materials::{MaterialForm, MaterialIdentifier},
+    tiles::{CellCoordinates, TileCoordinates},
 };
 use std::io;
 
@@ -24,7 +18,6 @@ pub struct ChunkGasCell {
 }
 
 impl ChunkGasCell {
-
     /// Returns the world tile containing this cell
     pub const fn tile_coordinates(&self) -> TileCoordinates {
         self.coordinates.tile_coordinates()
@@ -43,7 +36,10 @@ impl ChunkGasCell {
         let count: usize = Self::read_u32(reader)? as usize;
         let mut species: Vec<(MaterialIdentifier, f32)> = Vec::new();
         species.try_reserve_exact(count).map_err(|_| {
-            io::Error::new(io::ErrorKind::InvalidData, "Dormant gas species count is too large")
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Dormant gas species count is too large",
+            )
         })?;
         for _ in 0..count {
             species.push((
@@ -51,7 +47,11 @@ impl ChunkGasCell {
                 f32::from_bits(Self::read_u32(reader)?),
             ));
         }
-        let cell: Self = Self { coordinates, velocity, species };
+        let cell: Self = Self {
+            coordinates,
+            velocity,
+            species,
+        };
         cell.validate()?;
         Ok(cell)
     }
@@ -82,16 +82,26 @@ impl ChunkGasCell {
     }
 
     pub(crate) fn validate(&self) -> Result<(), io::Error> {
-        let valid: bool = self.velocity.into_iter().all(f32::is_finite) &&
-            !self.species.is_empty() && self.species.iter().enumerate().all(
-                |(index, (identifier, concentration))| {
-                    identifier.form_checked() == Some(MaterialForm::Gas) &&
-                    concentration.is_finite() && *concentration > 0.0 &&
-                    !self.species[..index].iter().any(|(other, _)| other == identifier)
-                },
-            );
-        if valid { return Ok(()); }
-        Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid dormant gas cell"))
+        let valid: bool = self.velocity.into_iter().all(f32::is_finite)
+            && !self.species.is_empty()
+            && self
+                .species
+                .iter()
+                .enumerate()
+                .all(|(index, (identifier, concentration))| {
+                    identifier.form_checked() == Some(MaterialForm::Gas)
+                        && concentration.is_finite()
+                        && *concentration > 0.0
+                        && !self.species[..index]
+                            .iter()
+                            .any(|(other, _)| other == identifier)
+                });
+        if valid {
+            return Ok(());
+        }
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Invalid dormant gas cell",
+        ))
     }
-
 }

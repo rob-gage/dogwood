@@ -5,7 +5,6 @@
 pub struct Key(winit::keyboard::KeyCode);
 
 impl Key {
-
     /// The `A` key
     pub const A: Self = Self(winit::keyboard::KeyCode::KeyA);
 
@@ -179,5 +178,4 @@ impl Key {
     pub(super) const fn from_winit(key_code: winit::keyboard::KeyCode) -> Self {
         Self(key_code)
     }
-
 }

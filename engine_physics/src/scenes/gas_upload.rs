@@ -2,10 +2,7 @@
 
 use crate::{
     chunks::ChunkGasCell,
-    materials::{
-        Material,
-        MaterialRegistry,
-    },
+    materials::{Material, MaterialRegistry},
     tiles::TileArea,
 };
 use std::io;
@@ -19,7 +16,6 @@ pub struct GasUpload {
 }
 
 impl GasUpload {
-
     /// Creates a synchronous fixed-capacity gas upload
     pub const fn new(area: TileArea, cells: Vec<ChunkGasCell>) -> Self {
         Self { area, cells }
@@ -46,7 +42,6 @@ impl GasUpload {
         }
         Ok(())
     }
-
 }
 
 #[cfg(test)]
@@ -55,10 +50,7 @@ mod tests {
     use super::*;
     use crate::{
         materials::MaterialIdentifier,
-        tiles::{
-            CellCoordinates,
-            TileCoordinates,
-        },
+        tiles::{CellCoordinates, TileCoordinates},
     };
 
     #[test]
@@ -73,5 +65,4 @@ mod tests {
         );
         assert!(upload.validate(&MaterialRegistry::new()).is_err());
     }
-
 }

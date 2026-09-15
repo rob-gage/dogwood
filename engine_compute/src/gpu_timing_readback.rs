@@ -1,10 +1,7 @@
 // Copyright Rob Gage 2026
 
 use super::gpu_timing_record::GpuTimingRecord;
-use std::sync::{
-    Arc,
-    atomic::AtomicU8,
-};
+use std::sync::{Arc, atomic::AtomicU8};
 
 /// One asynchronously mapped GPU timestamp readback slot.
 pub(crate) struct GpuTimingReadback {
@@ -16,7 +13,6 @@ pub(crate) struct GpuTimingReadback {
 }
 
 impl GpuTimingReadback {
-
     pub(crate) const IDLE: u8 = 0;
     pub(crate) const RECORDING: u8 = 1;
     pub(crate) const READY_TO_MAP: u8 = 2;
@@ -38,5 +34,4 @@ impl GpuTimingReadback {
             records: Vec::new(),
         }
     }
-
 }

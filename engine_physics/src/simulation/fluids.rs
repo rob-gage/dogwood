@@ -1,16 +1,10 @@
 // Copyright Rob Gage 2026
 
-use crate::scenes::{
-    FluidDownload,
-    FluidUpload,
-};
+use crate::scenes::{FluidDownload, FluidUpload};
 use crate::{
     actors::ActorCollisionShape,
     chunks::ChunkFluidParticle,
-    tiles::{
-        TileArea,
-        TileCoordinates,
-    },
+    tiles::{TileArea, TileCoordinates},
 };
 use engine_compute::{Accelerator, AcceleratorBuffer};
 
@@ -114,7 +108,6 @@ pub struct Fluids {
 }
 
 impl Fluids {
-
     /// Creates the fixed fluid pool and its concrete GPU simulation resources
     pub fn new(
         accelerator: &Accelerator,
@@ -126,8 +119,7 @@ impl Fluids {
         buffered_height: u16,
     ) -> Self {
         let device: &wgpu::Device = accelerator.wgpu_device();
-        let buffered_cell_count: u32 =
-            u32::from(buffered_width) * u32::from(buffered_height) * 64;
+        let buffered_cell_count: u32 = u32::from(buffered_width) * u32::from(buffered_height) * 64;
         let particle_capacity: u32 = buffered_cell_count;
         let bucket_dimensions: [u32; 2] = [
             (f32::from(buffered_width) * 8.0 / SUPPORT_RADIUS_CELLS).ceil() as u32,
@@ -141,14 +133,12 @@ impl Fluids {
         let free_count: AcceleratorBuffer = accelerator.allocate::<u32>(1);
         let edit_cells: AcceleratorBuffer =
             accelerator.allocate::<u32>(buffered_cell_count as usize);
-        let bucket_heads: AcceleratorBuffer =
-            accelerator.allocate::<u32>(bucket_count as usize);
+        let bucket_heads: AcceleratorBuffer = accelerator.allocate::<u32>(bucket_count as usize);
         let next_particle: AcceleratorBuffer =
             accelerator.allocate::<u32>(particle_capacity as usize);
         let predicted_positions: AcceleratorBuffer =
             accelerator.allocate::<[f32; 2]>(particle_capacity as usize);
-        let lambdas: AcceleratorBuffer =
-            accelerator.allocate::<f32>(particle_capacity as usize);
+        let lambdas: AcceleratorBuffer = accelerator.allocate::<f32>(particle_capacity as usize);
         let position_corrections: AcceleratorBuffer =
             accelerator.allocate::<[f32; 2]>(particle_capacity as usize);
         let derived_material_identifiers: AcceleratorBuffer =
@@ -167,13 +157,15 @@ impl Fluids {
         let streaming_results: AcceleratorBuffer =
             accelerator.allocate::<u32>(particle_capacity as usize);
         let sample_output: AcceleratorBuffer = accelerator.allocate::<[f32; 8]>(1);
-        let free_indices_data: Vec<u8> = (0..particle_capacity)
-            .flat_map(u32::to_le_bytes).collect();
+        let free_indices_data: Vec<u8> =
+            (0..particle_capacity).flat_map(u32::to_le_bytes).collect();
+        accelerator
+            .wgpu_queue()
+            .write_buffer(free_indices.wgpu_buffer(), 0, &free_indices_data);
         accelerator.wgpu_queue().write_buffer(
-            free_indices.wgpu_buffer(), 0, &free_indices_data,
-        );
-        accelerator.wgpu_queue().write_buffer(
-            free_count.wgpu_buffer(), 0, &particle_capacity.to_le_bytes(),
+            free_count.wgpu_buffer(),
+            0,
+            &particle_capacity.to_le_bytes(),
         );
         let parameters: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("fluid simulation parameters"),
@@ -191,14 +183,22 @@ impl Fluids {
             },
             count: None,
         };
-        let layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
-            &wgpu::BindGroupLayoutDescriptor {
+        let layout: wgpu::BindGroupLayout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("fluid simulation bind group layout"),
                 entries: &[
-                    storage(0, false), storage(1, false), storage(2, false),
-                    storage(3, false), storage(4, false), storage(5, false),
-                    storage(6, false), storage(7, false), storage(8, false),
-                    storage(9, true), storage(10, true), storage(11, true),
+                    storage(0, false),
+                    storage(1, false),
+                    storage(2, false),
+                    storage(3, false),
+                    storage(4, false),
+                    storage(5, false),
+                    storage(6, false),
+                    storage(7, false),
+                    storage(8, false),
+                    storage(9, true),
+                    storage(10, true),
+                    storage(11, true),
                     wgpu::BindGroupLayoutEntry {
                         binding: 12,
                         visibility: wgpu::ShaderStages::COMPUTE,
@@ -209,70 +209,72 @@ impl Fluids {
                         },
                         count: None,
                     },
-                    storage(13, false), storage(14, false), storage(15, false),
-                    storage(16, true), storage(17, false), storage(18, false),
-                    storage(19, false), storage(20, false), storage(21, false),
+                    storage(13, false),
+                    storage(14, false),
+                    storage(15, false),
+                    storage(16, true),
+                    storage(17, false),
+                    storage(18, false),
+                    storage(19, false),
+                    storage(20, false),
+                    storage(21, false),
                     storage(22, false),
                 ],
-            },
-        );
-        let bind_group: wgpu::BindGroup = device.create_bind_group(
-            &wgpu::BindGroupDescriptor {
-                label: Some("fluid simulation bind group"),
-                layout: &layout,
-                entries: &[
-                    Self::binding(0, &particles),
-                    Self::binding(1, &free_indices),
-                    Self::binding(2, &free_count),
-                    Self::binding(3, &edit_cells),
-                    Self::binding(4, &bucket_heads),
-                    Self::binding(5, &next_particle),
-                    Self::binding(6, &derived_material_identifiers),
-                    Self::binding(7, &derived_coverage),
-                    Self::binding(8, &derived_velocity),
-                    Self::binding(9, cellular_material_identifiers),
-                    Self::binding(10, external_body_occupancy),
-                    Self::binding(11, external_body_velocity),
-                    wgpu::BindGroupEntry {
-                        binding: 12,
-                        resource: parameters.as_entire_binding(),
-                    },
-                    Self::binding(13, &predicted_positions),
-                    Self::binding(14, &lambdas),
-                    Self::binding(15, &position_corrections),
-                    Self::binding(16, fluid_properties),
-                    Self::binding(17, &streaming_particles),
-                    Self::binding(18, &streaming_count),
-                    Self::binding(19, &streaming_results),
-                    Self::binding(20, &sample_output),
-                    Self::binding(21, &mechanical_cells),
-                    Self::binding(22, &mechanical_original_velocity),
-                ],
-            },
-        );
+            });
+        let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("fluid simulation bind group"),
+            layout: &layout,
+            entries: &[
+                Self::binding(0, &particles),
+                Self::binding(1, &free_indices),
+                Self::binding(2, &free_count),
+                Self::binding(3, &edit_cells),
+                Self::binding(4, &bucket_heads),
+                Self::binding(5, &next_particle),
+                Self::binding(6, &derived_material_identifiers),
+                Self::binding(7, &derived_coverage),
+                Self::binding(8, &derived_velocity),
+                Self::binding(9, cellular_material_identifiers),
+                Self::binding(10, external_body_occupancy),
+                Self::binding(11, external_body_velocity),
+                wgpu::BindGroupEntry {
+                    binding: 12,
+                    resource: parameters.as_entire_binding(),
+                },
+                Self::binding(13, &predicted_positions),
+                Self::binding(14, &lambdas),
+                Self::binding(15, &position_corrections),
+                Self::binding(16, fluid_properties),
+                Self::binding(17, &streaming_particles),
+                Self::binding(18, &streaming_count),
+                Self::binding(19, &streaming_results),
+                Self::binding(20, &sample_output),
+                Self::binding(21, &mechanical_cells),
+                Self::binding(22, &mechanical_original_velocity),
+            ],
+        });
         let shader: wgpu::ShaderModule = super::create_simulation_shader_module(
             device,
             "fluid simulation shader",
             include_str!("fluids.wgsl"),
             "engine_physics/src/simulation/fluids.wgsl",
         );
-        let pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
-            &wgpu::PipelineLayoutDescriptor {
+        let pipeline_layout: wgpu::PipelineLayout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("fluid simulation pipeline layout"),
                 bind_group_layouts: &[Some(&layout)],
                 immediate_size: 0,
-            },
-        );
-        let pipeline = |entry_point, label| device.create_compute_pipeline(
-            &wgpu::ComputePipelineDescriptor {
+            });
+        let pipeline = |entry_point, label| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(label),
                 layout: Some(&pipeline_layout),
                 module: &shader,
                 entry_point: Some(entry_point),
                 compilation_options: Default::default(),
                 cache: None,
-            },
-        );
+            })
+        };
         Self {
             particles,
             free_indices,
@@ -294,40 +296,70 @@ impl Fluids {
             sample_output,
             parameters,
             bind_group,
-            edit_remove_pipeline: pipeline("remove_edited_fluid_particles", "fluid edit removal pipeline"),
-            edit_spawn_pipeline: pipeline("spawn_edited_fluid_particles", "fluid edit spawn pipeline"),
+            edit_remove_pipeline: pipeline(
+                "remove_edited_fluid_particles",
+                "fluid edit removal pipeline",
+            ),
+            edit_spawn_pipeline: pipeline(
+                "spawn_edited_fluid_particles",
+                "fluid edit spawn pipeline",
+            ),
             edit_clear_pipeline: pipeline("clear_fluid_edits", "fluid edit clear pipeline"),
             predict_pipeline: pipeline("predict_fluid_particles", "fluid prediction pipeline"),
-            classify_active_pipeline: pipeline("classify_active_fluid_particles",
-                "fluid active classification pipeline"),
+            classify_active_pipeline: pipeline(
+                "classify_active_fluid_particles",
+                "fluid active classification pipeline",
+            ),
             clear_buckets_pipeline: pipeline("clear_fluid_buckets", "fluid bucket clear pipeline"),
-            insert_buckets_pipeline: pipeline("insert_committed_fluid_particles_into_spatial_buckets",
-                "fluid bucket insertion pipeline"),
+            insert_buckets_pipeline: pipeline(
+                "insert_committed_fluid_particles_into_spatial_buckets",
+                "fluid bucket insertion pipeline",
+            ),
             insert_predicted_buckets_pipeline: pipeline(
                 "insert_predicted_fluid_particles_into_spatial_buckets",
-                "predicted fluid bucket insertion pipeline"),
-            lambda_pipeline: pipeline("calculate_fluid_density_constraint_lambdas",
-                "fluid lambda pipeline"),
-            position_correction_pipeline: pipeline("calculate_fluid_position_corrections",
-                "fluid position correction pipeline"),
-            apply_position_correction_pipeline: pipeline("apply_fluid_position_corrections",
-                "fluid position correction application pipeline"),
+                "predicted fluid bucket insertion pipeline",
+            ),
+            lambda_pipeline: pipeline(
+                "calculate_fluid_density_constraint_lambdas",
+                "fluid lambda pipeline",
+            ),
+            position_correction_pipeline: pipeline(
+                "calculate_fluid_position_corrections",
+                "fluid position correction pipeline",
+            ),
+            apply_position_correction_pipeline: pipeline(
+                "apply_fluid_position_corrections",
+                "fluid position correction application pipeline",
+            ),
             commit_pipeline: pipeline("commit_fluid_particles", "fluid commit pipeline"),
-            velocity_smoothing_pipeline: pipeline("calculate_fluid_velocity_smoothing",
-                "fluid velocity smoothing pipeline"),
-            apply_velocity_smoothing_pipeline: pipeline("apply_fluid_velocity_smoothing",
-                "fluid velocity smoothing application pipeline"),
-            cell_contact_pipeline: pipeline("resolve_fluid_cellular_contact_velocity",
-                "fluid cell contact pipeline"),
+            velocity_smoothing_pipeline: pipeline(
+                "calculate_fluid_velocity_smoothing",
+                "fluid velocity smoothing pipeline",
+            ),
+            apply_velocity_smoothing_pipeline: pipeline(
+                "apply_fluid_velocity_smoothing",
+                "fluid velocity smoothing application pipeline",
+            ),
+            cell_contact_pipeline: pipeline(
+                "resolve_fluid_cellular_contact_velocity",
+                "fluid cell contact pipeline",
+            ),
             apply_cell_contact_pipeline: pipeline(
                 "apply_fluid_cellular_contact_velocity_to_particles",
-                "fluid cell contact application pipeline"),
-            raster_pipeline: pipeline("rasterize_fluid_particle_coverage_into_cells",
-                "fluid cellular raster pipeline"),
-            mechanical_scatter_pipeline: pipeline("scatter_fluid_mechanical_response",
-                "fluid mechanical response scatter pipeline"),
-            sample_pipeline: pipeline("sample_fluid_state_inside_pawn_capsule",
-                "pawn fluid sample pipeline"),
+                "fluid cell contact application pipeline",
+            ),
+            raster_pipeline: pipeline(
+                "rasterize_fluid_particle_coverage_into_cells",
+                "fluid cellular raster pipeline",
+            ),
+            mechanical_scatter_pipeline: pipeline(
+                "scatter_fluid_mechanical_response",
+                "fluid mechanical response scatter pipeline",
+            ),
+            sample_pipeline: pipeline(
+                "sample_fluid_state_inside_pawn_capsule",
+                "pawn fluid sample pipeline",
+            ),
             export_pipeline: pipeline("export_fluid_particles", "fluid export pipeline"),
             import_pipeline: pipeline("import_fluid_particles", "fluid import pipeline"),
             particle_capacity,
@@ -372,27 +404,59 @@ impl Fluids {
     ) {
         // One bounded upload per aggregate scene-edit flush. The edit shader already
         // scans this dense ring buffer, so a sparse sequence of tiny writes buys nothing.
-        let mut cells = vec![crate::materials::MaterialIdentifier::NULL.as_u32(); self.buffered_cell_count as usize];
-        for (index, material_identifier) in edits { cells[*index] = *material_identifier; }
+        let mut cells = vec![
+            crate::materials::MaterialIdentifier::NULL.as_u32();
+            self.buffered_cell_count as usize
+        ];
+        for (index, material_identifier) in edits {
+            cells[*index] = *material_identifier;
+        }
         let bytes: Vec<u8> = cells.into_iter().flat_map(u32::to_le_bytes).collect();
-        accelerator.wgpu_queue().write_buffer(self.edit_cells.wgpu_buffer(), 0, &bytes);
+        accelerator
+            .wgpu_queue()
+            .write_buffer(self.edit_cells.wgpu_buffer(), 0, &bytes);
         self.write_parameters(
-            accelerator, active_origin, active_width, active_height,
-            buffered_origin, buffered_width, buffered_height,
-            ring_offset_x, ring_offset_y, None, [0.0; 2], 0.0, None,
+            accelerator,
+            active_origin,
+            active_width,
+            active_height,
+            buffered_origin,
+            buffered_width,
+            buffered_height,
+            ring_offset_x,
+            ring_offset_y,
+            None,
+            [0.0; 2],
+            0.0,
+            None,
         );
-        let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: Some("fluid edits") },
-        );
-        self.dispatch(accelerator, &mut encoder, &self.edit_remove_pipeline,
+        let mut encoder: wgpu::CommandEncoder =
+            accelerator
+                .wgpu_device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("fluid edits"),
+                });
+        self.dispatch(
+            accelerator,
+            &mut encoder,
+            &self.edit_remove_pipeline,
             self.particle_capacity,
-            "remove edited fluid particles");
-        self.dispatch(accelerator, &mut encoder, &self.edit_spawn_pipeline,
+            "remove edited fluid particles",
+        );
+        self.dispatch(
+            accelerator,
+            &mut encoder,
+            &self.edit_spawn_pipeline,
             self.buffered_cell_count,
-            "spawn edited fluid particles");
-        self.dispatch(accelerator, &mut encoder, &self.edit_clear_pipeline,
+            "spawn edited fluid particles",
+        );
+        self.dispatch(
+            accelerator,
+            &mut encoder,
+            &self.edit_clear_pipeline,
             self.buffered_cell_count,
-            "clear fluid edits");
+            "clear fluid edits",
+        );
         self.encode_rebuild(accelerator, &mut encoder);
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
@@ -413,71 +477,166 @@ impl Fluids {
         delta_time: f32,
     ) {
         self.write_parameters(
-            accelerator, active_origin, active_width, active_height,
-            buffered_origin, buffered_width, buffered_height,
-            ring_offset_x, ring_offset_y, None, gravity, delta_time, None,
+            accelerator,
+            active_origin,
+            active_width,
+            active_height,
+            buffered_origin,
+            buffered_width,
+            buffered_height,
+            ring_offset_x,
+            ring_offset_y,
+            None,
+            gravity,
+            delta_time,
+            None,
         );
-        let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: Some("fluid simulation") },
-        );
-        self.dispatch(accelerator, &mut encoder, &self.classify_active_pipeline,
+        let mut encoder: wgpu::CommandEncoder =
+            accelerator
+                .wgpu_device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("fluid simulation"),
+                });
+        self.dispatch(
+            accelerator,
+            &mut encoder,
+            &self.classify_active_pipeline,
             self.particle_capacity,
-            "classify active fluid particles");
+            "classify active fluid particles",
+        );
         for _ in 0..PBF_SUBSTEP_COUNT {
-            self.dispatch(accelerator, &mut encoder, &self.predict_pipeline,
+            self.dispatch(
+                accelerator,
+                &mut encoder,
+                &self.predict_pipeline,
                 self.particle_capacity,
-                "predict fluid particles");
+                "predict fluid particles",
+            );
             for _ in 0..PBF_CONSTRAINT_ITERATION_COUNT {
-                self.dispatch(accelerator, &mut encoder, &self.clear_buckets_pipeline,
+                self.dispatch(
+                    accelerator,
+                    &mut encoder,
+                    &self.clear_buckets_pipeline,
                     self.bucket_count,
-                    "clear predicted fluid buckets");
-                self.dispatch(accelerator, &mut encoder, &self.insert_predicted_buckets_pipeline,
-                    self.particle_capacity, "insert predicted fluid particles into buckets");
-                self.dispatch(accelerator, &mut encoder, &self.lambda_pipeline,
+                    "clear predicted fluid buckets",
+                );
+                self.dispatch(
+                    accelerator,
+                    &mut encoder,
+                    &self.insert_predicted_buckets_pipeline,
                     self.particle_capacity,
-                    "calculate fluid lambdas");
-                self.dispatch(accelerator, &mut encoder, &self.position_correction_pipeline,
-                    self.particle_capacity, "calculate fluid position corrections");
-                self.dispatch(accelerator, &mut encoder, &self.apply_position_correction_pipeline,
-                    self.particle_capacity, "apply fluid position corrections");
+                    "insert predicted fluid particles into buckets",
+                );
+                self.dispatch(
+                    accelerator,
+                    &mut encoder,
+                    &self.lambda_pipeline,
+                    self.particle_capacity,
+                    "calculate fluid lambdas",
+                );
+                self.dispatch(
+                    accelerator,
+                    &mut encoder,
+                    &self.position_correction_pipeline,
+                    self.particle_capacity,
+                    "calculate fluid position corrections",
+                );
+                self.dispatch(
+                    accelerator,
+                    &mut encoder,
+                    &self.apply_position_correction_pipeline,
+                    self.particle_capacity,
+                    "apply fluid position corrections",
+                );
             }
-            self.dispatch(accelerator, &mut encoder, &self.commit_pipeline,
+            self.dispatch(
+                accelerator,
+                &mut encoder,
+                &self.commit_pipeline,
                 self.particle_capacity,
-                "commit fluid particles");
+                "commit fluid particles",
+            );
         }
-        self.dispatch(accelerator, &mut encoder, &self.clear_buckets_pipeline, self.bucket_count,
-            "clear final fluid buckets");
-        self.dispatch(accelerator, &mut encoder, &self.insert_buckets_pipeline,
+        self.dispatch(
+            accelerator,
+            &mut encoder,
+            &self.clear_buckets_pipeline,
+            self.bucket_count,
+            "clear final fluid buckets",
+        );
+        self.dispatch(
+            accelerator,
+            &mut encoder,
+            &self.insert_buckets_pipeline,
             self.particle_capacity,
-            "insert final fluid particles into buckets");
-        self.dispatch(accelerator, &mut encoder, &self.velocity_smoothing_pipeline,
+            "insert final fluid particles into buckets",
+        );
+        self.dispatch(
+            accelerator,
+            &mut encoder,
+            &self.velocity_smoothing_pipeline,
             self.particle_capacity,
-            "calculate fluid velocity smoothing");
-        self.dispatch(accelerator, &mut encoder, &self.apply_velocity_smoothing_pipeline,
-            self.particle_capacity, "apply fluid velocity smoothing");
-        self.dispatch(accelerator, &mut encoder, &self.raster_pipeline,
-            self.buffered_cell_count,
-            "rasterize derived fluid cells");
-        self.dispatch(accelerator, &mut encoder, &self.cell_contact_pipeline,
-            self.buffered_cell_count,
-            "resolve fluid cell interactions");
-        self.dispatch(accelerator, &mut encoder, &self.apply_cell_contact_pipeline,
+            "calculate fluid velocity smoothing",
+        );
+        self.dispatch(
+            accelerator,
+            &mut encoder,
+            &self.apply_velocity_smoothing_pipeline,
             self.particle_capacity,
-            "apply fluid cell contacts");
-        self.dispatch(accelerator, &mut encoder, &self.raster_pipeline,
+            "apply fluid velocity smoothing",
+        );
+        self.dispatch(
+            accelerator,
+            &mut encoder,
+            &self.raster_pipeline,
             self.buffered_cell_count,
-            "refresh contacted fluid cells");
+            "rasterize derived fluid cells",
+        );
+        self.dispatch(
+            accelerator,
+            &mut encoder,
+            &self.cell_contact_pipeline,
+            self.buffered_cell_count,
+            "resolve fluid cell interactions",
+        );
+        self.dispatch(
+            accelerator,
+            &mut encoder,
+            &self.apply_cell_contact_pipeline,
+            self.particle_capacity,
+            "apply fluid cell contacts",
+        );
+        self.dispatch(
+            accelerator,
+            &mut encoder,
+            &self.raster_pipeline,
+            self.buffered_cell_count,
+            "refresh contacted fluid cells",
+        );
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
 
     pub(crate) fn scatter_mechanical_response(&self, accelerator: &Accelerator) {
-        let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: Some("fluid mechanical response") },
+        let mut encoder: wgpu::CommandEncoder =
+            accelerator
+                .wgpu_device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("fluid mechanical response"),
+                });
+        self.dispatch(
+            accelerator,
+            &mut encoder,
+            &self.mechanical_scatter_pipeline,
+            self.particle_capacity,
+            "scatter mechanical fluid velocity",
         );
-        self.dispatch(accelerator, &mut encoder, &self.mechanical_scatter_pipeline,
-            self.particle_capacity, "scatter mechanical fluid velocity");
-        self.dispatch(accelerator, &mut encoder, &self.raster_pipeline,
-            self.buffered_cell_count, "refresh solved fluid coverage");
+        self.dispatch(
+            accelerator,
+            &mut encoder,
+            &self.raster_pipeline,
+            self.buffered_cell_count,
+            "refresh solved fluid coverage",
+        );
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
 
@@ -499,18 +658,34 @@ impl Fluids {
         gravity: [f32; 2],
     ) {
         self.write_parameters(
-            accelerator, active_origin, active_width, active_height,
-            buffered_origin, buffered_width, buffered_height,
-            ring_offset_x, ring_offset_y, None, gravity, 0.0,
+            accelerator,
+            active_origin,
+            active_width,
+            active_height,
+            buffered_origin,
+            buffered_width,
+            buffered_height,
+            ring_offset_x,
+            ring_offset_y,
+            None,
+            gravity,
+            0.0,
             Some((center, shape)),
         );
-        let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: Some("pawn fluid sample") },
+        let mut encoder: wgpu::CommandEncoder =
+            accelerator
+                .wgpu_device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("pawn fluid sample"),
+                });
+        self.dispatch(
+            accelerator,
+            &mut encoder,
+            &self.sample_pipeline,
+            1,
+            "sample pawn fluid",
         );
-        self.dispatch(accelerator, &mut encoder, &self.sample_pipeline, 1, "sample pawn fluid");
-        encoder.copy_buffer_to_buffer(
-            self.sample_output.wgpu_buffer(), 0, output, 0, 32,
-        );
+        encoder.copy_buffer_to_buffer(self.sample_output.wgpu_buffer(), 0, output, 0, 32);
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
 
@@ -528,25 +703,39 @@ impl Fluids {
         ring_offset_y: u16,
     ) {
         self.write_parameters(
-            accelerator, active_origin, active_width, active_height,
-            buffered_origin, buffered_width, buffered_height,
-            ring_offset_x, ring_offset_y, None, [0.0; 2], 0.0, None,
+            accelerator,
+            active_origin,
+            active_width,
+            active_height,
+            buffered_origin,
+            buffered_width,
+            buffered_height,
+            ring_offset_x,
+            ring_offset_y,
+            None,
+            [0.0; 2],
+            0.0,
+            None,
         );
-        let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: Some("fluid cellular refresh") },
-        );
+        let mut encoder: wgpu::CommandEncoder =
+            accelerator
+                .wgpu_device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("fluid cellular refresh"),
+                });
         self.encode_rebuild(accelerator, &mut encoder);
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
 
     /// Returns the maximum number of authoritative resident particles
-    pub const fn particle_capacity(&self) -> u32 { self.particle_capacity }
+    pub const fn particle_capacity(&self) -> u32 {
+        self.particle_capacity
+    }
 
     /// Returns the tile buffer required by active movement and PBF support
     pub fn minimum_buffer_tiles() -> u8 {
-        let predicted_movement: f32 = MAXIMUM_MOVEMENT_CELLS as f32 /
-            PBF_SUBSTEP_COUNT as f32 + MAXIMUM_CORRECTION_CELLS *
-            PBF_CONSTRAINT_ITERATION_COUNT as f32;
+        let predicted_movement: f32 = MAXIMUM_MOVEMENT_CELLS as f32 / PBF_SUBSTEP_COUNT as f32
+            + MAXIMUM_CORRECTION_CELLS * PBF_CONSTRAINT_ITERATION_COUNT as f32;
         ((SUPPORT_RADIUS_CELLS * 2.0 + predicted_movement) / 8.0).ceil() as u8
     }
 
@@ -565,23 +754,50 @@ impl Fluids {
         ring_offset_y: u16,
     ) {
         accelerator.wgpu_queue().write_buffer(
-            self.streaming_count.wgpu_buffer(), 0, &0u32.to_le_bytes(),
+            self.streaming_count.wgpu_buffer(),
+            0,
+            &0u32.to_le_bytes(),
         );
         self.write_parameters(
-            accelerator, active_origin, active_width, active_height,
-            buffered_origin, buffered_width, buffered_height,
-            ring_offset_x, ring_offset_y, Some(download.area), [0.0; 2], 0.0, None,
+            accelerator,
+            active_origin,
+            active_width,
+            active_height,
+            buffered_origin,
+            buffered_width,
+            buffered_height,
+            ring_offset_x,
+            ring_offset_y,
+            Some(download.area),
+            [0.0; 2],
+            0.0,
+            None,
         );
-        let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: Some("fluid export") },
+        let mut encoder: wgpu::CommandEncoder =
+            accelerator
+                .wgpu_device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("fluid export"),
+                });
+        self.dispatch(
+            accelerator,
+            &mut encoder,
+            &self.export_pipeline,
+            self.particle_capacity,
+            "compact outgoing fluid particles",
         );
-        self.dispatch(accelerator, &mut encoder, &self.export_pipeline, self.particle_capacity,
-            "compact outgoing fluid particles");
         encoder.copy_buffer_to_buffer(
-            self.streaming_count.wgpu_buffer(), 0, &download.buffer, 0, 4,
+            self.streaming_count.wgpu_buffer(),
+            0,
+            &download.buffer,
+            0,
+            4,
         );
         encoder.copy_buffer_to_buffer(
-            self.streaming_particles.wgpu_buffer(), 0, &download.buffer, 16,
+            self.streaming_particles.wgpu_buffer(),
+            0,
+            &download.buffer,
+            16,
             u64::from(self.particle_capacity) * ChunkFluidParticle::GPU_SIZE as u64,
         );
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
@@ -601,44 +817,80 @@ impl Fluids {
         ring_offset_x: u16,
         ring_offset_y: u16,
     ) {
-        let mut bytes: Vec<u8> = Vec::with_capacity(
-            upload.particles.len() * ChunkFluidParticle::GPU_SIZE,
-        );
-        for particle in &upload.particles { particle.serialize_gpu(&mut bytes); }
+        let mut bytes: Vec<u8> =
+            Vec::with_capacity(upload.particles.len() * ChunkFluidParticle::GPU_SIZE);
+        for particle in &upload.particles {
+            particle.serialize_gpu(&mut bytes);
+        }
+        accelerator
+            .wgpu_queue()
+            .write_buffer(self.streaming_particles.wgpu_buffer(), 0, &bytes);
         accelerator.wgpu_queue().write_buffer(
-            self.streaming_particles.wgpu_buffer(), 0, &bytes,
-        );
-        accelerator.wgpu_queue().write_buffer(
-            self.streaming_count.wgpu_buffer(), 0,
+            self.streaming_count.wgpu_buffer(),
+            0,
             &(upload.particles.len() as u32).to_le_bytes(),
         );
         self.write_parameters(
-            accelerator, active_origin, active_width, active_height,
-            buffered_origin, buffered_width, buffered_height,
-            ring_offset_x, ring_offset_y, None, [0.0; 2], 0.0, None,
+            accelerator,
+            active_origin,
+            active_width,
+            active_height,
+            buffered_origin,
+            buffered_width,
+            buffered_height,
+            ring_offset_x,
+            ring_offset_y,
+            None,
+            [0.0; 2],
+            0.0,
+            None,
         );
-        let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: Some("fluid import") },
-        );
-        self.dispatch(accelerator, &mut encoder, &self.import_pipeline,
+        let mut encoder: wgpu::CommandEncoder =
+            accelerator
+                .wgpu_device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("fluid import"),
+                });
+        self.dispatch(
+            accelerator,
+            &mut encoder,
+            &self.import_pipeline,
             upload.particles.len() as u32,
-            "import dormant fluid particles");
+            "import dormant fluid particles",
+        );
         self.encode_rebuild(accelerator, &mut encoder);
         encoder.copy_buffer_to_buffer(
-            self.streaming_results.wgpu_buffer(), 0, &upload.buffer, 0,
+            self.streaming_results.wgpu_buffer(),
+            0,
+            &upload.buffer,
+            0,
             upload.particles.len() as u64 * 4,
         );
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
 
     fn encode_rebuild(&self, accelerator: &Accelerator, encoder: &mut wgpu::CommandEncoder) {
-        self.dispatch(accelerator, encoder, &self.clear_buckets_pipeline, self.bucket_count,
-            "clear fluid buckets");
-        self.dispatch(accelerator, encoder, &self.insert_buckets_pipeline,
+        self.dispatch(
+            accelerator,
+            encoder,
+            &self.clear_buckets_pipeline,
+            self.bucket_count,
+            "clear fluid buckets",
+        );
+        self.dispatch(
+            accelerator,
+            encoder,
+            &self.insert_buckets_pipeline,
             self.particle_capacity,
-            "insert fluid particles into buckets");
-        self.dispatch(accelerator, encoder, &self.raster_pipeline, self.buffered_cell_count,
-            "rasterize derived fluid cells");
+            "insert fluid particles into buckets",
+        );
+        self.dispatch(
+            accelerator,
+            encoder,
+            &self.raster_pipeline,
+            self.buffered_cell_count,
+            "rasterize derived fluid cells",
+        );
     }
 
     fn dispatch(
@@ -649,8 +901,7 @@ impl Fluids {
         count: u32,
         label: &str,
     ) {
-        let mut pass: wgpu::ComputePass<'_> =
-            accelerator.begin_compute_pass(encoder, label);
+        let mut pass: wgpu::ComputePass<'_> = accelerator.begin_compute_pass(encoder, label);
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.dispatch_workgroups(count.div_ceil(64), 1, 1);
@@ -672,36 +923,52 @@ impl Fluids {
         delta_time: f32,
         sample: Option<([f32; 2], ActorCollisionShape)>,
     ) {
-        let streaming_origin: TileCoordinates = streaming_area.map_or(
-            TileCoordinates { x: 0, y: 0 }, TileArea::origin,
-        );
-        let streaming_dimensions: [u16; 2] = streaming_area.map_or(
-            [0, 0], TileArea::dimensions,
-        );
-        let (sample_center, sample_kind, sample_parameters) = sample.map_or(
-            ([0.0; 2], 0, [0.0; 2]), |(center, shape)| {
+        let streaming_origin: TileCoordinates =
+            streaming_area.map_or(TileCoordinates { x: 0, y: 0 }, TileArea::origin);
+        let streaming_dimensions: [u16; 2] = streaming_area.map_or([0, 0], TileArea::dimensions);
+        let (sample_center, sample_kind, sample_parameters) =
+            sample.map_or(([0.0; 2], 0, [0.0; 2]), |(center, shape)| {
                 let (kind, parameters) = shape.gpu_parameters();
                 (center, kind, parameters)
             });
         let values: [u32; 32] = [
-            buffered_origin.x as u32, buffered_origin.y as u32,
-            u32::from(buffered_width), u32::from(buffered_height),
-            active_origin.x as u32, active_origin.y as u32,
-            u32::from(active_width), u32::from(active_height),
-            u32::from(ring_offset_x), u32::from(ring_offset_y),
-            self.bucket_dimensions[0], self.bucket_dimensions[1],
-            streaming_origin.x as u32, streaming_origin.y as u32,
-            u32::from(streaming_dimensions[0]), u32::from(streaming_dimensions[1]),
-            gravity[0].to_bits(), gravity[1].to_bits(), delta_time.to_bits(),
-            self.particle_capacity, self.buffered_cell_count, self.bucket_count,
-            SUPPORT_RADIUS_CELLS.to_bits(), PARTICLE_RADIUS_CELLS.to_bits(),
-            MAXIMUM_MOVEMENT_CELLS, 0,
-            sample_center[0].to_bits(), sample_center[1].to_bits(),
-            sample_parameters[0].to_bits(), sample_parameters[1].to_bits(),
-            sample_kind, 0,
+            buffered_origin.x as u32,
+            buffered_origin.y as u32,
+            u32::from(buffered_width),
+            u32::from(buffered_height),
+            active_origin.x as u32,
+            active_origin.y as u32,
+            u32::from(active_width),
+            u32::from(active_height),
+            u32::from(ring_offset_x),
+            u32::from(ring_offset_y),
+            self.bucket_dimensions[0],
+            self.bucket_dimensions[1],
+            streaming_origin.x as u32,
+            streaming_origin.y as u32,
+            u32::from(streaming_dimensions[0]),
+            u32::from(streaming_dimensions[1]),
+            gravity[0].to_bits(),
+            gravity[1].to_bits(),
+            delta_time.to_bits(),
+            self.particle_capacity,
+            self.buffered_cell_count,
+            self.bucket_count,
+            SUPPORT_RADIUS_CELLS.to_bits(),
+            PARTICLE_RADIUS_CELLS.to_bits(),
+            MAXIMUM_MOVEMENT_CELLS,
+            0,
+            sample_center[0].to_bits(),
+            sample_center[1].to_bits(),
+            sample_parameters[0].to_bits(),
+            sample_parameters[1].to_bits(),
+            sample_kind,
+            0,
         ];
         let bytes: Vec<u8> = values.into_iter().flat_map(u32::to_le_bytes).collect();
-        accelerator.wgpu_queue().write_buffer(&self.parameters, 0, &bytes);
+        accelerator
+            .wgpu_queue()
+            .write_buffer(&self.parameters, 0, &bytes);
     }
 
     fn binding<'a>(binding: u32, buffer: &'a AcceleratorBuffer) -> wgpu::BindGroupEntry<'a> {
@@ -712,12 +979,12 @@ impl Fluids {
     }
 
     /// Returns the transient edit value used to remove fluid without spawning it
-    pub const fn erase_edit() -> u32 { FLUID_EDIT_ERASE }
-
+    pub const fn erase_edit() -> u32 {
+        FLUID_EDIT_ERASE
+    }
 }
 
 impl Drop for Fluids {
-
     fn drop(&mut self) {
         self.particles.free();
         self.free_indices.free();
@@ -739,7 +1006,6 @@ impl Drop for Fluids {
         self.sample_output.free();
         self.parameters.destroy();
     }
-
 }
 
 #[cfg(test)]
@@ -747,7 +1013,10 @@ mod tests {
 
     use super::*;
     use crate::materials::{MaterialForm, MaterialIdentifier};
-    use std::{sync::mpsc, time::{Duration, Instant}};
+    use std::{
+        sync::mpsc,
+        time::{Duration, Instant},
+    };
 
     #[test]
     fn mechanical_raster_and_scatter_pipelines_compile_on_gpu() {
@@ -758,7 +1027,13 @@ mod tests {
         let velocity = accelerator.allocate::<[f32; 4]>(64);
         let properties = accelerator.allocate::<[f32; 4]>(2);
         let fluids = Fluids::new(
-            &accelerator, &cells, &occupancy, &velocity, &properties, 1, 1,
+            &accelerator,
+            &cells,
+            &occupancy,
+            &velocity,
+            &properties,
+            1,
+            1,
         );
         accelerator.poll().unwrap();
         drop(fluids);
@@ -772,47 +1047,89 @@ mod tests {
         let occupancy = accelerator.allocate::<u32>(64);
         let velocity = accelerator.allocate::<[f32; 4]>(64);
         let properties = accelerator.allocate::<[f32; 4]>(2);
-        accelerator.wgpu_queue().write_buffer(properties.wgpu_buffer(), 0,
-            &[1.0f32, 0.0, 0.0, 4.0, 0.0, 0.0, 1.0, 0.0].into_iter()
-                .flat_map(f32::to_le_bytes).collect::<Vec<_>>());
+        accelerator.wgpu_queue().write_buffer(
+            properties.wgpu_buffer(),
+            0,
+            &[1.0f32, 0.0, 0.0, 4.0, 0.0, 0.0, 1.0, 0.0]
+                .into_iter()
+                .flat_map(f32::to_le_bytes)
+                .collect::<Vec<_>>(),
+        );
         let fluids = Fluids::new(
-            &accelerator, &cells, &occupancy, &velocity, &properties, 1, 1,
+            &accelerator,
+            &cells,
+            &occupancy,
+            &velocity,
+            &properties,
+            1,
+            1,
         );
         let material = MaterialIdentifier::new(MaterialForm::Fluid, 0).as_u32();
-        let particle: [u32; 8] = [material, 1, 0.5f32.to_bits(), 0.5f32.to_bits(),
-            0, 0, 0, 0];
-        accelerator.wgpu_queue().write_buffer(fluids.particles.wgpu_buffer(), 0,
-            &particle.into_iter().flat_map(u32::to_le_bytes).collect::<Vec<_>>());
-        fluids.simulate(&accelerator, TileCoordinates { x: 0, y: 0 }, 1, 1,
-            TileCoordinates { x: 0, y: 0 }, 1, 1, 0, 0, [0.0, 0.0], 1.0 / 60.0);
+        let particle: [u32; 8] = [material, 1, 0.5f32.to_bits(), 0.5f32.to_bits(), 0, 0, 0, 0];
+        accelerator.wgpu_queue().write_buffer(
+            fluids.particles.wgpu_buffer(),
+            0,
+            &particle
+                .into_iter()
+                .flat_map(u32::to_le_bytes)
+                .collect::<Vec<_>>(),
+        );
+        fluids.simulate(
+            &accelerator,
+            TileCoordinates { x: 0, y: 0 },
+            1,
+            1,
+            TileCoordinates { x: 0, y: 0 },
+            1,
+            1,
+            0,
+            0,
+            [0.0, 0.0],
+            1.0 / 60.0,
+        );
         let cell_index = 4 + 4 * 8;
-        accelerator.wgpu_queue().write_buffer(fluids.mechanical_cells.wgpu_buffer(),
-            cell_index * 16 + 8, &1.0f32.to_le_bytes());
+        accelerator.wgpu_queue().write_buffer(
+            fluids.mechanical_cells.wgpu_buffer(),
+            cell_index * 16 + 8,
+            &1.0f32.to_le_bytes(),
+        );
         fluids.scatter_mechanical_response(&accelerator);
-        let readback = accelerator.wgpu_device().create_buffer(&wgpu::BufferDescriptor {
-            label: Some("fluid particle response check"), size: 32,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        let mut encoder = accelerator.wgpu_device().create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: Some("fluid particle response check") });
+        let readback = accelerator
+            .wgpu_device()
+            .create_buffer(&wgpu::BufferDescriptor {
+                label: Some("fluid particle response check"),
+                size: 32,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+        let mut encoder =
+            accelerator
+                .wgpu_device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("fluid particle response check"),
+                });
         encoder.copy_buffer_to_buffer(fluids.particles.wgpu_buffer(), 0, &readback, 0, 32);
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
         let (sender, receiver) = mpsc::sync_channel(1);
-        readback.slice(..).map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).unwrap();
-        });
+        readback
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                sender.send(result).unwrap();
+            });
         let started = Instant::now();
         loop {
             accelerator.poll().unwrap();
-            if receiver.try_recv().is_ok() { break; }
+            if receiver.try_recv().is_ok() {
+                break;
+            }
             assert!(started.elapsed() < Duration::from_secs(5));
             std::thread::yield_now();
         }
         let mapped = readback.slice(..).get_mapped_range().unwrap();
         let particle_velocity = f32::from_le_bytes(mapped[16..20].try_into().unwrap());
-        assert!((particle_velocity - 1.0).abs() < 0.01,
-            "mechanical response did not persist: {particle_velocity}");
+        assert!(
+            (particle_velocity - 1.0).abs() < 0.01,
+            "mechanical response did not persist: {particle_velocity}"
+        );
     }
-
 }

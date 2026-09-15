@@ -1,8 +1,8 @@
 // Copyright Rob Gage 2026
 
 use demo_game::DemoGame;
-use engine::compute::Accelerator;
 use editor::EditorGame;
+use engine::compute::Accelerator;
 use std::sync::Arc;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

@@ -1,12 +1,8 @@
 // Copyright Rob Gage 2026
 
 use super::{
-    ActorCollisionShape,
-    ActorPawnFlyingConfiguration,
-    ActorPawnMovement,
-    ActorPawnNoclipConfiguration,
-    ActorPawnSwimmingConfiguration,
-    ActorPawnWalkingConfiguration,
+    ActorCollisionShape, ActorPawnFlyingConfiguration, ActorPawnMovement,
+    ActorPawnNoclipConfiguration, ActorPawnSwimmingConfiguration, ActorPawnWalkingConfiguration,
 };
 
 /// Configures the movement capabilities and active movement of an actor pawn
@@ -29,7 +25,6 @@ pub struct ActorPawn {
 }
 
 impl ActorPawn {
-
     /// Creates a pawn with no movement capabilities or active movement
     pub const fn new() -> Self {
         Self {
@@ -42,5 +37,4 @@ impl ActorPawn {
             simulate_when_paused: false,
         }
     }
-
 }

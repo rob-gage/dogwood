@@ -3,12 +3,5 @@
 pub mod controls;
 pub mod keyboard;
 
-pub use keyboard::{
-    Key,
-    KeyboardInputState,
-};
-pub use controls::{
-    ControlState,
-    InputTranslator,
-    SimpleInputTranslator,
-};
+pub use controls::{ControlState, InputTranslator, SimpleInputTranslator};
+pub use keyboard::{Key, KeyboardInputState};

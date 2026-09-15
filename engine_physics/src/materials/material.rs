@@ -88,7 +88,6 @@ pub enum Material {
 }
 
 impl Material {
-
     /// Returns the graphics information for this `Material`
     pub const fn appearance(&self) -> &MaterialAppearance {
         match self {
@@ -108,5 +107,4 @@ impl Material {
             Material::Gas { name, .. } => name,
         }
     }
-
 }

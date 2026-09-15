@@ -12,7 +12,6 @@ pub struct UserInterfaceContext {
 }
 
 impl UserInterfaceContext {
-
     /// Creates an empty `UserInterfaceContext`
     pub fn new() -> Self {
         let egui_context: egui::Context = egui::Context::default();
@@ -33,7 +32,9 @@ impl UserInterfaceContext {
         let mut add_contents: Option<_> = Some(add_contents);
         let output: egui::FullOutput = self.egui_context.run_ui(input, |ui| {
             let mut ui: UserInterface = UserInterface(ui);
-            if let Some(add_contents) = add_contents.take() { add_contents(&mut ui); }
+            if let Some(add_contents) = add_contents.take() {
+                add_contents(&mut ui);
+            }
         });
         let mut returned_output: egui::FullOutput = output.clone();
         returned_output.textures_delta.clear();
@@ -48,7 +49,10 @@ impl UserInterfaceContext {
         size: [u32; 2],
         window: &egui_winit::winit::window::Window,
     ) {
-        let input: egui::RawInput = self.window_state.borrow_mut().as_mut()
+        let input: egui::RawInput = self
+            .window_state
+            .borrow_mut()
+            .as_mut()
             .map(|state| state.take_egui_input(window))
             .unwrap_or_else(|| egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
@@ -87,7 +91,9 @@ impl UserInterfaceContext {
         window: &egui_winit::winit::window::Window,
         event: &egui_winit::winit::event::WindowEvent,
     ) -> bool {
-        self.window_state.borrow_mut().as_mut()
+        self.window_state
+            .borrow_mut()
+            .as_mut()
             .is_some_and(|state| state.on_window_event(window, event).consumed)
     }
 
@@ -97,14 +103,13 @@ impl UserInterfaceContext {
     }
 
     /// Returns a reference to this `UserInterfaceContext`'s `egui::Context`
-    pub fn egui_context(&self) -> &egui::Context { &self.egui_context }
-
+    pub fn egui_context(&self) -> &egui::Context {
+        &self.egui_context
+    }
 }
 
 impl Drop for UserInterfaceContext {
-
     fn drop(&mut self) {
         self.output.get_mut().textures_delta.clear();
     }
-
 }

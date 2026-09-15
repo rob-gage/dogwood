@@ -2,23 +2,16 @@
 
 #[cfg(debug_assertions)]
 use super::{
-    gpu_timing_readback::GpuTimingReadback,
-    gpu_timing_record::GpuTimingRecord,
+    gpu_timing_readback::GpuTimingReadback, gpu_timing_record::GpuTimingRecord,
     gpu_timing_state::GpuTimingState,
 };
 #[cfg(debug_assertions)]
 use std::{
     sync::{
         Mutex,
-        atomic::{
-            AtomicBool,
-            Ordering,
-        },
+        atomic::{AtomicBool, Ordering},
     },
-    time::{
-        Duration,
-        Instant,
-    },
+    time::{Duration, Instant},
 };
 
 /// Debug-only WGPU timestamp-query state shared by an accelerator.
@@ -36,7 +29,6 @@ pub(crate) struct GpuTiming {
 }
 
 impl GpuTiming {
-
     #[cfg(debug_assertions)]
     const QUERY_CAPACITY: u32 = wgpu::QUERY_SET_MAX_QUERIES;
     #[cfg(debug_assertions)]
@@ -44,15 +36,10 @@ impl GpuTiming {
     #[cfg(debug_assertions)]
     const SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
 
-    pub(crate) fn new(
-        _device: &wgpu::Device,
-        _queue: &wgpu::Queue,
-        _is_available: bool,
-    ) -> Self {
+    pub(crate) fn new(_device: &wgpu::Device, _queue: &wgpu::Queue, _is_available: bool) -> Self {
         #[cfg(debug_assertions)]
         {
-            let byte_capacity: u64 = u64::from(Self::QUERY_CAPACITY) *
-                u64::from(wgpu::QUERY_SIZE);
+            let byte_capacity: u64 = u64::from(Self::QUERY_CAPACITY) * u64::from(wgpu::QUERY_SIZE);
             let query_set: Option<wgpu::QuerySet> = _is_available.then(|| {
                 _device.create_query_set(&wgpu::QuerySetDescriptor {
                     label: Some("GPU timing queries"),
@@ -69,10 +56,12 @@ impl GpuTiming {
                 })
             });
             let readbacks: Vec<GpuTimingReadback> = if _is_available {
-                (0..Self::READBACK_COUNT).map(|index| {
-                    GpuTimingReadback::new(_device, byte_capacity, index)
-                }).collect()
-            } else { Vec::new() };
+                (0..Self::READBACK_COUNT)
+                    .map(|index| GpuTimingReadback::new(_device, byte_capacity, index))
+                    .collect()
+            } else {
+                Vec::new()
+            };
             Self {
                 query_set,
                 resolve_buffer,
@@ -89,15 +78,23 @@ impl GpuTiming {
     pub(crate) fn begin_sample(&self) {
         #[cfg(debug_assertions)]
         {
-            if self.query_set.is_none() || !tracing::enabled!(
-                target: "dogwood_gpu",
-                tracing::Level::DEBUG
-            ) { return; }
+            if self.query_set.is_none()
+                || !tracing::enabled!(
+                    target: "dogwood_gpu",
+                    tracing::Level::DEBUG
+                )
+            {
+                return;
+            }
             let now: Instant = Instant::now();
             let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-            if state.active_slot.is_some() || state.last_sample.is_some_and(|last_sample| {
-                now.duration_since(last_sample) < Self::SAMPLE_INTERVAL
-            }) { return; }
+            if state.active_slot.is_some()
+                || state.last_sample.is_some_and(|last_sample| {
+                    now.duration_since(last_sample) < Self::SAMPLE_INTERVAL
+                })
+            {
+                return;
+            }
             state.last_sample = Some(now);
             let Some(slot) = state.readbacks.iter().position(|readback| {
                 readback.status.load(Ordering::Acquire) == GpuTimingReadback::IDLE
@@ -105,7 +102,9 @@ impl GpuTiming {
                 tracing::debug!(target: "dogwood_gpu", "skipped GPU timing sample; readback busy");
                 return;
             };
-            state.readbacks[slot].status.store(GpuTimingReadback::RECORDING, Ordering::Release);
+            state.readbacks[slot]
+                .status
+                .store(GpuTimingReadback::RECORDING, Ordering::Release);
             state.active_slot = Some(slot);
             state.capacity_exhausted = false;
             state.query_count = 0;
@@ -161,14 +160,20 @@ impl GpuTiming {
         #[cfg(debug_assertions)]
         {
             self.recording.store(false, Ordering::Release);
-            let (Some(query_set), Some(resolve_buffer)) = (
-                self.query_set.as_ref(), self.resolve_buffer.as_ref(),
-            ) else { return; };
+            let (Some(query_set), Some(resolve_buffer)) =
+                (self.query_set.as_ref(), self.resolve_buffer.as_ref())
+            else {
+                return;
+            };
             let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-            let Some(slot) = state.active_slot.take() else { return; };
+            let Some(slot) = state.active_slot.take() else {
+                return;
+            };
             let query_count: u32 = state.query_count;
             if query_count == 0 {
-                state.readbacks[slot].status.store(GpuTimingReadback::IDLE, Ordering::Release);
+                state.readbacks[slot]
+                    .status
+                    .store(GpuTimingReadback::IDLE, Ordering::Release);
                 return;
             }
             let byte_count: u64 = u64::from(query_count) * u64::from(wgpu::QUERY_SIZE);
@@ -184,10 +189,9 @@ impl GpuTiming {
             state.next_sample = state.next_sample.wrapping_add(1);
             state.readbacks[slot].query_count = query_count;
             state.readbacks[slot].records = std::mem::take(&mut state.records);
-            state.readbacks[slot].status.store(
-                GpuTimingReadback::READY_TO_MAP,
-                Ordering::Release,
-            );
+            state.readbacks[slot]
+                .status
+                .store(GpuTimingReadback::READY_TO_MAP, Ordering::Release);
         }
         #[cfg(not(debug_assertions))]
         let _ = encoder;
@@ -197,26 +201,42 @@ impl GpuTiming {
     pub(crate) fn map_sample(&self) {
         #[cfg(debug_assertions)]
         {
-            let pending: Vec<(wgpu::Buffer, std::sync::Arc<std::sync::atomic::AtomicU8>, u64)> = {
+            let pending: Vec<(
+                wgpu::Buffer,
+                std::sync::Arc<std::sync::atomic::AtomicU8>,
+                u64,
+            )> = {
                 let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-                state.readbacks.iter().filter_map(|readback| {
-                    if readback.status.load(Ordering::Acquire) !=
-                            GpuTimingReadback::READY_TO_MAP { return None; }
-                    readback.status.store(GpuTimingReadback::MAPPING, Ordering::Release);
-                    Some((
-                        readback.buffer.clone(),
-                        readback.status.clone(),
-                        u64::from(readback.query_count) * u64::from(wgpu::QUERY_SIZE),
-                    ))
-                }).collect()
+                state
+                    .readbacks
+                    .iter()
+                    .filter_map(|readback| {
+                        if readback.status.load(Ordering::Acquire)
+                            != GpuTimingReadback::READY_TO_MAP
+                        {
+                            return None;
+                        }
+                        readback
+                            .status
+                            .store(GpuTimingReadback::MAPPING, Ordering::Release);
+                        Some((
+                            readback.buffer.clone(),
+                            readback.status.clone(),
+                            u64::from(readback.query_count) * u64::from(wgpu::QUERY_SIZE),
+                        ))
+                    })
+                    .collect()
             };
             for (buffer, status, byte_count) in pending {
                 buffer.map_async(wgpu::MapMode::Read, 0..byte_count, move |result| {
-                    status.store(if result.is_ok() {
-                        GpuTimingReadback::READY
-                    } else {
-                        GpuTimingReadback::FAILED
-                    }, Ordering::Release);
+                    status.store(
+                        if result.is_ok() {
+                            GpuTimingReadback::READY
+                        } else {
+                            GpuTimingReadback::FAILED
+                        },
+                        Ordering::Release,
+                    );
                 });
             }
         }
@@ -227,29 +247,45 @@ impl GpuTiming {
         {
             let ready: Vec<usize> = {
                 let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-                state.readbacks.iter().enumerate().filter_map(|(index, readback)| {
-                    matches!(readback.status.load(Ordering::Acquire),
-                        GpuTimingReadback::READY | GpuTimingReadback::FAILED).then_some(index)
-                }).collect()
+                state
+                    .readbacks
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, readback)| {
+                        matches!(
+                            readback.status.load(Ordering::Acquire),
+                            GpuTimingReadback::READY | GpuTimingReadback::FAILED
+                        )
+                        .then_some(index)
+                    })
+                    .collect()
             };
-            for index in ready { self.collect_readback(index); }
+            for index in ready {
+                self.collect_readback(index);
+            }
         }
     }
 
     #[cfg(test)]
-    pub(crate) fn is_available(&self) -> bool { self.query_set.is_some() }
+    pub(crate) fn is_available(&self) -> bool {
+        self.query_set.is_some()
+    }
 
     #[cfg(test)]
     pub(crate) fn is_idle(&self) -> bool {
         let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        state.active_slot.is_none() && state.readbacks.iter().all(|readback| {
-            readback.status.load(Ordering::Acquire) == GpuTimingReadback::IDLE
-        })
+        state.active_slot.is_none()
+            && state
+                .readbacks
+                .iter()
+                .all(|readback| readback.status.load(Ordering::Acquire) == GpuTimingReadback::IDLE)
     }
 
     #[cfg(debug_assertions)]
     fn allocate_queries(&self, kind: &'static str, label: &str) -> Option<(u32, u32)> {
-        if !self.recording.load(Ordering::Acquire) { return None; }
+        if !self.recording.load(Ordering::Acquire) {
+            return None;
+        }
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         if state.query_count + 2 > Self::QUERY_CAPACITY {
             self.recording.store(false, Ordering::Release);
@@ -264,9 +300,12 @@ impl GpuTiming {
             }
             return None;
         }
-        let occurrence: u32 = state.records.iter().filter(|record| {
-            record.kind == kind && record.label == label
-        }).count() as u32 + 1;
+        let occurrence: u32 = state
+            .records
+            .iter()
+            .filter(|record| record.kind == kind && record.label == label)
+            .count() as u32
+            + 1;
         let begin: u32 = state.query_count;
         state.query_count += 2;
         state.records.push(GpuTimingRecord {
@@ -286,13 +325,19 @@ impl GpuTiming {
             let timestamps: Vec<u64> = if failed {
                 Vec::new()
             } else {
-                let byte_count: u64 = u64::from(readback.query_count) *
-                    u64::from(wgpu::QUERY_SIZE);
-                let mapped = readback.buffer.get_mapped_range(0..byte_count)
+                let byte_count: u64 = u64::from(readback.query_count) * u64::from(wgpu::QUERY_SIZE);
+                let mapped = readback
+                    .buffer
+                    .get_mapped_range(0..byte_count)
                     .expect("mapped GPU timestamp readback must remain accessible");
-                let timestamps: Vec<u64> = mapped.chunks_exact(8).map(|bytes| {
-                    u64::from_le_bytes(bytes.try_into().expect("timestamp occupies eight bytes"))
-                }).collect();
+                let timestamps: Vec<u64> = mapped
+                    .chunks_exact(8)
+                    .map(|bytes| {
+                        u64::from_le_bytes(
+                            bytes.try_into().expect("timestamp occupies eight bytes"),
+                        )
+                    })
+                    .collect();
                 drop(mapped);
                 readback.buffer.unmap();
                 timestamps
@@ -300,7 +345,9 @@ impl GpuTiming {
             let sample: u64 = readback.sample;
             let records: Vec<GpuTimingRecord> = std::mem::take(&mut readback.records);
             readback.query_count = 0;
-            readback.status.store(GpuTimingReadback::IDLE, Ordering::Release);
+            readback
+                .status
+                .store(GpuTimingReadback::IDLE, Ordering::Release);
             (sample, records, timestamps, failed)
         };
         if failed {
@@ -358,5 +405,4 @@ impl GpuTiming {
             "GPU measured-pass sample"
         );
     }
-
 }

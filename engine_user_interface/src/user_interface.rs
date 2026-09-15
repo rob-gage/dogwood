@@ -6,9 +6,10 @@ use crate::Widget;
 pub struct UserInterface<'a>(pub(crate) &'a mut egui::Ui);
 
 impl<'a> UserInterface<'a> {
-
     /// Returns the underlying `egui` user interface for application-specific composition.
-    pub fn egui(&mut self) -> &mut egui::Ui { self.0 }
+    pub fn egui(&mut self) -> &mut egui::Ui {
+        self.0
+    }
 
     /// Adds a `Widget` and returns its response.
     pub fn add_widget(&mut self, widget: &mut impl Widget) -> egui::Response {
@@ -16,13 +17,19 @@ impl<'a> UserInterface<'a> {
     }
 
     /// Returns the painter used to draw this user interface.
-    pub fn painter(&self) -> &egui::Painter { self.0.painter() }
+    pub fn painter(&self) -> &egui::Painter {
+        self.0.painter()
+    }
 
     /// Returns the available area before the UI wraps its contents.
-    pub fn available_rect(&self) -> egui::Rect { self.0.available_rect_before_wrap() }
+    pub fn available_rect(&self) -> egui::Rect {
+        self.0.available_rect_before_wrap()
+    }
 
     /// Returns the scale from interface points to physical surface pixels.
-    pub fn pixels_per_point(&self) -> f32 { self.0.ctx().pixels_per_point() }
+    pub fn pixels_per_point(&self) -> f32 {
+        self.0.ctx().pixels_per_point()
+    }
 
     /// Allocates an area for a widget.
     pub fn allocate_rect(&mut self, rect: egui::Rect, sense: egui::Sense) -> egui::Response {
@@ -35,10 +42,12 @@ impl<'a> UserInterface<'a> {
         rect: egui::Rect,
         add_contents: impl FnOnce(&mut UserInterface),
     ) -> egui::Response {
-        self.0.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-            let mut ui = UserInterface(ui);
-            add_contents(&mut ui);
-        }).response
+        self.0
+            .scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                let mut ui = UserInterface(ui);
+                add_contents(&mut ui);
+            })
+            .response
     }
 
     /// Creates an interactive region with a stable identifier.
@@ -50,5 +59,4 @@ impl<'a> UserInterface<'a> {
     ) -> egui::Response {
         self.0.interact(rect, id, sense)
     }
-
 }

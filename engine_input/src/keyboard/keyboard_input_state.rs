@@ -10,9 +10,12 @@ pub struct KeyboardInputState {
 }
 
 impl KeyboardInputState {
-
     /// Creates an empty keyboard input state
-    pub fn new() -> Self { Self { pressed_keys: HashSet::new() } }
+    pub fn new() -> Self {
+        Self {
+            pressed_keys: HashSet::new(),
+        }
+    }
 
     /// Updates the state from a winit keyboard event
     pub fn process_event(&mut self, event: &winit::event::KeyEvent) {
@@ -21,12 +24,17 @@ impl KeyboardInputState {
             winit::keyboard::PhysicalKey::Unidentified(_) => return,
         };
         match event.state {
-            winit::event::ElementState::Pressed => { self.pressed_keys.insert(key); },
-            winit::event::ElementState::Released => { self.pressed_keys.remove(&key); },
+            winit::event::ElementState::Pressed => {
+                self.pressed_keys.insert(key);
+            }
+            winit::event::ElementState::Released => {
+                self.pressed_keys.remove(&key);
+            }
         }
     }
 
     /// Returns whether a key is currently held down
-    pub fn is_pressed(&self, key: Key) -> bool { self.pressed_keys.contains(&key) }
-
+    pub fn is_pressed(&self, key: Key) -> bool {
+        self.pressed_keys.contains(&key)
+    }
 }

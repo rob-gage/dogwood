@@ -1,10 +1,7 @@
 // Copyright Rob Gage 2026
 
 use super::MaterialAppearance;
-use engine_compute::{
-    Accelerator,
-    AcceleratorBuffer,
-};
+use engine_compute::{Accelerator, AcceleratorBuffer};
 use std::mem::size_of;
 
 /// Graphics properties for every material form
@@ -24,7 +21,6 @@ pub struct MaterialGraphics {
 }
 
 impl MaterialGraphics {
-
     /// Creates graphics properties for every material form
     pub fn new(
         accelerator: &Accelerator,
@@ -50,30 +46,36 @@ impl MaterialGraphics {
         accelerator: &Accelerator,
         properties: Vec<MaterialAppearance>,
     ) -> AcceleratorBuffer {
-        let data: Vec<u32> = properties.into_iter().flat_map(
-            MaterialAppearance::accelerator_data
-        ).collect();
+        let data: Vec<u32> = properties
+            .into_iter()
+            .flat_map(MaterialAppearance::accelerator_data)
+            .collect();
         // keep empty material form buffers large enough for one WGSL element
         let buffer: AcceleratorBuffer = accelerator.allocate::<u32>(data.len().max(16));
         if !data.is_empty() {
             let mut bytes: Vec<u8> = Vec::with_capacity(data.len() * size_of::<u32>());
-            for value in data { bytes.extend_from_slice(&value.to_le_bytes()); }
-            accelerator.wgpu_queue().write_buffer(buffer.wgpu_buffer(), 0, &bytes);
+            for value in data {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+            accelerator
+                .wgpu_queue()
+                .write_buffer(buffer.wgpu_buffer(), 0, &bytes);
         }
         buffer
     }
 
     fn create_raw_buffer(
         accelerator: &Accelerator,
-        properties: Vec<[f32; 8]>
+        properties: Vec<[f32; 8]>,
     ) -> AcceleratorBuffer {
         let data: Vec<u32> = properties.into_iter().flatten().map(f32::to_bits).collect();
         let buffer: AcceleratorBuffer = accelerator.allocate::<u32>(data.len().max(8));
         if !data.is_empty() {
             let bytes: Vec<u8> = data.into_iter().flat_map(u32::to_le_bytes).collect();
-            accelerator.wgpu_queue().write_buffer(buffer.wgpu_buffer(), 0, &bytes);
+            accelerator
+                .wgpu_queue()
+                .write_buffer(buffer.wgpu_buffer(), 0, &bytes);
         }
         buffer
     }
-
 }

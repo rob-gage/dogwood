@@ -4,14 +4,16 @@ use crate::UserInterface;
 
 /// A user-interface widget that can be added to a `UserInterface`
 pub trait Widget {
-
     /// Displays this widget and returns its `egui::Response`
     fn display(&mut self, user_interface: &mut UserInterface) -> egui::Response;
 
     /// Returns the widget's fixed width within a horizontal stack, if it has one
-    fn desired_width(&self) -> Option<f32> { None }
+    fn desired_width(&self) -> Option<f32> {
+        None
+    }
 
     /// Returns the widget's fixed height within a vertical stack, if it has one
-    fn desired_height(&self) -> Option<f32> { None }
-
+    fn desired_height(&self) -> Option<f32> {
+        None
+    }
 }

@@ -1,25 +1,13 @@
 // Copyright Rob Gage 2026
 
-use crate::{
-    chunks::Chunk,
-    materials::MaterialRegistry,
-    tiles::TileCoordinates,
-};
+use crate::{chunks::Chunk, materials::MaterialRegistry, tiles::TileCoordinates};
 use std::{
-    fs::{
-        create_dir,
-        create_dir_all,
-        metadata,
-        File,
-    },
+    fs::{File, create_dir, create_dir_all, metadata},
     io,
     path::PathBuf,
     sync::{
         Arc,
-        atomic::{
-            AtomicU64,
-            Ordering,
-        },
+        atomic::{AtomicU64, Ordering},
     },
 };
 
@@ -38,7 +26,6 @@ pub struct SceneData {
 }
 
 impl SceneData {
-
     /// Loads scene data from an existing directory
     pub fn load(path: PathBuf) -> Result<Self, io::Error> {
         if !metadata(&path)?.is_dir() {
@@ -66,10 +53,8 @@ impl SceneData {
         create_dir_all(&save_directory)?;
         loop {
             let identifier: u64 = TEMPORARY_IDENTIFIER.fetch_add(1, Ordering::Relaxed);
-            let path: PathBuf = save_directory.join(format!(
-                "dogwood-scene-{}-{identifier}",
-                std::process::id(),
-            ));
+            let path: PathBuf =
+                save_directory.join(format!("dogwood-scene-{}-{identifier}", std::process::id(),));
             match create_dir(&path) {
                 Ok(()) => {
                     let mut materials_file: File = File::create(path.join("materials"))?;
@@ -87,7 +72,9 @@ impl SceneData {
     }
 
     /// Returns the CPU-side materials stored with this scene data
-    pub fn materials(&self) -> &MaterialRegistry { &self.materials }
+    pub fn materials(&self) -> &MaterialRegistry {
+        &self.materials
+    }
 
     /// Reads a `Chunk` from the `SceneData`, returning `None` if the chunk does not exist
     pub fn read_chunk(&self, position: TileCoordinates) -> Result<Option<Chunk>, io::Error> {
@@ -113,9 +100,7 @@ impl SceneData {
     fn chunk_path(&self, position: TileCoordinates) -> PathBuf {
         self.path.join("chunks").join(format!(
             "{:08x}{:08x}.chunk",
-            position.x as u32,
-            position.y as u32,
+            position.x as u32, position.y as u32,
         ))
     }
-
 }

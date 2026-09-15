@@ -1,13 +1,7 @@
 // Copyright Rob Gage 2026
 
-use super::{
-    ControlState,
-    InputTranslator,
-};
-use crate::keyboard::{
-    Key,
-    KeyboardInputState,
-};
+use super::{ControlState, InputTranslator};
+use crate::keyboard::{Key, KeyboardInputState};
 
 /// Translates configured keyboard keys into normalized locomotion controls
 pub struct SimpleInputTranslator {
@@ -16,7 +10,6 @@ pub struct SimpleInputTranslator {
 }
 
 impl SimpleInputTranslator {
-
     /// A translator using the arrow keys for locomotion
     pub const ARROWS: Self = Self {
         key_mappings: &[
@@ -50,11 +43,9 @@ impl SimpleInputTranslator {
             (Key::ARROW_RIGHT, 1.0, 0.0),
         ],
     };
-
 }
 
 impl InputTranslator for SimpleInputTranslator {
-
     fn translate(&self, keyboard_input: &KeyboardInputState) -> ControlState {
         let mut locomotion_x: f32 = 0.0;
         let mut locomotion_y: f32 = 0.0;
@@ -70,7 +61,9 @@ impl InputTranslator for SimpleInputTranslator {
             locomotion_x /= magnitude;
             locomotion_y /= magnitude;
         }
-        ControlState { locomotion_x, locomotion_y }
+        ControlState {
+            locomotion_x,
+            locomotion_y,
+        }
     }
-
 }

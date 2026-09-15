@@ -1,9 +1,6 @@
 // Copyright Rob Gage 2026
 
-use crate::{
-    UserInterface,
-    Widget,
-};
+use crate::{UserInterface, Widget};
 
 /// A clickable text button
 pub struct Button {
@@ -20,7 +17,6 @@ pub struct Button {
 }
 
 impl Button {
-
     /// Creates an enabled button with a click action
     pub fn new(text: impl Into<String>, on_click: impl FnMut() + 'static) -> Self {
         Self {
@@ -37,22 +33,24 @@ impl Button {
         self.enabled = enabled;
         self
     }
-
 }
 
 impl Widget for Button {
-
     fn display(&mut self, user_interface: &mut UserInterface) -> egui::Response {
-        let response: egui::Response = user_interface.0.add_enabled(
-            self.enabled,
-            egui::Button::new(&self.text),
-        );
-        if response.clicked() { (self.on_click)(); }
+        let response: egui::Response = user_interface
+            .0
+            .add_enabled(self.enabled, egui::Button::new(&self.text));
+        if response.clicked() {
+            (self.on_click)();
+        }
         response
     }
 
-    fn desired_width(&self) -> Option<f32> { Some(self.width) }
+    fn desired_width(&self) -> Option<f32> {
+        Some(self.width)
+    }
 
-    fn desired_height(&self) -> Option<f32> { Some(self.height) }
-
+    fn desired_height(&self) -> Option<f32> {
+        Some(self.height)
+    }
 }

@@ -1,85 +1,30 @@
 // Copyright Rob Gage 2026
 
 use super::{
-    FluidDownload,
-    FluidUpload,
-    GasDownload,
-    GasUpload,
-    SceneData,
-    SceneEditCellPlacement,
-    SceneEdit,
-    SceneEditBatch,
-    SceneGenerator,
-    ScenePosition,
-    SceneVelocity,
-    TileDownload,
-    TileUpload,
+    FluidDownload, FluidUpload, GasDownload, GasUpload, SceneData, SceneEdit, SceneEditBatch,
+    SceneEditCellPlacement, SceneGenerator, ScenePosition, SceneVelocity, TileDownload, TileUpload,
 };
 use crate::simulation::{
-    CellularCollision,
-    CellularPhysicsBodyProxy,
-    CellularDynamic,
-    CellularPressure,
-    CollisionOccupancySnapshot,
-    Fluids,
-    Gases,
-    RigidCellularBody,
-    RigidCellularBodyState,
-    SceneSimulationConfiguration,
-    ScenePhysicsWorld,
+    CellularCollision, CellularDynamic, CellularPhysicsBodyProxy, CellularPressure,
+    CollisionOccupancySnapshot, Fluids, Gases, RigidCellularBody, RigidCellularBodyState,
+    ScenePhysicsWorld, SceneSimulationConfiguration,
 };
 use crate::{
-    actors::{
-        Actor,
-        ActorRegistry,
-    },
-    chunks::{
-        Chunk,
-        ChunkEntry,
-        ChunkStreamingResponse,
-        ChunkFluidParticle,
-        ChunkGasCell,
-    },
-    materials::{
-        Material,
-        MaterialIdentifier,
-        MaterialRegistry,
-    },
-    tiles::{
-        CellCoordinates,
-        CellularAppearance,
-        Tile,
-        TileArea,
-        TileCoordinates,
-        TileData,
-    },
+    actors::{Actor, ActorRegistry},
+    chunks::{Chunk, ChunkEntry, ChunkFluidParticle, ChunkGasCell, ChunkStreamingResponse},
+    materials::{Material, MaterialIdentifier, MaterialRegistry},
+    tiles::{CellCoordinates, CellularAppearance, Tile, TileArea, TileCoordinates, TileData},
 };
-use engine_compute::{
-    Accelerator,
-    AcceleratorBuffer
-};
-use engine_graphics::{
-    MaterialGraphics,
-    SceneGraphics,
-};
+use engine_compute::{Accelerator, AcceleratorBuffer};
+use engine_graphics::{MaterialGraphics, SceneGraphics};
 use std::{
-    collections::{
-        BTreeMap,
-        HashMap,
-        HashSet,
-        VecDeque,
-    },
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     error::Error,
     future::poll_fn,
     io,
     sync::{
-        Arc,
-        Mutex,
-        mpsc::{
-            Receiver,
-            SyncSender,
-            sync_channel,
-        }
+        Arc, Mutex,
+        mpsc::{Receiver, SyncSender, sync_channel},
     },
     time::Duration,
 };
@@ -200,7 +145,6 @@ pub struct Scene {
 }
 
 impl Scene {
-
     /// Creates a temporary `Scene`, its buffered GPU storage, and every initial chunk.
     ///
     /// The initial streaming area is synchronously loaded from disk or generated so the returned
@@ -251,13 +195,13 @@ impl Scene {
     ) -> Result<Self, Box<dyn Error>> {
         simulation.validate()?;
         let accelerator: Arc<Accelerator> = accelerator.clone();
-        let material_graphics: MaterialGraphics =
-            data.materials().build_material_graphics(accelerator.as_ref());
+        let material_graphics: MaterialGraphics = data
+            .materials()
+            .build_material_graphics(accelerator.as_ref());
         let generator: Arc<dyn SceneGenerator> = Arc::new(generator);
         let buffer_size: u16 = u16::from(simulation.buffer_size) * 2;
         let buffered_tile_count: usize =
-            (simulation.width + buffer_size) as usize *
-            (simulation.height + buffer_size) as usize;
+            (simulation.width + buffer_size) as usize * (simulation.height + buffer_size) as usize;
         let buffered_cell_count: usize = buffered_tile_count * 64;
         let cellular_material_identifiers: AcceleratorBuffer =
             accelerator.allocate::<u32>(buffered_cell_count);
@@ -265,7 +209,8 @@ impl Scene {
             accelerator.allocate::<u32>(buffered_cell_count);
         let cellular_integrities: AcceleratorBuffer =
             accelerator.allocate::<f32>(buffered_cell_count);
-        let cellular_physics_body_proxy = CellularPhysicsBodyProxy::new(accelerator.as_ref(), buffered_cell_count);
+        let cellular_physics_body_proxy =
+            CellularPhysicsBodyProxy::new(accelerator.as_ref(), buffered_cell_count);
         let fluids: Fluids = Fluids::new(
             accelerator.as_ref(),
             &cellular_material_identifiers,
@@ -319,32 +264,31 @@ impl Scene {
             simulation.width + buffer_size,
             simulation.height + buffer_size,
         );
-        let fluid_download_pool: Vec<Arc<Mutex<FluidDownload>>> = vec![Arc::new(Mutex::new(
-            FluidDownload::new(
+        let fluid_download_pool: Vec<Arc<Mutex<FluidDownload>>> =
+            vec![Arc::new(Mutex::new(FluidDownload::new(
                 accelerator.as_ref(),
                 TileArea::new(TileCoordinates { x: 0, y: 0 }, 1, 1),
                 fluids.particle_capacity(),
-            ),
-        ))];
-        let maximum_gas_streaming_cell_count: u32 =
-            u32::from(simulation.streaming_batch_size) *
-            u32::from((simulation.width + buffer_size).max(simulation.height + buffer_size)) * 64;
-        let gas_download_pool: Vec<Arc<Mutex<GasDownload>>> = vec![Arc::new(Mutex::new(
-            GasDownload::new(
+            )))];
+        let maximum_gas_streaming_cell_count: u32 = u32::from(simulation.streaming_batch_size)
+            * u32::from((simulation.width + buffer_size).max(simulation.height + buffer_size))
+            * 64;
+        let gas_download_pool: Vec<Arc<Mutex<GasDownload>>> =
+            vec![Arc::new(Mutex::new(GasDownload::new(
                 accelerator.as_ref(),
                 TileArea::new(TileCoordinates { x: 0, y: 0 }, 1, 1),
                 maximum_gas_streaming_cell_count,
                 gases.gas_count(),
-            ),
-        ))];
-        let fluid_sample_buffer: wgpu::Buffer = accelerator.wgpu_device().create_buffer(
-            &wgpu::BufferDescriptor {
-                label: Some("Pawn fluid sample readback"),
-                size: 32,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            },
-        );
+            )))];
+        let fluid_sample_buffer: wgpu::Buffer =
+            accelerator
+                .wgpu_device()
+                .create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("Pawn fluid sample readback"),
+                    size: 32,
+                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
         let tile_count: u32 = buffered_tile_count as u32;
         let tiles: Box<[Tile]> = (0..tile_count).map(Tile).collect();
         let (chunk_streaming_response_sender, chunk_streaming_responses) =
@@ -408,10 +352,13 @@ impl Scene {
                 Some(chunk) => chunk,
                 None => scene.generator.generate_chunk(coordinates),
             };
-            scene.chunks.insert(coordinates, ChunkEntry::Active {
-                chunk,
-                is_dirty: false,
-            });
+            scene.chunks.insert(
+                coordinates,
+                ChunkEntry::Active {
+                    chunk,
+                    is_dirty: false,
+                },
+            );
         }
         drop(scene.tiles_upload(scene.area_buffered()));
         scene.fluid_uploads_queue(scene.area_buffered())?;
@@ -431,13 +378,15 @@ impl Scene {
     pub fn graphics(&self) -> SceneGraphics<'_> {
         let buffer_size: i32 = i32::from(self.simulation_buffer_size);
         let dimensions: u32 = u32::from(self.simulation_buffer_size) * 2;
-        let walking_pawn: Option<([f32; 2], [f32; 2])> = self.actor_registry
+        let walking_pawn: Option<([f32; 2], [f32; 2])> = self
+            .actor_registry
             .first_walking_pawn_graphics(self.tick_interpolation());
         SceneGraphics {
             material_graphics: &self.material_graphics,
             cellular_material_identifiers: &self.cellular_material_identifiers,
             cellular_appearances: &self.cellular_appearances,
-            rigid_material_identifiers: self.cellular_physics_body_proxy
+            rigid_material_identifiers: self
+                .cellular_physics_body_proxy
                 .rigid_material_identifiers_buffer(),
             rigid_appearances: self.cellular_physics_body_proxy.rigid_appearances_buffer(),
             fluid_material_identifiers: self.fluids.material_identifiers_buffer(),
@@ -459,29 +408,40 @@ impl Scene {
     }
 
     /// Returns the materials registered for this scene
-    pub fn materials(&self) -> &MaterialRegistry { self.data.materials() }
+    pub fn materials(&self) -> &MaterialRegistry {
+        self.data.materials()
+    }
 
     /// Returns the `ActorRegistry` for this `Scene`
-    pub const fn actor_registry(&self) -> &ActorRegistry { &self.actor_registry }
+    pub const fn actor_registry(&self) -> &ActorRegistry {
+        &self.actor_registry
+    }
 
     /// Returns mutable access to the `ActorRegistry` for this `Scene`
-    pub const fn actor_registry_mutable(&mut self) -> &mut ActorRegistry
-    { &mut self.actor_registry }
+    pub const fn actor_registry_mutable(&mut self) -> &mut ActorRegistry {
+        &mut self.actor_registry
+    }
 
     /// Returns the currently possessed actor if one exists
     pub fn possessed_actor(&self) -> Option<Actor> {
-        self.possessed_actor.filter(|actor| self.actor_registry.contains(*actor))
+        self.possessed_actor
+            .filter(|actor| self.actor_registry.contains(*actor))
     }
 
     /// Returns an actor's position interpolated between its latest fixed ticks
     pub fn actor_render_position(&self, actor: Actor) -> Option<ScenePosition> {
-        self.actor_registry.get_render_position(actor, self.tick_interpolation())
+        self.actor_registry
+            .get_render_position(actor, self.tick_interpolation())
     }
 
     /// Possesses an actor if it exists in this `Scene`
     pub fn possess_actor(&mut self, identifier: Actor) -> bool {
-        if !self.actor_registry.is_possessable(identifier) { return false; }
-        if self.possessed_actor != Some(identifier) && let Some(possessed) = self.possessed_actor {
+        if !self.actor_registry.is_possessable(identifier) {
+            return false;
+        }
+        if self.possessed_actor != Some(identifier)
+            && let Some(possessed) = self.possessed_actor
+        {
             self.actor_registry.clear_control_state(possessed);
         }
         self.possessed_actor = Some(identifier);
@@ -509,12 +469,16 @@ impl Scene {
     }
 
     /// Queues mandatory runtime material edits for one coalesced update-time flush.
-    pub fn queue_edits(&mut self, edits: SceneEditBatch) { self.pending_runtime_edits.append(edits); }
+    pub fn queue_edits(&mut self, edits: SceneEditBatch) {
+        self.pending_runtime_edits.append(edits);
+    }
 
     /// Applies a scene-owned transaction immediately; nonresident requests remain queued.
     fn apply_edits_immediate(&mut self, edits: &mut SceneEditBatch) -> Result<(), io::Error> {
-        let mut cell_edits: HashMap<usize, (CellCoordinates, MaterialIdentifier, CellularAppearance, f32)> =
-            HashMap::new();
+        let mut cell_edits: HashMap<
+            usize,
+            (CellCoordinates, MaterialIdentifier, CellularAppearance, f32),
+        > = HashMap::new();
         let mut fluid_edits: HashMap<usize, u32> = HashMap::new();
         let mut gas_edits: HashSet<(usize, u32)> = HashSet::new();
         let mut gas_clear_cells: HashSet<usize> = HashSet::new();
@@ -522,8 +486,13 @@ impl Scene {
         for edit in edits.drain() {
             match edit {
                 SceneEdit::PlaceRigidBody { cells } => {
-                    if cells.is_empty() { continue; }
-                    if !cells.iter().all(|cell| self.cell_edit_index(cell.coordinates).is_some()) {
+                    if cells.is_empty() {
+                        continue;
+                    }
+                    if !cells
+                        .iter()
+                        .all(|cell| self.cell_edit_index(cell.coordinates).is_some())
+                    {
                         deferred.place_rigid_body(cells);
                     } else {
                         self.insert_authored_rigid_cellular_body(cells);
@@ -534,13 +503,22 @@ impl Scene {
                         coordinates,
                         material_identifier,
                         appearance,
-                    } in cells {
+                    } in cells
+                    {
                         if let Some(physical_index) = self.cell_edit_index(coordinates) {
                             match self.data.materials().get(material_identifier) {
-                                Some(Material::CellularStatic { default_integrity, .. }) => {
-                                    cell_edits.insert(physical_index, (
-                                        coordinates, material_identifier, appearance, *default_integrity,
-                                    ));
+                                Some(Material::CellularStatic {
+                                    default_integrity, ..
+                                }) => {
+                                    cell_edits.insert(
+                                        physical_index,
+                                        (
+                                            coordinates,
+                                            material_identifier,
+                                            appearance,
+                                            *default_integrity,
+                                        ),
+                                    );
                                     fluid_edits.insert(physical_index, Fluids::erase_edit());
                                     if self.gases.gas_count() != 0 {
                                         gas_clear_cells.insert(physical_index);
@@ -550,9 +528,10 @@ impl Scene {
                                     }
                                 }
                                 Some(Material::CellularDynamic { .. }) => {
-                                    cell_edits.insert(physical_index, (
-                                        coordinates, material_identifier, appearance, 0.0,
-                                    ));
+                                    cell_edits.insert(
+                                        physical_index,
+                                        (coordinates, material_identifier, appearance, 0.0),
+                                    );
                                     fluid_edits.insert(physical_index, Fluids::erase_edit());
                                     if self.gases.gas_count() != 0 {
                                         gas_clear_cells.insert(physical_index);
@@ -562,11 +541,17 @@ impl Scene {
                                     }
                                 }
                                 Some(Material::Fluid { .. }) => {
-                                    cell_edits.insert(physical_index, (
-                                        coordinates, MaterialIdentifier::NULL,
-                                        CellularAppearance::NEUTRAL, 0.0,
-                                    ));
-                                    fluid_edits.insert(physical_index, material_identifier.as_u32());
+                                    cell_edits.insert(
+                                        physical_index,
+                                        (
+                                            coordinates,
+                                            MaterialIdentifier::NULL,
+                                            CellularAppearance::NEUTRAL,
+                                            0.0,
+                                        ),
+                                    );
+                                    fluid_edits
+                                        .insert(physical_index, material_identifier.as_u32());
                                     if self.gases.gas_count() != 0 {
                                         gas_clear_cells.insert(physical_index);
                                         for species in 0..self.gases.gas_count() {
@@ -577,20 +562,29 @@ impl Scene {
                                 Some(Material::Gas { .. }) => {
                                     gas_edits.insert((physical_index, material_identifier.index()));
                                 }
-                                None => { }
+                                None => {}
                             }
-                        } else { deferred.place_cells(vec![SceneEditCellPlacement { coordinates, material_identifier, appearance }]); }
+                        } else {
+                            deferred.place_cells(vec![SceneEditCellPlacement {
+                                coordinates,
+                                material_identifier,
+                                appearance,
+                            }]);
+                        }
                     }
                 }
                 SceneEdit::Erase { cells } => {
                     for coordinates in cells {
                         if let Some(physical_index) = self.cell_edit_index(coordinates) {
-                            cell_edits.insert(physical_index, (
-                                coordinates,
-                                MaterialIdentifier::NULL,
-                                CellularAppearance::NEUTRAL,
-                                0.0,
-                            ));
+                            cell_edits.insert(
+                                physical_index,
+                                (
+                                    coordinates,
+                                    MaterialIdentifier::NULL,
+                                    CellularAppearance::NEUTRAL,
+                                    0.0,
+                                ),
+                            );
                             fluid_edits.insert(physical_index, Fluids::erase_edit());
                             if self.gases.gas_count() != 0 {
                                 gas_clear_cells.insert(physical_index);
@@ -598,31 +592,53 @@ impl Scene {
                                     gas_edits.remove(&(physical_index, species));
                                 }
                             }
-                        } else { deferred.erase(vec![coordinates]); }
+                        } else {
+                            deferred.erase(vec![coordinates]);
+                        }
                     }
                 }
             }
         }
         edits.append(deferred);
-        let mut cell_edits: Vec<(usize, CellCoordinates, MaterialIdentifier, CellularAppearance, f32)> =
-            cell_edits.into_iter().map(|(index, (coordinates, material_identifier, appearance, integrity))| {
-                (index, coordinates, material_identifier, appearance, integrity)
-            }).collect();
+        let mut cell_edits: Vec<(
+            usize,
+            CellCoordinates,
+            MaterialIdentifier,
+            CellularAppearance,
+            f32,
+        )> = cell_edits
+            .into_iter()
+            .map(
+                |(index, (coordinates, material_identifier, appearance, integrity))| {
+                    (
+                        index,
+                        coordinates,
+                        material_identifier,
+                        appearance,
+                        integrity,
+                    )
+                },
+            )
+            .collect();
         cell_edits.sort_unstable_by_key(|(physical_index, ..)| *physical_index);
         for (_, coordinates, material_identifier, appearance, integrity) in &cell_edits {
             let tile_coordinates: TileCoordinates = coordinates.tile_coordinates();
             let [x, y]: [usize; 2] = coordinates.local_tile_coordinates();
             let Some(ChunkEntry::Active { chunk, is_dirty }) =
                 self.chunks.get_mut(&tile_coordinates.chunk_coordinates())
-            else { return Err(io::Error::other("Resident tile chunk is not active")); };
-            chunk.set_cell_with_integrity(
-                tile_coordinates,
-                x,
-                y,
-                *material_identifier,
-                *appearance,
-                *integrity,
-            ).map_err(|_| io::Error::other("Resident tile is not in its active chunk"))?;
+            else {
+                return Err(io::Error::other("Resident tile chunk is not active"));
+            };
+            chunk
+                .set_cell_with_integrity(
+                    tile_coordinates,
+                    x,
+                    y,
+                    *material_identifier,
+                    *appearance,
+                    *integrity,
+                )
+                .map_err(|_| io::Error::other("Resident tile is not in its active chunk"))?;
             *is_dirty = true;
         }
         if !cell_edits.is_empty() {
@@ -637,12 +653,19 @@ impl Scene {
             let fluid_active_area: TileArea = self.area_fluid_active();
             let fluid_active_dimensions: [u16; 2] = fluid_active_area.dimensions();
             self.fluids.apply_edits(
-                self.accelerator.as_ref(), &fluid_edits,
+                self.accelerator.as_ref(),
+                &fluid_edits,
                 fluid_active_area.origin(),
-                fluid_active_dimensions[0], fluid_active_dimensions[1],
-                TileCoordinates { x: self.origin.x - buffer_size, y: self.origin.y - buffer_size },
-                self.simulation_width + dimensions, self.simulation_height + dimensions,
-                self.tiles_ring_offset_x, self.tiles_ring_offset_y,
+                fluid_active_dimensions[0],
+                fluid_active_dimensions[1],
+                TileCoordinates {
+                    x: self.origin.x - buffer_size,
+                    y: self.origin.y - buffer_size,
+                },
+                self.simulation_width + dimensions,
+                self.simulation_height + dimensions,
+                self.tiles_ring_offset_x,
+                self.tiles_ring_offset_y,
             );
         }
         if !gas_edits.is_empty() || !gas_clear_cells.is_empty() {
@@ -650,9 +673,8 @@ impl Scene {
             gas_edits.sort_unstable();
             let mut gas_clear_cells: Vec<usize> = gas_clear_cells.into_iter().collect();
             gas_clear_cells.sort_unstable();
-            self.gases.apply_edits(
-                self.accelerator.as_ref(), &gas_edits, &gas_clear_cells,
-            );
+            self.gases
+                .apply_edits(self.accelerator.as_ref(), &gas_edits, &gas_clear_cells);
         }
         Ok(())
     }
@@ -668,7 +690,10 @@ impl Scene {
         let dimensions: u16 = u16::from(self.simulation_buffer_size) * 2;
         self.cellular_pressure.apply_radial_impulse(
             self.accelerator.as_ref(),
-            TileCoordinates { x: self.origin.x - buffer_size, y: self.origin.y - buffer_size },
+            TileCoordinates {
+                x: self.origin.x - buffer_size,
+                y: self.origin.y - buffer_size,
+            },
             self.simulation_width + dimensions,
             self.simulation_height + dimensions,
             self.tiles_ring_offset_x,
@@ -688,9 +713,13 @@ impl Scene {
         if let Some(origin_target) = self.area_request.take() {
             self.origin_target = origin_target;
         } else {
-            let possessed_position: Option<ScenePosition> = self.possessed_actor()
-                .and_then(|actor| self.actor_registry.get_position(actor)).copied();
-            if let Some(position) = possessed_position { self.follow_position(position); }
+            let possessed_position: Option<ScenePosition> = self
+                .possessed_actor()
+                .and_then(|actor| self.actor_registry.get_position(actor))
+                .copied();
+            if let Some(position) = possessed_position {
+                self.follow_position(position);
+            }
         }
         self.chunks_refresh()?;
         self.tile_downloads_submit()?;
@@ -704,7 +733,9 @@ impl Scene {
             self.apply_edits_immediate(&mut edits)?;
             self.pending_runtime_edits.append(edits);
         }
-        self.accelerator.poll().map_err(|error| io::Error::other(error.to_string()))?;
+        self.accelerator
+            .poll()
+            .map_err(|error| io::Error::other(error.to_string()))?;
         self.apply_completed_rigid_cellular_reactions()?;
         self.cellular_collision.collect_collision()?;
         self.tile_downloads_apply_completed()?;
@@ -721,7 +752,9 @@ impl Scene {
             // A catch-up update may submit several fixed ticks. Give tiny reaction
             // readbacks a nonblocking chance to complete between them so each
             // reaction is applied as its own fixed-tick batch.
-            self.accelerator.poll().map_err(|error| io::Error::other(error.to_string()))?;
+            self.accelerator
+                .poll()
+                .map_err(|error| io::Error::other(error.to_string()))?;
             self.apply_completed_rigid_cellular_reactions()?;
             self.tick(is_simulation_active)?;
             self.tick_time -= tick_time;
@@ -740,31 +773,43 @@ impl Scene {
         let body_count: usize = self.rigid_cellular_bodies.len();
         let mut newest = None;
         for batch in self.cellular_pressure.collect_rigid_reactions()? {
-            if batch.topology_revision != self.rigid_cellular_topology_revision ||
-                    batch.body_count != body_count {
+            if batch.topology_revision != self.rigid_cellular_topology_revision
+                || batch.body_count != body_count
+            {
                 continue;
             }
             for index in 0..batch.body_count {
                 let reaction = batch.reactions[index];
                 let granular_contacts = batch.granular_contact_counts[index] != 0;
                 let contacts = granular_contacts || batch.contact_counts[index] != 0;
-                let wake = contacts != self.rigid_cellular_contact_active[index] ||
-                    batch.moving_contact_counts[index] != 0;
+                let wake = contacts != self.rigid_cellular_contact_active[index]
+                    || batch.moving_contact_counts[index] != 0;
                 if !self.physics_world.apply_rigid_cellular_body_reaction(
-                    &self.rigid_cellular_bodies[index], [reaction[0], reaction[1]],
-                    reaction[2], batch.energy_budgets[index], wake,
-                ) { return Err(io::Error::other("Rigid cellular body handle is missing")); }
+                    &self.rigid_cellular_bodies[index],
+                    [reaction[0], reaction[1]],
+                    reaction[2],
+                    batch.energy_budgets[index],
+                    wake,
+                ) {
+                    return Err(io::Error::other("Rigid cellular body handle is missing"));
+                }
             }
             newest = Some(batch);
         }
         if let Some(batch) = newest {
             for index in 0..body_count {
                 let contacts = batch.contact_counts[index] != 0;
-                let wake = contacts != self.rigid_cellular_contact_active[index] || batch.moving_contact_counts[index] != 0;
-                self.physics_world.apply_rigid_constraint(&self.rigid_cellular_bodies[index],
-                    batch.constraints[index], batch.source_motion[index], wake);
+                let wake = contacts != self.rigid_cellular_contact_active[index]
+                    || batch.moving_contact_counts[index] != 0;
+                self.physics_world.apply_rigid_constraint(
+                    &self.rigid_cellular_bodies[index],
+                    batch.constraints[index],
+                    batch.source_motion[index],
+                    wake,
+                );
                 self.rigid_cellular_contact_active[index] = contacts;
-                self.rigid_granular_contact_active[index] = batch.granular_contact_counts[index] != 0;
+                self.rigid_granular_contact_active[index] =
+                    batch.granular_contact_counts[index] != 0;
             }
         }
         Ok(())
@@ -777,8 +822,14 @@ impl Scene {
             self.physics_world.update_cellular_snapshot(snapshot);
         }
         let delta_time: f32 = 1.0 / TICK_RATE as f32;
+        let actor_proxies = self.actor_registry.cellular_proxy_states();
         if is_simulation_active {
-            self.physics_world.prepare_rigid_cellular_terrain(&self.rigid_cellular_bodies, self.gravity, delta_time);
+            self.physics_world.prepare_cellular_terrain(
+                &self.rigid_cellular_bodies,
+                &actor_proxies,
+                self.gravity,
+                delta_time,
+            );
             self.physics_world.step(self.gravity, delta_time);
         }
         self.actor_registry.simulate_actor_pawns(
@@ -788,19 +839,36 @@ impl Scene {
             &self.physics_world,
         );
         let actor_proxies = self.actor_registry.cellular_proxy_states();
-        let possessed_position: Option<ScenePosition> = self.possessed_actor()
-            .and_then(|actor| self.actor_registry.get_position(actor)).copied();
-        if let Some(position) = possessed_position { self.follow_position(position); }
+        let possessed_position: Option<ScenePosition> = self
+            .possessed_actor()
+            .and_then(|actor| self.actor_registry.get_position(actor))
+            .copied();
+        if let Some(position) = possessed_position {
+            self.follow_position(position);
+        }
         let buffer_size: i32 = i32::from(self.simulation_buffer_size);
         let dimensions: u16 = u16::from(self.simulation_buffer_size) * 2;
-        let rigid_body_states: Vec<RigidCellularBodyState> = self.rigid_cellular_bodies.iter()
-            .map(|body| self.physics_world.rigid_cellular_body_state(body).ok_or_else(|| {
-                io::Error::other("Rigid cellular body handle is missing")
-            })).collect::<Result<_, _>>()?;
+        let rigid_body_states: Vec<RigidCellularBodyState> = self
+            .rigid_cellular_bodies
+            .iter()
+            .map(|body| {
+                self.physics_world
+                    .rigid_cellular_body_state(body)
+                    .ok_or_else(|| io::Error::other("Rigid cellular body handle is missing"))
+            })
+            .collect::<Result<_, _>>()?;
         self.cellular_physics_body_proxy.rasterize(
-            self.accelerator.as_ref(), TileCoordinates { x: self.origin.x - buffer_size, y: self.origin.y - buffer_size },
-            self.simulation_width + dimensions, self.simulation_height + dimensions, self.tiles_ring_offset_x,
-            self.tiles_ring_offset_y, self.gravity, &actor_proxies,
+            self.accelerator.as_ref(),
+            TileCoordinates {
+                x: self.origin.x - buffer_size,
+                y: self.origin.y - buffer_size,
+            },
+            self.simulation_width + dimensions,
+            self.simulation_height + dimensions,
+            self.tiles_ring_offset_x,
+            self.tiles_ring_offset_y,
+            self.gravity,
+            &actor_proxies,
             &self.rigid_cellular_bodies,
             &rigid_body_states,
             self.rigid_cellular_topology_revision,
@@ -838,12 +906,20 @@ impl Scene {
                 1.0 / TICK_RATE as f32,
             );
             self.cellular_pressure.simulate(
-                self.accelerator.as_ref(), TileCoordinates { x: self.origin.x - buffer_size, y: self.origin.y - buffer_size },
-                self.simulation_width + dimensions, self.simulation_height + dimensions, self.tiles_ring_offset_x,
-                self.tiles_ring_offset_y, 1.0 / TICK_RATE as f32,
-                self.gravity, self.rigid_cellular_bodies.len(),
-                self.cellular_physics_body_proxy.rigid_cell_count(
-                    &self.rigid_cellular_bodies),
+                self.accelerator.as_ref(),
+                TileCoordinates {
+                    x: self.origin.x - buffer_size,
+                    y: self.origin.y - buffer_size,
+                },
+                self.simulation_width + dimensions,
+                self.simulation_height + dimensions,
+                self.tiles_ring_offset_x,
+                self.tiles_ring_offset_y,
+                1.0 / TICK_RATE as f32,
+                self.gravity,
+                self.rigid_cellular_bodies.len(),
+                self.cellular_physics_body_proxy
+                    .rigid_cell_count(&self.rigid_cellular_bodies),
                 self.rigid_cellular_topology_revision,
             )?;
             self.cellular_dynamic.simulate_cellular_dynamic_tick(
@@ -861,12 +937,15 @@ impl Scene {
                 self.gravity,
                 1.0 / TICK_RATE as f32,
             );
-            self.fluids.scatter_mechanical_response(self.accelerator.as_ref());
+            self.fluids
+                .scatter_mechanical_response(self.accelerator.as_ref());
             self.gases.simulate_post_coupling(self.accelerator.as_ref());
             self.fluid_sample_submit()?;
             self.cellular_collision_dirty = true;
         }
-        if !self.cellular_collision_dirty { return Ok(()); }
+        if !self.cellular_collision_dirty {
+            return Ok(());
+        }
         let buffer_size: i32 = i32::from(self.simulation_buffer_size);
         if self.cellular_collision.extract_collision(
             self.accelerator.as_ref(),
@@ -878,7 +957,9 @@ impl Scene {
             self.simulation_height + u16::from(self.simulation_buffer_size) * 2,
             self.tiles_ring_offset_x,
             self.tiles_ring_offset_y,
-        )? { self.cellular_collision_dirty = false; }
+        )? {
+            self.cellular_collision_dirty = false;
+        }
         Ok(())
     }
 
@@ -891,8 +972,10 @@ impl Scene {
             self.rigid_detachment_snapshot = Some(snapshot.clone());
             return Ok(());
         };
-        if previous.origin != snapshot.origin || previous.width != snapshot.width ||
-                previous.height != snapshot.height {
+        if previous.origin != snapshot.origin
+            || previous.width != snapshot.width
+            || previous.height != snapshot.height
+        {
             self.rigid_detachment_snapshot = Some(snapshot.clone());
             return Ok(());
         }
@@ -908,50 +991,68 @@ impl Scene {
         for y in origin_y..origin_y + height {
             for x in origin_x..origin_x + width {
                 let index: usize = ((y - origin_y) * width + x - origin_x) as usize;
-                occupancy[index] = u8::from(
-                    snapshot.is_static_cell_occupied(x, y) == Some(true),
-                );
+                occupancy[index] = u8::from(snapshot.is_static_cell_occupied(x, y) == Some(true));
             }
         }
         let mut candidates: Vec<Vec<CellCoordinates>> = Vec::new();
         for y in origin_y..origin_y + height {
             for x in origin_x..origin_x + width {
                 let index: usize = ((y - origin_y) * width + x - origin_x) as usize;
-                if occupancy[index] != 1 { continue; }
+                if occupancy[index] != 1 {
+                    continue;
+                }
                 let mut queue: VecDeque<[i32; 2]> = VecDeque::from([[x, y]]);
                 let mut component: Vec<CellCoordinates> = Vec::new();
                 let mut anchored: bool = false;
                 occupancy[index] = 2;
                 while let Some([cell_x, cell_y]) = queue.pop_front() {
-                    component.push(CellCoordinates { x: cell_x, y: cell_y });
-                    anchored |= cell_x == origin_x || cell_y == origin_y ||
-                        cell_x == origin_x + width - 1 || cell_y == origin_y + height - 1;
-                    for neighbor in [[cell_x - 1, cell_y], [cell_x + 1, cell_y],
-                            [cell_x, cell_y - 1], [cell_x, cell_y + 1]] {
-                        if neighbor[0] < origin_x || neighbor[1] < origin_y ||
-                                neighbor[0] >= origin_x + width ||
-                                neighbor[1] >= origin_y + height {
+                    component.push(CellCoordinates {
+                        x: cell_x,
+                        y: cell_y,
+                    });
+                    anchored |= cell_x == origin_x
+                        || cell_y == origin_y
+                        || cell_x == origin_x + width - 1
+                        || cell_y == origin_y + height - 1;
+                    for neighbor in [
+                        [cell_x - 1, cell_y],
+                        [cell_x + 1, cell_y],
+                        [cell_x, cell_y - 1],
+                        [cell_x, cell_y + 1],
+                    ] {
+                        if neighbor[0] < origin_x
+                            || neighbor[1] < origin_y
+                            || neighbor[0] >= origin_x + width
+                            || neighbor[1] >= origin_y + height
+                        {
                             continue;
                         }
-                        let neighbor_index: usize = ((neighbor[1] - origin_y) * width +
-                            neighbor[0] - origin_x) as usize;
+                        let neighbor_index: usize =
+                            ((neighbor[1] - origin_y) * width + neighbor[0] - origin_x) as usize;
                         if occupancy[neighbor_index] == 1 {
                             occupancy[neighbor_index] = 2;
                             queue.push_back(neighbor);
                         }
                     }
                 }
-                if !anchored && (RIGID_DETACHMENT_MINIMUM_CELLS..=
-                        RIGID_DETACHMENT_MAXIMUM_CELLS).contains(&component.len()) {
+                if !anchored
+                    && (RIGID_DETACHMENT_MINIMUM_CELLS..=RIGID_DETACHMENT_MAXIMUM_CELLS)
+                        .contains(&component.len())
+                {
                     candidates.push(component);
                 }
             }
         }
         let capacity: usize = usize::from(snapshot.width) * usize::from(snapshot.height) * 64;
         for component in candidates {
-            let represented: usize = self.rigid_cellular_bodies.iter()
-                .map(|body| body.cells.len()).sum();
-            if represented + component.len() > capacity { continue; }
+            let represented: usize = self
+                .rigid_cellular_bodies
+                .iter()
+                .map(|body| body.cells.len())
+                .sum();
+            if represented + component.len() > capacity {
+                continue;
+            }
             let minimum_x: i32 = component.iter().map(|cell| cell.x).min().unwrap();
             let minimum_y: i32 = component.iter().map(|cell| cell.y).min().unwrap();
             let mut cells = Vec::with_capacity(component.len());
@@ -961,12 +1062,22 @@ impl Scene {
                 let tile_coordinates: TileCoordinates = coordinates.tile_coordinates();
                 let [x, y] = coordinates.local_tile_coordinates();
                 let Some(ChunkEntry::Active { chunk, .. }) =
-                    self.chunks.get(&tile_coordinates.chunk_coordinates()) else { continue; };
-                let Ok(tile) = chunk.get_tile(tile_coordinates) else { continue; };
+                    self.chunks.get(&tile_coordinates.chunk_coordinates())
+                else {
+                    continue;
+                };
+                let Ok(tile) = chunk.get_tile(tile_coordinates) else {
+                    continue;
+                };
                 let material_identifier = tile.cell_material_identifier(x, y);
-                let Some(Material::CellularStatic { friction: cell_friction,
-                    restitution: cell_restitution, .. }) =
-                    self.data.materials().get(material_identifier) else { continue; };
+                let Some(Material::CellularStatic {
+                    friction: cell_friction,
+                    restitution: cell_restitution,
+                    ..
+                }) = self.data.materials().get(material_identifier)
+                else {
+                    continue;
+                };
                 friction += *cell_friction;
                 restitution += *cell_restitution;
                 cells.push((
@@ -975,15 +1086,21 @@ impl Scene {
                     tile.cell_appearance(x, y),
                 ));
             }
-            if cells.len() != component.len() { continue; }
+            if cells.len() != component.len() {
+                continue;
+            }
             let divisor: f32 = cells.len() as f32;
             let mut edits = SceneEditBatch::new();
             edits.erase(component.clone());
             self.apply_edits_immediate(&mut edits)?;
-            for coordinates in &component { snapshot.clear_static_cell(coordinates.x, coordinates.y); }
+            for coordinates in &component {
+                snapshot.clear_static_cell(coordinates.x, coordinates.y);
+            }
             self.insert_rigid_cellular_body(
-                [minimum_x as f32 / 8.0, minimum_y as f32 / 8.0], cells,
-                friction / divisor, restitution / divisor,
+                [minimum_x as f32 / 8.0, minimum_y as f32 / 8.0],
+                cells,
+                friction / divisor,
+                restitution / divisor,
             );
         }
         self.rigid_detachment_snapshot = Some(snapshot.clone());
@@ -992,15 +1109,16 @@ impl Scene {
 
     /// Removes body-local cells and replaces the body with its remaining connected pieces
     #[allow(dead_code)]
-    fn remove_rigid_cellular_body_cells(
-        &mut self,
-        body_index: usize,
-        removed: &HashSet<[i32; 2]>,
-    ) {
-        if body_index >= self.rigid_cellular_bodies.len() || removed.is_empty() { return; }
-        let Some(state) = self.physics_world.rigid_cellular_body_state(
-            &self.rigid_cellular_bodies[body_index],
-        ) else { return; };
+    fn remove_rigid_cellular_body_cells(&mut self, body_index: usize, removed: &HashSet<[i32; 2]>) {
+        if body_index >= self.rigid_cellular_bodies.len() || removed.is_empty() {
+            return;
+        }
+        let Some(state) = self
+            .physics_world
+            .rigid_cellular_body_state(&self.rigid_cellular_bodies[body_index])
+        else {
+            return;
+        };
         let body = self.rigid_cellular_bodies.swap_remove(body_index);
         self.rigid_cellular_topology_revision =
             self.rigid_cellular_topology_revision.wrapping_add(1);
@@ -1009,32 +1127,49 @@ impl Scene {
         self.rigid_cellular_contact_active.clear();
         self.rigid_granular_contact_active.clear();
         self.physics_world.remove_rigid_cellular_body(&body);
-        let remaining = body.cells.into_iter().filter(|cell| !removed.contains(&cell.0)).collect();
+        let remaining = body
+            .cells
+            .into_iter()
+            .filter(|cell| !removed.contains(&cell.0))
+            .collect();
         for cells in RigidCellularBody::connected_components(remaining) {
-            if cells.is_empty() { continue; }
-            let local_center = RigidCellularBody::mass_properties(
-                &cells, self.data.materials(),
-            ).local_com;
+            if cells.is_empty() {
+                continue;
+            }
+            let local_center =
+                RigidCellularBody::mass_properties(&cells, self.data.materials()).local_com;
             let child_center = [
-                state.translation[0] + state.angle.cos() * local_center.x -
-                    state.angle.sin() * local_center.y,
-                state.translation[1] + state.angle.sin() * local_center.x +
-                    state.angle.cos() * local_center.y,
+                state.translation[0] + state.angle.cos() * local_center.x
+                    - state.angle.sin() * local_center.y,
+                state.translation[1]
+                    + state.angle.sin() * local_center.x
+                    + state.angle.cos() * local_center.y,
             ];
-            let offset = [child_center[0] - state.center_of_mass[0],
-                child_center[1] - state.center_of_mass[1]];
+            let offset = [
+                child_center[0] - state.center_of_mass[0],
+                child_center[1] - state.center_of_mass[1],
+            ];
             let child_velocity = [
                 state.linear_velocity[0] - state.angular_velocity * offset[1],
                 state.linear_velocity[1] + state.angular_velocity * offset[0],
             ];
             let (friction, restitution) = self.rigid_cellular_material_response(&cells);
-            self.rigid_cellular_bodies.push(self.physics_world.insert_rigid_cellular_body(
-                state.translation, state.angle, self.data.materials(), cells, friction,
-                restitution, child_velocity, state.angular_velocity,
-            ));
+            self.rigid_cellular_bodies
+                .push(self.physics_world.insert_rigid_cellular_body(
+                    state.translation,
+                    state.angle,
+                    self.data.materials(),
+                    cells,
+                    friction,
+                    restitution,
+                    child_velocity,
+                    state.angular_velocity,
+                ));
         }
-        self.rigid_cellular_contact_active.resize(self.rigid_cellular_bodies.len(), false);
-        self.rigid_granular_contact_active.resize(self.rigid_cellular_bodies.len(), false);
+        self.rigid_cellular_contact_active
+            .resize(self.rigid_cellular_bodies.len(), false);
+        self.rigid_granular_contact_active
+            .resize(self.rigid_cellular_bodies.len(), false);
     }
 
     /// Averages the existing static material response for one concrete body
@@ -1042,12 +1177,16 @@ impl Scene {
         &self,
         cells: &[([i32; 2], MaterialIdentifier, CellularAppearance)],
     ) -> (f32, f32) {
-        let (friction, restitution) = cells.iter().fold((0.0, 0.0),
-            |sum, (_, identifier, _)| match self.data.materials().get(*identifier) {
-                Some(Material::CellularStatic { friction, restitution, .. }) =>
-                    (sum.0 + friction, sum.1 + restitution),
+        let (friction, restitution) = cells.iter().fold((0.0, 0.0), |sum, (_, identifier, _)| {
+            match self.data.materials().get(*identifier) {
+                Some(Material::CellularStatic {
+                    friction,
+                    restitution,
+                    ..
+                }) => (sum.0 + friction, sum.1 + restitution),
                 _ => sum,
-            });
+            }
+        });
         let divisor = cells.len().max(1) as f32;
         (friction / divisor, restitution / divisor)
     }
@@ -1055,33 +1194,78 @@ impl Scene {
     /// Validates and inserts one direct, non-canonical rigid cellular body.
     fn insert_authored_rigid_cellular_body(&mut self, placements: Vec<SceneEditCellPlacement>) {
         let mut unique: BTreeMap<(i32, i32), SceneEditCellPlacement> = BTreeMap::new();
-        for placement in placements { unique.insert((placement.coordinates.x, placement.coordinates.y), placement); }
-        if unique.is_empty() || !unique.values().all(|cell| matches!(
-            self.data.materials().get(cell.material_identifier), Some(Material::CellularStatic { .. })
-        )) { return; }
-        let used: usize = self.rigid_cellular_bodies.iter().map(|body| body.cells.len()).sum();
-        if used + unique.len() > self.cellular_physics_body_proxy.rigid_cell_capacity() { return; }
+        for placement in placements {
+            unique.insert(
+                (placement.coordinates.x, placement.coordinates.y),
+                placement,
+            );
+        }
+        if unique.is_empty()
+            || !unique.values().all(|cell| {
+                matches!(
+                    self.data.materials().get(cell.material_identifier),
+                    Some(Material::CellularStatic { .. })
+                )
+            })
+        {
+            return;
+        }
+        let used: usize = self
+            .rigid_cellular_bodies
+            .iter()
+            .map(|body| body.cells.len())
+            .sum();
+        if used + unique.len() > self.cellular_physics_body_proxy.rigid_cell_capacity() {
+            return;
+        }
         let min_x = unique.keys().map(|(x, _)| *x).min().unwrap();
         let min_y = unique.keys().map(|(_, y)| *y).min().unwrap();
-        let cells: Vec<_> = unique.into_values().map(|cell| (
-            [cell.coordinates.x - min_x, cell.coordinates.y - min_y],
-            cell.material_identifier, cell.appearance,
-        )).collect();
+        let cells: Vec<_> = unique
+            .into_values()
+            .map(|cell| {
+                (
+                    [cell.coordinates.x - min_x, cell.coordinates.y - min_y],
+                    cell.material_identifier,
+                    cell.appearance,
+                )
+            })
+            .collect();
         let (friction, restitution) = self.rigid_cellular_material_response(&cells);
-        self.insert_rigid_cellular_body([min_x as f32 / 8.0, min_y as f32 / 8.0], cells, friction, restitution);
+        self.insert_rigid_cellular_body(
+            [min_x as f32 / 8.0, min_y as f32 / 8.0],
+            cells,
+            friction,
+            restitution,
+        );
     }
 
     /// Centralizes topology invalidation for every rigid-body insertion.
     fn insert_rigid_cellular_body(
-        &mut self, position: [f32; 2], cells: Vec<([i32; 2], MaterialIdentifier, CellularAppearance)>,
-        friction: f32, restitution: f32,
+        &mut self,
+        position: [f32; 2],
+        cells: Vec<([i32; 2], MaterialIdentifier, CellularAppearance)>,
+        friction: f32,
+        restitution: f32,
     ) {
-        self.rigid_cellular_bodies.push(self.physics_world.insert_rigid_cellular_body(
-            position, 0.0, self.data.materials(), cells, friction, restitution, [0.0; 2], 0.0));
-        self.rigid_cellular_topology_revision = self.rigid_cellular_topology_revision.wrapping_add(1);
-        self.rigid_cellular_support.clear(); self.rigid_cellular_recovery.clear();
-        self.rigid_cellular_contact_active.resize(self.rigid_cellular_bodies.len(), false);
-        self.rigid_granular_contact_active.resize(self.rigid_cellular_bodies.len(), false);
+        self.rigid_cellular_bodies
+            .push(self.physics_world.insert_rigid_cellular_body(
+                position,
+                0.0,
+                self.data.materials(),
+                cells,
+                friction,
+                restitution,
+                [0.0; 2],
+                0.0,
+            ));
+        self.rigid_cellular_topology_revision =
+            self.rigid_cellular_topology_revision.wrapping_add(1);
+        self.rigid_cellular_support.clear();
+        self.rigid_cellular_recovery.clear();
+        self.rigid_cellular_contact_active
+            .resize(self.rigid_cellular_bodies.len(), false);
+        self.rigid_granular_contact_active
+            .resize(self.rigid_cellular_bodies.len(), false);
     }
 
     /// Resolves one world cell to a resident physical GPU cell
@@ -1092,20 +1276,27 @@ impl Scene {
         if !matches!(
             self.chunks.get(&tile_coordinates.chunk_coordinates()),
             Some(ChunkEntry::Active { chunk, .. }) if chunk.get_tile(tile_coordinates).is_ok()
-        ) { return None; }
+        ) {
+            return None;
+        }
         Some(tile.0 as usize * 64 + y * 8 + x)
     }
 
     /// Writes final contiguous cellular edits to the two authoritative GPU buffers
     fn write_cell_edits(
         &self,
-        edits: &[(usize, CellCoordinates, MaterialIdentifier, CellularAppearance, f32)],
+        edits: &[(
+            usize,
+            CellCoordinates,
+            MaterialIdentifier,
+            CellularAppearance,
+            f32,
+        )],
     ) {
         let mut start: usize = 0;
         while start < edits.len() {
             let mut end: usize = start + 1;
-            while end < edits.len() &&
-                    edits[end].0 == edits[end - 1].0 + 1 {
+            while end < edits.len() && edits[end].0 == edits[end - 1].0 + 1 {
                 end += 1;
             }
             let mut material_identifiers: Vec<u8> = Vec::with_capacity((end - start) * 4);
@@ -1156,17 +1347,14 @@ impl Scene {
 
     /// Returns the exact tile area currently being simulated
     const fn area_active(&self) -> TileArea {
-        TileArea::new(
-            self.origin,
-            self.simulation_width,
-            self.simulation_height,
-        )
+        TileArea::new(self.origin, self.simulation_width, self.simulation_height)
     }
 
     /// Returns the moving-fluid area including one camera-streaming batch outside the viewport
     fn area_fluid_active(&self) -> TileArea {
         let padding: u16 = u16::from(self.tile_streaming_batch_size);
-        self.area_active().expanded(padding, padding, padding, padding)
+        self.area_active()
+            .expanded(padding, padding, padding, padding)
     }
 
     /// Returns the tile area resident on the GPU
@@ -1184,20 +1372,24 @@ impl Scene {
     }
 
     /// Returns the chunk-aligned area required by the current GPU buffer
-    fn area_streaming(&self) -> TileArea { self.area_buffered().chunk_area() }
+    fn area_streaming(&self) -> TileArea {
+        self.area_buffered().chunk_area()
+    }
 
     /// Returns the current chunk area plus one chunk in each movement direction
     fn area_prefetching(&self) -> TileArea {
-        let velocity: Option<SceneVelocity> = self.possessed_actor()
-            .and_then(|actor| self.actor_registry.get_velocity(actor)).copied();
-        let left: bool = self.origin_target.x < self.origin.x ||
-            velocity.is_some_and(|velocity| velocity.x < 0.0);
-        let bottom: bool = self.origin_target.y < self.origin.y ||
-            velocity.is_some_and(|velocity| velocity.y < 0.0);
-        let right: bool = self.origin_target.x > self.origin.x ||
-            velocity.is_some_and(|velocity| velocity.x > 0.0);
-        let top: bool = self.origin_target.y > self.origin.y ||
-            velocity.is_some_and(|velocity| velocity.y > 0.0);
+        let velocity: Option<SceneVelocity> = self
+            .possessed_actor()
+            .and_then(|actor| self.actor_registry.get_velocity(actor))
+            .copied();
+        let left: bool = self.origin_target.x < self.origin.x
+            || velocity.is_some_and(|velocity| velocity.x < 0.0);
+        let bottom: bool = self.origin_target.y < self.origin.y
+            || velocity.is_some_and(|velocity| velocity.y < 0.0);
+        let right: bool = self.origin_target.x > self.origin.x
+            || velocity.is_some_and(|velocity| velocity.x > 0.0);
+        let top: bool = self.origin_target.y > self.origin.y
+            || velocity.is_some_and(|velocity| velocity.y > 0.0);
         self.area_streaming().expanded(
             if left { Chunk::WIDTH } else { 0 },
             if bottom { Chunk::WIDTH } else { 0 },
@@ -1211,10 +1403,10 @@ impl Scene {
         for coordinates in streaming_area.iterate_chunk_coordinates() {
             match self.chunks.get(&coordinates) {
                 None | Some(ChunkEntry::Error(_)) => self.chunk_load(coordinates)?,
-                Some(ChunkEntry::Active { .. }) |
-                Some(ChunkEntry::Loading { .. }) |
-                Some(ChunkEntry::Generating { .. }) |
-                Some(ChunkEntry::Saving { .. }) => { },
+                Some(ChunkEntry::Active { .. })
+                | Some(ChunkEntry::Loading { .. })
+                | Some(ChunkEntry::Generating { .. })
+                | Some(ChunkEntry::Saving { .. }) => {}
             };
         }
         Ok(())
@@ -1225,32 +1417,38 @@ impl Scene {
         // avoid duplicate work
         if let Some(entry) = self.chunks.get(&coordinates) {
             match entry {
-                ChunkEntry::Active { .. } |
-                ChunkEntry::Loading { .. } |
-                ChunkEntry::Generating { .. } |
-                ChunkEntry::Saving { .. } =>
-                    return Ok(()),
+                ChunkEntry::Active { .. }
+                | ChunkEntry::Loading { .. }
+                | ChunkEntry::Generating { .. }
+                | ChunkEntry::Saving { .. } => return Ok(()),
                 _ => (),
             }
         }
         let streaming_identifier: u64 = self.chunks_streaming_identifier_next;
         self.chunks_streaming_identifier_next =
             self.chunks_streaming_identifier_next.wrapping_add(1);
-        self.chunks.insert(coordinates, ChunkEntry::Loading { streaming_identifier, });
+        self.chunks.insert(
+            coordinates,
+            ChunkEntry::Loading {
+                streaming_identifier,
+            },
+        );
         let data: SceneData = self.data.clone();
         let sender: SyncSender<ChunkStreamingResponse> =
             self.chunk_streaming_response_sender.clone();
         // spawn new thread to attempt read
         std::thread::spawn(move || {
-            let result: Result<Option<Box<Chunk>>, Box<dyn Error + Send + Sync>> =
-                data.read_chunk(coordinates)
-                    .map(|chunk| chunk.map(Box::new))
-                    .map_err(|error| Box::new(error).into());
-            sender.send(ChunkStreamingResponse::Loaded {
-                streaming_identifier,
-                coordinates,
-                result,
-            }).unwrap();
+            let result: Result<Option<Box<Chunk>>, Box<dyn Error + Send + Sync>> = data
+                .read_chunk(coordinates)
+                .map(|chunk| chunk.map(Box::new))
+                .map_err(|error| Box::new(error).into());
+            sender
+                .send(ChunkStreamingResponse::Loaded {
+                    streaming_identifier,
+                    coordinates,
+                    result,
+                })
+                .unwrap();
         });
         Ok(())
     }
@@ -1260,19 +1458,21 @@ impl Scene {
         // avoid duplicate work
         if let Some(entry) = self.chunks.get(&coordinates) {
             match entry {
-                ChunkEntry::Active { .. } |
-                ChunkEntry::Generating { .. } |
-                ChunkEntry::Saving { .. } =>
-                    return Ok(()),
+                ChunkEntry::Active { .. }
+                | ChunkEntry::Generating { .. }
+                | ChunkEntry::Saving { .. } => return Ok(()),
                 _ => (),
             }
         }
         let streaming_identifier: u64 = self.chunks_streaming_identifier_next;
         self.chunks_streaming_identifier_next =
             self.chunks_streaming_identifier_next.wrapping_add(1);
-        self.chunks.insert(coordinates, ChunkEntry::Generating {
-            streaming_identifier,
-        });
+        self.chunks.insert(
+            coordinates,
+            ChunkEntry::Generating {
+                streaming_identifier,
+            },
+        );
         let generator: Arc<dyn SceneGenerator> = self.generator.clone();
         let sender: SyncSender<ChunkStreamingResponse> =
             self.chunk_streaming_response_sender.clone();
@@ -1280,44 +1480,67 @@ impl Scene {
         std::thread::spawn(move || {
             let result: Result<Box<Chunk>, Box<dyn Error + Send + Sync>> =
                 Ok(Box::new(generator.generate_chunk(coordinates)));
-            sender.send(ChunkStreamingResponse::Generated {
-                streaming_identifier,
-                coordinates,
-                result,
-            }).unwrap();
+            sender
+                .send(ChunkStreamingResponse::Generated {
+                    streaming_identifier,
+                    coordinates,
+                    result,
+                })
+                .unwrap();
         });
         Ok(())
     }
 
     /// Saves dirty chunks and removes entries outside the one-chunk retention region
     fn chunks_save(&mut self) -> Result<(), io::Error> {
-        let retention_area: TileArea = self.area_streaming().expanded(
-            Chunk::WIDTH,
-            Chunk::WIDTH,
-            Chunk::WIDTH,
-            Chunk::WIDTH,
-        );
-        let coordinates: Vec<TileCoordinates> = self.chunks.iter().filter_map(
-            |(coordinates, entry)| {
-                if retention_area.contains(*coordinates) || matches!(
-                    entry,
-                    ChunkEntry::Loading { .. } |
-                    ChunkEntry::Generating { .. } |
-                    ChunkEntry::Saving { .. },
-                ) { None } else { Some(*coordinates) }
-            }
-        ).collect();
+        let retention_area: TileArea =
+            self.area_streaming()
+                .expanded(Chunk::WIDTH, Chunk::WIDTH, Chunk::WIDTH, Chunk::WIDTH);
+        let coordinates: Vec<TileCoordinates> = self
+            .chunks
+            .iter()
+            .filter_map(|(coordinates, entry)| {
+                if retention_area.contains(*coordinates)
+                    || matches!(
+                        entry,
+                        ChunkEntry::Loading { .. }
+                            | ChunkEntry::Generating { .. }
+                            | ChunkEntry::Saving { .. },
+                    )
+                {
+                    None
+                } else {
+                    Some(*coordinates)
+                }
+            })
+            .collect();
         for coordinates in coordinates {
             // keep stale CPU chunks unavailable to save or removal until downloads are applied
-            if self.tile_download_pending_for_chunk(coordinates)? ||
-                    self.fluid_transfer_pending_for_chunk(coordinates)? ||
-                    self.gas_transfer_pending_for_chunk(coordinates)? { continue; }
-            let Some(entry) = self.chunks.remove(&coordinates) else { continue; };
-            let ChunkEntry::Active { chunk, is_dirty: true } = entry else { continue; };
+            if self.tile_download_pending_for_chunk(coordinates)?
+                || self.fluid_transfer_pending_for_chunk(coordinates)?
+                || self.gas_transfer_pending_for_chunk(coordinates)?
+            {
+                continue;
+            }
+            let Some(entry) = self.chunks.remove(&coordinates) else {
+                continue;
+            };
+            let ChunkEntry::Active {
+                chunk,
+                is_dirty: true,
+            } = entry
+            else {
+                continue;
+            };
             let streaming_identifier: u64 = self.chunks_streaming_identifier_next;
             self.chunks_streaming_identifier_next =
                 self.chunks_streaming_identifier_next.wrapping_add(1);
-            self.chunks.insert(coordinates, ChunkEntry::Saving { streaming_identifier });
+            self.chunks.insert(
+                coordinates,
+                ChunkEntry::Saving {
+                    streaming_identifier,
+                },
+            );
             let data: SceneData = self.data.clone();
             let sender: SyncSender<ChunkStreamingResponse> =
                 self.chunk_streaming_response_sender.clone();
@@ -1327,11 +1550,13 @@ impl Scene {
                         Ok(()) => Ok(Box::new(chunk)),
                         Err(error) => Err((Box::new(chunk), error)),
                     };
-                sender.send(ChunkStreamingResponse::Saved {
-                    streaming_identifier,
-                    coordinates,
-                    result,
-                }).unwrap();
+                sender
+                    .send(ChunkStreamingResponse::Saved {
+                        streaming_identifier,
+                        coordinates,
+                        result,
+                    })
+                    .unwrap();
             });
         }
         Ok(())
@@ -1353,13 +1578,19 @@ impl Scene {
                         Some(ChunkEntry::Loading { streaming_identifier: current })
                             if *current == streaming_identifier
                     );
-                    if !matches_request { continue; }
-                    match result { // missing chunk begins a separate generation operation
+                    if !matches_request {
+                        continue;
+                    }
+                    match result {
+                        // missing chunk begins a separate generation operation
                         Ok(Some(chunk)) => {
-                            self.chunks.insert(coordinates, ChunkEntry::Active {
-                                chunk: *chunk,
-                                is_dirty: false,
-                            });
+                            self.chunks.insert(
+                                coordinates,
+                                ChunkEntry::Active {
+                                    chunk: *chunk,
+                                    is_dirty: false,
+                                },
+                            );
                             chunks_available.push(coordinates);
                         }
                         Ok(None) => self.chunk_generate(coordinates)?,
@@ -1378,13 +1609,19 @@ impl Scene {
                         self.chunks.get(&coordinates),
                         Some(ChunkEntry::Generating { streaming_identifier: current })
                             if *current == streaming_identifier
-                    ) { continue; }
-                    match result { // retain the successfully generated chunk
+                    ) {
+                        continue;
+                    }
+                    match result {
+                        // retain the successfully generated chunk
                         Ok(chunk) => {
-                            self.chunks.insert(coordinates, ChunkEntry::Active {
-                                chunk: *chunk,
-                                is_dirty: false,
-                            });
+                            self.chunks.insert(
+                                coordinates,
+                                ChunkEntry::Active {
+                                    chunk: *chunk,
+                                    is_dirty: false,
+                                },
+                            );
                             chunks_available.push(coordinates);
                         }
                         Err(error) => {
@@ -1402,24 +1639,32 @@ impl Scene {
                         self.chunks.get(&coordinates),
                         Some(ChunkEntry::Saving { streaming_identifier: current })
                             if *current == streaming_identifier
-                    ) { continue; }
+                    ) {
+                        continue;
+                    }
                     match result {
                         Ok(chunk) => {
                             if self.area_prefetching().contains(coordinates) {
-                                self.chunks.insert(coordinates, ChunkEntry::Active {
-                                    chunk: *chunk,
-                                    is_dirty: false,
-                                });
+                                self.chunks.insert(
+                                    coordinates,
+                                    ChunkEntry::Active {
+                                        chunk: *chunk,
+                                        is_dirty: false,
+                                    },
+                                );
                                 chunks_available.push(coordinates);
                             } else {
                                 self.chunks.remove(&coordinates);
                             }
                         }
                         Err((chunk, error)) => {
-                            self.chunks.insert(coordinates, ChunkEntry::Active {
-                                chunk: *chunk,
-                                is_dirty: true,
-                            });
+                            self.chunks.insert(
+                                coordinates,
+                                ChunkEntry::Active {
+                                    chunk: *chunk,
+                                    is_dirty: true,
+                                },
+                            );
                             return Err(error);
                         }
                     }
@@ -1487,16 +1732,27 @@ impl Scene {
         let dimensions: u16 = u16::from(self.simulation_buffer_size) * 2;
         let width: u16 = self.simulation_width + dimensions;
         let height: u16 = self.simulation_height + dimensions;
-        let buffered_area: TileArea = TileArea::new(TileCoordinates {
-            x: new_origin.x - buffer_size,
-            y: new_origin.y - buffer_size,
-        }, width, height);
+        let buffered_area: TileArea = TileArea::new(
+            TileCoordinates {
+                x: new_origin.x - buffer_size,
+                y: new_origin.y - buffer_size,
+            },
+            width,
+            height,
+        );
         let streaming_area: TileArea = buffered_area.chunk_area();
         self.chunks_fetch(streaming_area)?;
-        if !streaming_area.iterate_chunk_coordinates().all(|coordinates| { matches!(
-            self.chunks.get(&coordinates),
-            Some(ChunkEntry::Active { .. })
-        ) }) { return Ok(()); }
+        if !streaming_area
+            .iterate_chunk_coordinates()
+            .all(|coordinates| {
+                matches!(
+                    self.chunks.get(&coordinates),
+                    Some(ChunkEntry::Active { .. })
+                )
+            })
+        {
+            return Ok(());
+        }
         let batch_size: u16 = u16::from(self.tile_streaming_batch_size);
         let old_buffered_origin: TileCoordinates = TileCoordinates {
             x: self.origin.x - buffer_size,
@@ -1505,52 +1761,71 @@ impl Scene {
         let tiles_download_area: TileArea;
         let tiles_upload_area: TileArea;
         if new_origin.x > self.origin.x {
-            tiles_download_area = TileArea::new(
-                old_buffered_origin,
+            tiles_download_area = TileArea::new(old_buffered_origin, batch_size, height);
+            tiles_upload_area = TileArea::new(
+                TileCoordinates {
+                    x: new_origin.x - buffer_size + width as i32 - batch_size as i32,
+                    y: new_origin.y - buffer_size,
+                },
                 batch_size,
                 height,
             );
-            tiles_upload_area = TileArea::new(TileCoordinates {
-                x: new_origin.x - buffer_size + width as i32 - batch_size as i32,
-                y: new_origin.y - buffer_size,
-            }, batch_size, height);
         } else if new_origin.x < self.origin.x {
-            tiles_download_area = TileArea::new(TileCoordinates {
-                x: old_buffered_origin.x + width as i32 - batch_size as i32,
-                y: old_buffered_origin.y,
-            }, batch_size, height);
-            tiles_upload_area = TileArea::new(TileCoordinates {
-                x: new_origin.x - buffer_size,
-                y: new_origin.y - buffer_size,
-            }, batch_size, height);
-        } else if new_origin.y > self.origin.y {
             tiles_download_area = TileArea::new(
-                old_buffered_origin,
+                TileCoordinates {
+                    x: old_buffered_origin.x + width as i32 - batch_size as i32,
+                    y: old_buffered_origin.y,
+                },
+                batch_size,
+                height,
+            );
+            tiles_upload_area = TileArea::new(
+                TileCoordinates {
+                    x: new_origin.x - buffer_size,
+                    y: new_origin.y - buffer_size,
+                },
+                batch_size,
+                height,
+            );
+        } else if new_origin.y > self.origin.y {
+            tiles_download_area = TileArea::new(old_buffered_origin, width, batch_size);
+            tiles_upload_area = TileArea::new(
+                TileCoordinates {
+                    x: new_origin.x - buffer_size,
+                    y: new_origin.y - buffer_size + height as i32 - batch_size as i32,
+                },
                 width,
                 batch_size,
             );
-            tiles_upload_area = TileArea::new(TileCoordinates {
-                x: new_origin.x - buffer_size,
-                y: new_origin.y - buffer_size + height as i32 - batch_size as i32,
-            }, width, batch_size);
         } else if new_origin.y < self.origin.y {
-            tiles_download_area = TileArea::new(TileCoordinates {
-                x: old_buffered_origin.x,
-                y: old_buffered_origin.y + height as i32 - batch_size as i32,
-            }, width, batch_size);
-            tiles_upload_area = TileArea::new(TileCoordinates {
-                x: new_origin.x - buffer_size,
-                y: new_origin.y - buffer_size,
-            }, width, batch_size);
+            tiles_download_area = TileArea::new(
+                TileCoordinates {
+                    x: old_buffered_origin.x,
+                    y: old_buffered_origin.y + height as i32 - batch_size as i32,
+                },
+                width,
+                batch_size,
+            );
+            tiles_upload_area = TileArea::new(
+                TileCoordinates {
+                    x: new_origin.x - buffer_size,
+                    y: new_origin.y - buffer_size,
+                },
+                width,
+                batch_size,
+            );
         } else {
             return Ok(());
         }
 
         // defer rapid re-entry until the prior download has reached its CPU chunk
-        if self.tile_download_pending_in(tiles_upload_area)? ||
-                self.fluid_download_pending_in(tiles_upload_area)? ||
-                self.fluid_upload_pending_in(tiles_download_area)? ||
-                self.gas_download_pending_in(tiles_upload_area)? { return Ok(()); }
+        if self.tile_download_pending_in(tiles_upload_area)?
+            || self.fluid_download_pending_in(tiles_upload_area)?
+            || self.fluid_upload_pending_in(tiles_download_area)?
+            || self.gas_download_pending_in(tiles_upload_area)?
+        {
+            return Ok(());
+        }
 
         // materialize queued CPU state before capturing the old physical slots
         self.tile_uploads_submit()?;
@@ -1568,13 +1843,11 @@ impl Scene {
         if new_origin.x > self.origin.x {
             self.tiles_ring_offset_x = (self.tiles_ring_offset_x + batch_size) % width;
         } else if new_origin.x < self.origin.x {
-            self.tiles_ring_offset_x =
-                (self.tiles_ring_offset_x + width - batch_size) % width;
+            self.tiles_ring_offset_x = (self.tiles_ring_offset_x + width - batch_size) % width;
         } else if new_origin.y > self.origin.y {
             self.tiles_ring_offset_y = (self.tiles_ring_offset_y + batch_size) % height;
         } else {
-            self.tiles_ring_offset_y =
-                (self.tiles_ring_offset_y + height - batch_size) % height;
+            self.tiles_ring_offset_y = (self.tiles_ring_offset_y + height - batch_size) % height;
         }
         self.origin = new_origin;
         self.cellular_collision_dirty = true;
@@ -1583,7 +1856,10 @@ impl Scene {
             self.area_fluid_active().origin(),
             self.area_fluid_active().dimensions()[0],
             self.area_fluid_active().dimensions()[1],
-            TileCoordinates { x: new_origin.x - buffer_size, y: new_origin.y - buffer_size },
+            TileCoordinates {
+                x: new_origin.x - buffer_size,
+                y: new_origin.y - buffer_size,
+            },
             width,
             height,
             self.tiles_ring_offset_x,
@@ -1603,7 +1879,9 @@ impl Scene {
         let x: usize = usize::try_from(coordinates.x - (self.origin.x - buffer_size)).ok()?;
         let y: usize = usize::try_from(coordinates.y - (self.origin.y - buffer_size)).ok()?;
         let height: usize = self.simulation_height as usize + buffer_size as usize * 2;
-        if x >= width || y >= height { return None; }
+        if x >= width || y >= height {
+            return None;
+        }
         let x: usize = (x + self.tiles_ring_offset_x as usize) % width;
         let y: usize = (y + self.tiles_ring_offset_y as usize) % height;
         self.tiles.get(y * width + x).copied()
@@ -1611,18 +1889,21 @@ impl Scene {
 
     /// Queues one dense gas strip export under the current ring interpretation
     fn gas_downloads_queue(&mut self, area: TileArea) {
-        if self.gases.gas_count() == 0 { return; }
-        let dimensions: u16 = (self.simulation_width +
-            u16::from(self.simulation_buffer_size) * 2).max(
-                self.simulation_height + u16::from(self.simulation_buffer_size) * 2,
-            );
-        let maximum_cell_count: u32 = u32::from(self.tile_streaming_batch_size) *
-            u32::from(dimensions) * 64;
-        let download: Arc<Mutex<GasDownload>> = self.gas_download_pool.pop().unwrap_or_else(
-            || Arc::new(Mutex::new(GasDownload::new(
-                self.accelerator.as_ref(), area, maximum_cell_count, self.gases.gas_count(),
-            ))),
-        );
+        if self.gases.gas_count() == 0 {
+            return;
+        }
+        let dimensions: u16 = (self.simulation_width + u16::from(self.simulation_buffer_size) * 2)
+            .max(self.simulation_height + u16::from(self.simulation_buffer_size) * 2);
+        let maximum_cell_count: u32 =
+            u32::from(self.tile_streaming_batch_size) * u32::from(dimensions) * 64;
+        let download: Arc<Mutex<GasDownload>> = self.gas_download_pool.pop().unwrap_or_else(|| {
+            Arc::new(Mutex::new(GasDownload::new(
+                self.accelerator.as_ref(),
+                area,
+                maximum_cell_count,
+                self.gases.gas_count(),
+            )))
+        });
         download.lock().unwrap().reset(area);
         self.gas_downloads.push(download);
     }
@@ -1630,9 +1911,14 @@ impl Scene {
     /// Returns whether an incoming area overlaps unresolved exported gas
     fn gas_download_pending_in(&self, area: TileArea) -> Result<bool, io::Error> {
         for download in &self.gas_downloads {
-            if download.lock().map_err(|_| {
-                io::Error::other("Gas download is unavailable")
-            })?.area.intersects(area) { return Ok(true); }
+            if download
+                .lock()
+                .map_err(|_| io::Error::other("Gas download is unavailable"))?
+                .area
+                .intersects(area)
+            {
+                return Ok(true);
+            }
         }
         Ok(false)
     }
@@ -1643,9 +1929,15 @@ impl Scene {
         coordinates: TileCoordinates,
     ) -> Result<bool, io::Error> {
         for download in &self.gas_downloads {
-            if download.lock().map_err(|_| {
-                io::Error::other("Gas download is unavailable")
-            })?.area.chunk_area().contains(coordinates) { return Ok(true); }
+            if download
+                .lock()
+                .map_err(|_| io::Error::other("Gas download is unavailable"))?
+                .area
+                .chunk_area()
+                .contains(coordinates)
+            {
+                return Ok(true);
+            }
         }
         Ok(false)
     }
@@ -1655,44 +1947,64 @@ impl Scene {
         let buffered_area: TileArea = self.area_buffered();
         let dimensions: [u16; 2] = buffered_area.dimensions();
         self.gases.clear_area(
-            self.accelerator.as_ref(), area, buffered_area.origin(),
-            dimensions[0], dimensions[1],
-            self.tiles_ring_offset_x, self.tiles_ring_offset_y,
+            self.accelerator.as_ref(),
+            area,
+            buffered_area.origin(),
+            dimensions[0],
+            dimensions[1],
+            self.tiles_ring_offset_x,
+            self.tiles_ring_offset_y,
         );
     }
 
     /// Moves dormant sparse gas from CPU chunks into dense resident GPU fields
     fn gas_upload_area(&mut self, area: TileArea) -> Result<(), io::Error> {
-        if self.gases.gas_count() == 0 { return Ok(()); }
+        if self.gases.gas_count() == 0 {
+            return Ok(());
+        }
         let chunk_coordinates: Vec<TileCoordinates> =
             area.chunk_area().iterate_chunk_coordinates().collect();
         for coordinates in &chunk_coordinates {
-            if !matches!(self.chunks.get(coordinates), Some(ChunkEntry::Active { .. })) {
+            if !matches!(
+                self.chunks.get(coordinates),
+                Some(ChunkEntry::Active { .. })
+            ) {
                 return Err(io::Error::other("Incoming gas chunk is not active"));
             }
         }
         let mut cells: Vec<ChunkGasCell> = Vec::new();
         for coordinates in chunk_coordinates {
             let Some(ChunkEntry::Active { chunk, is_dirty }) = self.chunks.get_mut(&coordinates)
-                else { unreachable!(); };
+            else {
+                unreachable!();
+            };
             let mut chunk_cells: Vec<ChunkGasCell> = chunk.take_dormant_gas_cells(area);
-            if !chunk_cells.is_empty() { *is_dirty = true; }
+            if !chunk_cells.is_empty() {
+                *is_dirty = true;
+            }
             cells.append(&mut chunk_cells);
         }
-        if cells.is_empty() { return Ok(()); }
+        if cells.is_empty() {
+            return Ok(());
+        }
         let upload: GasUpload = GasUpload::new(area, cells);
         if let Err(error) = upload.validate(self.data.materials()) {
             self.gas_cells_restore(upload.cells)?;
             return Err(error);
         }
-        let physical_indices: Option<Vec<usize>> = upload.cells.iter().map(|cell| {
-            self.cell_edit_index(cell.coordinates)
-        }).collect();
+        let physical_indices: Option<Vec<usize>> = upload
+            .cells
+            .iter()
+            .map(|cell| self.cell_edit_index(cell.coordinates))
+            .collect();
         let Some(physical_indices) = physical_indices else {
             self.gas_cells_restore(upload.cells)?;
-            return Err(io::Error::other("Incoming dormant gas cell is outside GPU residency"));
+            return Err(io::Error::other(
+                "Incoming dormant gas cell is outside GPU residency",
+            ));
         };
-        self.gases.import(self.accelerator.as_ref(), &upload, &physical_indices);
+        self.gases
+            .import(self.accelerator.as_ref(), &upload, &physical_indices);
         Ok(())
     }
 
@@ -1701,10 +2013,12 @@ impl Scene {
         for cell in cells {
             let coordinates: TileCoordinates = cell.tile_coordinates().chunk_coordinates();
             let Some(ChunkEntry::Active { chunk, is_dirty }) = self.chunks.get_mut(&coordinates)
-                else { return Err(io::Error::other("Dormant gas source chunk is not active")); };
-            chunk.insert_dormant_gas_cell(cell).map_err(|_| {
-                io::Error::other("Dormant gas cell is outside its source chunk")
-            })?;
+            else {
+                return Err(io::Error::other("Dormant gas source chunk is not active"));
+            };
+            chunk
+                .insert_dormant_gas_cell(cell)
+                .map_err(|_| io::Error::other("Dormant gas cell is outside its source chunk"))?;
             *is_dirty = true;
         }
         Ok(())
@@ -1714,9 +2028,9 @@ impl Scene {
     fn gas_downloads_apply_completed(&mut self) -> Result<(), io::Error> {
         let mut index: usize = 0;
         while index < self.gas_downloads.len() {
-            let mut download = self.gas_downloads[index].lock().map_err(|_| {
-                io::Error::other("Gas download is unavailable")
-            })?;
+            let mut download = self.gas_downloads[index]
+                .lock()
+                .map_err(|_| io::Error::other("Gas download is unavailable"))?;
             let Some(result) = download.result.as_ref() else {
                 index += 1;
                 continue;
@@ -1727,10 +2041,12 @@ impl Scene {
             let area: TileArea = download.area;
             for cell in result.as_ref().unwrap() {
                 let coordinates: TileCoordinates = cell.tile_coordinates();
-                if !area.contains(coordinates) || !matches!(
-                    self.chunks.get(&coordinates.chunk_coordinates()),
-                    Some(ChunkEntry::Active { .. }),
-                ) {
+                if !area.contains(coordinates)
+                    || !matches!(
+                        self.chunks.get(&coordinates.chunk_coordinates()),
+                        Some(ChunkEntry::Active { .. }),
+                    )
+                {
                     return Err(io::Error::other(
                         "Exported gas cell has no active destination chunk",
                     ));
@@ -1748,64 +2064,85 @@ impl Scene {
     /// Submits queued gas exports and begins their asynchronous readbacks
     fn gas_downloads_submit(&self) -> Result<(), io::Error> {
         for download in &self.gas_downloads {
-            let mut state = download.lock().map_err(|_| {
-                io::Error::other("Gas download is unavailable")
-            })?;
-            if state.is_started { continue; }
+            let mut state = download
+                .lock()
+                .map_err(|_| io::Error::other("Gas download is unavailable"))?;
+            if state.is_started {
+                continue;
+            }
             let buffered_area: TileArea = self.area_buffered();
             let buffered_dimensions: [u16; 2] = buffered_area.dimensions();
             self.gases.export(
-                self.accelerator.as_ref(), &state, buffered_area.origin(),
-                buffered_dimensions[0], buffered_dimensions[1],
-                self.tiles_ring_offset_x, self.tiles_ring_offset_y,
+                self.accelerator.as_ref(),
+                &state,
+                buffered_area.origin(),
+                buffered_dimensions[0],
+                buffered_dimensions[1],
+                self.tiles_ring_offset_x,
+                self.tiles_ring_offset_y,
             );
             state.is_started = true;
             let area: TileArea = state.area;
             let dimensions: [u16; 2] = area.dimensions();
-            let byte_count: usize = usize::from(dimensions[0]) * usize::from(dimensions[1]) * 64 *
-                (4 + self.gases.gas_count() as usize) * 4;
-            let gas_identifiers: Vec<MaterialIdentifier> = self.data.materials().iter()
+            let byte_count: usize = usize::from(dimensions[0])
+                * usize::from(dimensions[1])
+                * 64
+                * (4 + self.gases.gas_count() as usize)
+                * 4;
+            let gas_identifiers: Vec<MaterialIdentifier> = self
+                .data
+                .materials()
+                .iter()
                 .filter_map(|(identifier, material)| {
                     matches!(material, Material::Gas { .. }).then_some(identifier)
-                }).collect();
+                })
+                .collect();
             let buffer: wgpu::Buffer = state.buffer.clone();
             let mapped_buffer: wgpu::Buffer = buffer.clone();
             let download: Arc<Mutex<GasDownload>> = download.clone();
             drop(state);
-            buffer.slice(0..byte_count as u64).map_async(wgpu::MapMode::Read, move |result| {
-                let bytes: Result<Vec<u8>, io::Error> = match result {
-                    Ok(()) => match mapped_buffer.slice(0..byte_count as u64).get_mapped_range() {
-                        Ok(mapped_data) => {
-                            let bytes: Vec<u8> = mapped_data.to_vec();
-                            drop(mapped_data);
-                            mapped_buffer.unmap();
-                            Ok(bytes)
+            buffer
+                .slice(0..byte_count as u64)
+                .map_async(wgpu::MapMode::Read, move |result| {
+                    let bytes: Result<Vec<u8>, io::Error> = match result {
+                        Ok(()) => {
+                            match mapped_buffer.slice(0..byte_count as u64).get_mapped_range() {
+                                Ok(mapped_data) => {
+                                    let bytes: Vec<u8> = mapped_data.to_vec();
+                                    drop(mapped_data);
+                                    mapped_buffer.unmap();
+                                    Ok(bytes)
+                                }
+                                Err(error) => {
+                                    mapped_buffer.unmap();
+                                    Err(io::Error::other(error.to_string()))
+                                }
+                            }
                         }
-                        Err(error) => {
-                            mapped_buffer.unmap();
-                            Err(io::Error::other(error.to_string()))
-                        }
-                    },
-                    Err(_) => Err(io::Error::other("Gas download failed")),
-                };
-                std::thread::spawn(move || {
-                    let result: Result<Vec<ChunkGasCell>, io::Error> = bytes.and_then(|bytes| {
-                        GasDownload::deserialize(&bytes, area, &gas_identifiers)
+                        Err(_) => Err(io::Error::other("Gas download failed")),
+                    };
+                    std::thread::spawn(move || {
+                        let result: Result<Vec<ChunkGasCell>, io::Error> =
+                            bytes.and_then(|bytes| {
+                                GasDownload::deserialize(&bytes, area, &gas_identifiers)
+                            });
+                        download.lock().unwrap().result = Some(result);
                     });
-                    download.lock().unwrap().result = Some(result);
                 });
-            });
         }
         Ok(())
     }
 
     /// Queues one authoritative fluid export under the current ring interpretation
     fn fluid_downloads_queue(&mut self, area: TileArea) {
-        let download: Arc<Mutex<FluidDownload>> = self.fluid_download_pool.pop().unwrap_or_else(
-            || Arc::new(Mutex::new(FluidDownload::new(
-                self.accelerator.as_ref(), area, self.fluids.particle_capacity(),
-            ))),
-        );
+        let download: Arc<Mutex<FluidDownload>> =
+            self.fluid_download_pool.pop().unwrap_or_else(|| {
+                Arc::new(Mutex::new(FluidDownload::new(
+                    self.accelerator.as_ref(),
+                    area,
+                    self.fluids.particle_capacity(),
+                )))
+            });
         download.lock().unwrap().reset(area);
         self.fluid_downloads.push(download);
     }
@@ -1813,9 +2150,14 @@ impl Scene {
     /// Returns whether an incoming area overlaps unresolved exported fluid
     fn fluid_download_pending_in(&self, area: TileArea) -> Result<bool, io::Error> {
         for download in &self.fluid_downloads {
-            if download.lock().map_err(|_| {
-                io::Error::other("Fluid download is unavailable")
-            })?.area.intersects(area) { return Ok(true); }
+            if download
+                .lock()
+                .map_err(|_| io::Error::other("Fluid download is unavailable"))?
+                .area
+                .intersects(area)
+            {
+                return Ok(true);
+            }
         }
         Ok(false)
     }
@@ -1823,9 +2165,14 @@ impl Scene {
     /// Returns whether an outgoing area overlaps unresolved imported fluid
     fn fluid_upload_pending_in(&self, area: TileArea) -> Result<bool, io::Error> {
         for upload in &self.fluid_uploads {
-            if upload.lock().map_err(|_| {
-                io::Error::other("Fluid upload is unavailable")
-            })?.area.intersects(area) { return Ok(true); }
+            if upload
+                .lock()
+                .map_err(|_| io::Error::other("Fluid upload is unavailable"))?
+                .area
+                .intersects(area)
+            {
+                return Ok(true);
+            }
         }
         Ok(false)
     }
@@ -1836,14 +2183,26 @@ impl Scene {
         coordinates: TileCoordinates,
     ) -> Result<bool, io::Error> {
         for download in &self.fluid_downloads {
-            if download.lock().map_err(|_| {
-                io::Error::other("Fluid download is unavailable")
-            })?.area.chunk_area().contains(coordinates) { return Ok(true); }
+            if download
+                .lock()
+                .map_err(|_| io::Error::other("Fluid download is unavailable"))?
+                .area
+                .chunk_area()
+                .contains(coordinates)
+            {
+                return Ok(true);
+            }
         }
         for upload in &self.fluid_uploads {
-            if upload.lock().map_err(|_| {
-                io::Error::other("Fluid upload is unavailable")
-            })?.area.chunk_area().contains(coordinates) { return Ok(true); }
+            if upload
+                .lock()
+                .map_err(|_| io::Error::other("Fluid upload is unavailable"))?
+                .area
+                .chunk_area()
+                .contains(coordinates)
+            {
+                return Ok(true);
+            }
         }
         Ok(false)
     }
@@ -1859,34 +2218,47 @@ impl Scene {
         }
         let mut particles: Vec<ChunkFluidParticle> = Vec::new();
         for coordinates in chunk_coordinates {
-            let Some(ChunkEntry::Active { chunk, is_dirty }) =
-                self.chunks.get_mut(&coordinates)
-            else { unreachable!(); };
+            let Some(ChunkEntry::Active { chunk, is_dirty }) = self.chunks.get_mut(&coordinates)
+            else {
+                unreachable!();
+            };
             let mut chunk_particles: Vec<ChunkFluidParticle> =
                 chunk.take_dormant_fluid_particles(area);
-            if !chunk_particles.is_empty() { *is_dirty = true; }
+            if !chunk_particles.is_empty() {
+                *is_dirty = true;
+            }
             particles.append(&mut chunk_particles);
         }
-        if particles.is_empty() { return Ok(()); }
+        if particles.is_empty() {
+            return Ok(());
+        }
         if particles.len() > self.fluids.particle_capacity() as usize {
             for particle in particles {
-                let Some(ChunkEntry::Active { chunk, .. }) =
-                    self.chunks.get_mut(&particle.tile_coordinates().chunk_coordinates())
-                else { unreachable!(); };
+                let Some(ChunkEntry::Active { chunk, .. }) = self
+                    .chunks
+                    .get_mut(&particle.tile_coordinates().chunk_coordinates())
+                else {
+                    unreachable!();
+                };
                 chunk.insert_dormant_fluid_particle(particle).unwrap();
             }
             return Err(io::Error::other(
                 "Incoming dormant fluid exceeds the GPU particle pool capacity",
             ));
         }
-        if !particles.iter().all(|particle| matches!(
-            self.data.materials().get(particle.material_identifier),
-            Some(Material::Fluid { .. }),
-        )) {
+        if !particles.iter().all(|particle| {
+            matches!(
+                self.data.materials().get(particle.material_identifier),
+                Some(Material::Fluid { .. }),
+            )
+        }) {
             for particle in particles {
-                let Some(ChunkEntry::Active { chunk, .. }) =
-                    self.chunks.get_mut(&particle.tile_coordinates().chunk_coordinates())
-                else { unreachable!(); };
+                let Some(ChunkEntry::Active { chunk, .. }) = self
+                    .chunks
+                    .get_mut(&particle.tile_coordinates().chunk_coordinates())
+                else {
+                    unreachable!();
+                };
                 chunk.insert_dormant_fluid_particle(particle).unwrap();
             }
             return Err(io::Error::new(
@@ -1894,9 +2266,12 @@ impl Scene {
                 "Dormant particle references an unregistered fluid material",
             ));
         }
-        self.fluid_uploads.push(Arc::new(Mutex::new(FluidUpload::new(
-            self.accelerator.as_ref(), area, particles,
-        ))));
+        self.fluid_uploads
+            .push(Arc::new(Mutex::new(FluidUpload::new(
+                self.accelerator.as_ref(),
+                area,
+                particles,
+            ))));
         Ok(())
     }
 
@@ -1904,9 +2279,9 @@ impl Scene {
     fn fluid_downloads_apply_completed(&mut self) -> Result<(), io::Error> {
         let mut index: usize = 0;
         while index < self.fluid_downloads.len() {
-            let mut download = self.fluid_downloads[index].lock().map_err(|_| {
-                io::Error::other("Fluid download is unavailable")
-            })?;
+            let mut download = self.fluid_downloads[index]
+                .lock()
+                .map_err(|_| io::Error::other("Fluid download is unavailable"))?;
             let Some(result) = download.result.as_ref() else {
                 index += 1;
                 continue;
@@ -1917,10 +2292,12 @@ impl Scene {
             let area: TileArea = download.area;
             for particle in result.as_ref().unwrap() {
                 let coordinates: TileCoordinates = particle.tile_coordinates();
-                if !area.contains(coordinates) || !matches!(
-                    self.chunks.get(&coordinates.chunk_coordinates()),
-                    Some(ChunkEntry::Active { .. }),
-                ) {
+                if !area.contains(coordinates)
+                    || !matches!(
+                        self.chunks.get(&coordinates.chunk_coordinates()),
+                        Some(ChunkEntry::Active { .. }),
+                    )
+                {
                     return Err(io::Error::other(
                         "Exported fluid particle has no active destination chunk",
                     ));
@@ -1929,9 +2306,12 @@ impl Scene {
             let particles: Vec<ChunkFluidParticle> = download.result.take().unwrap().unwrap();
             drop(download);
             for particle in particles {
-                let Some(ChunkEntry::Active { chunk, is_dirty }) =
-                    self.chunks.get_mut(&particle.tile_coordinates().chunk_coordinates())
-                else { unreachable!(); };
+                let Some(ChunkEntry::Active { chunk, is_dirty }) = self
+                    .chunks
+                    .get_mut(&particle.tile_coordinates().chunk_coordinates())
+                else {
+                    unreachable!();
+                };
                 chunk.insert_dormant_fluid_particle(particle).map_err(|_| {
                     io::Error::other("Exported fluid particle is outside its destination chunk")
                 })?;
@@ -1947,9 +2327,9 @@ impl Scene {
     fn fluid_uploads_apply_completed(&mut self) -> Result<(), io::Error> {
         let mut index: usize = 0;
         while index < self.fluid_uploads.len() {
-            let mut upload = self.fluid_uploads[index].lock().map_err(|_| {
-                io::Error::other("Fluid upload is unavailable")
-            })?;
+            let mut upload = self.fluid_uploads[index]
+                .lock()
+                .map_err(|_| io::Error::other("Fluid upload is unavailable"))?;
             let Some(result) = upload.result.as_ref() else {
                 index += 1;
                 continue;
@@ -1959,7 +2339,8 @@ impl Scene {
             }
             for particle in result.as_ref().unwrap() {
                 if !matches!(
-                    self.chunks.get(&particle.tile_coordinates().chunk_coordinates()),
+                    self.chunks
+                        .get(&particle.tile_coordinates().chunk_coordinates()),
                     Some(ChunkEntry::Active { .. }),
                 ) {
                     return Err(io::Error::other(
@@ -1970,12 +2351,17 @@ impl Scene {
             let failed: Vec<ChunkFluidParticle> = upload.result.take().unwrap().unwrap();
             drop(upload);
             for particle in &failed {
-                let Some(ChunkEntry::Active { chunk, is_dirty }) =
-                    self.chunks.get_mut(&particle.tile_coordinates().chunk_coordinates())
-                else { unreachable!(); };
-                chunk.insert_dormant_fluid_particle(*particle).map_err(|_| {
-                    io::Error::other("Rejected fluid particle is outside its source chunk")
-                })?;
+                let Some(ChunkEntry::Active { chunk, is_dirty }) = self
+                    .chunks
+                    .get_mut(&particle.tile_coordinates().chunk_coordinates())
+                else {
+                    unreachable!();
+                };
+                chunk
+                    .insert_dormant_fluid_particle(*particle)
+                    .map_err(|_| {
+                        io::Error::other("Rejected fluid particle is outside its source chunk")
+                    })?;
                 *is_dirty = true;
             }
             self.fluid_uploads.swap_remove(index);
@@ -1991,12 +2377,18 @@ impl Scene {
 
     /// Applies a completed sample only to the actor for which it was dispatched
     fn fluid_sample_apply_completed(&mut self) -> Result<(), io::Error> {
-        let Some(result) = self.fluid_sample_result.lock().map_err(|_| {
-            io::Error::other("Pawn fluid sample result is unavailable")
-        })?.take() else { return Ok(()); };
-        let actor: Actor = self.fluid_sample_actor.take().ok_or_else(|| {
-            io::Error::other("Completed pawn fluid sample has no actor")
-        })?;
+        let Some(result) = self
+            .fluid_sample_result
+            .lock()
+            .map_err(|_| io::Error::other("Pawn fluid sample result is unavailable"))?
+            .take()
+        else {
+            return Ok(());
+        };
+        let actor: Actor = self
+            .fluid_sample_actor
+            .take()
+            .ok_or_else(|| io::Error::other("Completed pawn fluid sample has no actor"))?;
         let sample: [f32; 5] = result.map_err(io::Error::other)?;
         if self.possessed_actor() == Some(actor) {
             self.actor_registry.apply_swimming_sample(actor, sample);
@@ -2006,10 +2398,15 @@ impl Scene {
 
     /// Dispatches one tiny derived-cell sample without waiting for its readback
     fn fluid_sample_submit(&mut self) -> Result<(), io::Error> {
-        if self.fluid_sample_actor.is_some() { return Ok(()); }
-        let Some(actor) = self.possessed_actor() else { return Ok(()); };
-        let Some((center, shape)) = self.actor_registry.swimming_pawn_sample(actor)
-            else { return Ok(()); };
+        if self.fluid_sample_actor.is_some() {
+            return Ok(());
+        }
+        let Some(actor) = self.possessed_actor() else {
+            return Ok(());
+        };
+        let Some((center, shape)) = self.actor_registry.swimming_pawn_sample(actor) else {
+            return Ok(());
+        };
         let active_area: TileArea = self.area_fluid_active();
         let active_dimensions: [u16; 2] = active_area.dimensions();
         let buffered_area: TileArea = self.area_buffered();
@@ -2031,45 +2428,59 @@ impl Scene {
         );
         self.fluid_sample_actor = Some(actor);
         let mapped_buffer: wgpu::Buffer = self.fluid_sample_buffer.clone();
-        let result: Arc<Mutex<Option<Result<[f32; 5], String>>>> =
-            self.fluid_sample_result.clone();
-        self.fluid_sample_buffer.slice(..).map_async(wgpu::MapMode::Read, move |mapping| {
-            let sample: Result<[f32; 5], String> = mapping.map_err(|_| {
-                "Pawn fluid sample readback failed".to_owned()
-            }).and_then(|()| mapped_buffer.slice(..).get_mapped_range()
-                .map_err(|error| error.to_string()).and_then(|mapped| {
-                    let sample: [f32; 5] = std::array::from_fn(|index| f32::from_bits(
-                        u32::from_le_bytes(mapped[index * 4..index * 4 + 4]
-                            .try_into().unwrap()),
-                    ));
-                    drop(mapped);
-                    if sample.into_iter().all(f32::is_finite) {
-                        Ok(sample)
-                    } else {
-                        Err("Pawn fluid sample contains a non-finite value".to_owned())
-                    }
-                }));
-            mapped_buffer.unmap();
-            if let Ok(mut result) = result.lock() { *result = Some(sample); }
-        });
+        let result: Arc<Mutex<Option<Result<[f32; 5], String>>>> = self.fluid_sample_result.clone();
+        self.fluid_sample_buffer
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |mapping| {
+                let sample: Result<[f32; 5], String> = mapping
+                    .map_err(|_| "Pawn fluid sample readback failed".to_owned())
+                    .and_then(|()| {
+                        mapped_buffer
+                            .slice(..)
+                            .get_mapped_range()
+                            .map_err(|error| error.to_string())
+                            .and_then(|mapped| {
+                                let sample: [f32; 5] = std::array::from_fn(|index| {
+                                    f32::from_bits(u32::from_le_bytes(
+                                        mapped[index * 4..index * 4 + 4].try_into().unwrap(),
+                                    ))
+                                });
+                                drop(mapped);
+                                if sample.into_iter().all(f32::is_finite) {
+                                    Ok(sample)
+                                } else {
+                                    Err("Pawn fluid sample contains a non-finite value".to_owned())
+                                }
+                            })
+                    });
+                mapped_buffer.unmap();
+                if let Ok(mut result) = result.lock() {
+                    *result = Some(sample);
+                }
+            });
         Ok(())
     }
 
     /// Submits queued fluid exports and begins their asynchronous readbacks
     fn fluid_downloads_submit(&self) -> Result<(), io::Error> {
         for download in &self.fluid_downloads {
-            let mut state = download.lock().map_err(|_| {
-                io::Error::other("Fluid download is unavailable")
-            })?;
-            if state.is_started { continue; }
+            let mut state = download
+                .lock()
+                .map_err(|_| io::Error::other("Fluid download is unavailable"))?;
+            if state.is_started {
+                continue;
+            }
             self.fluids.export(
-                self.accelerator.as_ref(), &state,
+                self.accelerator.as_ref(),
+                &state,
                 self.area_fluid_active().origin(),
                 self.area_fluid_active().dimensions()[0],
                 self.area_fluid_active().dimensions()[1],
                 self.area_buffered().origin(),
-                self.area_buffered().dimensions()[0], self.area_buffered().dimensions()[1],
-                self.tiles_ring_offset_x, self.tiles_ring_offset_y,
+                self.area_buffered().dimensions()[0],
+                self.area_buffered().dimensions()[1],
+                self.tiles_ring_offset_x,
+                self.tiles_ring_offset_y,
             );
             state.is_started = true;
             let buffer: wgpu::Buffer = state.buffer.clone();
@@ -2077,37 +2488,40 @@ impl Scene {
             let download: Arc<Mutex<FluidDownload>> = download.clone();
             let particle_capacity: u32 = self.fluids.particle_capacity();
             drop(state);
-            buffer.slice(..).map_async(wgpu::MapMode::Read, move |result| {
-                let bytes: Result<Vec<u8>, io::Error> = match result {
-                    Ok(()) => match mapped_buffer.slice(..).get_mapped_range() {
-                        Ok(mapped_data) => {
-                            let count: usize = u32::from_le_bytes(
-                                mapped_data[0..4].try_into().unwrap(),
-                            ) as usize;
-                            let byte_count: usize = if count <= particle_capacity as usize {
-                                16 + count * ChunkFluidParticle::GPU_SIZE
-                            } else {
-                                16
-                            };
-                            let bytes: Vec<u8> = mapped_data[..byte_count].to_vec();
-                            drop(mapped_data);
-                            mapped_buffer.unmap();
-                            Ok(bytes)
-                        }
-                        Err(error) => {
-                            mapped_buffer.unmap();
-                            Err(io::Error::other(error.to_string()))
-                        }
-                    },
-                    Err(_) => Err(io::Error::other("Fluid download failed")),
-                };
-                std::thread::spawn(move || {
-                    let result: Result<Vec<ChunkFluidParticle>, io::Error> = bytes.and_then(
-                        |bytes| FluidDownload::deserialize(&bytes, particle_capacity),
-                    );
-                    download.lock().unwrap().result = Some(result);
+            buffer
+                .slice(..)
+                .map_async(wgpu::MapMode::Read, move |result| {
+                    let bytes: Result<Vec<u8>, io::Error> = match result {
+                        Ok(()) => match mapped_buffer.slice(..).get_mapped_range() {
+                            Ok(mapped_data) => {
+                                let count: usize =
+                                    u32::from_le_bytes(mapped_data[0..4].try_into().unwrap())
+                                        as usize;
+                                let byte_count: usize = if count <= particle_capacity as usize {
+                                    16 + count * ChunkFluidParticle::GPU_SIZE
+                                } else {
+                                    16
+                                };
+                                let bytes: Vec<u8> = mapped_data[..byte_count].to_vec();
+                                drop(mapped_data);
+                                mapped_buffer.unmap();
+                                Ok(bytes)
+                            }
+                            Err(error) => {
+                                mapped_buffer.unmap();
+                                Err(io::Error::other(error.to_string()))
+                            }
+                        },
+                        Err(_) => Err(io::Error::other("Fluid download failed")),
+                    };
+                    std::thread::spawn(move || {
+                        let result: Result<Vec<ChunkFluidParticle>, io::Error> =
+                            bytes.and_then(|bytes| {
+                                FluidDownload::deserialize(&bytes, particle_capacity)
+                            });
+                        download.lock().unwrap().result = Some(result);
+                    });
                 });
-            });
         }
         Ok(())
     }
@@ -2115,47 +2529,53 @@ impl Scene {
     /// Submits queued dormant-fluid reconstruction and begins result readback
     fn fluid_uploads_submit(&self) -> Result<(), io::Error> {
         for upload in &self.fluid_uploads {
-            let mut state = upload.lock().map_err(|_| {
-                io::Error::other("Fluid upload is unavailable")
-            })?;
-            if state.is_started { continue; }
+            let mut state = upload
+                .lock()
+                .map_err(|_| io::Error::other("Fluid upload is unavailable"))?;
+            if state.is_started {
+                continue;
+            }
             self.fluids.import(
-                self.accelerator.as_ref(), &state,
+                self.accelerator.as_ref(),
+                &state,
                 self.area_fluid_active().origin(),
                 self.area_fluid_active().dimensions()[0],
                 self.area_fluid_active().dimensions()[1],
                 self.area_buffered().origin(),
-                self.area_buffered().dimensions()[0], self.area_buffered().dimensions()[1],
-                self.tiles_ring_offset_x, self.tiles_ring_offset_y,
+                self.area_buffered().dimensions()[0],
+                self.area_buffered().dimensions()[1],
+                self.tiles_ring_offset_x,
+                self.tiles_ring_offset_y,
             );
             state.is_started = true;
             let buffer: wgpu::Buffer = state.buffer.clone();
             let mapped_buffer: wgpu::Buffer = buffer.clone();
             let upload: Arc<Mutex<FluidUpload>> = upload.clone();
             drop(state);
-            buffer.slice(..).map_async(wgpu::MapMode::Read, move |result| {
-                let bytes: Result<Vec<u8>, io::Error> = match result {
-                    Ok(()) => match mapped_buffer.slice(..).get_mapped_range() {
-                        Ok(mapped_data) => {
-                            let bytes: Vec<u8> = mapped_data.to_vec();
-                            drop(mapped_data);
-                            mapped_buffer.unmap();
-                            Ok(bytes)
-                        }
-                        Err(error) => {
-                            mapped_buffer.unmap();
-                            Err(io::Error::other(error.to_string()))
-                        }
-                    },
-                    Err(_) => Err(io::Error::other("Fluid upload result readback failed")),
-                };
-                std::thread::spawn(move || {
-                    let result: Result<Vec<ChunkFluidParticle>, io::Error> = bytes.and_then(
-                        |bytes| upload.lock().unwrap().failed_particles(&bytes),
-                    );
-                    upload.lock().unwrap().result = Some(result);
+            buffer
+                .slice(..)
+                .map_async(wgpu::MapMode::Read, move |result| {
+                    let bytes: Result<Vec<u8>, io::Error> = match result {
+                        Ok(()) => match mapped_buffer.slice(..).get_mapped_range() {
+                            Ok(mapped_data) => {
+                                let bytes: Vec<u8> = mapped_data.to_vec();
+                                drop(mapped_data);
+                                mapped_buffer.unmap();
+                                Ok(bytes)
+                            }
+                            Err(error) => {
+                                mapped_buffer.unmap();
+                                Err(io::Error::other(error.to_string()))
+                            }
+                        },
+                        Err(_) => Err(io::Error::other("Fluid upload result readback failed")),
+                    };
+                    std::thread::spawn(move || {
+                        let result: Result<Vec<ChunkFluidParticle>, io::Error> =
+                            bytes.and_then(|bytes| upload.lock().unwrap().failed_particles(&bytes));
+                        upload.lock().unwrap().result = Some(result);
+                    });
                 });
-            });
         }
         Ok(())
     }
@@ -2165,22 +2585,30 @@ impl Scene {
         &self,
         area: TileArea,
     ) -> impl Future<Output = Result<HashMap<TileCoordinates, TileData>, io::Error>> + 'static {
-        let downloads: Vec<Arc<Mutex<TileDownload>>> = area.iterate_tile_coordinates()
-            .filter_map(|coordinates| self.tile_at(coordinates).map(|tile| {
-                Arc::new(Mutex::new(TileDownload::new(
-                    self.accelerator.as_ref(),
-                    coordinates,
-                    tile,
-                )))
-            })).collect();
+        let downloads: Vec<Arc<Mutex<TileDownload>>> = area
+            .iterate_tile_coordinates()
+            .filter_map(|coordinates| {
+                self.tile_at(coordinates).map(|tile| {
+                    Arc::new(Mutex::new(TileDownload::new(
+                        self.accelerator.as_ref(),
+                        coordinates,
+                        tile,
+                    )))
+                })
+            })
+            .collect();
         let mut error: Option<io::Error> = None;
         if let Err(_) = self.tile_downloads.lock().map(|mut tile_downloads| {
             tile_downloads.extend(downloads.iter().cloned());
-        }) { error = Some(io::Error::other("Tile download queue is unavailable")); }
+        }) {
+            error = Some(io::Error::other("Tile download queue is unavailable"));
+        }
         let mut downloads: Vec<Arc<Mutex<TileDownload>>> = downloads;
         let mut tile_data: HashMap<TileCoordinates, TileData> = HashMap::new();
         poll_fn(move |context| {
-            if let Some(error) = error.take() { return std::task::Poll::Ready(Err(error)); }
+            if let Some(error) = error.take() {
+                return std::task::Poll::Ready(Err(error));
+            }
             let mut index: usize = 0;
             while index < downloads.len() {
                 let mut download: std::sync::MutexGuard<TileDownload> =
@@ -2211,32 +2639,43 @@ impl Scene {
         let mut error: Option<io::Error> = None;
         let mut uploads: Vec<Arc<Mutex<TileUpload>>> = Vec::new();
         for coordinates in area.iterate_tile_coordinates() {
-            if self.tile_at(coordinates).is_none() { continue; }
+            if self.tile_at(coordinates).is_none() {
+                continue;
+            }
             match self.chunks.get(&coordinates.chunk_coordinates()) {
                 Some(ChunkEntry::Active { chunk, .. }) => match chunk.get_tile(coordinates) {
-                    Ok(tile_data) => uploads.push(Arc::new(Mutex::new(
-                        TileUpload::new(coordinates, tile_data)
-                    ))),
+                    Ok(tile_data) => uploads.push(Arc::new(Mutex::new(TileUpload::new(
+                        coordinates,
+                        tile_data,
+                    )))),
                     Err(()) => {
-                        error = Some(io::Error::new(io::ErrorKind::InvalidInput,
-                                                    "Tile is not in its active chunk",
+                        error = Some(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "Tile is not in its active chunk",
                         ));
                         break;
                     }
                 },
                 _ => {
-                    error = Some(io::Error::new(io::ErrorKind::NotFound,
-                                                "Tile chunk is not active",
+                    error = Some(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        "Tile chunk is not active",
                     ));
                     break;
                 }
             }
         }
-        if error.is_none() && let Err(_) = self.tile_uploads.lock().map(|mut tile_uploads| {
-            tile_uploads.extend(uploads.iter().cloned());
-        }) { error = Some(io::Error::other("Tile upload queue is unavailable")); }
+        if error.is_none()
+            && let Err(_) = self.tile_uploads.lock().map(|mut tile_uploads| {
+                tile_uploads.extend(uploads.iter().cloned());
+            })
+        {
+            error = Some(io::Error::other("Tile upload queue is unavailable"));
+        }
         poll_fn(move |context| {
-            if let Some(error) = error.take() { return std::task::Poll::Ready(Err(error)); }
+            if let Some(error) = error.take() {
+                return std::task::Poll::Ready(Err(error));
+            }
             let mut index: usize = 0;
             while index < uploads.len() {
                 let mut upload: std::sync::MutexGuard<TileUpload> = uploads[index].lock().unwrap();
@@ -2261,9 +2700,9 @@ impl Scene {
         // bind every world coordinate to its physical slot under the old ring mapping
         let mut downloads: Vec<Arc<Mutex<TileDownload>>> = Vec::new();
         for coordinates in area.iterate_tile_coordinates() {
-            let tile: Tile = self.tile_at(coordinates).ok_or_else(|| {
-                io::Error::other("Outgoing tile is outside the old GPU buffer")
-            })?;
+            let tile: Tile = self
+                .tile_at(coordinates)
+                .ok_or_else(|| io::Error::other("Outgoing tile is outside the old GPU buffer"))?;
             downloads.push(Arc::new(Mutex::new(TileDownload::new(
                 self.accelerator.as_ref(),
                 coordinates,
@@ -2271,9 +2710,10 @@ impl Scene {
             ))));
         }
         // share the existing copy and deserialization path while retaining internal ownership
-        self.tile_downloads.lock().map_err(|_| {
-            io::Error::other("Tile download queue is unavailable")
-        })?.extend(downloads.iter().cloned());
+        self.tile_downloads
+            .lock()
+            .map_err(|_| io::Error::other("Tile download queue is unavailable"))?
+            .extend(downloads.iter().cloned());
         self.outgoing_tile_downloads.extend(downloads);
         Ok(())
     }
@@ -2281,10 +2721,13 @@ impl Scene {
     /// Returns whether an area contains an outgoing tile awaiting download
     fn tile_download_pending_in(&self, area: TileArea) -> Result<bool, io::Error> {
         for download in &self.outgoing_tile_downloads {
-            let coordinates: TileCoordinates = download.lock().map_err(|_| {
-                io::Error::other("Outgoing tile download is unavailable")
-            })?.coordinates;
-            if area.contains(coordinates) { return Ok(true); }
+            let coordinates: TileCoordinates = download
+                .lock()
+                .map_err(|_| io::Error::other("Outgoing tile download is unavailable"))?
+                .coordinates;
+            if area.contains(coordinates) {
+                return Ok(true);
+            }
         }
         Ok(false)
     }
@@ -2295,10 +2738,13 @@ impl Scene {
         coordinates: TileCoordinates,
     ) -> Result<bool, io::Error> {
         for download in &self.outgoing_tile_downloads {
-            let tile_coordinates: TileCoordinates = download.lock().map_err(|_| {
-                io::Error::other("Outgoing tile download is unavailable")
-            })?.coordinates;
-            if tile_coordinates.chunk_coordinates() == coordinates { return Ok(true); }
+            let tile_coordinates: TileCoordinates = download
+                .lock()
+                .map_err(|_| io::Error::other("Outgoing tile download is unavailable"))?
+                .coordinates;
+            if tile_coordinates.chunk_coordinates() == coordinates {
+                return Ok(true);
+            }
         }
         Ok(false)
     }
@@ -2308,23 +2754,27 @@ impl Scene {
         let mut index: usize = 0;
         while index < self.outgoing_tile_downloads.len() {
             // leave unfinished and failed jobs pinned so stale chunks cannot be saved
-            let mut download: std::sync::MutexGuard<TileDownload> =
-                self.outgoing_tile_downloads[index].lock().map_err(|_| {
-                    io::Error::other("Outgoing tile download is unavailable")
-                })?;
+            let mut download: std::sync::MutexGuard<TileDownload> = self.outgoing_tile_downloads
+                [index]
+                .lock()
+                .map_err(|_| io::Error::other("Outgoing tile download is unavailable"))?;
             let Some(result) = download.result.as_ref() else {
                 index += 1;
                 continue;
             };
             if let Err(error) = result {
-                return Err(io::Error::other(format!("Outgoing tile download failed: {error}")));
+                return Err(io::Error::other(format!(
+                    "Outgoing tile download failed: {error}"
+                )));
             }
             let coordinates: TileCoordinates = download.coordinates;
             if !matches!(
                 self.chunks.get(&coordinates.chunk_coordinates()),
                 Some(ChunkEntry::Active { .. }),
             ) {
-                return Err(io::Error::other("Outgoing tile download chunk is not active"));
+                return Err(io::Error::other(
+                    "Outgoing tile download chunk is not active",
+                ));
             }
             let tile_data: TileData = download.result.take().unwrap().unwrap();
             drop(download);
@@ -2332,7 +2782,9 @@ impl Scene {
             // replace the stale persistence copy and route saving through normal dirty handling
             let Some(ChunkEntry::Active { chunk, is_dirty }) =
                 self.chunks.get_mut(&coordinates.chunk_coordinates())
-            else { unreachable!(); };
+            else {
+                unreachable!();
+            };
             chunk.set_tile(coordinates, tile_data).map_err(|_| {
                 io::Error::other("Outgoing tile download is outside its active chunk")
             })?;
@@ -2348,20 +2800,28 @@ impl Scene {
         let mut downloads_started: Vec<(Arc<Mutex<TileDownload>>, wgpu::Buffer)> = Vec::new();
         let mut command_encoder: Option<wgpu::CommandEncoder> = None;
         {
-            let downloads = self.tile_downloads.lock().map_err(|_| {
-                io::Error::other("Tile download queue is unavailable")
-            })?;
+            let downloads = self
+                .tile_downloads
+                .lock()
+                .map_err(|_| io::Error::other("Tile download queue is unavailable"))?;
             // process each incomplete download
             for download in downloads.iter() {
                 let mut state: std::sync::MutexGuard<TileDownload> = download.lock().unwrap();
-                if state.result.is_some() { continue; }
-                if state.is_started { continue; }
+                if state.result.is_some() {
+                    continue;
+                }
+                if state.is_started {
+                    continue;
+                }
                 let tile: Tile = state.physical_tile;
-                let command_encoder: &mut wgpu::CommandEncoder = command_encoder.get_or_insert_with(
-                    || self.accelerator.wgpu_device().create_command_encoder(
-                        &wgpu::CommandEncoderDescriptor { label: Some("tile_downloads_submit") },
-                    )
-                );
+                let command_encoder: &mut wgpu::CommandEncoder = command_encoder
+                    .get_or_insert_with(|| {
+                        self.accelerator.wgpu_device().create_command_encoder(
+                            &wgpu::CommandEncoderDescriptor {
+                                label: Some("tile_downloads_submit"),
+                            },
+                        )
+                    });
                 command_encoder.copy_buffer_to_buffer(
                     self.cellular_material_identifiers.wgpu_buffer(),
                     tile.0 as u64 * TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
@@ -2388,22 +2848,25 @@ impl Scene {
             }
         }
         if let Some(command_encoder) = command_encoder {
-            self.accelerator.wgpu_queue().submit(Some(command_encoder.finish()));
+            self.accelerator
+                .wgpu_queue()
+                .submit(Some(command_encoder.finish()));
             // submit the encoded copies and register their readback callbacks
             for (download, buffer) in downloads_started {
                 let mapped_buffer: wgpu::Buffer = buffer.clone();
-                buffer.slice(..).map_async(wgpu::MapMode::Read, move |result| {
-                    let result: Result<TileData, io::Error> = match result {
-                        Ok(()) => {
-                            match mapped_buffer.slice(..).get_mapped_range() {
+                buffer
+                    .slice(..)
+                    .map_async(wgpu::MapMode::Read, move |result| {
+                        let result: Result<TileData, io::Error> = match result {
+                            Ok(()) => match mapped_buffer.slice(..).get_mapped_range() {
                                 Ok(mapped_data) => {
-                                    let mut material_data: &[u8] = &mapped_data[..
-                                        TileData::CELL_FIELD_SERIALIZED_SIZE];
-                                    let mut appearance_data: &[u8] = &mapped_data[
-                                        TileData::CELL_FIELD_SERIALIZED_SIZE..
-                                            TileData::CELL_FIELD_SERIALIZED_SIZE * 2];
-                                    let mut integrity_data: &[u8] = &mapped_data[
-                                        TileData::CELL_FIELD_SERIALIZED_SIZE * 2..];
+                                    let mut material_data: &[u8] =
+                                        &mapped_data[..TileData::CELL_FIELD_SERIALIZED_SIZE];
+                                    let mut appearance_data: &[u8] = &mapped_data
+                                        [TileData::CELL_FIELD_SERIALIZED_SIZE
+                                            ..TileData::CELL_FIELD_SERIALIZED_SIZE * 2];
+                                    let mut integrity_data: &[u8] =
+                                        &mapped_data[TileData::CELL_FIELD_SERIALIZED_SIZE * 2..];
                                     let tile_data: Result<TileData, io::Error> =
                                         TileData::deserialize_fields(
                                             &mut material_data,
@@ -2418,16 +2881,17 @@ impl Scene {
                                     mapped_buffer.unmap();
                                     Err(io::Error::other(error.to_string()))
                                 }
-                            }
+                            },
+                            Err(_) => Err(io::Error::other("Tile download failed")),
+                        };
+                        let mut download: std::sync::MutexGuard<TileDownload> =
+                            download.lock().unwrap();
+                        download.result = Some(result);
+                        download.is_complete = true;
+                        if let Some(waker) = download.waker.take() {
+                            waker.wake();
                         }
-                        Err(_) => Err(io::Error::other("Tile download failed")),
-                    };
-                    let mut download: std::sync::MutexGuard<TileDownload> =
-                        download.lock().unwrap();
-                    download.result = Some(result);
-                    download.is_complete = true;
-                    if let Some(waker) = download.waker.take() { waker.wake(); }
-                });
+                    });
             }
         }
         Ok(())
@@ -2435,29 +2899,35 @@ impl Scene {
 
     /// Removes completed GPU tile downloads
     fn tile_downloads_clean(&self) -> Result<(), io::Error> {
-        self.tile_downloads.lock().map_err(|_| {
-            io::Error::other("Tile download queue is unavailable")
-        })?.retain(|download| !download.lock().unwrap().is_complete);
+        self.tile_downloads
+            .lock()
+            .map_err(|_| io::Error::other("Tile download queue is unavailable"))?
+            .retain(|download| !download.lock().unwrap().is_complete);
         Ok(())
     }
 
     /// Submits queued GPU tile uploads
     fn tile_uploads_submit(&self) -> Result<(), io::Error> {
         // acquire the pending upload queue
-        let uploads = self.tile_uploads.lock().map_err(|_| {
-            io::Error::other("Tile upload queue is unavailable")
-        })?;
+        let uploads = self
+            .tile_uploads
+            .lock()
+            .map_err(|_| io::Error::other("Tile upload queue is unavailable"))?;
         // process each incomplete upload
         for upload in uploads.iter() {
             let mut state: std::sync::MutexGuard<TileUpload> = upload.lock().unwrap();
-            if state.result.is_some() { continue; }
+            if state.result.is_some() {
+                continue;
+            }
             let Some(tile) = self.tile_at(state.coordinates) else {
                 state.result = Some(Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     "Tile is outside the GPU buffer",
                 )));
                 state.is_complete = true;
-                if let Some(waker) = state.waker.take() { waker.wake(); }
+                if let Some(waker) = state.waker.take() {
+                    waker.wake();
+                }
                 continue;
             };
             self.accelerator.wgpu_queue().write_buffer(
@@ -2487,44 +2957,38 @@ impl Scene {
             );
             state.result = Some(Ok(()));
             state.is_complete = true;
-            if let Some(waker) = state.waker.take() { waker.wake(); }
+            if let Some(waker) = state.waker.take() {
+                waker.wake();
+            }
         }
         Ok(())
     }
 
     /// Removes completed GPU tile uploads
     fn tile_uploads_clean(&self) -> Result<(), io::Error> {
-        self.tile_uploads.lock().map_err(|_| {
-            io::Error::other("Tile upload queue is unavailable")
-        })?.retain(|upload| !upload.lock().unwrap().is_complete);
+        self.tile_uploads
+            .lock()
+            .map_err(|_| io::Error::other("Tile upload queue is unavailable"))?
+            .retain(|upload| !upload.lock().unwrap().is_complete);
         Ok(())
     }
-
 }
 
 impl Drop for Scene {
-
     fn drop(&mut self) {
         self.cellular_material_identifiers.free();
         self.cellular_appearances.free();
         self.cellular_integrities.free();
         self.fluid_sample_buffer.destroy();
     }
-
 }
 
 #[cfg(test)]
 mod tests {
 
     use super::*;
-    use engine_graphics::{
-        Color,
-        MaterialAppearance,
-    };
-    use std::{
-        sync::mpsc,
-        time::Instant,
-    };
+    use engine_graphics::{Color, MaterialAppearance};
+    use std::{sync::mpsc, time::Instant};
 
     #[test]
     fn gas_leaves_and_returns_through_ring_streaming() {
@@ -2550,7 +3014,8 @@ mod tests {
                 buffer_size: 2,
                 streaming_batch_size: 1,
             },
-        ).unwrap();
+        )
+        .unwrap();
         let coordinates: CellCoordinates = CellCoordinates { x: -16, y: 0 };
         let mut edits: SceneEditBatch = SceneEditBatch::new();
         edits.place_material(vapor, CellularAppearance::NEUTRAL, vec![coordinates]);
@@ -2558,8 +3023,10 @@ mod tests {
         scene.shift_to(TileCoordinates { x: 1, y: 0 }).unwrap();
         scene.origin_target = scene.origin;
         let started: Instant = Instant::now();
-        while !scene.gas_downloads.is_empty() || !scene.fluid_downloads.is_empty() ||
-                !scene.outgoing_tile_downloads.is_empty() {
+        while !scene.gas_downloads.is_empty()
+            || !scene.fluid_downloads.is_empty()
+            || !scene.outgoing_tile_downloads.is_empty()
+        {
             scene.update(Duration::ZERO, false).unwrap();
             assert!(started.elapsed() < Duration::from_secs(5));
             std::thread::yield_now();
@@ -2567,21 +3034,27 @@ mod tests {
         scene.shift_to(TileCoordinates { x: 0, y: 0 }).unwrap();
 
         let area: TileArea = TileArea::new(TileCoordinates { x: -2, y: 0 }, 1, 1);
-        let download: GasDownload = GasDownload::new(
-            accelerator.as_ref(), area, 64, scene.gases.gas_count(),
-        );
+        let download: GasDownload =
+            GasDownload::new(accelerator.as_ref(), area, 64, scene.gases.gas_count());
         let buffered_area: TileArea = scene.area_buffered();
         let dimensions: [u16; 2] = buffered_area.dimensions();
         scene.gases.export(
-            accelerator.as_ref(), &download, buffered_area.origin(),
-            dimensions[0], dimensions[1], scene.tiles_ring_offset_x,
+            accelerator.as_ref(),
+            &download,
+            buffered_area.origin(),
+            dimensions[0],
+            dimensions[1],
+            scene.tiles_ring_offset_x,
             scene.tiles_ring_offset_y,
         );
         let byte_count: u64 = 64 * u64::from(4 + scene.gases.gas_count()) * 4;
         let (sender, receiver) = mpsc::sync_channel(1);
-        download.buffer.slice(0..byte_count).map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).unwrap();
-        });
+        download
+            .buffer
+            .slice(0..byte_count)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                sender.send(result).unwrap();
+            });
         let started: Instant = Instant::now();
         loop {
             accelerator.poll().unwrap();
@@ -2592,13 +3065,20 @@ mod tests {
             assert!(started.elapsed() < Duration::from_secs(5));
             std::thread::yield_now();
         }
-        let mapped = download.buffer.slice(0..byte_count).get_mapped_range().unwrap();
+        let mapped = download
+            .buffer
+            .slice(0..byte_count)
+            .get_mapped_range()
+            .unwrap();
         let bytes: Vec<u8> = mapped.to_vec();
         drop(mapped);
         download.buffer.unmap();
         let restored: Vec<ChunkGasCell> = GasDownload::deserialize(&bytes, area, &[vapor]).unwrap();
-        assert!(restored.iter().any(|cell| cell.coordinates == coordinates &&
-            cell.species == vec![(vapor, 1.0)]));
+        assert!(
+            restored
+                .iter()
+                .any(|cell| cell.coordinates == coordinates && cell.species == vec![(vapor, 1.0)])
+        );
     }
 
     #[test]
@@ -2624,7 +3104,8 @@ mod tests {
                 buffer_size: 2,
                 streaming_batch_size: 1,
             },
-        ).unwrap();
+        )
+        .unwrap();
         let mut edits: SceneEditBatch = SceneEditBatch::new();
         edits.place_material(
             sand,
@@ -2657,13 +3138,18 @@ mod tests {
             &accelerator,
             materials,
             SceneSimulationConfiguration {
-                gravity: [0.0, -8.0], width: 1, height: 1,
-                buffer_size: 2, streaming_batch_size: 1,
+                gravity: [0.0, -8.0],
+                width: 1,
+                height: 1,
+                buffer_size: 2,
+                streaming_batch_size: 1,
             },
-        ).unwrap();
-        let cells: Vec<CellCoordinates> = (2..=5).flat_map(|x| {
-            (3..=4).map(move |y| CellCoordinates { x, y })
-        }).chain((0..=2).map(|y| CellCoordinates { x: 3, y })).collect();
+        )
+        .unwrap();
+        let cells: Vec<CellCoordinates> = (2..=5)
+            .flat_map(|x| (3..=4).map(move |y| CellCoordinates { x, y }))
+            .chain((0..=2).map(|y| CellCoordinates { x: 3, y }))
+            .collect();
         let mut edits = SceneEditBatch::new();
         edits.place_material(stone, CellularAppearance::NEUTRAL, cells.clone());
         scene.apply_edits_immediate(&mut edits).unwrap();
@@ -2683,26 +3169,45 @@ mod tests {
             static_masks: static_masks.into_boxed_slice(),
             dynamic_masks: vec![[0, 0]; 25].into_boxed_slice(),
         };
-        scene.detach_unanchored_static_components(&mut baseline.clone()).unwrap();
+        scene
+            .detach_unanchored_static_components(&mut baseline.clone())
+            .unwrap();
         assert!(scene.rigid_cellular_bodies.is_empty());
         let mut separated = baseline.clone();
         separated.sequence = 1;
         separated.clear_static_cell(3, 2);
-        scene.detach_unanchored_static_components(&mut separated).unwrap();
+        scene
+            .detach_unanchored_static_components(&mut separated)
+            .unwrap();
         assert!(scene.rigid_cellular_bodies.len() == 1);
         assert!(scene.rigid_cellular_bodies[0].cells.len() == 8);
-        let initial_y = scene.physics_world.rigid_cellular_body_state(
-            &scene.rigid_cellular_bodies[0],
-        ).unwrap().translation[1];
+        let initial_y = scene
+            .physics_world
+            .rigid_cellular_body_state(&scene.rigid_cellular_bodies[0])
+            .unwrap()
+            .translation[1];
         scene.physics_world.update_cellular_snapshot(separated);
-        for _ in 0..8 { scene.physics_world.step(scene.gravity, 1.0 / TICK_RATE as f32); }
-        let state = scene.physics_world.rigid_cellular_body_state(
-            &scene.rigid_cellular_bodies[0],
-        ).unwrap();
+        for _ in 0..8 {
+            scene
+                .physics_world
+                .step(scene.gravity, 1.0 / TICK_RATE as f32);
+        }
+        let state = scene
+            .physics_world
+            .rigid_cellular_body_state(&scene.rigid_cellular_bodies[0])
+            .unwrap();
         assert!(state.translation[1] < initial_y);
         scene.cellular_physics_body_proxy.rasterize(
-            accelerator.as_ref(), TileCoordinates { x: -2, y: -2 }, 5, 5, 0, 0,
-            scene.gravity, &[], &scene.rigid_cellular_bodies, &[state],
+            accelerator.as_ref(),
+            TileCoordinates { x: -2, y: -2 },
+            5,
+            5,
+            0,
+            0,
+            scene.gravity,
+            &[],
+            &scene.rigid_cellular_bodies,
+            &[state],
             scene.rigid_cellular_topology_revision,
         );
         accelerator.poll().unwrap();
@@ -2713,22 +3218,61 @@ mod tests {
         let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
         let accelerator = Arc::new(Accelerator::new().unwrap());
         let mut materials = MaterialRegistry::new();
-        let stone = materials.register(Material::CellularStatic { name: "Stone".into(),
-            graphics: MaterialAppearance::from_color(Color::new_rgb(1, 1, 1)), mass: 2.0,
-            pressure_ignore_threshold: 1.0, default_integrity: 1.0, debris_material: None,
-            debris_yield_rate: 0.0, pressure_transmission: 1.0, friction: 0.7, restitution: 0.05 });
-        let sand = materials.register(Material::CellularDynamic { name: "Sand".into(),
-            graphics: MaterialAppearance::from_color(Color::new_rgb(1, 1, 1)), mass: 1.0,
-            pressure_transmission: 1.0, friction: 0.5, restitution: 0.0 });
-        let mut scene = Scene::new(&accelerator, materials, SceneSimulationConfiguration {
-            gravity: [0.0, -8.0], width: 4, height: 4, buffer_size: 2, streaming_batch_size: 1 }).unwrap();
+        let stone = materials.register(Material::CellularStatic {
+            name: "Stone".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(1, 1, 1)),
+            mass: 2.0,
+            pressure_ignore_threshold: 1.0,
+            default_integrity: 1.0,
+            debris_material: None,
+            debris_yield_rate: 0.0,
+            pressure_transmission: 1.0,
+            friction: 0.7,
+            restitution: 0.05,
+        });
+        let sand = materials.register(Material::CellularDynamic {
+            name: "Sand".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(1, 1, 1)),
+            mass: 1.0,
+            pressure_transmission: 1.0,
+            friction: 0.5,
+            restitution: 0.0,
+        });
+        let mut scene = Scene::new(
+            &accelerator,
+            materials,
+            SceneSimulationConfiguration {
+                gravity: [0.0, -8.0],
+                width: 4,
+                height: 4,
+                buffer_size: 2,
+                streaming_batch_size: 1,
+            },
+        )
+        .unwrap();
         let mut edits = SceneEditBatch::new();
         edits.place_rigid_body(vec![
-            SceneEditCellPlacement { coordinates: CellCoordinates { x: 10, y: 20 }, material_identifier: stone, appearance: CellularAppearance(3) },
-            SceneEditCellPlacement { coordinates: CellCoordinates { x: 11, y: 20 }, material_identifier: stone, appearance: CellularAppearance(4) },
-            SceneEditCellPlacement { coordinates: CellCoordinates { x: 10, y: 20 }, material_identifier: stone, appearance: CellularAppearance(5) },
+            SceneEditCellPlacement {
+                coordinates: CellCoordinates { x: 10, y: 20 },
+                material_identifier: stone,
+                appearance: CellularAppearance(3),
+            },
+            SceneEditCellPlacement {
+                coordinates: CellCoordinates { x: 11, y: 20 },
+                material_identifier: stone,
+                appearance: CellularAppearance(4),
+            },
+            SceneEditCellPlacement {
+                coordinates: CellCoordinates { x: 10, y: 20 },
+                material_identifier: stone,
+                appearance: CellularAppearance(5),
+            },
         ]);
-        edits.place_rigid_body(vec![SceneEditCellPlacement { coordinates: CellCoordinates { x: 12, y: 20 }, material_identifier: sand, appearance: CellularAppearance::NEUTRAL }]);
+        edits.place_rigid_body(vec![SceneEditCellPlacement {
+            coordinates: CellCoordinates { x: 12, y: 20 },
+            material_identifier: sand,
+            appearance: CellularAppearance::NEUTRAL,
+        }]);
         scene.queue_edits(edits);
         scene.update(Duration::ZERO, false).unwrap();
         assert_eq!(scene.rigid_cellular_bodies.len(), 1);
@@ -2739,5 +3283,4 @@ mod tests {
         assert_eq!(body.cells[0].2.0, 5);
         assert_eq!(scene.rigid_cellular_topology_revision, 1);
     }
-
 }

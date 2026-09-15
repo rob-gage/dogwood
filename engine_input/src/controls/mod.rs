@@ -1,5 +1,5 @@
-mod input_translator;
 mod control_state;
+mod input_translator;
 mod simple_input_translator;
 
 pub use control_state::ControlState;

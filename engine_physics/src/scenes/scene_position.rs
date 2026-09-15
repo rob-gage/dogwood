@@ -16,7 +16,6 @@ pub struct ScenePosition {
 }
 
 impl ScenePosition {
-
     /// Interpolates from a previous fixed-tick position to this position
     pub(crate) fn interpolated(self, previous: Self, interpolation: f32) -> Self {
         let interpolation: f32 = interpolation.clamp(0.0, 1.0);
@@ -29,10 +28,12 @@ impl ScenePosition {
         let tile_x: f32 = x.floor();
         let tile_y: f32 = y.floor();
         Self {
-            tile_coordinates: TileCoordinates { x: tile_x as i32, y: tile_y as i32 },
+            tile_coordinates: TileCoordinates {
+                x: tile_x as i32,
+                y: tile_y as i32,
+            },
             x_offset: x - tile_x,
             y_offset: y - tile_y,
         }
     }
-
 }

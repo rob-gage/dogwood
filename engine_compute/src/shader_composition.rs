@@ -1,10 +1,6 @@
 // Copyright Rob Gage 2026
 
-use naga_oil::compose::{
-    ComposableModuleDescriptor,
-    Composer,
-    NagaModuleDescriptor,
-};
+use naga_oil::compose::{ComposableModuleDescriptor, Composer, NagaModuleDescriptor};
 use std::borrow::Cow;
 
 /// Composes one root shader with Dogwood's focused utility modules
