@@ -16,13 +16,7 @@ use crate::{
     },
     scenes::{Scene, ScenePosition, SceneVelocity},
 };
-use rapier2d::{
-    control::{CharacterLength, KinematicCharacterController},
-    prelude::{
-        Pose,
-        Vector,
-    },
-};
+use rapier2d::prelude::Vector;
 
 const CELLULAR_DRIVE_TRANSFER: f32 = 0.08;
 
@@ -98,7 +92,7 @@ pub trait SceneSimulation {
         }
     }
 
-    /// Resolves one walking pawn's desired motion with Rapier's character controller
+    /// Resolves one walking pawn's desired motion with direct scene collision queries
     fn simulate_actor_pawn_walking(
         control: &engine_input::ControlState,
         configuration: &ActorPawnWalkingConfiguration,
@@ -121,19 +115,6 @@ pub trait SceneSimulation {
         let tangent: Vector = Vector::new(up.y, -up.x);
         let was_grounded: bool = state.grounded;
         let jump_requested: bool = control.locomotion_y > 0.0 && state.grounded;
-        let controller: KinematicCharacterController = KinematicCharacterController {
-            up,
-            // a cell is 1/8 tile; this is large enough for stable contact without
-            // visibly separating the pawn from cellular terrain
-            offset: CharacterLength::Absolute(1.0 / 1024.0),
-            max_slope_climb_angle: configuration.maximum_slope_angle,
-            min_slope_slide_angle: configuration.maximum_slope_angle,
-            snap_to_ground: Some(CharacterLength::Absolute(1.0 / 8.0)),
-            autostep: None,
-            // clear the contact offset in one iteration before continuing sideways
-            normal_nudge_factor: 1.0 / 1024.0,
-            ..Default::default()
-        };
         let world_x: f32 = position.tile_coordinates.x as f32 + position.x_offset;
         let world_y: f32 = position.tile_coordinates.y as f32 + position.y_offset;
         let previous_up_velocity: f32 = velocity.x * up.x + velocity.y * up.y;
@@ -149,7 +130,6 @@ pub trait SceneSimulation {
                 travel_direction != 0.0 {
             Self::probe_actor_pawn_walking_surface(
                 physics_world,
-                &controller,
                 collision_shape,
                 Vector::new(world_x, world_y),
                 tangent,
@@ -162,26 +142,21 @@ pub trait SceneSimulation {
         let stationary_support: bool = was_grounded && !jump_requested &&
             travel_direction == 0.0 && (
                 Self::probe_actor_pawn_walking_surface(
-                    physics_world, &controller, collision_shape,
+                    physics_world, collision_shape,
                     Vector::new(world_x, world_y), tangent, up, 1.0,
                     configuration.maximum_slope_angle, delta_time,
                 ).is_some() ||
                 Self::probe_actor_pawn_walking_surface(
-                    physics_world, &controller, collision_shape,
+                    physics_world, collision_shape,
                     Vector::new(world_x, world_y), tangent, up, -1.0,
                     configuration.maximum_slope_angle, delta_time,
                 ).is_some() || {
-                    let support_controller = KinematicCharacterController {
-                        snap_to_ground: None,
-                        ..controller.clone()
-                    };
                     let mut supported = false;
-                    physics_world.move_character(
-                        &support_controller, delta_time, collision_shape,
-                        &Pose::translation(world_x, world_y), -up * (1.0 / 8.0),
-                        |normal| { supported |= normal.dot(up) > 1e-4; },
-                    );
-                    supported
+                    let (_, grounded) = physics_world.move_actor(collision_shape,
+                        Vector::new(world_x, world_y), -up * (1.0 / 8.0), up,
+                        configuration.maximum_slope_angle.cos(), 0.0, None,
+                        &mut |normal| { supported |= normal.dot(up) > 1e-4; });
+                    supported || grounded
                 }
             );
         let locomotion_direction: Vector = surface_direction.unwrap_or(tangent * travel_direction);
@@ -224,65 +199,19 @@ pub trait SceneSimulation {
         let mut contacted_walkable_surface: bool = false;
         let walkable_normal: f32 = configuration.maximum_slope_angle.cos();
         let desired_translation: Vector = desired_velocity * delta_time;
-        let mut resolved_translation: Vector = Vector::ZERO;
-        let mut collision_grounded: bool = false;
-        let mut virtual_surface_complete: bool = false;
-        if was_grounded && !jump_requested && surface_direction.is_some() {
-            let surface_controller = KinematicCharacterController {
-                snap_to_ground: None,
-                ..controller.clone()
-            };
-            let tangent_translation: Vector = tangent * desired_translation.dot(tangent);
-            let up_translation: Vector = up * desired_translation.dot(up);
-            let (first, second): (Vector, Vector) = if up_translation.dot(up) > 1e-5 {
-                (up_translation, tangent_translation)
-            } else if up_translation.dot(up) < -1e-5 {
-                (tangent_translation, up_translation)
-            } else {
-                (tangent_translation, Vector::ZERO)
-            };
-            for component in [first, second] {
-                if component.length_squared() < 1e-12 { continue; }
-                let component_movement = physics_world.move_character(
-                    &surface_controller, delta_time, collision_shape,
-                    &Pose::translation(
-                        world_x + resolved_translation.x,
-                        world_y + resolved_translation.y,
-                    ),
-                    component,
-                    |normal| {
-                        let normal_up: f32 = normal.dot(up);
-                        if normal_up >= walkable_normal {
-                            contacted_walkable_surface = true;
-                        } else if normal_up > -walkable_normal {
-                            contacted_wall = true;
-                        }
-                    },
-                );
-                collision_grounded |= component_movement.grounded;
-                resolved_translation += component_movement.translation;
-            }
-            virtual_surface_complete = (resolved_translation - desired_translation)
-                .length_squared() <= 4.0 / (1024.0 * 1024.0);
-        } else {
-            let movement = physics_world.move_character(
-                &controller,
-                delta_time,
-                collision_shape,
-                &Pose::translation(world_x, world_y),
-                desired_translation,
-                |normal| {
-                    let normal_up: f32 = normal.dot(up);
-                    if normal_up >= walkable_normal {
-                        contacted_walkable_surface = true;
-                    } else if normal_up > -walkable_normal {
-                        contacted_wall = true;
-                    }
-                },
-            );
-            resolved_translation = movement.translation;
-            collision_grounded = movement.grounded;
-        }
+        let virtual_surface = was_grounded && !jump_requested && surface_direction.is_some();
+        let (resolved_translation, collision_grounded) = physics_world.move_actor(
+            collision_shape, Vector::new(world_x, world_y), desired_translation, up,
+            walkable_normal, if virtual_surface { 0.0 } else { 1.0 / 8.0 },
+            surface_direction.map(|_| -tangent * travel_direction),
+            &mut |normal| {
+                let normal_up: f32 = normal.dot(up);
+                if normal_up >= walkable_normal { contacted_walkable_surface = true; }
+                else if normal_up > -walkable_normal { contacted_wall = true; }
+            },
+        );
+        let virtual_surface_complete = virtual_surface && (resolved_translation - desired_translation)
+            .length_squared() <= 4.0 / (1024.0 * 1024.0);
         Self::integrate_actor_position(
             position,
             &SceneVelocity {
@@ -319,7 +248,6 @@ pub trait SceneSimulation {
     /// Estimates a continuous walkable direction from one- and two-cell support samples
     fn probe_actor_pawn_walking_surface(
         physics_world: &ScenePhysicsWorld,
-        controller: &KinematicCharacterController,
         collision_shape: ActorCollisionShape,
         position: Vector,
         tangent: Vector,
@@ -331,11 +259,11 @@ pub trait SceneSimulation {
         let midpoint_run: f32 = 1.0 / 8.0;
         let lookahead_run: f32 = 2.0 / 8.0;
         let midpoint_rise: f32 = Self::probe_actor_pawn_support_rise(
-            physics_world, controller, collision_shape, position, tangent, up, direction,
+            physics_world, collision_shape, position, tangent, up, direction,
             midpoint_run, maximum_slope_angle, delta_time,
         )?;
         let lookahead_rise: f32 = Self::probe_actor_pawn_support_rise(
-            physics_world, controller, collision_shape, position, tangent, up, direction,
+            physics_world, collision_shape, position, tangent, up, direction,
             lookahead_run, maximum_slope_angle, delta_time,
         )?;
         let maximum_midpoint_rise: f32 = midpoint_run * maximum_slope_angle.tan();
@@ -351,7 +279,6 @@ pub trait SceneSimulation {
     /// Measures signed support-height change at one gravity-relative tangent distance
     fn probe_actor_pawn_support_rise(
         physics_world: &ScenePhysicsWorld,
-        controller: &KinematicCharacterController,
         collision_shape: ActorCollisionShape,
         position: Vector,
         tangent: Vector,
@@ -359,41 +286,29 @@ pub trait SceneSimulation {
         direction: f32,
         run: f32,
         maximum_slope_angle: f32,
-        delta_time: f32,
+        _delta_time: f32,
     ) -> Option<f32> {
         let maximum_rise: f32 = run * maximum_slope_angle.tan();
         if !maximum_rise.is_finite() || maximum_rise <= 0.0 { return None; }
-        let probe_controller = KinematicCharacterController {
-            snap_to_ground: None,
-            ..controller.clone()
-        };
         let rise_clearance: f32 = maximum_rise + 1.0 / 8.0;
-        let probe_up = physics_world.move_character(
-            &probe_controller, delta_time, collision_shape, &Pose::translation(position.x, position.y),
-            up * rise_clearance, |_| { },
-        );
-        if probe_up.translation.dot(up) < rise_clearance - 1.0 / 1024.0 { return None; }
-        let raised_position: Vector = position + probe_up.translation;
-        let probe_forward = physics_world.move_character(
-            &probe_controller, delta_time, collision_shape,
-            &Pose::translation(raised_position.x, raised_position.y),
-            tangent * direction * run, |_| { },
-        );
-        if probe_forward.translation.dot(tangent) * direction < run - 1.0 / 1024.0 {
+        let (probe_up, _) = physics_world.move_actor(collision_shape, position,
+            up * rise_clearance, up, maximum_slope_angle.cos(), 0.0, None, &mut |_| { });
+        if probe_up.dot(up) < rise_clearance - 1.0 / 1024.0 { return None; }
+        let raised_position: Vector = position + probe_up;
+        let (probe_forward, _) = physics_world.move_actor(collision_shape, raised_position,
+            tangent * direction * run, up, maximum_slope_angle.cos(), 0.0, None, &mut |_| { });
+        if probe_forward.dot(tangent) * direction < run - 1.0 / 1024.0 {
             return None;
         }
-        let forward_position: Vector = raised_position + probe_forward.translation;
+        let forward_position: Vector = raised_position + probe_forward;
         let mut found_support: bool = false;
-        let probe_down = physics_world.move_character(
-            &probe_controller, delta_time, collision_shape,
-            &Pose::translation(forward_position.x, forward_position.y),
-            -up * (rise_clearance + maximum_rise + 1.0 / 8.0),
-            |normal| {
+        let (probe_down, grounded) = physics_world.move_actor(collision_shape, forward_position,
+            -up * (rise_clearance + maximum_rise + 1.0 / 8.0), up,
+            maximum_slope_angle.cos(), 0.0, None, &mut |normal| {
                 if normal.dot(up) > 1e-4 { found_support = true; }
-            },
-        );
-        if !found_support && !probe_down.grounded { return None; }
-        Some((probe_up.translation + probe_forward.translation + probe_down.translation).dot(up))
+            });
+        if !found_support && !grounded { return None; }
+        Some((probe_up + probe_forward + probe_down).dot(up))
     }
 
     /// Advances one swimmer relative to its asynchronously sampled surrounding fluid
@@ -441,36 +356,23 @@ pub trait SceneSimulation {
         velocity.x = resolved_velocity.x;
         velocity.y = resolved_velocity.y;
 
-        let controller: KinematicCharacterController = KinematicCharacterController {
-            up,
-            offset: CharacterLength::Absolute(1.0 / 1024.0),
-            snap_to_ground: None,
-            autostep: None,
-            normal_nudge_factor: 1.0 / 1024.0,
-            ..Default::default()
-        };
         let world_x: f32 = position.tile_coordinates.x as f32 + position.x_offset;
         let world_y: f32 = position.tile_coordinates.y as f32 + position.y_offset;
-        let movement = physics_world.move_character(
-            &controller,
-            delta_time,
-            collision_shape,
-            &Pose::translation(world_x, world_y),
-            Vector::new(velocity.x, velocity.y) * delta_time,
-            |normal| {
+        let (movement, _) = physics_world.move_actor(collision_shape,
+            Vector::new(world_x, world_y), Vector::new(velocity.x, velocity.y) * delta_time,
+            up, 1.0, 0.0, None, &mut |normal| {
                 let normal_speed: f32 = velocity.x * normal.x +
                     velocity.y * normal.y;
                 if normal_speed < 0.0 {
                     velocity.x -= normal.x * normal_speed;
                     velocity.y -= normal.y * normal_speed;
                 }
-            },
-        );
+            });
         Self::integrate_actor_position(
             position,
             &SceneVelocity {
-                x: movement.translation.x,
-                y: movement.translation.y,
+                x: movement.x,
+                y: movement.y,
             },
             1.0,
         );
@@ -536,18 +438,8 @@ mod tests {
     fn probe_staircase(height: impl Fn(i32) -> i32) -> Option<Vector> {
         let mut physics = ScenePhysicsWorld::new();
         physics.update_cellular_terrain(staircase_snapshot(height));
-        let controller = KinematicCharacterController {
-            up: Vector::Y,
-            offset: CharacterLength::Absolute(1.0 / 1024.0),
-            max_slope_climb_angle: 50.0_f32.to_radians(),
-            min_slope_slide_angle: 50.0_f32.to_radians(),
-            snap_to_ground: Some(CharacterLength::Absolute(1.0 / 8.0)),
-            autostep: None,
-            ..Default::default()
-        };
         Scene::probe_actor_pawn_walking_surface(
             &physics,
-            &controller,
             ActorCollisionShape::Rectangle { width: 0.05, height: 0.5 },
             Vector::new(0.0625, 0.251),
             Vector::X,

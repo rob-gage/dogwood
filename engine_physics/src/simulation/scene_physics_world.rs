@@ -7,11 +7,6 @@ use super::{
 };
 use crate::actors::ActorCollisionShape;
 use rapier2d::{
-    control::{
-        CharacterLength,
-        EffectiveCharacterMovement,
-        KinematicCharacterController,
-    },
     prelude::{
         CCDSolver,
         ColliderBuilder,
@@ -27,7 +22,10 @@ use rapier2d::{
         Vector,
     },
 };
-use rapier2d::parry::query::{cast_shapes, ShapeCastOptions};
+use rapier2d::{
+    parry::query::{cast_shapes, ShapeCastOptions},
+    pipeline::QueryFilter,
+};
 
 /// Owns the Rapier collision world and its derived cellular terrain
 pub struct ScenePhysicsWorld {
@@ -279,75 +277,46 @@ impl ScenePhysicsWorld {
             .with_filter(Group::ALL & !Group::GROUP_2)
     }
 
-    /// Resolves a character shape's desired translation against the scene collision world
-    pub fn move_character(
-        &self,
-        controller: &KinematicCharacterController,
-        delta_time: f32,
-        shape: ActorCollisionShape,
-        position: &Pose,
-        desired_translation: Vector,
-        mut collisions: impl FnMut(Vector),
-    ) -> EffectiveCharacterMovement {
-        let up = controller.up;
-        let primitive = shape.rapier_shape();
-        let rapier_pose = shape.pose(position.translation, up);
-        let walkable_normal = controller.max_slope_climb_angle.cos();
-        let mut candidate = desired_translation;
-        let mut grounded = false;
-        let mut sliding = false;
-        for _ in 0..3 {
-            let rapier = controller.move_shape(delta_time, &self.rapier.query_pipeline(),
-                primitive.as_ref(), &rapier_pose, candidate, |collision| {
-                    collisions(collision.hit.normal1);
-                });
-            grounded |= rapier.grounded;
-            sliding |= rapier.is_sliding_down_slope;
-            let dynamic = self.resolve_dynamic_cells(shape, position, rapier.translation,
-                1.0 / 1024.0, up, walkable_normal, &mut collisions);
-            grounded |= dynamic.1;
-            if (dynamic.0 - rapier.translation).length_squared() < 1e-10 {
-                candidate = dynamic.0;
-                break;
-            }
-            candidate = dynamic.0;
-        }
-        if desired_translation.dot(up) <= 0.0 {
-            let snap = match controller.snap_to_ground {
-                Some(CharacterLength::Absolute(distance)) => distance,
-                Some(CharacterLength::Relative(scale)) =>
-                    shape.nominal_dimensions()[1] * scale,
-                None => 0.0,
-            };
-            if snap > 0.0 && !grounded {
-                let snap_position = Pose::new(position.translation + candidate, position.rotation.angle());
-                let snapped = self.resolve_dynamic_cells(shape, &snap_position, -up * snap,
-                    1.0 / 1024.0, up, walkable_normal, &mut collisions);
-                if snapped.1 {
-                    candidate += snapped.0;
-                    grounded = true;
-                }
-            }
-        }
-        EffectiveCharacterMovement { translation: candidate, grounded,
-            is_sliding_down_slope: sliding }
-    }
-
-    fn resolve_dynamic_cells(
+    /// Resolves authoritative actor motion against cellular occupancy and non-cellular Rapier bodies.
+    pub(crate) fn move_actor(
         &self,
         shape: ActorCollisionShape,
-        position: &Pose,
+        position: Vector,
         desired: Vector,
-        offset: f32,
         up: Vector,
         walkable_normal: f32,
+        snap_distance: f32,
+        ignored_cell_normal: Option<Vector>,
         collisions: &mut impl FnMut(Vector),
     ) -> (Vector, bool) {
-        let Some(snapshot) = self.cellular_terrain_snapshot.as_ref() else {
-            return (desired, false);
-        };
+        let (mut translation, mut grounded) = self.resolve_actor_translation(
+            shape, position, desired, up, walkable_normal, ignored_cell_normal, collisions,
+        );
+        if snap_distance > 0.0 && desired.dot(up) <= 0.0 && !grounded {
+            let (snap, snapped) = self.resolve_actor_translation(
+                shape, position + translation, -up * snap_distance, up, walkable_normal,
+                None, collisions,
+            );
+            if snapped {
+                translation += snap;
+                grounded = true;
+            }
+        }
+        (translation, grounded)
+    }
+
+    fn resolve_actor_translation(
+        &self,
+        shape: ActorCollisionShape,
+        position: Vector,
+        desired: Vector,
+        up: Vector,
+        walkable_normal: f32,
+        ignored_cell_normal: Option<Vector>,
+        collisions: &mut impl FnMut(Vector),
+    ) -> (Vector, bool) {
+        let offset = 1.0 / 1024.0;
         let primitive = shape.rapier_shape();
-        let start = position.translation;
         let extent = shape.world_extent(up) + Vector::splat(offset);
         let cell = SharedShape::cuboid(1.0 / 16.0, 1.0 / 16.0);
         let mut consumed = Vector::ZERO;
@@ -355,7 +324,7 @@ impl ScenePhysicsWorld {
         let mut grounded = false;
         for _ in 0..4 {
             if remaining.length_squared() < 1e-12 { break; }
-            let from = start + consumed;
+            let from = position + consumed;
             let to = from + remaining;
             let minimum = from.min(to) - extent;
             let maximum = from.max(to) + extent;
@@ -367,10 +336,14 @@ impl ScenePhysicsWorld {
                 compute_impact_geometry_on_penetration: true };
             let mut earliest = 2.0f32;
             let mut normals = [Vector::ZERO; 4];
+            let mut cellular_normals = [false; 4];
             let mut normal_count = 0usize;
             for y in bounds[1]..bounds[3] {
                 for x in bounds[0]..bounds[2] {
-                    if snapshot.is_dynamic_cell_occupied(x, y) != Some(true) { continue; }
+                    let occupied = self.cellular_terrain_snapshot.as_ref().is_some_and(|snapshot|
+                        snapshot.is_static_cell_occupied(x, y) == Some(true) ||
+                        snapshot.is_dynamic_cell_occupied(x, y) == Some(true));
+                    if !occupied { continue; }
                     let cell_pose = Pose::translation(x as f32 / 8.0 + 1.0 / 16.0,
                         y as f32 / 8.0 + 1.0 / 16.0);
                     let Ok(Some(hit)) = cast_shapes(&moving_pose, remaining, primitive.as_ref(),
@@ -383,21 +356,48 @@ impl ScenePhysicsWorld {
                         let normal = moving_pose.rotation * hit.normal2;
                         if !normals[..normal_count].iter().any(|current| current.dot(normal) > 0.999) {
                             normals[normal_count] = normal;
+                            cellular_normals[normal_count] = true;
                             normal_count += 1;
                         }
                     }
+                }
+            }
+            let query = match self.static_cellular_terrain {
+                Some(terrain) => self.rapier.query_pipeline().with_filter(
+                    QueryFilter::default().exclude_collider(terrain)),
+                None => self.rapier.query_pipeline(),
+            };
+            if let Some((_handle, hit)) = query.cast_shape(&moving_pose, remaining,
+                    primitive.as_ref(), options) {
+                if hit.time_of_impact + 1e-4 < earliest {
+                    earliest = hit.time_of_impact;
+                    normal_count = 0;
+                }
+                if (hit.time_of_impact - earliest).abs() <= 1e-4 && normal_count < normals.len() &&
+                        !normals[..normal_count].iter().any(|current| current.dot(hit.normal1) > 0.999) {
+                    normals[normal_count] = hit.normal1;
+                    cellular_normals[normal_count] = false;
+                    normal_count += 1;
                 }
             }
             if earliest > 1.0 { consumed += remaining; break; }
             let advance = remaining * earliest.max(0.0);
             consumed += advance;
             remaining -= advance;
-            for normal in &normals[..normal_count] {
-                collisions(*normal);
+            let mut active_normals = 0usize;
+            for index in 0..normal_count {
+                let normal = normals[index];
+                if cellular_normals[index] && ignored_cell_normal.is_some_and(|ignored|
+                        normal.dot(ignored) > 0.999) {
+                    continue;
+                }
+                active_normals += 1;
+                collisions(normal);
                 grounded |= normal.dot(up) >= walkable_normal;
-                let inward = remaining.dot(*normal);
-                if inward < 0.0 { remaining -= *normal * inward; }
+                let inward = remaining.dot(normal);
+                if inward < 0.0 { remaining -= normal * inward; }
             }
+            if active_normals == 0 { consumed += remaining; break; }
         }
         (consumed, grounded)
     }
@@ -412,10 +412,7 @@ mod tests {
         simulation::CollisionOccupancySnapshot,
         tiles::TileCoordinates,
     };
-    use rapier2d::{
-        control::KinematicCharacterController,
-        prelude::{Pose, Vector},
-    };
+    use rapier2d::prelude::Vector;
 
     #[test]
     fn cellular_terrain_builds_only_static_world_geometry() {
@@ -438,30 +435,28 @@ mod tests {
     }
 
     #[test]
-    fn every_actor_primitive_casts_directly_against_dynamic_cells() {
+    fn every_actor_primitive_casts_directly_against_cellular_occupancy() {
         for shape in [
             ActorCollisionShape::Circle { radius: 0.25 },
             ActorCollisionShape::Capsule { radius: 0.25, height: 0.75 },
             ActorCollisionShape::Rectangle { width: 0.5, height: 0.75 },
         ] {
-            let mut physics = ScenePhysicsWorld::new();
-            physics.update_cellular_terrain(CollisionOccupancySnapshot {
-                sequence: 0,
-                origin: TileCoordinates { x: 0, y: 0 },
-                width: 1,
-                height: 1,
-                static_masks: vec![[0, 0]].into_boxed_slice(),
-                dynamic_masks: vec![[0, 1 << 4]].into_boxed_slice(),
-            });
-            let movement = physics.move_character(
-                &KinematicCharacterController::default(),
-                1.0 / 60.0,
-                shape,
-                &Pose::translation(0.0, 0.5625),
-                Vector::new(1.0, 0.0),
-                |_| { },
-            );
-            assert!(movement.translation.x < 0.5);
+            for static_occupancy in [true, false] {
+                let mut physics = ScenePhysicsWorld::new();
+                physics.update_cellular_terrain(CollisionOccupancySnapshot {
+                    sequence: 0,
+                    origin: TileCoordinates { x: 0, y: 0 },
+                    width: 1,
+                    height: 1,
+                    static_masks: vec![[0, if static_occupancy { 1 << 4 } else { 0 }]]
+                        .into_boxed_slice(),
+                    dynamic_masks: vec![[0, if static_occupancy { 0 } else { 1 << 4 }]]
+                        .into_boxed_slice(),
+                });
+                let (movement, _) = physics.move_actor(shape, Vector::new(0.0, 0.5625),
+                    Vector::new(1.0, 0.0), Vector::Y, 0.0, 0.0, None, &mut |_| { });
+                assert!(movement.x < 0.5);
+            }
         }
     }
 
@@ -476,15 +471,10 @@ mod tests {
             static_masks: vec![[0, 0]].into_boxed_slice(),
             dynamic_masks: vec![[0, 1 << 4]].into_boxed_slice(),
         });
-        let movement = physics.move_character(
-            &KinematicCharacterController::default(),
-            1.0 / 60.0,
-            ActorCollisionShape::Circle { radius: 0.25 },
-            &Pose::translation(0.5625, 0.5625),
-            Vector::new(-0.25, 0.0),
-            |_| { },
-        );
-        assert!(movement.translation.x < -0.2);
+        let (movement, _) = physics.move_actor(ActorCollisionShape::Circle { radius: 0.25 },
+            Vector::new(0.5625, 0.5625), Vector::new(-0.25, 0.0), Vector::Y, 0.0, 0.0,
+            None, &mut |_| { });
+        assert!(movement.x < -0.2);
     }
 
 }
