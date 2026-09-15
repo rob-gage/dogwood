@@ -53,6 +53,23 @@ const INVALID_CELLULAR_DYNAMIC_CLAIM_INDEX: u32 = 0xffffffffu;
 @group(0) @binding(7) var<uniform> parameters: Parameters;
 @group(0) @binding(8) var<storage, read> external_body_occupancy: array<u32>;
 
+// Gravity belongs to authoritative velocity before grid contact, not to transport.
+@compute @workgroup_size(64)
+fn prepare_cellular_dynamic_velocity(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let logical_index: u32 = invocation.x;
+    if logical_index >= parameters.buffered_cell_count { return; }
+    let cell: vec2<i32> = world_cell_from_logical_tile_major_index(
+        logical_index, parameters.buffered_origin, parameters.buffered_tile_size,
+    );
+    let index: u32 = physical_cell_index_from_world_cell(
+        cell, parameters.buffered_origin, parameters.buffered_tile_size, parameters.ring_offset,
+    );
+    if material_form_from_identifier(cellular_material_identifiers[index]) !=
+            CELLULAR_DYNAMIC_MATERIAL_FORM { return; }
+    cellular_kinematics[index].x += parameters.gravity.x * parameters.delta_time;
+    cellular_kinematics[index].y += parameters.gravity.y * parameters.delta_time;
+}
+
 // Reset transient atomic contention state
 @compute @workgroup_size(64)
 fn clear_cellular_dynamic_destination_claims(@builtin(global_invocation_id) invocation: vec3<u32>) {
@@ -79,8 +96,7 @@ fn calculate_cellular_dynamic_movement_proposals(@builtin(global_invocation_id) 
             CELLULAR_DYNAMIC_MATERIAL_FORM { return; }
 
     // integrate arbitrary gravity and enforce the per-tick transport limit
-    var velocity: vec2<f32> = cellular_kinematics[source_index].xy +
-        parameters.gravity * parameters.delta_time;
+    var velocity: vec2<f32> = cellular_kinematics[source_index].xy;
     let maximum_velocity: f32 = f32(parameters.maximum_movement_cells) /
         (f32(CELLS_PER_TILE) * parameters.delta_time);
     let velocity_magnitude: f32 = length(velocity);
@@ -107,14 +123,6 @@ fn calculate_cellular_dynamic_movement_proposals(@builtin(global_invocation_id) 
         if path.direct_blocked && all(destination_cell == source_cell) {
             destination_cell = choose_cellular_dynamic_slide_destination(source_cell);
             if all(destination_cell == source_cell) {
-                let gravity_length: f32 = length(parameters.gravity);
-                if gravity_length > 0.0 {
-                    let gravity_direction: vec2<f32> = parameters.gravity / gravity_length;
-                    let into_support: f32 = dot(velocity, gravity_direction);
-                    if into_support > 0.0 {
-                        velocity -= gravity_direction * into_support;
-                    }
-                }
                 residual = clamp(accumulated, vec2<f32>(-0.999), vec2<f32>(0.999));
             }
         }

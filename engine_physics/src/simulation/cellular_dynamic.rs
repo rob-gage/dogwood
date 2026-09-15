@@ -25,6 +25,7 @@ pub struct CellularDynamic {
     parameters: wgpu::Buffer,
     /// All concrete cellular dynamic input, scratch, and output bindings
     bind_group: wgpu::BindGroup,
+    prepare_pipeline: wgpu::ComputePipeline,
     /// Clears destination claims before proposals are submitted
     clear_claims_pipeline: wgpu::ComputePipeline,
     /// Integrates dynamic cells, traces paths, and submits destination claims
@@ -164,6 +165,12 @@ impl CellularDynamic {
                 "cellular dynamic clear claims pipeline",
                 "clear_cellular_dynamic_destination_claims",
             );
+        let prepare_pipeline: wgpu::ComputePipeline =
+            Self::create_cellular_dynamic_compute_pipeline(
+                device, &pipeline_layout, &shader,
+                "cellular dynamic velocity preparation pipeline",
+                "prepare_cellular_dynamic_velocity",
+            );
         let propose_pipeline: wgpu::ComputePipeline =
             Self::create_cellular_dynamic_compute_pipeline(
                 device, &pipeline_layout, &shader,
@@ -184,6 +191,7 @@ impl CellularDynamic {
             proposals,
             parameters,
             bind_group,
+            prepare_pipeline,
             clear_claims_pipeline,
             propose_pipeline,
             resolve_pipeline,
@@ -198,6 +206,76 @@ impl CellularDynamic {
         accelerator: &Accelerator,
         cellular_material_identifiers: &AcceleratorBuffer,
         cellular_appearances: &AcceleratorBuffer,
+        buffered_origin: TileCoordinates,
+        buffered_width: u16,
+        buffered_height: u16,
+        ring_offset_x: u16,
+        ring_offset_y: u16,
+        gravity: [f32; 2],
+        delta_time: f32,
+    ) {
+        self.write_tick_parameters(
+            accelerator, buffered_origin, buffered_width, buffered_height,
+            ring_offset_x, ring_offset_y, gravity, delta_time,
+        );
+        let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
+            &wgpu::CommandEncoderDescriptor { label: Some("cellular dynamic simulation") },
+        );
+        let workgroup_count: u32 = self.buffered_cell_count.div_ceil(64);
+        for (label, pipeline) in [
+            ("cellular dynamic clear destination claims", &self.clear_claims_pipeline),
+            ("cellular dynamic calculate proposals", &self.propose_pipeline),
+            ("cellular dynamic resolve movement proposals", &self.resolve_pipeline),
+        ] {
+            let mut pass: wgpu::ComputePass<'_> =
+                accelerator.begin_compute_pass(&mut encoder, label);
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &self.bind_group, &[]);
+            pass.dispatch_workgroups(workgroup_count, 1, 1);
+        }
+        let cell_field_size: u64 = u64::from(self.buffered_cell_count) * 4;
+        encoder.copy_buffer_to_buffer(
+            self.material_identifiers_output.wgpu_buffer(), 0,
+            cellular_material_identifiers.wgpu_buffer(), 0, cell_field_size,
+        );
+        encoder.copy_buffer_to_buffer(
+            self.appearances_output.wgpu_buffer(), 0,
+            cellular_appearances.wgpu_buffer(), 0, cell_field_size,
+        );
+        accelerator.wgpu_queue().submit(Some(encoder.finish()));
+        self.tick = self.tick.wrapping_add(1);
+    }
+
+    pub(crate) fn prepare_velocity(
+        &self,
+        accelerator: &Accelerator,
+        buffered_origin: TileCoordinates,
+        buffered_width: u16,
+        buffered_height: u16,
+        ring_offset_x: u16,
+        ring_offset_y: u16,
+        gravity: [f32; 2],
+        delta_time: f32,
+    ) {
+        self.write_tick_parameters(
+            accelerator, buffered_origin, buffered_width, buffered_height,
+            ring_offset_x, ring_offset_y, gravity, delta_time,
+        );
+        let mut encoder = accelerator.wgpu_device().create_command_encoder(
+            &wgpu::CommandEncoderDescriptor { label: Some("cellular dynamic velocity preparation") },
+        );
+        let mut pass = accelerator.begin_compute_pass(&mut encoder,
+            "prepare cellular dynamic velocity");
+        pass.set_pipeline(&self.prepare_pipeline);
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.dispatch_workgroups(self.buffered_cell_count.div_ceil(64), 1, 1);
+        drop(pass);
+        accelerator.wgpu_queue().submit(Some(encoder.finish()));
+    }
+
+    fn write_tick_parameters(
+        &self,
+        accelerator: &Accelerator,
         buffered_origin: TileCoordinates,
         buffered_width: u16,
         buffered_height: u16,
@@ -229,35 +307,6 @@ impl CellularDynamic {
         let mut bytes: Vec<u8> = Vec::with_capacity(96);
         for value in parameters { bytes.extend_from_slice(&value.to_le_bytes()); }
         accelerator.wgpu_queue().write_buffer(&self.parameters, 0, &bytes);
-        // order claim clearing, immutable proposals, and winner resolution as separate passes
-        let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: Some("cellular dynamic simulation") },
-        );
-        let workgroup_count: u32 = self.buffered_cell_count.div_ceil(64);
-        for (label, pipeline) in [
-            ("cellular dynamic clear destination claims", &self.clear_claims_pipeline),
-            ("cellular dynamic calculate proposals", &self.propose_pipeline),
-            ("cellular dynamic resolve movement proposals", &self.resolve_pipeline),
-        ] {
-            let mut pass: wgpu::ComputePass<'_> =
-                accelerator.begin_compute_pass(&mut encoder, label);
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.dispatch_workgroups(workgroup_count, 1, 1);
-        }
-        // commit every resolved field together after no pass can observe partial movement
-        let cell_field_size: u64 = u64::from(self.buffered_cell_count) * 4;
-        encoder.copy_buffer_to_buffer(
-            self.material_identifiers_output.wgpu_buffer(), 0,
-            cellular_material_identifiers.wgpu_buffer(), 0, cell_field_size,
-        );
-        encoder.copy_buffer_to_buffer(
-            self.appearances_output.wgpu_buffer(), 0,
-            cellular_appearances.wgpu_buffer(), 0, cell_field_size,
-        );
-        // submit one ordered cellular dynamic tick and rotate the next claim priority seed
-        accelerator.wgpu_queue().submit(Some(encoder.finish()));
-        self.tick = self.tick.wrapping_add(1);
     }
 
     /// Clears motion state replaced by a CPU cell edit or tile upload

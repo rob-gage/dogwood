@@ -124,13 +124,34 @@ impl ScenePhysicsWorld {
         body: &RigidCellularBody,
         impulse: [f32; 2],
         angular_impulse: f32,
+        energy_budget: f32,
         wake: bool,
     ) -> bool {
         let Some(rigid_body) = self.rapier.bodies.get_mut(body.handle) else { return false; };
-        if impulse != [0.0; 2] {
-            rigid_body.apply_impulse(Vector::new(impulse[0], impulse[1]), wake);
+        let inverse_mass: f32 = rigid_body.mass_properties().local_mprops.inv_mass;
+        let inverse_inertia: f32 = rigid_body.mass_properties().effective_world_inv_inertia;
+        let linear: Vector = Vector::new(impulse[0], impulse[1]);
+        let quadratic: f32 = 0.5 * (inverse_mass * linear.length_squared() +
+            inverse_inertia * angular_impulse * angular_impulse);
+        let linear_term: f32 = rigid_body.linvel().dot(linear) +
+            rigid_body.angvel() * angular_impulse;
+        let budget: f32 = energy_budget.max(0.0);
+        let scale: f32 = if linear_term + quadratic <= budget {
+            1.0
+        } else if quadratic > 0.0 {
+            ((linear_term * linear_term + 4.0 * quadratic * budget).sqrt() -
+                linear_term) / (2.0 * quadratic)
+        } else if linear_term > 0.0 {
+            budget / linear_term
+        } else {
+            1.0
+        }.clamp(0.0, 1.0);
+        if scale > 0.0 && impulse != [0.0; 2] {
+            rigid_body.apply_impulse(linear * scale, wake);
         }
-        if angular_impulse != 0.0 { rigid_body.apply_torque_impulse(angular_impulse, wake); }
+        if scale > 0.0 && angular_impulse != 0.0 {
+            rigid_body.apply_torque_impulse(angular_impulse * scale, wake);
+        }
         true
     }
 
@@ -329,6 +350,34 @@ mod tests {
         tiles::TileCoordinates,
     };
     use rapier2d::prelude::Vector;
+    use crate::{materials::{Material, MaterialRegistry}, tiles::CellularAppearance};
+    use engine_graphics::{Color, MaterialAppearance};
+
+    #[test]
+    fn stale_rigid_reaction_cannot_create_energy_without_grid_transfer() {
+        let mut materials = MaterialRegistry::new();
+        let stone = materials.register(Material::CellularStatic {
+            name: "Stone".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(90, 90, 90)),
+            mass: 1.0, pressure_ignore_threshold: 1000.0, default_integrity: 100.0,
+            debris_material: None, debris_yield_rate: 0.0,
+            pressure_transmission: 1.0, friction: 0.5, restitution: 0.0,
+        });
+        let mut physics = ScenePhysicsWorld::new();
+        let body = physics.insert_rigid_cellular_body([0.0, 0.0], 0.0,
+            &materials, vec![([0, 0], stone, CellularAppearance::NEUTRAL)],
+            0.5, 0.0, [0.0, 0.0], 0.0);
+        assert!(physics.apply_rigid_cellular_body_reaction(&body,
+            [1.0, 0.0], 0.0, 0.0, true));
+        physics.step([0.0, 0.0], 1.0 / 60.0);
+        let state = physics.rigid_cellular_body_state(&body).unwrap();
+        assert!(state.linear_velocity[0].abs() < 0.0001);
+        assert!(physics.apply_rigid_cellular_body_reaction(&body,
+            [1.0, 0.0], 0.0, 0.5, true));
+        physics.step([0.0, 0.0], 1.0 / 60.0);
+        let state = physics.rigid_cellular_body_state(&body).unwrap();
+        assert!(state.linear_velocity[0] > 0.0);
+    }
 
     #[test]
     fn every_actor_primitive_casts_directly_against_cellular_occupancy() {

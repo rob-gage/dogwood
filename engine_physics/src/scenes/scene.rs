@@ -298,8 +298,13 @@ impl Scene {
             cellular_physics_body_proxy.velocity_buffer(),
             cellular_physics_body_proxy.rigid_owners_buffer(),
             cellular_physics_body_proxy.rigid_material_identifiers_buffer(),
-            cellular_physics_body_proxy.rigid_cells_buffer(),
             cellular_physics_body_proxy.rigid_transforms_buffer(),
+            fluids.mechanical_cells_buffer(),
+            gases.velocity_buffer(),
+            gases.concentrations_buffer(),
+            &material_graphics.gas_properties,
+            fluids.coverage_buffer(),
+            gases.gas_count(),
             buffered_cell_count,
         );
         let cellular_collision: CellularCollision = CellularCollision::new(
@@ -699,33 +704,46 @@ impl Scene {
 
     /// Applies every compatible completed GPU reaction in submission order
     fn apply_completed_rigid_cellular_reactions(&mut self) -> Result<(), io::Error> {
+        let body_count: usize = self.rigid_cellular_bodies.len();
+        let mut reactions: Vec<[f32; 3]> = vec![[0.0; 3]; body_count];
+        let mut energy_budgets: Vec<f32> = vec![0.0; body_count];
+        let mut contacts: Vec<bool> = vec![false; body_count];
+        let mut granular_contacts: Vec<bool> = vec![false; body_count];
+        let mut has_batch: bool = false;
         for batch in self.cellular_pressure.collect_rigid_reactions()? {
             if batch.topology_revision != self.rigid_cellular_topology_revision ||
-                    batch.body_count != self.rigid_cellular_bodies.len() {
+                    batch.body_count != body_count {
                 continue;
             }
+            has_batch = true;
             for index in 0..batch.body_count {
-                let reaction: [f32; 3] = batch.reactions[index];
-                let granular_contact: bool =
+                for component in 0..3 {
+                    reactions[index][component] += batch.reactions[index][component];
+                }
+                energy_budgets[index] += batch.energy_budgets[index];
+                contacts[index] = batch.contact_counts[index] != 0;
+                granular_contacts[index] =
                     batch.contact_counts[index] > batch.static_contact_counts[index];
-                if !self.physics_world.apply_rigid_cellular_body_reaction(
-                    &self.rigid_cellular_bodies[index],
-                    [reaction[0], reaction[1]],
-                    reaction[2],
-                    granular_contact,
-                ) {
-                    return Err(io::Error::other("Rigid cellular body handle is missing"));
-                }
-                let contacted: bool = batch.contact_counts[index] != 0;
-                if (granular_contact || contacted != self.rigid_cellular_contact_active[index]) &&
-                        !self.physics_world.wake_rigid_cellular_body(
-                    &self.rigid_cellular_bodies[index],
-                ) {
-                    return Err(io::Error::other("Rigid cellular body handle is missing"));
-                }
-                self.rigid_cellular_contact_active[index] = contacted;
-                self.rigid_granular_contact_active[index] = granular_contact;
             }
+        }
+        if !has_batch { return Ok(()); }
+        for index in 0..body_count {
+            let reaction: [f32; 3] = reactions[index];
+            if !self.physics_world.apply_rigid_cellular_body_reaction(
+                &self.rigid_cellular_bodies[index], [reaction[0], reaction[1]],
+                reaction[2], energy_budgets[index], granular_contacts[index],
+            ) {
+                return Err(io::Error::other("Rigid cellular body handle is missing"));
+            }
+            if (granular_contacts[index] ||
+                    contacts[index] != self.rigid_cellular_contact_active[index]) &&
+                    !self.physics_world.wake_rigid_cellular_body(
+                &self.rigid_cellular_bodies[index],
+            ) {
+                return Err(io::Error::other("Rigid cellular body handle is missing"));
+            }
+            self.rigid_cellular_contact_active[index] = contacts[index];
+            self.rigid_granular_contact_active[index] = granular_contacts[index];
         }
         Ok(())
     }
@@ -774,27 +792,12 @@ impl Scene {
         if is_simulation_active {
             let fluid_active_area: TileArea = self.area_fluid_active();
             let fluid_active_dimensions: [u16; 2] = fluid_active_area.dimensions();
-            self.cellular_pressure.simulate(
-                self.accelerator.as_ref(), TileCoordinates { x: self.origin.x - buffer_size, y: self.origin.y - buffer_size },
-                self.simulation_width + dimensions, self.simulation_height + dimensions, self.tiles_ring_offset_x,
-                self.tiles_ring_offset_y, 1.0 / TICK_RATE as f32, self.gravity,
-                self.rigid_cellular_bodies.len(), self.rigid_cellular_bodies.iter()
-                    .map(|body| body.cells.len()).sum(), self.rigid_cellular_topology_revision,
-            )?;
-            self.cellular_dynamic.simulate_cellular_dynamic_tick(
+            self.cellular_dynamic.prepare_velocity(
                 self.accelerator.as_ref(),
-                &self.cellular_material_identifiers,
-                &self.cellular_appearances,
-                TileCoordinates {
-                    x: self.origin.x - buffer_size,
-                    y: self.origin.y - buffer_size,
-                },
-                self.simulation_width + dimensions,
-                self.simulation_height + dimensions,
-                self.tiles_ring_offset_x,
-                self.tiles_ring_offset_y,
-                self.gravity,
-                1.0 / TICK_RATE as f32,
+                TileCoordinates { x: self.origin.x - buffer_size, y: self.origin.y - buffer_size },
+                self.simulation_width + dimensions, self.simulation_height + dimensions,
+                self.tiles_ring_offset_x, self.tiles_ring_offset_y,
+                self.gravity, delta_time,
             );
             self.fluids.simulate(
                 self.accelerator.as_ref(),
@@ -812,7 +815,7 @@ impl Scene {
                 self.gravity,
                 1.0 / TICK_RATE as f32,
             );
-            self.gases.simulate(
+            self.gases.simulate_pre_coupling(
                 self.accelerator.as_ref(),
                 TileCoordinates {
                     x: self.origin.x - buffer_size,
@@ -825,6 +828,29 @@ impl Scene {
                 self.gravity,
                 1.0 / TICK_RATE as f32,
             );
+            self.cellular_pressure.simulate(
+                self.accelerator.as_ref(), TileCoordinates { x: self.origin.x - buffer_size, y: self.origin.y - buffer_size },
+                self.simulation_width + dimensions, self.simulation_height + dimensions, self.tiles_ring_offset_x,
+                self.tiles_ring_offset_y, 1.0 / TICK_RATE as f32,
+                self.rigid_cellular_bodies.len(), self.rigid_cellular_topology_revision,
+            )?;
+            self.cellular_dynamic.simulate_cellular_dynamic_tick(
+                self.accelerator.as_ref(),
+                &self.cellular_material_identifiers,
+                &self.cellular_appearances,
+                TileCoordinates {
+                    x: self.origin.x - buffer_size,
+                    y: self.origin.y - buffer_size,
+                },
+                self.simulation_width + dimensions,
+                self.simulation_height + dimensions,
+                self.tiles_ring_offset_x,
+                self.tiles_ring_offset_y,
+                self.gravity,
+                1.0 / TICK_RATE as f32,
+            );
+            self.fluids.scatter_mechanical_response(self.accelerator.as_ref());
+            self.gases.simulate_post_coupling(self.accelerator.as_ref());
             self.fluid_sample_submit()?;
             self.cellular_collision_dirty = true;
         }

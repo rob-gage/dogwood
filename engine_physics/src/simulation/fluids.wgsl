@@ -56,6 +56,15 @@ struct DerivedFluidCellSample {
     material_identifier: u32,
     coverage: f32,
     velocity: vec2<f32>,
+    mechanical_material_identifier: u32,
+    mechanical_mass: f32,
+    mechanical_velocity: vec2<f32>,
+}
+
+struct MechanicalFluidCell {
+    material_identifier: u32,
+    mass: f32,
+    velocity: vec2<f32>,
 }
 
 struct DerivedFluidActorSample {
@@ -87,6 +96,8 @@ struct DerivedFluidActorSample {
 @group(0) @binding(18) var<storage, read_write> streaming_count: array<atomic<u32>>;
 @group(0) @binding(19) var<storage, read_write> streaming_results: array<u32>;
 @group(0) @binding(20) var<storage, read_write> sample_output: array<vec4<f32>>;
+@group(0) @binding(21) var<storage, read_write> mechanical_cells: array<MechanicalFluidCell>;
+@group(0) @binding(22) var<storage, read_write> mechanical_original_velocity: array<vec2<f32>>;
 
 const INVALID_FLUID_PARTICLE_INDEX: u32 = 0xffffffffu;
 const INVALID_FLUID_BUCKET_INDEX: u32 = 0xffffffffu;
@@ -340,56 +351,10 @@ fn resolve_fluid_cellular_contact_velocity(@builtin(global_invocation_id) invoca
         derived_velocity[index] = vec4<f32>(initial_velocity, vec2<f32>(0.0));
         return;
     }
-    var velocity: vec2<f32> = resolve_fluid_velocity_against_neighboring_cellular_contacts(
-        cell, initial_velocity, material_identifier,
-    );
-    velocity = apply_fluid_swimmer_velocity_entrainment(
-        index, velocity, material_identifier,
+    let velocity: vec2<f32> = apply_fluid_swimmer_velocity_entrainment(
+        index, initial_velocity, material_identifier,
     );
     derived_velocity[index] = vec4<f32>(initial_velocity, velocity - initial_velocity);
-}
-
-// Resolves one derived fluid cell against neighboring cellular and hard-body faces
-fn resolve_fluid_velocity_against_neighboring_cellular_contacts(
-    world_cell: vec2<i32>,
-    initial_velocity: vec2<f32>,
-    material_identifier: u32,
-) -> vec2<f32> {
-    var resolved_velocity: vec2<f32> = initial_velocity;
-    let offsets: array<vec2<i32>, 4> = array<vec2<i32>, 4>(
-        vec2<i32>(-1, 0),
-        vec2<i32>(1, 0),
-        vec2<i32>(0, -1),
-        vec2<i32>(0, 1),
-    );
-    for (var neighbor_number: u32 = 0u; neighbor_number < 4u; neighbor_number++) {
-        let offset: vec2<i32> = offsets[neighbor_number];
-        let neighbor_index: u32 = fluid_physical_cell_index_from_world_cell(
-            world_cell + offset,
-        );
-        if neighbor_index == INVALID_PHYSICAL_CELL_INDEX ||
-                (cellular_material_identifiers[neighbor_index] == EMPTY_MATERIAL_IDENTIFIER &&
-                    !is_hard_external_body(external_body_occupancy[neighbor_index])) {
-            continue;
-        }
-        var boundary_velocity: vec2<f32> = select(
-            vec2<f32>(0.0),
-            external_body_velocity[neighbor_index].xy,
-            is_hard_external_body(external_body_occupancy[neighbor_index]),
-        );
-        let boundary_speed: f32 = length(boundary_velocity) * CELLS_PER_TILE_FLOAT;
-        let body_push_speed: f32 = fluid_constraint_properties_from_identifier(material_identifier).w;
-        if boundary_speed > body_push_speed {
-            boundary_velocity *= body_push_speed / boundary_speed;
-        }
-        resolved_velocity = resolve_fluid_velocity_against_cellular_contact(
-            resolved_velocity,
-            boundary_velocity,
-            -vec2<f32>(offset),
-            material_identifier,
-        );
-    }
-    return resolved_velocity;
 }
 
 // Couples one swimmer proxy cell toward its requested external-body velocity
@@ -468,6 +433,28 @@ fn rasterize_fluid_particle_coverage_into_cells(@builtin(global_invocation_id) i
     derived_material_identifiers[physical_index] = sample.material_identifier;
     derived_coverage[physical_index] = sample.coverage;
     derived_velocity[physical_index] = vec4<f32>(sample.velocity, 0.0, 0.0);
+    mechanical_cells[physical_index] = MechanicalFluidCell(
+        sample.mechanical_material_identifier,
+        sample.mechanical_mass,
+        sample.mechanical_velocity,
+    );
+    mechanical_original_velocity[physical_index] = sample.mechanical_velocity;
+}
+
+// Each authoritative particle retains its center cell's solved velocity delta.
+@compute @workgroup_size(64)
+fn scatter_fluid_mechanical_response(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let particle_index: u32 = invocation.x;
+    if particle_index >= parameters.particle_capacity ||
+            particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER ||
+            particles[particle_index].is_active == 0u { return; }
+    let cell: vec2<i32> = vec2<i32>(floor(
+        particles[particle_index].position * CELLS_PER_TILE_FLOAT,
+    ));
+    let index: u32 = fluid_physical_cell_index_from_world_cell(cell);
+    if index == INVALID_PHYSICAL_CELL_INDEX || mechanical_cells[index].mass <= 0.0 { return; }
+    particles[particle_index].velocity += mechanical_cells[index].velocity -
+        mechanical_original_velocity[index];
 }
 
 // Gathers nearby authoritative particles for one derived cellular sample
@@ -479,6 +466,9 @@ fn gather_fluid_particle_sample_for_cell(center: vec2<f32>) -> DerivedFluidCellS
     var velocity_sum: vec2<f32> = vec2<f32>(0.0);
     var strongest_weight: f32 = 0.0;
     var material_identifier: u32 = EMPTY_MATERIAL_IDENTIFIER;
+    var mechanical_material_identifier: u32 = EMPTY_MATERIAL_IDENTIFIER;
+    var mechanical_mass: f32 = 0.0;
+    var mechanical_momentum: vec2<f32> = vec2<f32>(0.0);
     for (var bucket_y: i32 = -1; bucket_y <= 1; bucket_y++) {
         for (var bucket_x: i32 = -1; bucket_x <= 1; bucket_x++) {
             let bucket_index: u32 = fluid_spatial_bucket_index_from_coordinates(
@@ -491,6 +481,15 @@ fn gather_fluid_particle_sample_for_cell(center: vec2<f32>) -> DerivedFluidCellS
                         chain_length < parameters.particle_capacity;
                     chain_length++) {
                 let particle: Particle = particles[particle_index];
+                if particle.material_identifier != EMPTY_MATERIAL_IDENTIFIER &&
+                        particle.is_active != 0u && all(vec2<i32>(floor(
+                            particle.position * CELLS_PER_TILE_FLOAT)) == vec2<i32>(floor(center))) {
+                    let particle_mass: f32 = fluid_physical_properties_from_identifier(
+                        particle.material_identifier).x;
+                    mechanical_mass += particle_mass;
+                    mechanical_momentum += particle.velocity * particle_mass;
+                    mechanical_material_identifier = particle.material_identifier;
+                }
                 let distance_cells: f32 = length(
                     particle.position * CELLS_PER_TILE_FLOAT - center,
                 );
@@ -515,6 +514,10 @@ fn gather_fluid_particle_sample_for_cell(center: vec2<f32>) -> DerivedFluidCellS
         select(
             vec2<f32>(0.0), velocity_sum / max(weight_sum, 0.000001), weight_sum > 0.0,
         ),
+        mechanical_material_identifier,
+        mechanical_mass,
+        select(vec2<f32>(0.0), mechanical_momentum / max(mechanical_mass, 0.000001),
+            mechanical_mass > 0.0),
     );
 }
 
@@ -745,13 +748,6 @@ fn fluid_constraint_properties_from_identifier(material_identifier: u32) -> vec4
     return fluid_material_properties[material_index_from_identifier(material_identifier) * 2u];
 }
 
-// Reads friction and restitution for fluid-cellular contact
-fn fluid_contact_properties_from_identifier(material_identifier: u32) -> vec2<f32> {
-    return fluid_material_properties[
-        material_index_from_identifier(material_identifier) * 2u + 1u
-    ].xy;
-}
-
 // Reads density and viscosity for derived fluid interaction
 fn fluid_physical_properties_from_identifier(material_identifier: u32) -> vec2<f32> {
     return fluid_material_properties[
@@ -808,28 +804,6 @@ fn project_fluid_particle_out_of_cellular_collision(initial_position: vec2<f32>)
         if !resolved { break; }
     }
     return position;
-}
-
-// Resolves normal restitution and tangential friction against one boundary
-fn resolve_fluid_velocity_against_cellular_contact(
-    velocity: vec2<f32>,
-    boundary_velocity: vec2<f32>,
-    normal: vec2<f32>,
-    material_identifier: u32,
-) -> vec2<f32> {
-    let properties: vec2<f32> = clamp(
-        fluid_contact_properties_from_identifier(material_identifier),
-        vec2<f32>(0.0),
-        vec2<f32>(1.0),
-    );
-    var relative_velocity: vec2<f32> = velocity - boundary_velocity;
-    let inward_speed: f32 = dot(relative_velocity, normal);
-    if inward_speed < 0.0 {
-        relative_velocity -= normal * inward_speed * (1.0 + properties.y);
-    }
-    let normal_velocity: vec2<f32> = normal * dot(relative_velocity, normal);
-    relative_velocity -= (relative_velocity - normal_velocity) * properties.x;
-    return boundary_velocity + relative_velocity;
 }
 
 // Atomically pops one reusable authoritative fluid-particle slot

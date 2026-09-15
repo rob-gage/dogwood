@@ -48,6 +48,8 @@ pub struct Fluids {
     derived_coverage: AcceleratorBuffer,
     /// Ring-aligned weighted average velocity derived from nearby particles
     derived_velocity: AcceleratorBuffer,
+    mechanical_cells: AcceleratorBuffer,
+    mechanical_original_velocity: AcceleratorBuffer,
     /// Fixed-capacity records used only during residency ownership transfers
     streaming_particles: AcceleratorBuffer,
     /// Atomic export count or immutable import count for the current transfer
@@ -94,6 +96,7 @@ pub struct Fluids {
     apply_cell_contact_pipeline: wgpu::ComputePipeline,
     /// Gathers nearby particles into ring-aligned derived cell fields
     raster_pipeline: wgpu::ComputePipeline,
+    mechanical_scatter_pipeline: wgpu::ComputePipeline,
     /// Reduces final derived fluid state across the possessed pawn capsule
     sample_pipeline: wgpu::ComputePipeline,
     /// Compacts and removes particles belonging to an outgoing tile strip
@@ -154,6 +157,10 @@ impl Fluids {
             accelerator.allocate::<f32>(buffered_cell_count as usize);
         let derived_velocity: AcceleratorBuffer =
             accelerator.allocate::<[f32; 4]>(buffered_cell_count as usize);
+        let mechanical_cells: AcceleratorBuffer =
+            accelerator.allocate::<[u32; 4]>(buffered_cell_count as usize);
+        let mechanical_original_velocity: AcceleratorBuffer =
+            accelerator.allocate::<[f32; 2]>(buffered_cell_count as usize);
         let streaming_particles: AcceleratorBuffer =
             accelerator.allocate::<[u32; 8]>(particle_capacity as usize);
         let streaming_count: AcceleratorBuffer = accelerator.allocate::<u32>(1);
@@ -204,7 +211,8 @@ impl Fluids {
                     },
                     storage(13, false), storage(14, false), storage(15, false),
                     storage(16, true), storage(17, false), storage(18, false),
-                    storage(19, false), storage(20, false),
+                    storage(19, false), storage(20, false), storage(21, false),
+                    storage(22, false),
                 ],
             },
         );
@@ -237,6 +245,8 @@ impl Fluids {
                     Self::binding(18, &streaming_count),
                     Self::binding(19, &streaming_results),
                     Self::binding(20, &sample_output),
+                    Self::binding(21, &mechanical_cells),
+                    Self::binding(22, &mechanical_original_velocity),
                 ],
             },
         );
@@ -276,6 +286,8 @@ impl Fluids {
             derived_material_identifiers,
             derived_coverage,
             derived_velocity,
+            mechanical_cells,
+            mechanical_original_velocity,
             streaming_particles,
             streaming_count,
             streaming_results,
@@ -312,6 +324,8 @@ impl Fluids {
                 "fluid cell contact application pipeline"),
             raster_pipeline: pipeline("rasterize_fluid_particle_coverage_into_cells",
                 "fluid cellular raster pipeline"),
+            mechanical_scatter_pipeline: pipeline("scatter_fluid_mechanical_response",
+                "fluid mechanical response scatter pipeline"),
             sample_pipeline: pipeline("sample_fluid_state_inside_pawn_capsule",
                 "pawn fluid sample pipeline"),
             export_pipeline: pipeline("export_fluid_particles", "fluid export pipeline"),
@@ -336,6 +350,10 @@ impl Fluids {
     /// Returns the transient ring-aligned derived average velocity buffer
     pub const fn velocity_buffer(&self) -> &AcceleratorBuffer {
         &self.derived_velocity
+    }
+
+    pub(crate) const fn mechanical_cells_buffer(&self) -> &AcceleratorBuffer {
+        &self.mechanical_cells
     }
 
     /// Consumes ring-aligned spawn/erase edits and immediately refreshes derived cells
@@ -449,6 +467,17 @@ impl Fluids {
         self.dispatch(accelerator, &mut encoder, &self.raster_pipeline,
             self.buffered_cell_count,
             "refresh contacted fluid cells");
+        accelerator.wgpu_queue().submit(Some(encoder.finish()));
+    }
+
+    pub(crate) fn scatter_mechanical_response(&self, accelerator: &Accelerator) {
+        let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
+            &wgpu::CommandEncoderDescriptor { label: Some("fluid mechanical response") },
+        );
+        self.dispatch(accelerator, &mut encoder, &self.mechanical_scatter_pipeline,
+            self.particle_capacity, "scatter mechanical fluid velocity");
+        self.dispatch(accelerator, &mut encoder, &self.raster_pipeline,
+            self.buffered_cell_count, "refresh solved fluid coverage");
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
 
@@ -702,11 +731,88 @@ impl Drop for Fluids {
         self.derived_material_identifiers.free();
         self.derived_coverage.free();
         self.derived_velocity.free();
+        self.mechanical_cells.free();
+        self.mechanical_original_velocity.free();
         self.streaming_particles.free();
         self.streaming_count.free();
         self.streaming_results.free();
         self.sample_output.free();
         self.parameters.destroy();
+    }
+
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+    use crate::materials::{MaterialForm, MaterialIdentifier};
+    use std::{sync::mpsc, time::{Duration, Instant}};
+
+    #[test]
+    fn mechanical_raster_and_scatter_pipelines_compile_on_gpu() {
+        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let accelerator = Accelerator::new().unwrap();
+        let cells = accelerator.allocate::<u32>(64);
+        let occupancy = accelerator.allocate::<u32>(64);
+        let velocity = accelerator.allocate::<[f32; 4]>(64);
+        let properties = accelerator.allocate::<[f32; 4]>(2);
+        let fluids = Fluids::new(
+            &accelerator, &cells, &occupancy, &velocity, &properties, 1, 1,
+        );
+        accelerator.poll().unwrap();
+        drop(fluids);
+    }
+
+    #[test]
+    fn solved_mechanical_delta_persists_in_authoritative_particle() {
+        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let accelerator = Accelerator::new().unwrap();
+        let cells = accelerator.allocate::<u32>(64);
+        let occupancy = accelerator.allocate::<u32>(64);
+        let velocity = accelerator.allocate::<[f32; 4]>(64);
+        let properties = accelerator.allocate::<[f32; 4]>(2);
+        accelerator.wgpu_queue().write_buffer(properties.wgpu_buffer(), 0,
+            &[1.0f32, 0.0, 0.0, 4.0, 0.0, 0.0, 1.0, 0.0].into_iter()
+                .flat_map(f32::to_le_bytes).collect::<Vec<_>>());
+        let fluids = Fluids::new(
+            &accelerator, &cells, &occupancy, &velocity, &properties, 1, 1,
+        );
+        let material = MaterialIdentifier::new(MaterialForm::Fluid, 0).as_u32();
+        let particle: [u32; 8] = [material, 1, 0.5f32.to_bits(), 0.5f32.to_bits(),
+            0, 0, 0, 0];
+        accelerator.wgpu_queue().write_buffer(fluids.particles.wgpu_buffer(), 0,
+            &particle.into_iter().flat_map(u32::to_le_bytes).collect::<Vec<_>>());
+        fluids.simulate(&accelerator, TileCoordinates { x: 0, y: 0 }, 1, 1,
+            TileCoordinates { x: 0, y: 0 }, 1, 1, 0, 0, [0.0, 0.0], 1.0 / 60.0);
+        let cell_index = 4 + 4 * 8;
+        accelerator.wgpu_queue().write_buffer(fluids.mechanical_cells.wgpu_buffer(),
+            cell_index * 16 + 8, &1.0f32.to_le_bytes());
+        fluids.scatter_mechanical_response(&accelerator);
+        let readback = accelerator.wgpu_device().create_buffer(&wgpu::BufferDescriptor {
+            label: Some("fluid particle response check"), size: 32,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = accelerator.wgpu_device().create_command_encoder(
+            &wgpu::CommandEncoderDescriptor { label: Some("fluid particle response check") });
+        encoder.copy_buffer_to_buffer(fluids.particles.wgpu_buffer(), 0, &readback, 0, 32);
+        accelerator.wgpu_queue().submit(Some(encoder.finish()));
+        let (sender, receiver) = mpsc::sync_channel(1);
+        readback.slice(..).map_async(wgpu::MapMode::Read, move |result| {
+            sender.send(result).unwrap();
+        });
+        let started = Instant::now();
+        loop {
+            accelerator.poll().unwrap();
+            if receiver.try_recv().is_ok() { break; }
+            assert!(started.elapsed() < Duration::from_secs(5));
+            std::thread::yield_now();
+        }
+        let mapped = readback.slice(..).get_mapped_range().unwrap();
+        let particle_velocity = f32::from_le_bytes(mapped[16..20].try_into().unwrap());
+        assert!((particle_velocity - 1.0).abs() < 0.01,
+            "mechanical response did not persist: {particle_velocity}");
     }
 
 }

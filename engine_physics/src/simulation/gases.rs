@@ -250,6 +250,24 @@ impl Gases {
         gravity: [f32; 2],
         delta_time: f32,
     ) {
+        self.simulate_pre_coupling(accelerator, buffered_origin, buffered_width,
+            buffered_height, ring_offset_x, ring_offset_y, gravity, delta_time);
+        self.simulate_post_coupling(accelerator);
+    }
+
+    pub(crate) const fn velocity_buffer(&self) -> &AcceleratorBuffer { &self.velocity }
+
+    pub(crate) fn simulate_pre_coupling(
+        &self,
+        accelerator: &Accelerator,
+        buffered_origin: TileCoordinates,
+        buffered_width: u16,
+        buffered_height: u16,
+        ring_offset_x: u16,
+        ring_offset_y: u16,
+        gravity: [f32; 2],
+        delta_time: f32,
+    ) {
         if self.gas_count == 0 { return; }
         self.write_parameters(
             accelerator, buffered_origin, buffered_width, buffered_height,
@@ -265,6 +283,14 @@ impl Gases {
             "calculate gas curl");
         self.dispatch(accelerator, &mut encoder, &self.force_pipeline, self.buffered_cell_count,
             "apply gas buoyancy and vorticity confinement");
+        accelerator.wgpu_queue().submit(Some(encoder.finish()));
+    }
+
+    pub(crate) fn simulate_post_coupling(&self, accelerator: &Accelerator) {
+        if self.gas_count == 0 { return; }
+        let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
+            &wgpu::CommandEncoderDescriptor { label: Some("gas projection and transport") },
+        );
         self.dispatch(accelerator, &mut encoder, &self.divergence_pipeline,
             self.buffered_cell_count,
             "calculate gas divergence");
