@@ -1,12 +1,12 @@
 // Copyright Rob Gage 2026
 
 use super::{CollisionOccupancySnapshot, RigidCellularBody, RigidCellularBodyState};
-use crate::actors::{ActorCellularProxyState, ActorCollisionShape};
+use crate::actors::{Actor, ActorCellularProxyState, ActorCollisionShape};
 use crate::materials::MaterialRegistry;
 use rapier2d::parry::query::ShapeCastOptions;
 use rapier2d::prelude::{
     ColliderBuilder, ColliderHandle, Group, InteractionGroups, LockedAxes, PhysicsWorld, Pose,
-    RigidBodyBuilder, RigidBodyHandle, SharedShape, Vector,
+    QueryFilter, RigidBodyBuilder, RigidBodyHandle, SharedShape, Vector,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -33,6 +33,11 @@ struct DynamicTile {
     collider: Option<ColliderHandle>,
     mask: [u32; 2],
     last_required_tick: u64,
+}
+struct ActorPhysicsProxy {
+    body: RigidBodyHandle,
+    collider: ColliderHandle,
+    shape: ActorCollisionShape,
 }
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Copy, Debug, Default)]
@@ -67,6 +72,7 @@ pub struct ScenePhysicsWorld {
     terrain_tick: u64,
     terrain_statistics: TerrainBridgeStatistics,
     snapshot_updated_this_tick: bool,
+    pawn_proxies: HashMap<Actor, ActorPhysicsProxy>,
 }
 
 impl ScenePhysicsWorld {
@@ -84,6 +90,7 @@ impl ScenePhysicsWorld {
             terrain_tick: 0,
             terrain_statistics: TerrainBridgeStatistics::default(),
             snapshot_updated_this_tick: false,
+            pawn_proxies: HashMap::new(),
         }
     }
 
@@ -164,6 +171,84 @@ impl ScenePhysicsWorld {
 
     pub(crate) fn set_collision_snapshot_age(&mut self, age: u64) {
         self.terrain_statistics.collision_snapshot_age = age;
+    }
+
+    pub(crate) fn sync_pawn_proxies(
+        &mut self,
+        states: &[crate::actors::ActorPhysicsProxyState],
+        up: Vector,
+    ) {
+        let mut live = HashSet::new();
+        for state in states {
+            live.insert(state.actor);
+            let pose = state
+                .shape
+                .pose(Vector::new(state.center[0], state.center[1]), up);
+            if let Some(proxy) = self.pawn_proxies.get_mut(&state.actor) {
+                if proxy.shape != state.shape {
+                    self.rapier.remove_collider(proxy.collider);
+                    proxy.collider = self.rapier.insert_collider(
+                        ColliderBuilder::new(state.shape.rapier_shape())
+                            .collision_groups(Self::pawn_collision_groups())
+                            .solver_groups(Self::pawn_solver_groups()),
+                        Some(proxy.body),
+                    );
+                    proxy.shape = state.shape;
+                }
+                self.rapier
+                    .bodies
+                    .get_mut(proxy.body)
+                    .unwrap()
+                    .set_next_kinematic_position(pose);
+            } else {
+                let body = self
+                    .rapier
+                    .insert_body(RigidBodyBuilder::kinematic_position_based().pose(pose));
+                let collider = self.rapier.insert_collider(
+                    ColliderBuilder::new(state.shape.rapier_shape())
+                        .collision_groups(Self::pawn_collision_groups())
+                        .solver_groups(Self::pawn_solver_groups()),
+                    Some(body),
+                );
+                self.pawn_proxies.insert(
+                    state.actor,
+                    ActorPhysicsProxy {
+                        body,
+                        collider,
+                        shape: state.shape,
+                    },
+                );
+            }
+        }
+        let stale: Vec<_> = self
+            .pawn_proxies
+            .keys()
+            .filter(|actor| !live.contains(actor))
+            .copied()
+            .collect();
+        for actor in stale {
+            if let Some(proxy) = self.pawn_proxies.remove(&actor) {
+                self.rapier.remove_body(proxy.body);
+            }
+        }
+    }
+
+    fn pawn_collider_at(
+        &self,
+        shape: ActorCollisionShape,
+        position: Vector,
+    ) -> Option<ColliderHandle> {
+        self.pawn_proxies
+            .values()
+            .filter_map(|proxy| {
+                let body = self.rapier.bodies.get(proxy.body)?;
+                (proxy.shape == shape).then_some((
+                    (body.position().translation - position).length_squared(),
+                    proxy.collider,
+                ))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, collider)| collider)
     }
 
     fn demand_dynamic_tiles(required: &mut HashSet<DynamicTileKey>, lo: Vector, hi: Vector) {
@@ -647,12 +732,12 @@ impl ScenePhysicsWorld {
     fn rigid_solver_groups() -> InteractionGroups {
         InteractionGroups::all()
             .with_memberships(Group::GROUP_1)
-            .with_filter(Group::ALL & !Group::GROUP_2)
+            .with_filter(Group::ALL)
     }
     fn rigid_collision_groups() -> InteractionGroups {
         InteractionGroups::all()
             .with_memberships(Group::GROUP_1)
-            .with_filter(Group::ALL & !Group::GROUP_2)
+            .with_filter(Group::ALL)
     }
     fn terrain_collision_groups() -> InteractionGroups {
         InteractionGroups::all()
@@ -674,6 +759,14 @@ impl ScenePhysicsWorld {
             .with_memberships(Group::GROUP_4)
             .with_filter(Group::GROUP_1)
     }
+    fn pawn_collision_groups() -> InteractionGroups {
+        InteractionGroups::all()
+            .with_memberships(Group::GROUP_2)
+            .with_filter(Group::GROUP_1)
+    }
+    fn pawn_solver_groups() -> InteractionGroups {
+        Self::pawn_collision_groups()
+    }
 
     /// Resolves authoritative actor motion through Rapier terrain and rigid-body queries.
     pub(crate) fn move_actor(
@@ -686,17 +779,47 @@ impl ScenePhysicsWorld {
         snap_distance: f32,
         collisions: &mut impl FnMut(Vector),
     ) -> (Vector, bool) {
+        let exclude = self.pawn_collider_at(shape, position);
+        self.move_actor_excluding(
+            shape,
+            position,
+            desired,
+            up,
+            walkable_normal,
+            snap_distance,
+            exclude,
+            collisions,
+        )
+    }
+
+    pub(crate) fn move_actor_excluding(
+        &self,
+        shape: ActorCollisionShape,
+        position: Vector,
+        desired: Vector,
+        up: Vector,
+        walkable_normal: f32,
+        snap_distance: f32,
+        exclude: Option<ColliderHandle>,
+        collisions: &mut impl FnMut(Vector),
+    ) -> (Vector, bool) {
         let (mut translation, mut grounded) = self.resolve_actor_translation(
             shape,
             position,
             desired,
             up,
             walkable_normal,
+            exclude,
             collisions,
         );
         if snap_distance > 0.0 && desired.dot(up) <= 0.0 && !grounded {
-            let (snap, snapped) =
-                self.resolve_actor_support(shape, position + translation, snap_distance, up);
+            let (snap, snapped) = self.resolve_actor_support_excluding(
+                shape,
+                position + translation,
+                snap_distance,
+                up,
+                exclude,
+            );
             if snapped {
                 translation += snap;
                 grounded = true;
@@ -712,6 +835,7 @@ impl ScenePhysicsWorld {
         desired: Vector,
         up: Vector,
         walkable_normal: f32,
+        exclude: Option<ColliderHandle>,
         collisions: &mut impl FnMut(Vector),
     ) -> (Vector, bool) {
         let offset = 1.0 / 1024.0;
@@ -734,10 +858,15 @@ impl ScenePhysicsWorld {
             let mut earliest = 2.0f32;
             let mut normals = [Vector::ZERO; 4];
             let mut normal_count = 0usize;
-            let query = self.rapier.query_pipeline();
-            if let Some((_handle, hit)) =
-                query.cast_shape(&moving_pose, remaining, primitive.as_ref(), options)
-            {
+            if let Some((_handle, hit)) = self.rapier.cast_shape(
+                &moving_pose,
+                remaining,
+                primitive.as_ref(),
+                options,
+                exclude.map_or_else(QueryFilter::default, |h| {
+                    QueryFilter::default().exclude_collider(h)
+                }),
+            ) {
                 if hit.time_of_impact + 1e-4 < earliest {
                     earliest = hit.time_of_impact;
                     normal_count = 0;
@@ -786,6 +915,17 @@ impl ScenePhysicsWorld {
         distance: f32,
         up: Vector,
     ) -> (Vector, bool) {
+        self.resolve_actor_support_excluding(shape, position, distance, up, None)
+    }
+
+    fn resolve_actor_support_excluding(
+        &self,
+        shape: ActorCollisionShape,
+        position: Vector,
+        distance: f32,
+        up: Vector,
+        exclude: Option<ColliderHandle>,
+    ) -> (Vector, bool) {
         if !distance.is_finite() || distance <= 0.0 {
             return (Vector::ZERO, false);
         }
@@ -801,10 +941,15 @@ impl ScenePhysicsWorld {
         };
         let mut earliest = 1.0f32;
         let mut support = false;
-        let query = self.rapier.query_pipeline();
-        if let Some((_handle, hit)) =
-            query.cast_shape(&moving_pose, desired, primitive.as_ref(), options)
-        {
+        if let Some((_handle, hit)) = self.rapier.cast_shape(
+            &moving_pose,
+            desired,
+            primitive.as_ref(),
+            options,
+            exclude.map_or_else(QueryFilter::default, |h| {
+                QueryFilter::default().exclude_collider(h)
+            }),
+        ) {
             if hit.normal1.dot(up) > 1e-4 && hit.time_of_impact <= earliest {
                 earliest = hit.time_of_impact;
                 support = true;

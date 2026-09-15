@@ -3,7 +3,7 @@
 use rapier2d::prelude::{Pose, SharedShape, Vector};
 
 /// Selects the gravity-relative primitive collision geometry of an actor pawn
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq)]
 pub enum ActorCollisionShape {
     /// A rotation-independent circle
     Circle { radius: f32 },

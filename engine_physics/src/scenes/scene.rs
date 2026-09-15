@@ -17,6 +17,7 @@ use crate::{
 };
 use engine_compute::{Accelerator, AcceleratorBuffer};
 use engine_graphics::{MaterialGraphics, SceneGraphics};
+use rapier2d::prelude::Vector;
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     error::Error,
@@ -826,6 +827,13 @@ impl Scene {
         let delta_time: f32 = 1.0 / TICK_RATE as f32;
         let actor_proxies = self.actor_registry.cellular_proxy_states();
         if is_simulation_active {
+            let up = if self.gravity[0].hypot(self.gravity[1]) > 0.0 {
+                Vector::new(-self.gravity[0], -self.gravity[1]).normalize()
+            } else {
+                Vector::Y
+            };
+            self.physics_world
+                .sync_pawn_proxies(&self.actor_registry.physics_proxy_states(), up);
             self.physics_world.prepare_cellular_terrain(
                 &self.rigid_cellular_bodies,
                 &actor_proxies,
@@ -840,6 +848,13 @@ impl Scene {
             self.gravity,
             &self.physics_world,
         );
+        let up = if self.gravity[0].hypot(self.gravity[1]) > 0.0 {
+            Vector::new(-self.gravity[0], -self.gravity[1]).normalize()
+        } else {
+            Vector::Y
+        };
+        self.physics_world
+            .sync_pawn_proxies(&self.actor_registry.physics_proxy_states(), up);
         let actor_proxies = self.actor_registry.cellular_proxy_states();
         let possessed_position: Option<ScenePosition> = self
             .possessed_actor()

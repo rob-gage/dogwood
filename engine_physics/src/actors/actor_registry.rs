@@ -9,6 +9,11 @@ use crate::{
     scenes::{Scene, ScenePosition, SceneVelocity},
     simulation::{ScenePhysicsWorld, SceneSimulation},
 };
+pub(crate) struct ActorPhysicsProxyState {
+    pub actor: Actor,
+    pub center: [f32; 2],
+    pub shape: ActorCollisionShape,
+}
 
 /// Owns the ECS world and provides the engine's actor-facing API
 pub struct ActorRegistry {
@@ -165,6 +170,28 @@ impl ActorRegistry {
                     shape,
                     occupancy_kind: if pawn.swimming.is_some() { 2 } else { 1 },
                     mass: pawn.walking.map_or(0.0, |configuration| configuration.mass),
+                })
+            })
+            .collect()
+    }
+
+    pub(crate) fn physics_proxy_states(&self) -> Vec<ActorPhysicsProxyState> {
+        self.world
+            .iter_entities()
+            .filter_map(|entity| {
+                let pawn = entity.get::<ActorPawn>()?;
+                let shape = pawn.collision_shape?;
+                if matches!(pawn.movement, Some(ActorPawnMovement::Noclip)) {
+                    return None;
+                }
+                let position = *entity.get::<ScenePosition>()?;
+                Some(ActorPhysicsProxyState {
+                    actor: Actor::from_bevy_entity(entity.id()),
+                    center: [
+                        position.tile_coordinates.x as f32 + position.x_offset,
+                        position.tile_coordinates.y as f32 + position.y_offset,
+                    ],
+                    shape,
                 })
             })
             .collect()

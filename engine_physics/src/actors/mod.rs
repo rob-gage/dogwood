@@ -30,4 +30,5 @@ pub use actor_pawn_walking_configuration::ActorPawnWalkingConfiguration;
 pub use actor_pawn_walking_state::ActorPawnWalkingState;
 pub use actor_possessable::ActorPossessable;
 pub(crate) use actor_previous_position::ActorPreviousPosition;
+pub(crate) use actor_registry::ActorPhysicsProxyState;
 pub use actor_registry::ActorRegistry;
