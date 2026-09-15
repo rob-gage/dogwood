@@ -723,10 +723,8 @@ impl Scene {
             }
             for index in 0..batch.body_count {
                 let reaction = batch.reactions[index];
-                let static_contacts = batch.static_contact_counts[index] != 0;
                 let granular_contacts = batch.granular_contact_counts[index] != 0;
-                let contacts = static_contacts || granular_contacts ||
-                    batch.contact_counts[index] != 0;
+                let contacts = granular_contacts || batch.contact_counts[index] != 0;
                 let wake = contacts != self.rigid_cellular_contact_active[index] ||
                     batch.moving_contact_counts[index] != 0;
                 if !self.physics_world.apply_rigid_cellular_body_reaction(
@@ -737,8 +735,6 @@ impl Scene {
             newest = Some(batch);
         }
         if let Some(batch) = newest {
-            self.rigid_cellular_support = batch.supports.to_vec();
-            self.rigid_cellular_recovery = batch.recovery.to_vec();
             for index in 0..body_count {
                 let contacts = batch.contact_counts[index] != 0;
                 let wake = contacts != self.rigid_cellular_contact_active[index] || batch.moving_contact_counts[index] != 0;
@@ -759,12 +755,7 @@ impl Scene {
         }
         let delta_time: f32 = 1.0 / TICK_RATE as f32;
         if is_simulation_active {
-            for (body, support) in self.rigid_cellular_bodies.iter().zip(&self.rigid_cellular_support) {
-                self.physics_world.apply_rigid_support(body, *support);
-            }
-            for (body, recovery) in self.rigid_cellular_bodies.iter().zip(&self.rigid_cellular_recovery) {
-                self.physics_world.apply_rigid_recovery(body, *recovery);
-            }
+            self.physics_world.prepare_rigid_cellular_terrain(&self.rigid_cellular_bodies, self.gravity, delta_time);
             self.physics_world.step(self.gravity, delta_time);
         }
         self.actor_registry.simulate_actor_pawns(

@@ -9,7 +9,7 @@ use crate::actors::ActorCollisionShape;
 use crate::materials::MaterialRegistry;
 use rapier2d::{
     prelude::{
-        ColliderBuilder,
+        ColliderBuilder, ColliderHandle,
         Group,
         InteractionGroups,
         LockedAxes,
@@ -24,6 +24,18 @@ use rapier2d::{
 use rapier2d::{
     parry::query::{cast_shapes, ShapeCastOptions},
 };
+use std::collections::{HashMap, HashSet};
+
+const TERRAIN_COLLISION_PATCH_TILES: i32 = 4;
+const TERRAIN_COLLISION_PATCH_CELLS: i32 = TERRAIN_COLLISION_PATCH_TILES * 8;
+const TERRAIN_PATCH_RETENTION_TICKS: u64 = 120;
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)] struct TerrainPatchKey { x: i32, y: i32 }
+struct TerrainPatch { collider: Option<ColliderHandle>, masks: [[u32; 2]; 16], last_required_tick: u64 }
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Clone, Copy, Debug, Default)] pub(crate) struct TerrainBridgeStatistics {
+    pub(crate) active_patches: usize, pub(crate) collider_patches: usize,
+    pub(crate) patch_rebuilds: u64, pub(crate) patch_cells_scanned: u64,
+}
 
 /// Owns Rapier rigid bodies and the CPU-readable cellular collision snapshot
 pub struct ScenePhysicsWorld {
@@ -32,6 +44,10 @@ pub struct ScenePhysicsWorld {
     rapier: PhysicsWorld,
     /// Latest asynchronously completed canonical cellular collision snapshot
     cellular_terrain_snapshot: Option<CollisionOccupancySnapshot>,
+    terrain_patches: HashMap<TerrainPatchKey, TerrainPatch>,
+    required_terrain_patches: HashSet<TerrainPatchKey>,
+    terrain_tick: u64,
+    terrain_statistics: TerrainBridgeStatistics,
 }
 
 impl ScenePhysicsWorld {
@@ -43,6 +59,8 @@ impl ScenePhysicsWorld {
             step_recovery: Vec::new(),
             rapier: PhysicsWorld::new(),
             cellular_terrain_snapshot: None,
+            terrain_patches: HashMap::new(), required_terrain_patches: HashSet::new(),
+            terrain_tick: 0, terrain_statistics: TerrainBridgeStatistics::default(),
         }
     }
 
@@ -66,6 +84,7 @@ impl ScenePhysicsWorld {
                 .rotation(angle)
                 .linvel(Vector::new(linear_velocity[0], linear_velocity[1]))
                 .angvel(angular_velocity)
+                .ccd_enabled(true)
                 .additional_mass_properties(mass_properties),
         );
         self.rapier.insert_collider(
@@ -73,6 +92,7 @@ impl ScenePhysicsWorld {
                 .density(0.0)
                 .friction(friction)
                 .restitution(restitution)
+                .collision_groups(Self::rigid_collision_groups())
                 .solver_groups(Self::rigid_solver_groups()),
             Some(handle),
         );
@@ -114,6 +134,62 @@ impl ScenePhysicsWorld {
     ) {
         self.cellular_terrain_snapshot = Some(snapshot);
     }
+
+    pub(crate) fn prepare_rigid_cellular_terrain(&mut self, bodies: &[RigidCellularBody], gravity: [f32; 2], dt: f32) {
+        self.terrain_tick += 1; self.required_terrain_patches.clear();
+        for body in bodies { let Some(rigid) = self.rapier.bodies.get(body.handle) else { continue; };
+            for handle in rigid.colliders() { let Some(collider) = self.rapier.colliders.get(*handle) else { continue; };
+                let aabb = collider.compute_aabb(); let radius = (aabb.maxs - aabb.mins).length() * 0.5;
+                let d = rigid.linvel() * dt + Vector::new(gravity[0], gravity[1]) * (0.5 * dt * dt);
+                let angular = rigid.angvel().abs() * dt * radius;
+                let lo = aabb.mins.min(aabb.mins + d) - Vector::splat(angular + 0.25);
+                let hi = aabb.maxs.max(aabb.maxs + d) + Vector::splat(angular + 0.25);
+                let x0 = ((lo.x * 8.0).floor() as i32).div_euclid(TERRAIN_COLLISION_PATCH_CELLS) - 1;
+                let y0 = ((lo.y * 8.0).floor() as i32).div_euclid(TERRAIN_COLLISION_PATCH_CELLS) - 1;
+                let x1 = ((hi.x * 8.0).floor() as i32).div_euclid(TERRAIN_COLLISION_PATCH_CELLS) + 1;
+                let y1 = ((hi.y * 8.0).floor() as i32).div_euclid(TERRAIN_COLLISION_PATCH_CELLS) + 1;
+                for y in y0..=y1 { for x in x0..=x1 { self.required_terrain_patches.insert(TerrainPatchKey { x, y }); }}
+            }
+        }
+        let Some(snapshot) = self.cellular_terrain_snapshot.as_ref() else { return; };
+        let keys: Vec<_> = self.required_terrain_patches.iter().copied().collect();
+        for key in keys { let masks = snapshot.static_patch_masks(key.x, key.y);
+            let changed = self.terrain_patches.get(&key).is_none_or(|p| p.masks != masks);
+            let patch = self.terrain_patches.entry(key).or_insert(TerrainPatch { collider: None, masks, last_required_tick: self.terrain_tick });
+            patch.last_required_tick = self.terrain_tick; if !changed { continue; }
+            patch.masks = masks; self.terrain_statistics.patch_rebuilds += 1; self.terrain_statistics.patch_cells_scanned += 1024;
+            match (patch.collider, Self::terrain_patch_shape(&masks)) {
+                (Some(h), Some(s)) => self.rapier.colliders.get_mut(h).unwrap().set_shape(s),
+                (Some(h), None) => { self.rapier.remove_collider(h); patch.collider = None; }
+                (None, Some(s)) => patch.collider = Some(self.rapier.insert_collider(ColliderBuilder::new(s)
+                    .translation(Vector::new(key.x as f32 * 4.0, key.y as f32 * 4.0)).friction(0.8).restitution(0.0)
+                    .collision_groups(Self::terrain_collision_groups()).solver_groups(Self::terrain_solver_groups()), None)),
+                (None, None) => {}
+            }
+        }
+        let old: Vec<_> = self.terrain_patches.iter().filter_map(|(k, p)|
+            (self.terrain_tick - p.last_required_tick > TERRAIN_PATCH_RETENTION_TICKS).then_some(*k)).collect();
+        for k in old { if let Some(p) = self.terrain_patches.remove(&k) { if let Some(h) = p.collider { self.rapier.remove_collider(h); } }}
+        self.terrain_statistics.active_patches = self.terrain_patches.len();
+        self.terrain_statistics.collider_patches = self.terrain_patches.values().filter(|p| p.collider.is_some()).count();
+    }
+
+    fn terrain_patch_shape(masks: &[[u32; 2]; 16]) -> Option<SharedShape> {
+        let mut rows = [0u32; 32];
+        for ty in 0..4 { for tx in 0..4 { let [lo, hi] = masks[ty * 4 + tx]; for y in 0..8 {
+            rows[ty * 8 + y] |= ((if y < 4 { lo } else { hi }) >> ((y % 4) * 8) & 0xff) << (tx * 8);
+        }}}
+        if rows.iter().all(|r| *r == 0) { return None; }
+        if rows.iter().all(|r| *r == u32::MAX) { return Some(SharedShape::cuboid(2.0, 2.0)); }
+        let mut parts = Vec::new();
+        for y in 0..32 { while rows[y] != 0 { let x = rows[y].trailing_zeros() as usize; let w = (rows[y] >> x).trailing_ones() as usize;
+            let mask = if w == 32 { u32::MAX } else { (((1u64 << w) - 1) as u32) << x }; let mut h = 1;
+            while y + h < 32 && rows[y + h] & mask == mask { h += 1; } for row in &mut rows[y..y + h] { *row &= !mask; }
+            parts.push((Pose::translation((x + w / 2) as f32 / 8.0 + (w % 2) as f32 / 16.0, (y + h / 2) as f32 / 8.0 + (h % 2) as f32 / 16.0), SharedShape::cuboid(w as f32 / 16.0, h as f32 / 16.0)));
+        }} Some(SharedShape::compound(parts))
+    }
+
+    #[cfg(test)] pub(crate) fn terrain_bridge_statistics(&self) -> TerrainBridgeStatistics { self.terrain_statistics }
 
     /// Advances Rapier's collision world by one fixed scene step
     pub fn step(&mut self, gravity: [f32; 2], delta_time: f32) {
@@ -229,6 +305,9 @@ impl ScenePhysicsWorld {
             .with_memberships(Group::GROUP_1)
             .with_filter(Group::ALL & !Group::GROUP_2)
     }
+    fn rigid_collision_groups() -> InteractionGroups { InteractionGroups::all().with_memberships(Group::GROUP_1).with_filter(Group::ALL & !Group::GROUP_2) }
+    fn terrain_collision_groups() -> InteractionGroups { InteractionGroups::all().with_memberships(Group::GROUP_3).with_filter(Group::GROUP_1) }
+    fn terrain_solver_groups() -> InteractionGroups { InteractionGroups::all().with_memberships(Group::GROUP_3).with_filter(Group::GROUP_1) }
 
     /// Resolves authoritative actor motion against cellular occupancy and non-cellular Rapier bodies.
     pub(crate) fn move_actor(

@@ -73,8 +73,6 @@ pub struct CellularPressure {
     gather_rigid_contacts_pipeline: wgpu::ComputePipeline,
     resolve_contacts_pipelines: [wgpu::ComputePipeline; 4],
     rigid_contact_initialize_pipeline: wgpu::ComputePipeline,
-    rigid_static_gather_pipeline: wgpu::ComputePipeline,
-    rigid_static_resolve_pipeline: wgpu::ComputePipeline,
     propagate_pending_pipeline: wgpu::ComputePipeline,
     propagate_a_pipeline: wgpu::ComputePipeline,
     propagate_b_pipeline: wgpu::ComputePipeline,
@@ -409,14 +407,6 @@ impl CellularPressure {
                 device, &pipeline_layout, &shader,
                 "initialize rigid contact state", "initialize_rigid_contact_state",
             ),
-            rigid_static_gather_pipeline: Self::create_pipeline(
-                device, &pipeline_layout, &shader,
-                "gather rigid static contacts", "gather_rigid_static_contacts",
-            ),
-            rigid_static_resolve_pipeline: Self::create_pipeline(
-                device, &pipeline_layout, &shader,
-                "resolve rigid static contacts", "resolve_rigid_static_contacts",
-            ),
             propagate_pending_pipeline: Self::create_pipeline(
                 device, &pipeline_layout, &shader,
                 "cellular pending pressure propagation", "propagate_pending_cellular_pressure",
@@ -527,27 +517,11 @@ impl CellularPressure {
         }
         {
             let mut pass: wgpu::ComputePass<'_> = accelerator.begin_compute_pass(
-                &mut encoder, "gather rigid contacts",
-            );
-            pass.set_pipeline(&self.rigid_static_gather_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.dispatch_workgroups(rigid_cell_count.max(1).div_ceil(64), 1, 1);
-        }
-        {
-            let mut pass: wgpu::ComputePass<'_> = accelerator.begin_compute_pass(
                 &mut encoder, "gather rigid grid interfaces",
             );
             pass.set_pipeline(&self.gather_rigid_contacts_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.dispatch_workgroups_indirect(&self.indirect_dispatch, 0);
-        }
-        {
-            let mut pass: wgpu::ComputePass<'_> = accelerator.begin_compute_pass(
-                &mut encoder, "resolve rigid static contacts",
-            );
-            pass.set_pipeline(&self.rigid_static_resolve_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.dispatch_workgroups(rigid_cell_count.max(1).div_ceil(64), 1, 1);
         }
         for pipeline in &self.resolve_contacts_pipelines {
             let mut pass: wgpu::ComputePass<'_> = accelerator.begin_compute_pass(

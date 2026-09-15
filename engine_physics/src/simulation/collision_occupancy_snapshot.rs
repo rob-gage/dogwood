@@ -21,6 +21,17 @@ pub struct CollisionOccupancySnapshot {
 }
 
 impl CollisionOccupancySnapshot {
+    pub(crate) fn static_patch_masks(&self, patch_x: i32, patch_y: i32) -> [[u32; 2]; 16] {
+        let mut result = [[0; 2]; 16];
+        for y in 0..4 { for x in 0..4 {
+            let tx = patch_x * 4 + x - self.origin.x;
+            let ty = patch_y * 4 + y - self.origin.y;
+            if tx >= 0 && ty >= 0 && tx < i32::from(self.width) && ty < i32::from(self.height) {
+                result[(y * 4 + x) as usize] = self.static_masks[ty as usize * usize::from(self.width) + tx as usize];
+            }
+        }}
+        result
+    }
 
     /// Returns whether a world cell contains static material
     pub(crate) fn is_static_cell_occupied(&self, x: i32, y: i32) -> Option<bool> {
