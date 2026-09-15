@@ -13,6 +13,7 @@ use std::collections::{HashMap, HashSet};
 const TERRAIN_COLLISION_PATCH_TILES: i32 = 4;
 const TERRAIN_COLLISION_PATCH_CELLS: i32 = TERRAIN_COLLISION_PATCH_TILES * 8;
 const TERRAIN_PATCH_RETENTION_TICKS: u64 = 120;
+const DYNAMIC_TILE_RETENTION_TICKS: u64 = 30;
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct TerrainPatchKey {
     x: i32,
@@ -23,6 +24,16 @@ struct TerrainPatch {
     masks: [[u32; 2]; 16],
     last_required_tick: u64,
 }
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct DynamicTileKey {
+    x: i32,
+    y: i32,
+}
+struct DynamicTile {
+    collider: Option<ColliderHandle>,
+    mask: [u32; 2],
+    last_required_tick: u64,
+}
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct TerrainBridgeStatistics {
@@ -30,6 +41,16 @@ pub(crate) struct TerrainBridgeStatistics {
     pub(crate) collider_patches: usize,
     pub(crate) patch_rebuilds: u64,
     pub(crate) patch_cells_scanned: u64,
+    pub(crate) dynamic_required_tiles: usize,
+    pub(crate) dynamic_cached_tiles: usize,
+    pub(crate) dynamic_collider_tiles: usize,
+    pub(crate) dynamic_mask_changes: u64,
+    pub(crate) dynamic_shape_rebuilds: u64,
+    pub(crate) dynamic_set_shape_calls: u64,
+    pub(crate) dynamic_enable_disable_changes: u64,
+    pub(crate) dynamic_cells_scanned: u64,
+    pub(crate) dynamic_rectangles_emitted: u64,
+    pub(crate) collision_snapshot_age: u64,
 }
 
 /// Owns Rapier rigid bodies and the CPU-readable cellular collision snapshot
@@ -41,8 +62,11 @@ pub struct ScenePhysicsWorld {
     cellular_terrain_snapshot: Option<CollisionOccupancySnapshot>,
     terrain_patches: HashMap<TerrainPatchKey, TerrainPatch>,
     required_terrain_patches: HashSet<TerrainPatchKey>,
+    dynamic_tiles: HashMap<DynamicTileKey, DynamicTile>,
+    required_dynamic_tiles: HashSet<DynamicTileKey>,
     terrain_tick: u64,
     terrain_statistics: TerrainBridgeStatistics,
+    snapshot_updated_this_tick: bool,
 }
 
 impl ScenePhysicsWorld {
@@ -55,8 +79,11 @@ impl ScenePhysicsWorld {
             cellular_terrain_snapshot: None,
             terrain_patches: HashMap::new(),
             required_terrain_patches: HashSet::new(),
+            dynamic_tiles: HashMap::new(),
+            required_dynamic_tiles: HashSet::new(),
             terrain_tick: 0,
             terrain_statistics: TerrainBridgeStatistics::default(),
+            snapshot_updated_this_tick: false,
         }
     }
 
@@ -132,6 +159,19 @@ impl ScenePhysicsWorld {
     /// Replaces the latest CPU-readable cellular collision snapshot
     pub fn update_cellular_snapshot(&mut self, snapshot: CollisionOccupancySnapshot) {
         self.cellular_terrain_snapshot = Some(snapshot);
+        self.snapshot_updated_this_tick = true;
+    }
+
+    pub(crate) fn set_collision_snapshot_age(&mut self, age: u64) {
+        self.terrain_statistics.collision_snapshot_age = age;
+    }
+
+    fn demand_dynamic_tiles(required: &mut HashSet<DynamicTileKey>, lo: Vector, hi: Vector) {
+        for y in (lo.y.floor() as i32 - 1)..=(hi.y.floor() as i32 + 1) {
+            for x in (lo.x.floor() as i32 - 1)..=(hi.x.floor() as i32 + 1) {
+                required.insert(DynamicTileKey { x, y });
+            }
+        }
     }
 
     pub(crate) fn prepare_cellular_terrain(
@@ -142,7 +182,12 @@ impl ScenePhysicsWorld {
         dt: f32,
     ) {
         self.terrain_tick += 1;
+        if !self.snapshot_updated_this_tick {
+            self.terrain_statistics.collision_snapshot_age += 1;
+        }
+        self.snapshot_updated_this_tick = false;
         self.required_terrain_patches.clear();
+        self.required_dynamic_tiles.clear();
         for body in bodies {
             let Some(rigid) = self.rapier.bodies.get(body.handle) else {
                 continue;
@@ -157,6 +202,7 @@ impl ScenePhysicsWorld {
                 let angular = rigid.angvel().abs() * dt * radius;
                 let lo = aabb.mins.min(aabb.mins + d) - Vector::splat(angular + 0.25);
                 let hi = aabb.maxs.max(aabb.maxs + d) + Vector::splat(angular + 0.25);
+                Self::demand_dynamic_tiles(&mut self.required_dynamic_tiles, lo, hi);
                 let x0 =
                     ((lo.x * 8.0).floor() as i32).div_euclid(TERRAIN_COLLISION_PATCH_CELLS) - 1;
                 let y0 =
@@ -185,6 +231,7 @@ impl ScenePhysicsWorld {
                 + Vector::new(gravity[0], gravity[1]) * (0.5 * dt * dt);
             let lo = center.min(center + d) - Vector::splat(radius + 0.25);
             let hi = center.max(center + d) + Vector::splat(radius + 0.25);
+            Self::demand_dynamic_tiles(&mut self.required_dynamic_tiles, lo, hi);
             let x0 = ((lo.x * 8.0).floor() as i32).div_euclid(TERRAIN_COLLISION_PATCH_CELLS) - 1;
             let y0 = ((lo.y * 8.0).floor() as i32).div_euclid(TERRAIN_COLLISION_PATCH_CELLS) - 1;
             let x1 = ((hi.x * 8.0).floor() as i32).div_euclid(TERRAIN_COLLISION_PATCH_CELLS) + 1;
@@ -199,6 +246,110 @@ impl ScenePhysicsWorld {
         let Some(snapshot) = self.cellular_terrain_snapshot.as_ref() else {
             return;
         };
+        self.terrain_statistics.dynamic_required_tiles = self.required_dynamic_tiles.len();
+        let dynamic_keys: Vec<_> = self.required_dynamic_tiles.iter().copied().collect();
+        let mut changed_dynamic = Vec::new();
+        for key in dynamic_keys {
+            let mask = snapshot.dynamic_tile_mask(key.x, key.y);
+            let tile = self.dynamic_tiles.entry(key).or_insert(DynamicTile {
+                collider: None,
+                mask: [0; 2],
+                last_required_tick: self.terrain_tick,
+            });
+            tile.last_required_tick = self.terrain_tick;
+            if tile.mask == mask {
+                continue;
+            }
+            tile.mask = mask;
+            changed_dynamic.push(key);
+            self.terrain_statistics.dynamic_mask_changes += 1;
+            self.terrain_statistics.dynamic_cells_scanned += 64;
+            if mask == [0; 2] {
+                if let Some(handle) = tile.collider {
+                    self.rapier
+                        .colliders
+                        .get_mut(handle)
+                        .unwrap()
+                        .set_enabled(false);
+                    self.terrain_statistics.dynamic_enable_disable_changes += 1;
+                }
+                continue;
+            }
+            let (shape, rectangles) = Self::dynamic_tile_shape(mask);
+            self.terrain_statistics.dynamic_shape_rebuilds += 1;
+            self.terrain_statistics.dynamic_rectangles_emitted += rectangles as u64;
+            if let Some(handle) = tile.collider {
+                let collider = self.rapier.colliders.get_mut(handle).unwrap();
+                collider.set_shape(shape.unwrap());
+                self.terrain_statistics.dynamic_set_shape_calls += 1;
+                if !collider.is_enabled() {
+                    collider.set_enabled(true);
+                    self.terrain_statistics.dynamic_enable_disable_changes += 1;
+                }
+            } else {
+                tile.collider = Some(
+                    self.rapier.insert_collider(
+                        ColliderBuilder::new(shape.unwrap())
+                            .translation(Vector::new(key.x as f32, key.y as f32))
+                            .friction(0.8)
+                            .restitution(0.0)
+                            .collision_groups(Self::dynamic_collision_groups())
+                            .solver_groups(Self::dynamic_solver_groups()),
+                        None,
+                    ),
+                );
+            }
+        }
+        // A support tile can vanish underneath a sleeping body. Wake only bodies touching it.
+        for key in changed_dynamic {
+            let lo = Vector::new(key.x as f32, key.y as f32) - Vector::splat(0.125);
+            let hi = lo + Vector::splat(1.25);
+            for body in bodies {
+                let Some(rigid) = self.rapier.bodies.get(body.handle) else {
+                    continue;
+                };
+                if !rigid.is_sleeping() {
+                    continue;
+                }
+                let touches = rigid.colliders().iter().any(|handle| {
+                    self.rapier.colliders.get(*handle).is_some_and(|c| {
+                        let a = c.compute_aabb();
+                        a.mins.x <= hi.x && a.maxs.x >= lo.x && a.mins.y <= hi.y && a.maxs.y >= lo.y
+                    })
+                });
+                if touches {
+                    self.rapier
+                        .bodies
+                        .get_mut(body.handle)
+                        .unwrap()
+                        .wake_up(true);
+                }
+            }
+        }
+        let stale_dynamic: Vec<_> = self
+            .dynamic_tiles
+            .iter()
+            .filter_map(|(key, tile)| {
+                (self.terrain_tick - tile.last_required_tick > DYNAMIC_TILE_RETENTION_TICKS)
+                    .then_some(*key)
+            })
+            .collect();
+        for key in stale_dynamic {
+            if let Some(tile) = self.dynamic_tiles.remove(&key) {
+                if let Some(handle) = tile.collider {
+                    self.rapier.remove_collider(handle);
+                }
+            }
+        }
+        self.terrain_statistics.dynamic_cached_tiles = self.dynamic_tiles.len();
+        self.terrain_statistics.dynamic_collider_tiles = self
+            .dynamic_tiles
+            .values()
+            .filter(|tile| {
+                tile.collider
+                    .is_some_and(|h| self.rapier.colliders.get(h).is_some_and(|c| c.is_enabled()))
+            })
+            .count();
         let keys: Vec<_> = self.required_terrain_patches.iter().copied().collect();
         for key in keys {
             let masks = snapshot.static_patch_masks(key.x, key.y);
@@ -274,11 +425,23 @@ impl ScenePhysicsWorld {
                 }
             }
         }
-        if rows.iter().all(|r| *r == 0) {
-            return None;
+        Self::shape_from_rows(&mut rows, 32).0
+    }
+
+    fn dynamic_tile_shape(mask: [u32; 2]) -> (Option<SharedShape>, usize) {
+        let mut rows = [0u32; 8];
+        for (y, row) in rows.iter_mut().enumerate() {
+            *row = (mask[y / 4] >> ((y % 4) * 8)) & 0xff;
         }
-        let mut parts = Vec::new();
-        for y in 0..32 {
+        Self::shape_from_rows(&mut rows, 8)
+    }
+
+    fn shape_from_rows(rows: &mut [u32], size: usize) -> (Option<SharedShape>, usize) {
+        if rows.iter().all(|r| *r == 0) {
+            return (None, 0);
+        }
+        let mut parts = Vec::with_capacity(size);
+        for y in 0..size {
             while rows[y] != 0 {
                 let x = rows[y].trailing_zeros() as usize;
                 let w = (rows[y] >> x).trailing_ones() as usize;
@@ -288,7 +451,7 @@ impl ScenePhysicsWorld {
                     (((1u64 << w) - 1) as u32) << x
                 };
                 let mut h = 1;
-                while y + h < 32 && rows[y + h] & mask == mask {
+                while y + h < size && rows[y + h] & mask == mask {
                     h += 1;
                 }
                 for row in &mut rows[y..y + h] {
@@ -303,10 +466,11 @@ impl ScenePhysicsWorld {
                 ));
             }
         }
-        Some(SharedShape::compound(parts))
+        let count = parts.len();
+        (Some(SharedShape::compound(parts)), count)
     }
 
-    #[cfg(test)]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn terrain_bridge_statistics(&self) -> TerrainBridgeStatistics {
         self.terrain_statistics
     }
@@ -498,6 +662,16 @@ impl ScenePhysicsWorld {
     fn terrain_solver_groups() -> InteractionGroups {
         InteractionGroups::all()
             .with_memberships(Group::GROUP_3)
+            .with_filter(Group::GROUP_1)
+    }
+    fn dynamic_collision_groups() -> InteractionGroups {
+        InteractionGroups::all()
+            .with_memberships(Group::GROUP_4)
+            .with_filter(Group::GROUP_1)
+    }
+    fn dynamic_solver_groups() -> InteractionGroups {
+        InteractionGroups::all()
+            .with_memberships(Group::GROUP_4)
             .with_filter(Group::GROUP_1)
     }
 
@@ -887,7 +1061,7 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_cells_do_not_create_hard_pawn_collision() {
+    fn dynamic_cells_create_hard_pawn_collision() {
         let mut physics = ScenePhysicsWorld::new();
         physics.update_cellular_snapshot(CollisionOccupancySnapshot {
             sequence: 0,
@@ -895,19 +1069,412 @@ mod tests {
             width: 1,
             height: 1,
             static_masks: vec![[0, 0]].into_boxed_slice(),
-            dynamic_masks: vec![[0, 1 << 4]].into_boxed_slice(),
+            dynamic_masks: vec![[0, 1]].into_boxed_slice(),
         });
         let shape = ActorCollisionShape::Circle { radius: 0.25 };
         prepare_actor_terrain(&mut physics, shape);
         let (movement, _) = physics.move_actor(
             shape,
             Vector::new(0.5625, 0.5625),
-            Vector::new(-0.25, 0.0),
+            Vector::new(-0.6, 0.0),
             Vector::Y,
             0.0,
             0.0,
             &mut |_| {},
         );
-        assert!((movement.x + 0.25).abs() < 1e-5);
+        assert!(
+            movement.x > -0.6,
+            "pawn passed through dynamic sand: {:?}",
+            movement
+        );
+        physics.update_cellular_snapshot(CollisionOccupancySnapshot {
+            sequence: 1,
+            origin: TileCoordinates { x: 0, y: 0 },
+            width: 1,
+            height: 1,
+            static_masks: vec![[0; 2]].into_boxed_slice(),
+            dynamic_masks: vec![[0; 2]].into_boxed_slice(),
+        });
+        let actor = [ActorCellularProxyState {
+            center: [0.5625, 0.5625],
+            velocity: [0.0; 2],
+            drive: [-1.0, 0.0],
+            shape,
+            occupancy_kind: 1,
+            mass: 0.0,
+        }];
+        physics.prepare_cellular_terrain(&[], &actor, [0.0; 2], 1.0 / 60.0);
+        physics.step([0.0; 2], 1.0 / 60.0);
+        let (cleared, _) = physics.move_actor(
+            shape,
+            Vector::new(0.5625, 0.5625),
+            Vector::new(-0.6, 0.0),
+            Vector::Y,
+            0.0,
+            0.0,
+            &mut |_| {},
+        );
+        assert!((cleared.x + 0.6).abs() < 1e-4);
+    }
+
+    #[test]
+    fn dynamic_tile_geometry_and_cache_are_local() {
+        assert!(ScenePhysicsWorld::dynamic_tile_shape([0; 2]).0.is_none());
+        let negative = CollisionOccupancySnapshot {
+            sequence: 0,
+            origin: TileCoordinates { x: -3, y: -2 },
+            width: 1,
+            height: 1,
+            static_masks: vec![[0; 2]].into_boxed_slice(),
+            dynamic_masks: vec![[u32::MAX; 2]].into_boxed_slice(),
+        };
+        assert_eq!(negative.dynamic_tile_mask(-3, -2), [u32::MAX; 2]);
+        assert_eq!(negative.dynamic_tile_mask(-4, -2), [0; 2]);
+        for (mask, expected, rectangles) in [
+            ([u32::MAX; 2], [-3.0, -2.0, -2.0, -1.0], 1),
+            ([u32::MAX, 0], [-3.0, -2.0, -2.0, -1.5], 1),
+        ] {
+            let (shape, count) = ScenePhysicsWorld::dynamic_tile_shape(mask);
+            assert_eq!(count, rectangles);
+            let aabb = shape.unwrap().compute_aabb(&Pose::translation(-3.0, -2.0));
+            assert!((aabb.mins.x - expected[0]).abs() < 1e-5);
+            assert!((aabb.mins.y - expected[1]).abs() < 1e-5);
+            assert!((aabb.maxs.x - expected[2]).abs() < 1e-5);
+            assert!((aabb.maxs.y - expected[3]).abs() < 1e-5);
+        }
+        let mut world = ScenePhysicsWorld::new();
+        let actor = ActorCellularProxyState {
+            center: [0.5, 0.5],
+            velocity: [0.0; 2],
+            drive: [0.0; 2],
+            shape: ActorCollisionShape::Circle { radius: 0.25 },
+            occupancy_kind: 1,
+            mass: 0.0,
+        };
+        let actors = [actor];
+        let snapshot = |near: [u32; 2], far: [u32; 2]| CollisionOccupancySnapshot {
+            sequence: 0,
+            origin: TileCoordinates { x: 0, y: 0 },
+            width: 16,
+            height: 1,
+            static_masks: vec![[0; 2]; 16].into_boxed_slice(),
+            dynamic_masks: {
+                let mut v = vec![[0; 2]; 16];
+                v[0] = near;
+                v[15] = far;
+                v.into_boxed_slice()
+            },
+        };
+        world.update_cellular_snapshot(snapshot([1, 0], [0; 2]));
+        world.prepare_cellular_terrain(&[], &actors, [0.0; 2], 1.0 / 60.0);
+        let first = world.terrain_bridge_statistics();
+        assert_eq!(first.dynamic_shape_rebuilds, 1);
+        assert_eq!(first.dynamic_cells_scanned, 64);
+        world.prepare_cellular_terrain(&[], &actors, [0.0; 2], 1.0 / 60.0);
+        assert_eq!(world.terrain_bridge_statistics().dynamic_shape_rebuilds, 1);
+        world.update_cellular_snapshot(snapshot([1, 0], [1, 0]));
+        world.prepare_cellular_terrain(&[], &actors, [0.0; 2], 1.0 / 60.0);
+        assert_eq!(world.terrain_bridge_statistics().dynamic_shape_rebuilds, 1);
+        world.update_cellular_snapshot(snapshot([3, 0], [1, 0]));
+        world.prepare_cellular_terrain(&[], &actors, [0.0; 2], 1.0 / 60.0);
+        let last = world.terrain_bridge_statistics();
+        assert_eq!(last.dynamic_shape_rebuilds, 2);
+        assert_eq!(last.dynamic_set_shape_calls, 1);
+        assert_eq!(last.dynamic_cells_scanned, 128);
+        let key = super::DynamicTileKey { x: 0, y: 0 };
+        let handle = world.dynamic_tiles[&key].collider.unwrap();
+        world.update_cellular_snapshot(snapshot([0; 2], [1, 0]));
+        world.prepare_cellular_terrain(&[], &actors, [0.0; 2], 1.0 / 60.0);
+        assert!(!world.rapier.colliders.get(handle).unwrap().is_enabled());
+        world.update_cellular_snapshot(snapshot([1, 0], [1, 0]));
+        world.prepare_cellular_terrain(&[], &actors, [0.0; 2], 1.0 / 60.0);
+        assert_eq!(world.dynamic_tiles[&key].collider, Some(handle));
+        assert!(world.rapier.colliders.get(handle).unwrap().is_enabled());
+    }
+
+    #[test]
+    fn settled_dynamic_floor_supports_rigid_and_removed_floor_releases_it() {
+        let mut materials = MaterialRegistry::new();
+        let stone = materials.register(Material::CellularStatic {
+            name: "Stone".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(90, 90, 90)),
+            mass: 1.0,
+            pressure_ignore_threshold: 1000.0,
+            default_integrity: 100.0,
+            debris_material: None,
+            debris_yield_rate: 0.0,
+            pressure_transmission: 1.0,
+            friction: 0.5,
+            restitution: 0.0,
+        });
+        let mut world = ScenePhysicsWorld::new();
+        let snapshot = |mask| CollisionOccupancySnapshot {
+            sequence: 0,
+            origin: TileCoordinates { x: 0, y: 0 },
+            width: 1,
+            height: 1,
+            static_masks: vec![[0; 2]].into_boxed_slice(),
+            dynamic_masks: vec![mask].into_boxed_slice(),
+        };
+        world.update_cellular_snapshot(snapshot([u32::MAX; 2]));
+        let body = world.insert_rigid_cellular_body(
+            [0.5, 1.5],
+            0.0,
+            &materials,
+            vec![([0, 0], stone, CellularAppearance::NEUTRAL)],
+            0.5,
+            0.0,
+            [0.0; 2],
+            0.0,
+        );
+        for _ in 0..180 {
+            world.prepare_cellular_terrain(
+                std::slice::from_ref(&body),
+                &[],
+                [0.0, -9.81],
+                1.0 / 60.0,
+            );
+            world.step([0.0, -9.81], 1.0 / 60.0);
+        }
+        let supported = world.rigid_cellular_body_state(&body).unwrap().translation[1];
+        assert!(supported > 0.95, "rigid sank through sand: {supported}");
+        for _ in 0..60 {
+            world
+                .rapier
+                .bodies
+                .get_mut(body.handle)
+                .unwrap()
+                .apply_impulse(Vector::new(0.0, -0.001), true);
+            world.prepare_cellular_terrain(
+                std::slice::from_ref(&body),
+                &[],
+                [0.0, -9.81],
+                1.0 / 60.0,
+            );
+            world.step([0.0, -9.81], 1.0 / 60.0);
+        }
+        assert!(world.rigid_cellular_body_state(&body).unwrap().translation[1] > 0.95);
+        let mut minimum_moving = f32::MAX;
+        let mut maximum_moving = f32::MIN;
+        for tick in 0..60 {
+            world.update_cellular_snapshot(snapshot([
+                u32::MAX ^ if tick % 2 == 0 { 1 << 3 } else { 0 },
+                u32::MAX,
+            ]));
+            world.prepare_cellular_terrain(
+                std::slice::from_ref(&body),
+                &[],
+                [0.0, -9.81],
+                1.0 / 60.0,
+            );
+            world.step([0.0, -9.81], 1.0 / 60.0);
+            let height = world.rigid_cellular_body_state(&body).unwrap().translation[1];
+            minimum_moving = minimum_moving.min(height);
+            maximum_moving = maximum_moving.max(height);
+        }
+        assert!(
+            minimum_moving > 0.95 && maximum_moving - minimum_moving < 0.01,
+            "rigid jittered or sank on moving sand: {minimum_moving}..{maximum_moving}"
+        );
+        world.update_cellular_snapshot(snapshot([u32::MAX; 2]));
+        world.prepare_cellular_terrain(std::slice::from_ref(&body), &[], [0.0, -9.81], 1.0 / 60.0);
+        let rebuilds = world.terrain_bridge_statistics().dynamic_shape_rebuilds;
+        for _ in 0..10 {
+            world.prepare_cellular_terrain(
+                std::slice::from_ref(&body),
+                &[],
+                [0.0, -9.81],
+                1.0 / 60.0,
+            );
+            world.step([0.0, -9.81], 1.0 / 60.0);
+        }
+        assert_eq!(
+            world.terrain_bridge_statistics().dynamic_shape_rebuilds,
+            rebuilds
+        );
+        world.rapier.bodies.get_mut(body.handle).unwrap().sleep();
+        world.update_cellular_snapshot(snapshot([0; 2]));
+        world.prepare_cellular_terrain(std::slice::from_ref(&body), &[], [0.0, -9.81], 1.0 / 60.0);
+        assert!(!world.rapier.bodies.get(body.handle).unwrap().is_sleeping());
+        for _ in 0..30 {
+            world.step([0.0, -9.81], 1.0 / 60.0);
+        }
+        assert!(world.rigid_cellular_body_state(&body).unwrap().translation[1] < supported - 0.1);
+    }
+
+    #[test]
+    fn distant_unsettled_sand_needs_no_rapier_geometry() {
+        let mut world = ScenePhysicsWorld::new();
+        for tick in 0..100 {
+            world.update_cellular_snapshot(CollisionOccupancySnapshot {
+                sequence: tick,
+                origin: TileCoordinates { x: -64, y: -64 },
+                width: 128,
+                height: 128,
+                static_masks: vec![[0; 2]; 128 * 128].into_boxed_slice(),
+                dynamic_masks: vec![[if tick % 2 == 0 { u32::MAX } else { 0 }; 2]; 128 * 128]
+                    .into_boxed_slice(),
+            });
+            world.prepare_cellular_terrain(&[], &[], [0.0, -9.81], 1.0 / 60.0);
+        }
+        let stats = world.terrain_bridge_statistics();
+        assert_eq!(stats.dynamic_required_tiles, 0);
+        assert_eq!(stats.dynamic_shape_rebuilds, 0);
+        assert_eq!(stats.dynamic_cells_scanned, 0);
+    }
+
+    #[test]
+    fn dynamic_group_filters_and_neighbor_tiles_have_no_gap() {
+        let rigid = ScenePhysicsWorld::rigid_collision_groups();
+        let dynamic = ScenePhysicsWorld::dynamic_collision_groups();
+        let static_terrain = ScenePhysicsWorld::terrain_collision_groups();
+        assert!(rigid.test(dynamic));
+        assert!(
+            ScenePhysicsWorld::rigid_solver_groups()
+                .test(ScenePhysicsWorld::dynamic_solver_groups())
+        );
+        assert!(!dynamic.test(static_terrain));
+        assert!(!dynamic.test(dynamic));
+        let shape = ScenePhysicsWorld::dynamic_tile_shape([u32::MAX; 2])
+            .0
+            .unwrap();
+        let left = shape.compute_aabb(&Pose::translation(-2.0, 0.0));
+        let right = shape.compute_aabb(&Pose::translation(-1.0, 0.0));
+        assert!((left.maxs.x - right.mins.x).abs() < 1e-5);
+    }
+
+    #[test]
+    fn pawn_is_supported_by_settled_dynamic_sand() {
+        let mut world = ScenePhysicsWorld::new();
+        world.update_cellular_snapshot(CollisionOccupancySnapshot {
+            sequence: 0,
+            origin: TileCoordinates { x: 0, y: 0 },
+            width: 1,
+            height: 1,
+            static_masks: vec![[0; 2]].into_boxed_slice(),
+            dynamic_masks: vec![[u32::MAX; 2]].into_boxed_slice(),
+        });
+        let shape = ActorCollisionShape::Circle { radius: 0.25 };
+        let actor = [ActorCellularProxyState {
+            center: [0.5, 1.5],
+            velocity: [0.0; 2],
+            drive: [0.0; 2],
+            shape,
+            occupancy_kind: 1,
+            mass: 0.0,
+        }];
+        world.prepare_cellular_terrain(&[], &actor, [0.0, -9.81], 1.0 / 60.0);
+        world.step([0.0, -9.81], 1.0 / 60.0);
+        let (motion, grounded) = world.move_actor(
+            shape,
+            Vector::new(0.5, 1.5),
+            Vector::new(0.0, -0.6),
+            Vector::Y,
+            0.5,
+            0.0,
+            &mut |_| {},
+        );
+        assert!(
+            grounded && motion.y > -0.6,
+            "pawn fell through sand: {motion:?}"
+        );
+    }
+
+    #[test]
+    fn distributed_rigids_demand_local_dynamic_tiles() {
+        let mut materials = MaterialRegistry::new();
+        let stone = materials.register(Material::CellularStatic {
+            name: "Stone".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(90, 90, 90)),
+            mass: 1.0,
+            pressure_ignore_threshold: 1000.0,
+            default_integrity: 100.0,
+            debris_material: None,
+            debris_yield_rate: 0.0,
+            pressure_transmission: 1.0,
+            friction: 0.5,
+            restitution: 0.0,
+        });
+        let mut world = ScenePhysicsWorld::new();
+        world.update_cellular_snapshot(CollisionOccupancySnapshot {
+            sequence: 0,
+            origin: TileCoordinates { x: -64, y: -64 },
+            width: 128,
+            height: 128,
+            static_masks: vec![[0; 2]; 128 * 128].into_boxed_slice(),
+            dynamic_masks: vec![[u32::MAX; 2]; 128 * 128].into_boxed_slice(),
+        });
+        let bodies: Vec<_> = [[-30.0, -30.0], [-30.0, 30.0], [30.0, -30.0], [30.0, 30.0]]
+            .into_iter()
+            .map(|position| {
+                world.insert_rigid_cellular_body(
+                    position,
+                    0.0,
+                    &materials,
+                    vec![([0, 0], stone, CellularAppearance::NEUTRAL)],
+                    0.5,
+                    0.0,
+                    [0.0; 2],
+                    0.0,
+                )
+            })
+            .collect();
+        world.prepare_cellular_terrain(&bodies, &[], [0.0, -9.81], 1.0 / 60.0);
+        let stats = world.terrain_bridge_statistics();
+        assert!(stats.dynamic_required_tiles <= 100 && stats.dynamic_required_tiles > 4);
+        assert_eq!(
+            stats.dynamic_shape_rebuilds as usize,
+            stats.dynamic_required_tiles
+        );
+        assert_eq!(
+            stats.dynamic_cells_scanned as usize,
+            stats.dynamic_required_tiles * 64
+        );
+    }
+
+    #[test]
+    fn moving_sand_shape_work_stays_near_pawn() {
+        let mut world = ScenePhysicsWorld::new();
+        let actor = [ActorCellularProxyState {
+            center: [0.5, 0.5],
+            velocity: [0.0; 2],
+            drive: [0.0; 2],
+            shape: ActorCollisionShape::Circle { radius: 0.25 },
+            occupancy_kind: 1,
+            mass: 0.0,
+        }];
+        let mut total = std::time::Duration::ZERO;
+        let mut max_required = 0;
+        for tick in 0..50 {
+            world.update_cellular_snapshot(CollisionOccupancySnapshot {
+                sequence: tick,
+                origin: TileCoordinates { x: -64, y: -64 },
+                width: 128,
+                height: 128,
+                static_masks: vec![[0; 2]; 128 * 128].into_boxed_slice(),
+                dynamic_masks: vec![[if tick % 2 == 0 { u32::MAX } else { 0 }; 2]; 128 * 128]
+                    .into_boxed_slice(),
+            });
+            let start = std::time::Instant::now();
+            world.prepare_cellular_terrain(&[], &actor, [0.0, -9.81], 1.0 / 60.0);
+            total += start.elapsed();
+            max_required =
+                max_required.max(world.terrain_bridge_statistics().dynamic_required_tiles);
+        }
+        let stats = world.terrain_bridge_statistics();
+        assert!(
+            max_required < 64,
+            "demand expanded beyond pawn neighborhood: {max_required}"
+        );
+        assert!(stats.dynamic_shape_rebuilds < 50 * 64);
+        assert!(stats.dynamic_cells_scanned <= stats.dynamic_mask_changes * 64);
+        eprintln!(
+            "moving-sand bridge: {:.3} ms/tick, max required {}, rebuilds {}, set_shape {}, scanned {}",
+            total.as_secs_f64() * 1000.0 / 50.0,
+            max_required,
+            stats.dynamic_shape_rebuilds,
+            stats.dynamic_set_shape_calls,
+            stats.dynamic_cells_scanned
+        );
     }
 }

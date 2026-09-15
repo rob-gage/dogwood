@@ -343,60 +343,18 @@ fn delayed_static_support() {
 }
 
 #[test]
-fn delayed_packed_sand_support() {
+fn granular_contact_transfers_to_sand_without_delayed_rigid_support() {
     let _lock = crate::GPU_TEST_LOCK.lock().unwrap();
     let mut f = Fixture::new();
-    f.words(&f.cells, 0, &[f.sand.as_u32(); 24]);
-    let (mut world, body) = f.static_body([0.25, 0.39], 0.0, [0.0; 2], 4);
-    let mut pending = std::collections::VecDeque::new();
-    let mut support = [0.0; 4];
-    let mut recovery = [0.0; 4];
-    let mut minimum = 1.0f32;
-    let mut maximum = 0.0f32;
-    for tick in 0..240 {
-        if tick != 0 && tick % 3 == 0 {
-            pending.extend(f.collect(3));
-        }
-        if tick >= 3 {
-            let batch: RigidGranularReactionBatch = pending.pop_front().unwrap();
-            world.apply_rigid_cellular_body_reaction(
-                &body,
-                [batch.reactions[0][0], batch.reactions[0][1]],
-                batch.reactions[0][2],
-                batch.energy_budgets[0],
-                true,
-            );
-            world.apply_rigid_constraint(&body, batch.constraints[0], batch.source_motion[0], true);
-            support = batch.supports[0];
-            recovery = batch.recovery[0];
-        }
-        world.apply_rigid_support(&body, support);
-        world.apply_rigid_recovery(&body, recovery);
-        world.step([0.0, -9.8], 1.0 / 60.0);
-        f.upload(&world, &body);
-        let state = world.rigid_cellular_body_state(&body).unwrap();
-        f.words(&f.owners, 0, &[0; 64]);
-        f.words(&f.occupancy, 0, &[0; 64]);
-        let row = (state.translation[1] * 8.0).floor() as usize;
-        assert!(row < 7);
-        for x in 2..6 {
-            f.proxy(row * 8 + x);
-        }
-        f.submit([0.0, -9.8], 0);
-        if tick > 60 {
-            minimum = minimum.min(state.translation[1]);
-            maximum = maximum.max(state.translation[1]);
-            assert!(state.angular_velocity.abs() < 0.05);
-        }
-    }
-    f.collect(3);
-    eprintln!("delayed sand height range {minimum}..{maximum}");
-    assert!(minimum > 0.31 && maximum - minimum < 0.003);
-    let grain = f.read_floats(&f.kinematics);
-    assert!(
-        grain.iter().all(|v| v.abs() < 0.01),
-        "support launched packed grains"
-    );
+    f.proxy(27);
+    f.words(&f.cells, 19, &[f.sand.as_u32()]);
+    f.static_body([0.375, 0.375], 0.0, [0.0, -1.0], 1);
+    let batch = f.tick([0.0, -9.8], 0);
+    assert_eq!(batch.reactions[0], [0.0; 3]);
+    assert_eq!(batch.supports[0], [0.0; 4]);
+    assert_eq!(batch.recovery[0], [0.0; 4]);
+    assert_eq!(batch.constraints[0], [0.0; 4]);
+    assert!(f.read_floats(&f.kinematics)[19 * 4 + 1] < -0.4);
 }
 
 #[test]
@@ -469,7 +427,7 @@ fn static_floor_recovery_sweep_rotation_and_gravity() {
 }
 
 #[test]
-fn granular_constraints_transfer_and_actor_overlay() {
+fn granular_material_transfer_and_actor_overlay() {
     let _lock = crate::GPU_TEST_LOCK.lock().unwrap();
     let mut f = Fixture::new();
     // A single bottom face, with the grain's away destination directly below it.
@@ -482,7 +440,7 @@ fn granular_constraints_transfer_and_actor_overlay() {
         free_velocity < -0.4 && free_velocity > -0.6,
         "free grain: {free_velocity}"
     );
-    assert!((free.reactions[0][1] + free_velocity).abs() < 0.02);
+    assert_eq!(free.reactions[0], [0.0; 3]);
 
     f.words(&f.cells, 11, &[f.sand.as_u32()]);
     f.words(&f.cells, 3, &[f.sand.as_u32()]);
@@ -492,31 +450,12 @@ fn granular_constraints_transfer_and_actor_overlay() {
         let packed = f.tick([0.0, -9.8], 0);
         let velocity = f.read_floats(&f.kinematics)[19 * 4 + 1];
         assert!(
-            velocity.abs() < 0.001,
-            "constraint launched grain: {velocity}"
+            velocity <= 0.0,
+            "packed grain moved against rigid drive: {velocity}"
         );
-        assert!(
-            packed.reactions[0][1] > -downward_speed + 0.1,
-            "packed support: {:?}",
-            packed.reactions[0]
-        );
+        assert_eq!(packed.reactions[0], [0.0; 3]);
+        assert_eq!(packed.supports[0], [0.0; 4]);
     }
-    // Feed GPU support through the actual CPU limiter and Rapier repeatedly.
-    let (mut world, body) = f.static_body([0.375, 0.375], 0.0, [0.0; 2], 1);
-    for _ in 0..40 {
-        world.step([0.0, -12.0], 1.0 / 60.0);
-        f.upload(&world, &body);
-        let batch = f.tick([0.0, -9.8], 0);
-        world.apply_rigid_cellular_body_reaction(
-            &body,
-            [batch.reactions[0][0], batch.reactions[0][1]],
-            batch.reactions[0][2],
-            batch.energy_budgets[0],
-            true,
-        );
-    }
-    assert!(world.rigid_cellular_body_state(&body).unwrap().translation[1] > 0.36);
-
     // An actor overlay must not replace canonical grain mass or friction.
     f.words(&f.cells, 11, &[0]);
     f.words(&f.cells, 3, &[0]);
@@ -532,7 +471,7 @@ fn granular_constraints_transfer_and_actor_overlay() {
         after[19 * 4 + 1]
     );
     assert!(after[19 * 4] < 0.19, "overlay suppressed friction");
-    assert!(overlay.granular_contact_counts[0] > 0);
+    assert_eq!(overlay.granular_contact_counts[0], 0);
 }
 
 #[test]
@@ -601,8 +540,8 @@ fn actor_drive_kinematic_constraint_and_canonical_contact() {
     f.floats(&f.kinematics, 26 * 4, &[1.0, 0.0, 0.0, 0.0]);
     f.floats(&f.velocity, 26 * 4, &[0.0, 0.0, 0.4, 0.0]);
     let both = f.tick([0.0; 2], 0);
-    assert!(both.reactions[0][0] > drive.reactions[0][0] + 0.1);
-    assert!(both.contact_counts[0] >= 2 && both.granular_contact_counts[0] > 0);
+    assert!((both.reactions[0][0] - drive.reactions[0][0]).abs() < 0.01);
+    assert_eq!(both.granular_contact_counts[0], 0);
 
     // Four independent cells each carry a quarter of a unit of actor drive.
     f.words(&f.cells, 0, &[0; 64]);

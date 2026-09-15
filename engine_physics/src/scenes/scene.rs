@@ -818,6 +818,8 @@ impl Scene {
     /// Runs one fixed-rate physics simulation tick
     fn tick(&mut self, is_simulation_active: bool) -> Result<(), io::Error> {
         if let Some(mut snapshot) = self.cellular_collision.latest.take() {
+            let age = self.cellular_collision.snapshot_age(snapshot.sequence);
+            self.physics_world.set_collision_snapshot_age(age);
             self.detach_unanchored_static_components(&mut snapshot)?;
             self.physics_world.update_cellular_snapshot(snapshot);
         }
@@ -3115,6 +3117,84 @@ mod tests {
         scene.apply_edits_immediate(&mut edits).unwrap();
         scene.update(Duration::from_secs(1) / 60, true).unwrap();
         accelerator.poll().unwrap();
+    }
+
+    #[test]
+    fn full_screen_moving_sand_headless_tps() {
+        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let accelerator: Arc<Accelerator> = Arc::new(Accelerator::new().unwrap());
+        let mut materials = MaterialRegistry::new();
+        let sand = materials.register(Material::CellularDynamic {
+            name: "Sand".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(194, 178, 128)),
+            mass: 1.0,
+            pressure_transmission: 0.35,
+            friction: 0.65,
+            restitution: 0.05,
+        });
+        let data_path = std::env::temp_dir().join(format!(
+            "dogwood-sand-stress-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&data_path).unwrap();
+        materials
+            .serialize(&mut std::fs::File::create(data_path.join("materials")).unwrap())
+            .unwrap();
+        let data = SceneData::load(data_path.clone()).unwrap();
+        let mut scene = Scene::load(
+            &accelerator,
+            SceneSimulationConfiguration {
+                gravity: [0.0, -18.0],
+                width: 8,
+                height: 8,
+                buffer_size: 2,
+                streaming_batch_size: 1,
+            },
+            data,
+        )
+        .unwrap();
+        let mut edits = SceneEditBatch::new();
+        edits.place_material(
+            sand,
+            CellularAppearance::NEUTRAL,
+            (8..64)
+                .step_by(2)
+                .flat_map(|y| (0..64).map(move |x| CellCoordinates { x, y }))
+                .collect(),
+        );
+        scene.apply_edits_immediate(&mut edits).unwrap();
+        let tick = Duration::from_secs(1) / 60;
+        for _ in 0..5 {
+            scene.update(tick, true).unwrap();
+        }
+        let start = Instant::now();
+        let mut older_snapshots = 0;
+        let mut maximum_snapshot_age = 0;
+        for _ in 0..30 {
+            scene.update(tick, true).unwrap();
+            let age = scene
+                .physics_world
+                .terrain_bridge_statistics()
+                .collision_snapshot_age;
+            maximum_snapshot_age = maximum_snapshot_age.max(age);
+            older_snapshots += u32::from(age > 1);
+        }
+        let elapsed = start.elapsed();
+        let stats = scene.physics_world.terrain_bridge_statistics();
+        assert_eq!(stats.dynamic_shape_rebuilds, 0);
+        assert_eq!(stats.dynamic_cells_scanned, 0);
+        eprintln!(
+            "moving sand headless TPS: {:.1}, snapshot age max {}, ticks >1 {}",
+            30.0 / elapsed.as_secs_f64(),
+            maximum_snapshot_age,
+            older_snapshots
+        );
+        drop(scene);
+        std::fs::remove_dir_all(data_path).unwrap();
     }
 
     #[test]

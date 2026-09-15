@@ -36,6 +36,10 @@ pub struct CellularCollision {
 }
 
 impl CellularCollision {
+    pub(crate) fn snapshot_age(&self, sequence: u64) -> u64 {
+        self.sequence_next
+            .saturating_sub(sequence.saturating_add(1))
+    }
     /// Creates the collision extraction pipeline and its fixed-size buffers
     pub fn new(
         accelerator: &Accelerator,

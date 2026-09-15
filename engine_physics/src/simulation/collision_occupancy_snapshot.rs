@@ -21,6 +21,15 @@ pub struct CollisionOccupancySnapshot {
 }
 
 impl CollisionOccupancySnapshot {
+    pub(crate) fn dynamic_tile_mask(&self, tile_x: i32, tile_y: i32) -> [u32; 2] {
+        let x = tile_x - self.origin.x;
+        let y = tile_y - self.origin.y;
+        if x < 0 || y < 0 || x >= i32::from(self.width) || y >= i32::from(self.height) {
+            return [0; 2];
+        }
+        self.dynamic_masks[y as usize * usize::from(self.width) + x as usize]
+    }
+
     pub(crate) fn static_patch_masks(&self, patch_x: i32, patch_y: i32) -> [[u32; 2]; 16] {
         let mut result = [[0; 2]; 16];
         for y in 0..4 {

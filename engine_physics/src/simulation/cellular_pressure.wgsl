@@ -679,7 +679,7 @@ fn process_rigid_cellular_contact(
     }
     var transfer_normal_impulse: f32 = 0.0;
     var constraint_normal_impulse: f32 = 0.0;
-    if constrained {
+    if constrained && !dynamic {
         let rigid_toward: f32 = max(0.0, dot(rigid_velocity, normal));
         let grain_toward: f32 = max(0.0, -dot(other_velocity, normal));
         let toward_sum: f32 = rigid_toward + grain_toward;
@@ -705,7 +705,7 @@ fn process_rigid_cellular_contact(
                 (simultaneous_contacts * rigid_inverse_effective_mass + other_inverse_mass);
     }
     var penetration_impulse: f32 = 0.0;
-    if constrained && penetration > CELL_SIZE * 0.02 && rigid_inverse_effective_mass > 0.000001 {
+    if constrained && !dynamic && penetration > CELL_SIZE * 0.02 && rigid_inverse_effective_mass > 0.000001 {
         let correction_speed: f32 = min(0.25,
             (penetration - CELL_SIZE * 0.02) * 0.2 / parameters.delta_time);
         penetration_impulse = max(0.0, correction_speed - max(-approach, 0.0)) /
@@ -716,12 +716,14 @@ fn process_rigid_cellular_contact(
         &rigid_contact_statistics[body].geometric_support[channel]);
     var support_impulse: f32 = 0.0;
     if geometric_contacts != 0u && mass_record.z > 0.000001 &&
-            constrained {
+            constrained && !dynamic {
         support_impulse = max(0.0,
             dot(parameters.gravity * parameters.delta_time / mass_record.z, normal)) /
                 f32(geometric_contacts);
         constraint_normal_impulse += support_impulse;
     }
+    // Rapier owns rigid/granular hard contact; only the material-side transfer remains here.
+    if dynamic { constraint_normal_impulse = 0.0; }
     let normal_impulse: f32 = transfer_normal_impulse + constraint_normal_impulse;
     if normal_impulse <= 0.0 { return; }
     let tangent: vec2<f32> = vec2<f32>(-normal.y, normal.x);
@@ -764,6 +766,7 @@ fn process_rigid_cellular_contact(
         pending_pressure[other] += encode_directional_pressure(normal *
             normal_impulse * CONTACT_PRESSURE_TRANSFER);
     }
+    if dynamic { return; }
     let reaction: vec2<f32> = -impulse;
     let torque: f32 = radius.x * reaction.y - radius.y * reaction.x;
     if penetration_impulse > 0.0 {
