@@ -2,11 +2,11 @@
 
 #define_import_path compute::fluids
 
-#import utility::capsule_collision::{
-    GravityRelativeCapsule,
-    gravity_relative_capsule_from_parameters,
-    gravity_relative_capsule_world_extent,
-    world_position_is_inside_gravity_relative_capsule,
+#import utility::actor_collision_shape::{
+    ActorShape,
+    actor_shape_from_parameters,
+    actor_shape_world_extent,
+    world_position_is_inside_actor_shape,
 }
 #import utility::cell_coordinates::{
     CELLS_PER_TILE_FLOAT,
@@ -47,8 +47,9 @@ struct Parameters {
     maximum_movement_cells: u32,
     padding_0: u32,
     sample_center: vec2<f32>,
-    sample_collider: vec2<f32>,
-    padding_1: vec2<u32>,
+    sample_shape_parameters: vec2<f32>,
+    sample_shape_kind: u32,
+    padding_1: u32,
 }
 
 struct DerivedFluidCellSample {
@@ -57,7 +58,7 @@ struct DerivedFluidCellSample {
     velocity: vec2<f32>,
 }
 
-struct DerivedFluidCapsuleSample {
+struct DerivedFluidActorSample {
     capsule_cell_count: f32,
     coverage_sum: f32,
     velocity_sum: vec2<f32>,
@@ -521,20 +522,17 @@ fn gather_fluid_particle_sample_for_cell(center: vec2<f32>) -> DerivedFluidCellS
 @compute @workgroup_size(1)
 fn sample_fluid_state_inside_pawn_capsule(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if invocation.x != 0u { return; }
-    let radius: f32 = min(parameters.sample_collider.x, parameters.sample_collider.y) * 0.5;
-    let half_segment: f32 = max(0.0, (parameters.sample_collider.y - radius * 2.0) * 0.5);
-    let capsule: GravityRelativeCapsule = gravity_relative_capsule_from_parameters(
-        parameters.sample_center, parameters.gravity, radius, half_segment,
-    );
-    let extent: vec2<f32> = gravity_relative_capsule_world_extent(capsule);
+    let shape: ActorShape = actor_shape_from_parameters(parameters.sample_center,
+        parameters.gravity, parameters.sample_shape_parameters, parameters.sample_shape_kind);
+    let extent: vec2<f32> = actor_shape_world_extent(shape);
     let minimum: vec2<i32> = vec2<i32>(floor(
         (parameters.sample_center - extent) * CELLS_PER_TILE_FLOAT,
     ));
     let maximum: vec2<i32> = vec2<i32>(floor(
         (parameters.sample_center + extent) * CELLS_PER_TILE_FLOAT,
     ));
-    let sample: DerivedFluidCapsuleSample = gather_derived_fluid_sample_inside_capsule(
-        capsule, minimum, maximum,
+    let sample: DerivedFluidActorSample = gather_derived_fluid_sample_inside_actor(
+        shape, minimum, maximum,
     );
     let divisor: f32 = max(sample.coverage_sum, 0.000001);
     sample_output[0] = vec4<f32>(
@@ -547,11 +545,11 @@ fn sample_fluid_state_inside_pawn_capsule(@builtin(global_invocation_id) invocat
 }
 
 // Gathers derived coverage and physical properties beneath one pawn capsule
-fn gather_derived_fluid_sample_inside_capsule(
-    capsule: GravityRelativeCapsule,
+fn gather_derived_fluid_sample_inside_actor(
+    shape: ActorShape,
     minimum: vec2<i32>,
     maximum: vec2<i32>,
-) -> DerivedFluidCapsuleSample {
+) -> DerivedFluidActorSample {
     var capsule_cell_count: f32 = 0.0;
     var coverage_sum: f32 = 0.0;
     var velocity_sum: vec2<f32> = vec2<f32>(0.0);
@@ -562,8 +560,7 @@ fn gather_derived_fluid_sample_inside_capsule(
             let cell: vec2<i32> = vec2<i32>(x, y);
             let world_position: vec2<f32> =
                 (vec2<f32>(cell) + vec2<f32>(0.5)) / CELLS_PER_TILE_FLOAT;
-            if !world_position_is_inside_gravity_relative_capsule(
-                    world_position, capsule) {
+            if !world_position_is_inside_actor_shape(world_position, shape) {
                 continue;
             }
             capsule_cell_count += 1.0;
@@ -582,7 +579,7 @@ fn gather_derived_fluid_sample_inside_capsule(
             viscosity_sum += properties.y * coverage;
         }
     }
-    return DerivedFluidCapsuleSample(
+    return DerivedFluidActorSample(
         capsule_cell_count,
         coverage_sum,
         velocity_sum,

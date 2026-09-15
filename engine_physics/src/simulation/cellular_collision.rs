@@ -48,7 +48,6 @@ impl CellularCollision {
     pub fn new(
         accelerator: &Accelerator,
         cellular_material_identifiers: &AcceleratorBuffer,
-        external_body_occupancy: &AcceleratorBuffer,
         width: u16,
         height: u16,
     ) -> Self {
@@ -98,16 +97,6 @@ impl CellularCollision {
                         },
                         count: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
                 ],
             });
         let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -125,10 +114,6 @@ impl CellularCollision {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: parameters.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: external_body_occupancy.wgpu_buffer().as_entire_binding(),
                 },
             ],
         });

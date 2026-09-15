@@ -1,7 +1,9 @@
 // Copyright Rob Gage 2026
 
 mod actor;
+mod actor_cellular_proxy_state;
 mod actor_control_state;
+mod actor_collision_shape;
 mod actor_pawn;
 mod actor_pawn_flying_configuration;
 mod actor_pawn_movement;
@@ -15,7 +17,9 @@ mod actor_possessable;
 mod actor_registry;
 
 pub use actor::Actor;
+pub(crate) use actor_cellular_proxy_state::ActorCellularProxyState;
 pub use actor_control_state::ActorControlState;
+pub use actor_collision_shape::ActorCollisionShape;
 pub use actor_pawn::ActorPawn;
 pub use actor_pawn_flying_configuration::ActorPawnFlyingConfiguration;
 pub use actor_pawn_movement::ActorPawnMovement;

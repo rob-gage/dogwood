@@ -95,7 +95,6 @@ impl CellularPressure {
         kinematics: &AcceleratorBuffer,
         external_body_occupancy: &AcceleratorBuffer,
         external_body_velocity: &AcceleratorBuffer,
-        external_body_count: &AcceleratorBuffer,
         rigid_owners: &AcceleratorBuffer,
         rigid_material_identifiers: &AcceleratorBuffer,
         rigid_transforms: &AcceleratorBuffer,
@@ -220,7 +219,6 @@ impl CellularPressure {
                     Self::storage_layout_entry(9, false),
                     Self::storage_layout_entry(10, true),
                     Self::storage_layout_entry(11, true),
-                    Self::storage_layout_entry(12, true),
                     wgpu::BindGroupLayoutEntry {
                         binding: 13,
                         visibility: wgpu::ShaderStages::COMPUTE,
@@ -286,7 +284,6 @@ impl CellularPressure {
                     Self::binding(9, &retained_pressure),
                     Self::binding(10, external_body_occupancy),
                     Self::binding(11, external_body_velocity),
-                    Self::binding(12, external_body_count),
                     wgpu::BindGroupEntry {
                         binding: 13,
                         resource: parameters.as_entire_binding(),

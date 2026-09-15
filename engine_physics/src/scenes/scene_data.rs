@@ -10,7 +10,6 @@ use std::{
         create_dir,
         create_dir_all,
         metadata,
-        remove_dir_all,
         File,
     },
     io,
@@ -60,9 +59,14 @@ impl SceneData {
     /// Creates empty scene data in a new temporary directory
     pub fn new_temporary(materials: MaterialRegistry) -> Result<Self, io::Error> {
         let materials: Arc<MaterialRegistry> = Arc::new(materials);
+        let home: PathBuf = std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotFound, "Home directory is unavailable")
+        })?;
+        let save_directory: PathBuf = home.join(".DOGWOOD");
+        create_dir_all(&save_directory)?;
         loop {
             let identifier: u64 = TEMPORARY_IDENTIFIER.fetch_add(1, Ordering::Relaxed);
-            let path: PathBuf = std::env::temp_dir().join(format!(
+            let path: PathBuf = save_directory.join(format!(
                 "dogwood-scene-{}-{identifier}",
                 std::process::id(),
             ));

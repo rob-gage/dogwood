@@ -2,15 +2,20 @@
 
 #define_import_path compute::cellular_physics_body_proxy
 
-#import utility::capsule_collision::{ gravity_relative_capsule_from_parameters, world_position_is_inside_gravity_relative_capsule, }
+#import utility::actor_collision_shape::{ actor_shape_from_parameters, actor_shape_world_extent, world_position_is_inside_actor_shape, }
 #import utility::cell_coordinates::{ CELLS_PER_TILE_FLOAT, world_cell_from_logical_tile_major_index, }
 #import utility::tile_ring::{INVALID_PHYSICAL_CELL_INDEX, physical_cell_index_from_world_cell}
 
 struct Parameters {
     buffered_origin: vec2<i32>, buffered_tile_size: vec2<u32>, ring_offset: vec2<u32>,
-    center: vec2<f32>, velocity: vec2<f32>, drive: vec2<f32>, collider: vec2<f32>,
-    gravity: vec2<f32>, buffered_cell_count: u32, occupancy_kind: u32,
-    rigid_cell_count: u32, rigid_body_count: u32, padding: vec4<u32>,
+    gravity: vec2<f32>, buffered_cell_count: u32, actor_count: u32,
+    rigid_cell_count: u32, rigid_body_count: u32, padding: array<vec4<u32>, 3>,
+}
+
+struct ActorProxy {
+    center: vec2<f32>, velocity: vec2<f32>, drive: vec2<f32>,
+    shape_parameters: vec2<f32>, shape_kind: u32, occupancy_kind: u32,
+    padding: vec2<u32>,
 }
 
 struct RigidCell {
@@ -20,7 +25,7 @@ struct RigidCell {
 
 @group(0) @binding(0) var<storage, read_write> occupancy: array<u32>;
 @group(0) @binding(1) var<storage, read_write> velocity: array<vec4<f32>>;
-@group(0) @binding(2) var<storage, read_write> count: array<atomic<u32>>;
+@group(0) @binding(2) var<storage, read_write> actor_counts: array<atomic<u32>>;
 @group(0) @binding(3) var<uniform> parameters: Parameters;
 @group(0) @binding(4) var<storage, read_write> rigid_material_identifiers: array<u32>;
 @group(0) @binding(5) var<storage, read_write> rigid_appearances: array<u32>;
@@ -28,6 +33,8 @@ struct RigidCell {
 @group(0) @binding(7) var<storage, read> rigid_cells: array<RigidCell>;
 @group(0) @binding(8) var<storage, read> rigid_transforms: array<vec4<f32>>;
 @group(0) @binding(9) var<storage, read_write> rigid_owners: array<u32>;
+@group(0) @binding(10) var<storage, read> actor_proxies: array<ActorProxy>;
+@group(0) @binding(11) var<storage, read_write> actor_claims: array<atomic<u32>>;
 
 @compute @workgroup_size(64)
 fn clear_cellular_physics_body_proxy(@builtin(global_invocation_id) invocation: vec3<u32>) {
@@ -38,27 +45,81 @@ fn clear_cellular_physics_body_proxy(@builtin(global_invocation_id) invocation: 
     rigid_appearances[invocation.x] = 0u;
     rigid_owners[invocation.x] = 0u;
     atomicStore(&rigid_claims[invocation.x], 0xffffffffu);
-    if invocation.x == 0u { atomicStore(&count[0], 0u); }
+    atomicStore(&actor_claims[invocation.x], 0xffffffffu);
 }
 
 @compute @workgroup_size(64)
-fn rasterize_pawn_proxy(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    let logical_index: u32 = invocation.x;
-    if logical_index >= parameters.buffered_cell_count || parameters.occupancy_kind == 0u { return; }
-    let world_cell: vec2<i32> = world_cell_from_logical_tile_major_index(
-        logical_index, parameters.buffered_origin, parameters.buffered_tile_size);
-    let radius: f32 = parameters.collider.x * 0.5;
-    let capsule = gravity_relative_capsule_from_parameters(parameters.center, parameters.gravity,
-        radius, max(0.0, (parameters.collider.y - 2.0 * radius) * 0.5));
-    let world_position: vec2<f32> =
-        (vec2<f32>(world_cell) + vec2<f32>(0.5)) / CELLS_PER_TILE_FLOAT;
-    if !world_position_is_inside_gravity_relative_capsule(world_position, capsule) { return; }
-    let physical_index: u32 = physical_cell_index_from_world_cell(world_cell,
-        parameters.buffered_origin, parameters.buffered_tile_size, parameters.ring_offset);
-    if physical_index == INVALID_PHYSICAL_CELL_INDEX { return; }
-    occupancy[physical_index] = parameters.occupancy_kind;
-    velocity[physical_index] = vec4<f32>(parameters.velocity, parameters.drive);
-    atomicAdd(&count[0], 1u);
+fn clear_actor_counts(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    if invocation.x < parameters.actor_count { atomicStore(&actor_counts[invocation.x], 0u); }
+}
+
+fn actor_bounds(actor: ActorProxy) -> vec4<i32> {
+    let shape = actor_shape_from_parameters(actor.center, parameters.gravity,
+        actor.shape_parameters, actor.shape_kind);
+    let extent = actor_shape_world_extent(shape);
+    return vec4<i32>(vec2<i32>(floor((actor.center - extent) * CELLS_PER_TILE_FLOAT)),
+        vec2<i32>(ceil((actor.center + extent) * CELLS_PER_TILE_FLOAT)));
+}
+
+fn actor_claim_candidate(actor_index: u32, actor: ActorProxy, cell: vec2<i32>) {
+    let position = (vec2<f32>(cell) + vec2<f32>(0.5)) / CELLS_PER_TILE_FLOAT;
+    let shape = actor_shape_from_parameters(actor.center, parameters.gravity,
+        actor.shape_parameters, actor.shape_kind);
+    if !world_position_is_inside_actor_shape(position, shape) { return; }
+    let index = physical_cell_index_from_world_cell(cell, parameters.buffered_origin,
+        parameters.buffered_tile_size, parameters.ring_offset);
+    if index != INVALID_PHYSICAL_CELL_INDEX { atomicMin(&actor_claims[index], actor_index); }
+}
+
+@compute @workgroup_size(64)
+fn claim_actor_proxy(@builtin(workgroup_id) group: vec3<u32>,
+        @builtin(local_invocation_index) lane: u32) {
+    if group.x >= parameters.actor_count { return; }
+    let actor = actor_proxies[group.x];
+    let bounds = actor_bounds(actor);
+    let width = u32(max(0, bounds.z - bounds.x));
+    let count = width * u32(max(0, bounds.w - bounds.y));
+    for (var candidate = lane; candidate < count; candidate += 64u) {
+        actor_claim_candidate(group.x, actor, vec2<i32>(bounds.x + i32(candidate % width),
+            bounds.y + i32(candidate / width)));
+    }
+}
+
+@compute @workgroup_size(64)
+fn count_actor_proxy(@builtin(workgroup_id) group: vec3<u32>,
+        @builtin(local_invocation_index) lane: u32) {
+    if group.x >= parameters.actor_count { return; }
+    let bounds = actor_bounds(actor_proxies[group.x]);
+    let width = u32(max(0, bounds.z - bounds.x));
+    let count = width * u32(max(0, bounds.w - bounds.y));
+    for (var candidate = lane; candidate < count; candidate += 64u) {
+        let cell = vec2<i32>(bounds.x + i32(candidate % width), bounds.y + i32(candidate / width));
+        let index = physical_cell_index_from_world_cell(cell, parameters.buffered_origin,
+            parameters.buffered_tile_size, parameters.ring_offset);
+        if index != INVALID_PHYSICAL_CELL_INDEX && atomicLoad(&actor_claims[index]) == group.x {
+            atomicAdd(&actor_counts[group.x], 1u);
+        }
+    }
+}
+
+@compute @workgroup_size(64)
+fn resolve_actor_proxy(@builtin(workgroup_id) group: vec3<u32>,
+        @builtin(local_invocation_index) lane: u32) {
+    if group.x >= parameters.actor_count { return; }
+    let actor = actor_proxies[group.x];
+    let bounds = actor_bounds(actor);
+    let width = u32(max(0, bounds.z - bounds.x));
+    let count = width * u32(max(0, bounds.w - bounds.y));
+    let divisor = f32(max(atomicLoad(&actor_counts[group.x]), 1u));
+    for (var candidate = lane; candidate < count; candidate += 64u) {
+        let cell = vec2<i32>(bounds.x + i32(candidate % width), bounds.y + i32(candidate / width));
+        let index = physical_cell_index_from_world_cell(cell, parameters.buffered_origin,
+            parameters.buffered_tile_size, parameters.ring_offset);
+        if index != INVALID_PHYSICAL_CELL_INDEX && atomicLoad(&actor_claims[index]) == group.x {
+            occupancy[index] = actor.occupancy_kind;
+            velocity[index] = vec4<f32>(actor.velocity, actor.drive / divisor);
+        }
+    }
 }
 
 fn rigid_cell_world_bounds(index: u32) -> vec4<i32> {

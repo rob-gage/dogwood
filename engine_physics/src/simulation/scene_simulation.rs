@@ -4,6 +4,7 @@ use super::ScenePhysicsWorld;
 use crate::{
     actors::{
         ActorControlState,
+        ActorCollisionShape,
         ActorPawn,
         ActorPawnMovement,
         ActorPawnNoclipConfiguration,
@@ -18,7 +19,6 @@ use crate::{
 use rapier2d::{
     control::{CharacterLength, KinematicCharacterController},
     prelude::{
-        Capsule,
         Pose,
         Vector,
     },
@@ -69,6 +69,7 @@ pub trait SceneSimulation {
                     Self::simulate_actor_pawn_walking(
                         &control.0,
                         &configuration,
+                        pawn.collision_shape,
                         &mut walking_state,
                         &mut position,
                         &mut velocity,
@@ -80,13 +81,11 @@ pub trait SceneSimulation {
                 Some(ActorPawnMovement::Swimming) => {
                     let Some(configuration): Option<ActorPawnSwimmingConfiguration> = pawn.swimming
                         else { continue; };
-                    let Some(walking): Option<ActorPawnWalkingConfiguration> = pawn.walking
-                        else { continue; };
                     Self::simulate_actor_pawn_swimming(
                         &control.0,
                         &configuration,
                         &swimming_state,
-                        &walking,
+                        pawn.collision_shape,
                         &mut position,
                         &mut velocity,
                         gravity,
@@ -103,6 +102,7 @@ pub trait SceneSimulation {
     fn simulate_actor_pawn_walking(
         control: &engine_input::ControlState,
         configuration: &ActorPawnWalkingConfiguration,
+        collision_shape: Option<ActorCollisionShape>,
         state: &mut ActorPawnWalkingState,
         position: &mut ScenePosition,
         velocity: &mut SceneVelocity,
@@ -110,13 +110,8 @@ pub trait SceneSimulation {
         physics_world: &ScenePhysicsWorld,
         delta_time: f32,
     ) {
-        if !configuration.collider_width.is_finite() ||
-                !configuration.collider_height.is_finite() ||
-                !configuration.mass.is_finite() || configuration.mass <= 0.0 ||
-                configuration.collider_width <= 0.0 ||
-                configuration.collider_height <= 0.0 {
-            return;
-        }
+        let Some(collision_shape) = collision_shape else { return; };
+        if !configuration.mass.is_finite() || configuration.mass <= 0.0 { return; }
         let gravity_magnitude: f32 = gravity[0].hypot(gravity[1]);
         let up: Vector = if gravity_magnitude > 0.0 {
             Vector::new(-gravity[0] / gravity_magnitude, -gravity[1] / gravity_magnitude)
@@ -155,15 +150,6 @@ pub trait SceneSimulation {
             velocity.x += up.x * (configuration.jump_velocity - up_velocity);
             velocity.y += up.y * (configuration.jump_velocity - up_velocity);
         }
-        // capsule cannot be shorter along up than its diameter, so an
-        // incompatible configuration safely collapses to a circular capsule.
-        let radius: f32 = configuration.collider_width.min(configuration.collider_height) * 0.5;
-        let half_segment_length: f32 = (configuration.collider_height - radius * 2.0) * 0.5;
-        let character_shape: Capsule = Capsule::new(
-            -up * half_segment_length,
-            up * half_segment_length,
-            radius,
-        );
         let controller: KinematicCharacterController = KinematicCharacterController {
             up,
             // a cell is 1/8 tile; this is large enough for stable contact without
@@ -192,16 +178,16 @@ pub trait SceneSimulation {
         let mut horizontal_movement = physics_world.move_character(
             &controller,
             delta_time,
-            &character_shape,
+            collision_shape,
             &Pose::translation(world_x, world_y),
             tangent * tangent_velocity * delta_time,
-            |collision| {
-                let normal_up: f32 = collision.hit.normal1.dot(up);
+            |normal| {
+                let normal_up: f32 = normal.dot(up);
                 if normal_up >= walkable_normal {
                     contacted_walkable_surface = true;
                 } else if normal_up > -walkable_normal {
                     contacted_wall = true;
-                    let normal_tangent: f32 = collision.hit.normal1.dot(tangent);
+                    let normal_tangent: f32 = normal.dot(tangent);
                     if normal_tangent * tangent_velocity < 0.0 {
                         tangent_velocity = 0.0;
                     }
@@ -216,7 +202,7 @@ pub trait SceneSimulation {
             let probe_up = physics_world.move_character(
                 &controller,
                 delta_time,
-                &character_shape,
+                collision_shape,
                 &Pose::translation(world_x, world_y),
                 up * maximum_rise,
                 |_| { },
@@ -226,7 +212,7 @@ pub trait SceneSimulation {
                 let probe_forward = physics_world.move_character(
                     &controller,
                     delta_time,
-                    &character_shape,
+                    collision_shape,
                     &Pose::translation(
                         world_x + probe_up.translation.x,
                         world_y + probe_up.translation.y,
@@ -240,14 +226,14 @@ pub trait SceneSimulation {
                     let probe_down = physics_world.move_character(
                         &controller,
                         delta_time,
-                        &character_shape,
+                        collision_shape,
                         &Pose::translation(
                             world_x + probe_up.translation.x + probe_forward.translation.x,
                             world_y + probe_up.translation.y + probe_forward.translation.y,
                         ),
                         -up * maximum_rise,
-                        |collision| {
-                            if collision.hit.normal1.dot(up) >= walkable_normal {
+                        |normal| {
+                            if normal.dot(up) >= walkable_normal {
                                 landing_is_walkable = true;
                             }
                         },
@@ -260,7 +246,7 @@ pub trait SceneSimulation {
                         let climb_forward = physics_world.move_character(
                             &controller,
                             delta_time,
-                            &character_shape,
+                            collision_shape,
                             &Pose::translation(
                                 world_x + up.x * rise,
                                 world_y + up.y * rise,
@@ -282,14 +268,14 @@ pub trait SceneSimulation {
         let vertical_movement = physics_world.move_character(
             &controller,
             delta_time,
-            &character_shape,
+            collision_shape,
             &Pose::translation(
                 world_x + horizontal_movement.translation.x,
                 world_y + horizontal_movement.translation.y,
             ),
             up * up_velocity * delta_time,
-            |collision| {
-                let normal_up: f32 = collision.hit.normal1.dot(up);
+            |normal| {
+                let normal_up: f32 = normal.dot(up);
                 if normal_up >= walkable_normal {
                     contacted_walkable_surface = true;
                 } else if normal_up > -walkable_normal {
@@ -331,17 +317,14 @@ pub trait SceneSimulation {
         control: &engine_input::ControlState,
         configuration: &ActorPawnSwimmingConfiguration,
         state: &ActorPawnSwimmingState,
-        walking: &ActorPawnWalkingConfiguration,
+        collision_shape: Option<ActorCollisionShape>,
         position: &mut ScenePosition,
         velocity: &mut SceneVelocity,
         gravity: [f32; 2],
         physics_world: &ScenePhysicsWorld,
         delta_time: f32,
     ) {
-        if !walking.collider_width.is_finite() || !walking.collider_height.is_finite() ||
-                walking.collider_width <= 0.0 || walking.collider_height <= 0.0 {
-            return;
-        }
+        let Some(collision_shape) = collision_shape else { return; };
         let gravity_magnitude: f32 = gravity[0].hypot(gravity[1]);
         let up: Vector = if gravity_magnitude > 0.0 {
             Vector::new(-gravity[0] / gravity_magnitude, -gravity[1] / gravity_magnitude)
@@ -374,13 +357,6 @@ pub trait SceneSimulation {
         velocity.x = resolved_velocity.x;
         velocity.y = resolved_velocity.y;
 
-        let radius: f32 = walking.collider_width.min(walking.collider_height) * 0.5;
-        let half_segment_length: f32 = (walking.collider_height - radius * 2.0) * 0.5;
-        let character_shape: Capsule = Capsule::new(
-            -up * half_segment_length,
-            up * half_segment_length,
-            radius,
-        );
         let controller: KinematicCharacterController = KinematicCharacterController {
             up,
             offset: CharacterLength::Absolute(1.0 / 1024.0),
@@ -394,15 +370,15 @@ pub trait SceneSimulation {
         let movement = physics_world.move_character(
             &controller,
             delta_time,
-            &character_shape,
+            collision_shape,
             &Pose::translation(world_x, world_y),
             Vector::new(velocity.x, velocity.y) * delta_time,
-            |collision| {
-                let normal_speed: f32 = velocity.x * collision.hit.normal1.x +
-                    velocity.y * collision.hit.normal1.y;
+            |normal| {
+                let normal_speed: f32 = velocity.x * normal.x +
+                    velocity.y * normal.y;
                 if normal_speed < 0.0 {
-                    velocity.x -= collision.hit.normal1.x * normal_speed;
-                    velocity.y -= collision.hit.normal1.y * normal_speed;
+                    velocity.x -= normal.x * normal_speed;
+                    velocity.y -= normal.y * normal_speed;
                 }
             },
         );

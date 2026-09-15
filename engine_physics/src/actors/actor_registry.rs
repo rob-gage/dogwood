@@ -2,12 +2,13 @@
 
 use super::{
     Actor,
+    ActorCellularProxyState,
+    ActorCollisionShape,
     ActorControlState,
     ActorPawn,
     ActorPawnMovement,
     ActorPawnSwimmingConfiguration,
     ActorPawnSwimmingState,
-    ActorPawnWalkingConfiguration,
     ActorPossessable,
     ActorPawnWalkingState,
     ActorPreviousPosition,
@@ -119,14 +120,14 @@ impl ActorRegistry {
         Some(position.interpolated(previous, interpolation))
     }
 
-    /// Returns the first walking pawn's position and collider dimensions for scene rendering
+    /// Returns the first physical pawn's position and nominal dimensions for scene rendering
     pub fn first_walking_pawn_graphics(
         &self,
         interpolation: f32,
     ) -> Option<([f32; 2], [f32; 2])> {
         self.world.iter_entities().find_map(|entity| {
             let pawn: &ActorPawn = entity.get::<ActorPawn>()?;
-            let walking: ActorPawnWalkingConfiguration = pawn.walking?;
+            let shape: ActorCollisionShape = pawn.collision_shape?;
             let position: ScenePosition = *entity.get::<ScenePosition>()?;
             let previous: ScenePosition = entity.get::<ActorPreviousPosition>()
                 .map_or(position, |previous| previous.0);
@@ -136,51 +137,47 @@ impl ActorRegistry {
                     position.tile_coordinates.x as f32 + position.x_offset,
                     position.tile_coordinates.y as f32 + position.y_offset,
                 ],
-                [walking.collider_width, walking.collider_height],
+                shape.nominal_dimensions(),
             ))
         })
     }
 
-    /// Returns the possessed walking-pawn data needed by the transient cellular proxy.
-    pub fn walking_pawn_physics(
-        &self,
-        identifier: Actor,
-    ) -> Option<([f32; 2], [f32; 2], [f32; 2], [f32; 2])> {
-        let entity = self.world.get_entity(identifier.bevy_entity()).ok()?;
-        let pawn = entity.get::<ActorPawn>()?;
-        let walking = pawn.walking?;
-        let position = *entity.get::<ScenePosition>()?;
-        let velocity = *entity.get::<SceneVelocity>()?;
-        let state = entity.get::<ActorPawnWalkingState>()?;
-        Some((
-            [
-                position.tile_coordinates.x as f32 + position.x_offset,
-                position.tile_coordinates.y as f32 + position.y_offset,
-            ],
-            [velocity.x, velocity.y],
-            [walking.collider_width, walking.collider_height],
-            if matches!(pawn.movement, Some(ActorPawnMovement::Walking)) {
-                state.cellular_drive_impulse
-            } else {
-                [0.0; 2]
-            },
-        ))
+    /// Gathers all physical non-noclip pawns for batched transient proxy rasterization
+    pub(crate) fn cellular_proxy_states(&self) -> Vec<ActorCellularProxyState> {
+        self.world.iter_entities().filter_map(|entity| {
+            let pawn = entity.get::<ActorPawn>()?;
+            let shape = pawn.collision_shape?;
+            if matches!(pawn.movement, Some(ActorPawnMovement::Noclip)) { return None; }
+            let position = *entity.get::<ScenePosition>()?;
+            let velocity = *entity.get::<SceneVelocity>()?;
+            let state = entity.get::<ActorPawnWalkingState>()?;
+            Some(ActorCellularProxyState {
+                center: [position.tile_coordinates.x as f32 + position.x_offset,
+                    position.tile_coordinates.y as f32 + position.y_offset],
+                velocity: [velocity.x, velocity.y],
+                drive: if matches!(pawn.movement, Some(ActorPawnMovement::Walking)) {
+                    state.cellular_drive_impulse
+                } else { [0.0; 2] },
+                shape,
+                occupancy_kind: if pawn.swimming.is_some() { 2 } else { 1 },
+            })
+        }).collect()
     }
 
-    /// Returns the possessed swimming-capable pawn capsule to sample on the GPU
+    /// Returns the possessed swimming-capable pawn shape to sample on the GPU
     pub fn swimming_pawn_sample(
         &self,
         identifier: Actor,
-    ) -> Option<([f32; 2], [f32; 2])> {
+    ) -> Option<([f32; 2], ActorCollisionShape)> {
         let entity = self.world.get_entity(identifier.bevy_entity()).ok()?;
         let pawn = entity.get::<ActorPawn>()?;
         pawn.swimming?;
-        let walking = pawn.walking?;
+        let shape = pawn.collision_shape?;
         let position = *entity.get::<ScenePosition>()?;
         Some(([
             position.tile_coordinates.x as f32 + position.x_offset,
             position.tile_coordinates.y as f32 + position.y_offset,
-        ], [walking.collider_width, walking.collider_height]))
+        ], shape))
     }
 
     /// Applies one completed derived-fluid sample and its walking/swimming hysteresis
@@ -192,8 +189,8 @@ impl ActorRegistry {
         let entity = identifier.bevy_entity();
         let Some(pawn) = self.world.get::<ActorPawn>(entity) else { return false; };
         let Some(configuration) = pawn.swimming else { return false; };
-        if pawn.walking.is_none() { return false; }
         let movement = pawn.movement;
+        let has_walking = pawn.walking.is_some();
         let Some(mut state) = self.world.get_mut::<ActorPawnSwimmingState>(entity) else {
             return false;
         };
@@ -208,7 +205,8 @@ impl ActorRegistry {
                     Some(ActorPawnMovement::Swimming),
             Some(ActorPawnMovement::Swimming)
                 if sample[0] < configuration.exit_immersion =>
-                    Some(ActorPawnMovement::Walking),
+                    has_walking.then_some(ActorPawnMovement::Walking)
+                        .or(Some(ActorPawnMovement::Swimming)),
             _ => return true,
         };
         self.world.get_mut::<ActorPawn>(entity).unwrap().movement = movement;
@@ -248,61 +246,6 @@ impl ActorRegistry {
         self.set_control_state(identifier, ActorControlState::default())
     }
 
-    /// Returns world-cell regions needed by walking and swimming pawn collision queries
-    pub(crate) fn cellular_collision_regions(
-        &self,
-        gravity: [f32; 2],
-        delta_time: f32,
-    ) -> Vec<[i32; 4]> {
-        self.world.iter_entities().filter_map(|entity| {
-            let pawn: &ActorPawn = entity.get::<ActorPawn>()?;
-            if !matches!(
-                pawn.movement,
-                Some(ActorPawnMovement::Walking | ActorPawnMovement::Swimming),
-            ) { return None; }
-            let walking: ActorPawnWalkingConfiguration = pawn.walking?;
-            let position: ScenePosition = *entity.get::<ScenePosition>()?;
-            let velocity: SceneVelocity = *entity.get::<SceneVelocity>()?;
-            if !walking.collider_width.is_finite() || !walking.collider_height.is_finite() ||
-                    walking.collider_width <= 0.0 || walking.collider_height <= 0.0 {
-                return None;
-            }
-            let gravity_magnitude: f32 = gravity[0].hypot(gravity[1]);
-            let up: [f32; 2] = if gravity_magnitude > 0.0 {
-                [-gravity[0] / gravity_magnitude, -gravity[1] / gravity_magnitude]
-            } else {
-                [0.0, 1.0]
-            };
-            let radius: f32 = walking.collider_width.min(walking.collider_height) * 0.5;
-            let half_segment: f32 = (walking.collider_height - radius * 2.0) * 0.5;
-            let extent: [f32; 2] = [
-                radius + up[0].abs() * half_segment,
-                radius + up[1].abs() * half_segment,
-            ];
-            let lookahead: f32 = 2.0 / 8.0;
-            let slope_rise: f32 = lookahead * walking.maximum_slope_angle.tan();
-            let slope_rise: f32 = if slope_rise.is_finite() {
-                slope_rise.max(0.0)
-            } else { 0.0 };
-            let movement: f32 = velocity.x.hypot(velocity.y) * delta_time +
-                gravity_magnitude * delta_time * delta_time +
-                walking.acceleration.abs() * delta_time * delta_time +
-                walking.jump_velocity.abs() * delta_time;
-            // Covers the capsule sweep, ground snap, and gravity-relative ramp probes.
-            let margin: f32 = movement + 1.0 / 8.0 + lookahead + slope_rise + 1.0 / 1024.0;
-            let center: [f32; 2] = [
-                position.tile_coordinates.x as f32 + position.x_offset,
-                position.tile_coordinates.y as f32 + position.y_offset,
-            ];
-            Some([
-                ((center[0] - extent[0] - margin) * 8.0).floor() as i32,
-                ((center[1] - extent[1] - margin) * 8.0).floor() as i32,
-                ((center[0] + extent[0] + margin) * 8.0).ceil() as i32,
-                ((center[1] + extent[1] + margin) * 8.0).ceil() as i32,
-            ])
-        }).collect()
-    }
-
     /// Advances configured pawn movement by one fixed simulation step
     pub fn simulate_actor_pawns(
         &mut self,
@@ -327,6 +270,7 @@ impl ActorRegistry {
 
     /// Rejects invalid configured swimming parameters before inserting a pawn
     fn validate_pawn(pawn: &ActorPawn) {
+        if let Some(shape) = pawn.collision_shape { assert!(shape.is_valid()); }
         let Some(ActorPawnSwimmingConfiguration {
             maximum_speed,
             acceleration,
@@ -350,20 +294,20 @@ impl ActorRegistry {
 mod tests {
 
     use super::*;
+    use crate::actors::ActorPawnWalkingConfiguration;
     use crate::tiles::TileCoordinates;
 
     #[test]
     fn swimming_sample_uses_hysteresis_without_changing_other_modes() {
         let mut registry: ActorRegistry = ActorRegistry::new();
         let mut pawn: ActorPawn = ActorPawn::new();
+        pawn.collision_shape = Some(ActorCollisionShape::Rectangle { width: 1.0, height: 1.0 });
         pawn.walking = Some(ActorPawnWalkingConfiguration {
             speed: 0.0,
             acceleration: 0.0,
             mass: 1.0,
             jump_velocity: 0.0,
             maximum_slope_angle: 0.0,
-            collider_width: 1.0,
-            collider_height: 1.0,
         });
         pawn.swimming = Some(ActorPawnSwimmingConfiguration {
             maximum_speed: 1.0,

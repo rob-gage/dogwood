@@ -21,7 +21,6 @@ struct Parameters {
 @group(0) @binding(0) var<storage, read> cellular_material_identifiers: array<u32>;
 @group(0) @binding(1) var<storage, read_write> occupancy: array<vec4<u32>>;
 @group(0) @binding(2) var<uniform> parameters: Parameters;
-@group(0) @binding(3) var<storage, read> external_body_occupancy: array<u32>;
 
 // Derives separate static and dynamic occupancy words for each logical buffered tile
 @compute @workgroup_size(1)
@@ -46,8 +45,7 @@ fn extract_cellular_collision_occupancy(@builtin(global_invocation_id) invocatio
         if identifier != EMPTY_MATERIAL_IDENTIFIER && form == CELLULAR_STATIC_MATERIAL_FORM {
             static_mask[cell / 32u] |= 1u << (cell % 32u);
         } else if identifier != EMPTY_MATERIAL_IDENTIFIER &&
-                form == CELLULAR_DYNAMIC_MATERIAL_FORM &&
-                external_body_occupancy[cell_start + cell] == 0u {
+                form == CELLULAR_DYNAMIC_MATERIAL_FORM {
             dynamic_mask[cell / 32u] |= 1u << (cell % 32u);
         }
     }

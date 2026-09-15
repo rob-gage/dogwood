@@ -56,7 +56,6 @@ struct StaticProperties {
 @group(0) @binding(9) var<storage, read_write> retained_pressure: array<vec4<f32>>;
 @group(0) @binding(10) var<storage, read> external_body_occupancy: array<u32>;
 @group(0) @binding(11) var<storage, read> external_body_velocity: array<vec4<f32>>;
-@group(0) @binding(12) var<storage, read> external_body_count: array<atomic<u32>>;
 @group(0) @binding(13) var<uniform> parameters: Parameters;
 @group(0) @binding(14) var<storage, read_write> active_pressure_tiles: array<atomic<u32>>;
 @group(0) @binding(15) var<storage, read_write> active_pressure_tile_indices: array<u32>;
@@ -206,12 +205,9 @@ fn seed_cellular_pressure(
     pressure_b[index] = vec4<f32>(0.0);
     var source: vec4<f32> = pending_pressure[index];
     pending_pressure[index] = vec4<f32>(0.0);
-    // Divide one authoritative body impulse across its rasterized proxy cells
+    // Actor resolve has already divided each drive impulse across that actor's won cells.
     if external_body_occupancy[index] == 1u || external_body_occupancy[index] == 2u {
-        let occupied_count: u32 = max(1u, atomicLoad(&external_body_count[0]));
-        source += encode_directional_pressure(
-            external_body_velocity[index].zw / f32(occupied_count),
-        );
+        source += encode_directional_pressure(external_body_velocity[index].zw);
     }
     pressure_a[index] = source;
 }

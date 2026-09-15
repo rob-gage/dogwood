@@ -5,6 +5,7 @@ use crate::scenes::{
     FluidUpload,
 };
 use crate::{
+    actors::ActorCollisionShape,
     chunks::ChunkFluidParticle,
     tiles::{
         TileArea,
@@ -451,13 +452,13 @@ impl Fluids {
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
 
-    /// Samples final derived fluid state across one gravity-relative pawn capsule
+    /// Samples final derived fluid state across one gravity-relative pawn shape
     pub fn sample_pawn(
         &self,
         accelerator: &Accelerator,
         output: &wgpu::Buffer,
         center: [f32; 2],
-        collider: [f32; 2],
+        shape: ActorCollisionShape,
         active_origin: TileCoordinates,
         active_width: u16,
         active_height: u16,
@@ -472,7 +473,7 @@ impl Fluids {
             accelerator, active_origin, active_width, active_height,
             buffered_origin, buffered_width, buffered_height,
             ring_offset_x, ring_offset_y, None, gravity, 0.0,
-            Some((center, collider)),
+            Some((center, shape)),
         );
         let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device().create_command_encoder(
             &wgpu::CommandEncoderDescriptor { label: Some("pawn fluid sample") },
@@ -640,7 +641,7 @@ impl Fluids {
         streaming_area: Option<TileArea>,
         gravity: [f32; 2],
         delta_time: f32,
-        sample: Option<([f32; 2], [f32; 2])>,
+        sample: Option<([f32; 2], ActorCollisionShape)>,
     ) {
         let streaming_origin: TileCoordinates = streaming_area.map_or(
             TileCoordinates { x: 0, y: 0 }, TileArea::origin,
@@ -648,7 +649,11 @@ impl Fluids {
         let streaming_dimensions: [u16; 2] = streaming_area.map_or(
             [0, 0], TileArea::dimensions,
         );
-        let (sample_center, sample_collider) = sample.unwrap_or(([0.0; 2], [0.0; 2]));
+        let (sample_center, sample_kind, sample_parameters) = sample.map_or(
+            ([0.0; 2], 0, [0.0; 2]), |(center, shape)| {
+                let (kind, parameters) = shape.gpu_parameters();
+                (center, kind, parameters)
+            });
         let values: [u32; 32] = [
             buffered_origin.x as u32, buffered_origin.y as u32,
             u32::from(buffered_width), u32::from(buffered_height),
@@ -663,8 +668,8 @@ impl Fluids {
             SUPPORT_RADIUS_CELLS.to_bits(), PARTICLE_RADIUS_CELLS.to_bits(),
             MAXIMUM_MOVEMENT_CELLS, 0,
             sample_center[0].to_bits(), sample_center[1].to_bits(),
-            sample_collider[0].to_bits(), sample_collider[1].to_bits(),
-            0, 0,
+            sample_parameters[0].to_bits(), sample_parameters[1].to_bits(),
+            sample_kind, 0,
         ];
         let bytes: Vec<u8> = values.into_iter().flat_map(u32::to_le_bytes).collect();
         accelerator.wgpu_queue().write_buffer(&self.parameters, 0, &bytes);

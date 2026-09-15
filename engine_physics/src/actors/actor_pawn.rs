@@ -1,6 +1,7 @@
 // Copyright Rob Gage 2026
 
 use super::{
+    ActorCollisionShape,
     ActorPawnFlyingConfiguration,
     ActorPawnMovement,
     ActorPawnNoclipConfiguration,
@@ -11,6 +12,8 @@ use super::{
 /// Configures the movement capabilities and active movement of an actor pawn
 #[derive(bevy_ecs::component::Component)]
 pub struct ActorPawn {
+    /// Shared physical geometry used by movement and cellular interaction
+    pub collision_shape: Option<ActorCollisionShape>,
     /// Walking capability configuration, if supported
     pub walking: Option<ActorPawnWalkingConfiguration>,
     /// Flying capability configuration, if supported
@@ -30,6 +33,7 @@ impl ActorPawn {
     /// Creates a pawn with no movement capabilities or active movement
     pub const fn new() -> Self {
         Self {
+            collision_shape: None,
             walking: None,
             flying: None,
             swimming: None,

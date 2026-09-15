@@ -294,7 +294,6 @@ impl Scene {
             cellular_dynamic.kinematics_buffer(),
             cellular_physics_body_proxy.occupancy_buffer(),
             cellular_physics_body_proxy.velocity_buffer(),
-            cellular_physics_body_proxy.count_buffer(),
             cellular_physics_body_proxy.rigid_owners_buffer(),
             cellular_physics_body_proxy.rigid_material_identifiers_buffer(),
             cellular_physics_body_proxy.rigid_transforms_buffer(),
@@ -303,7 +302,6 @@ impl Scene {
         let cellular_collision: CellularCollision = CellularCollision::new(
             accelerator.as_ref(),
             &cellular_material_identifiers,
-            cellular_physics_body_proxy.occupancy_buffer(),
             simulation.width + buffer_size,
             simulation.height + buffer_size,
         );
@@ -736,9 +734,6 @@ impl Scene {
             self.physics_world.update_cellular_terrain(snapshot);
         }
         let delta_time: f32 = 1.0 / TICK_RATE as f32;
-        let cellular_collision_regions: Vec<[i32; 4]> = self.actor_registry
-            .cellular_collision_regions(self.gravity, delta_time);
-        self.physics_world.update_dynamic_cellular_terrain(&cellular_collision_regions);
         if is_simulation_active {
             for (index, active) in self.rigid_granular_contact_active.iter().enumerate() {
                 if *active && !self.physics_world.wake_rigid_cellular_body(
@@ -755,13 +750,7 @@ impl Scene {
             self.gravity,
             &self.physics_world,
         );
-        let current_walking_pawn: Option<([f32; 2], [f32; 2], [f32; 2], [f32; 2])> =
-            self.possessed_actor().and_then(|actor| {
-                self.actor_registry.walking_pawn_physics(actor)
-            });
-        let current_pawn_fluid_permeable: bool = self.possessed_actor().and_then(|actor| {
-            self.actor_registry.get_pawn(actor)
-        }).is_some_and(|pawn| pawn.swimming.is_some());
+        let actor_proxies = self.actor_registry.cellular_proxy_states();
         let possessed_position: Option<ScenePosition> = self.possessed_actor()
             .and_then(|actor| self.actor_registry.get_position(actor)).copied();
         if let Some(position) = possessed_position { self.follow_position(position); }
@@ -774,8 +763,7 @@ impl Scene {
         self.cellular_physics_body_proxy.rasterize(
             self.accelerator.as_ref(), TileCoordinates { x: self.origin.x - buffer_size, y: self.origin.y - buffer_size },
             self.simulation_width + dimensions, self.simulation_height + dimensions, self.tiles_ring_offset_x,
-            self.tiles_ring_offset_y, self.gravity, current_walking_pawn,
-            current_pawn_fluid_permeable,
+            self.tiles_ring_offset_y, self.gravity, &actor_proxies,
             &self.rigid_cellular_bodies,
             &rigid_body_states,
             self.rigid_cellular_topology_revision,
@@ -1948,7 +1936,7 @@ impl Scene {
     fn fluid_sample_submit(&mut self) -> Result<(), io::Error> {
         if self.fluid_sample_actor.is_some() { return Ok(()); }
         let Some(actor) = self.possessed_actor() else { return Ok(()); };
-        let Some((center, collider)) = self.actor_registry.swimming_pawn_sample(actor)
+        let Some((center, shape)) = self.actor_registry.swimming_pawn_sample(actor)
             else { return Ok(()); };
         let active_area: TileArea = self.area_fluid_active();
         let active_dimensions: [u16; 2] = active_area.dimensions();
@@ -1958,7 +1946,7 @@ impl Scene {
             self.accelerator.as_ref(),
             &self.fluid_sample_buffer,
             center,
-            collider,
+            shape,
             active_area.origin(),
             active_dimensions[0],
             active_dimensions[1],
@@ -2641,7 +2629,7 @@ mod tests {
         assert!(state.translation[1] < initial_y);
         scene.cellular_physics_body_proxy.rasterize(
             accelerator.as_ref(), TileCoordinates { x: -2, y: -2 }, 5, 5, 0, 0,
-            scene.gravity, None, false, &scene.rigid_cellular_bodies, &[state],
+            scene.gravity, &[], &scene.rigid_cellular_bodies, &[state],
             scene.rigid_cellular_topology_revision,
         );
         accelerator.poll().unwrap();

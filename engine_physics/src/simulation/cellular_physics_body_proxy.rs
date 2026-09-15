@@ -4,6 +4,7 @@ use super::{
     RigidCellularBody,
     RigidCellularBodyState,
 };
+use crate::actors::ActorCellularProxyState;
 use crate::tiles::TileCoordinates;
 use engine_compute::{
     Accelerator,
@@ -14,7 +15,9 @@ use engine_compute::{
 pub struct CellularPhysicsBodyProxy {
     occupancy: AcceleratorBuffer,
     velocity: AcceleratorBuffer,
-    count: AcceleratorBuffer,
+    actor_counts: AcceleratorBuffer,
+    actor_claims: AcceleratorBuffer,
+    actor_proxies: AcceleratorBuffer,
     rigid_material_identifiers: AcceleratorBuffer,
     rigid_appearances: AcceleratorBuffer,
     rigid_claims: AcceleratorBuffer,
@@ -23,12 +26,17 @@ pub struct CellularPhysicsBodyProxy {
     rigid_transforms: AcceleratorBuffer,
     parameters: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
+    bind_group_layout: wgpu::BindGroupLayout,
     clear_pipeline: wgpu::ComputePipeline,
-    pawn_pipeline: wgpu::ComputePipeline,
+    actor_count_clear_pipeline: wgpu::ComputePipeline,
+    actor_claim_pipeline: wgpu::ComputePipeline,
+    actor_count_pipeline: wgpu::ComputePipeline,
+    actor_resolve_pipeline: wgpu::ComputePipeline,
     rigid_claim_pipeline: wgpu::ComputePipeline,
     rigid_resolve_pipeline: wgpu::ComputePipeline,
     buffered_cell_count: u32,
     topology_revision: u64,
+    actor_capacity: usize,
 }
 
 impl CellularPhysicsBodyProxy {
@@ -38,7 +46,10 @@ impl CellularPhysicsBodyProxy {
         let buffered_cell_count = buffered_cell_count as u32;
         let occupancy = accelerator.allocate::<u32>(buffered_cell_count as usize);
         let velocity = accelerator.allocate::<[f32; 4]>(buffered_cell_count as usize);
-        let count = accelerator.allocate::<u32>(1);
+        let actor_capacity = 1;
+        let actor_counts = accelerator.allocate::<u32>(actor_capacity);
+        let actor_claims = accelerator.allocate::<u32>(buffered_cell_count as usize);
+        let actor_proxies = accelerator.allocate::<[u32; 12]>(actor_capacity);
         let rigid_material_identifiers = accelerator.allocate::<u32>(buffered_cell_count as usize);
         let rigid_appearances = accelerator.allocate::<u32>(buffered_cell_count as usize);
         let rigid_claims = accelerator.allocate::<u32>(buffered_cell_count as usize);
@@ -62,14 +73,14 @@ impl CellularPhysicsBodyProxy {
                     ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false, min_binding_size: None }, count: None },
                 storage(4, false), storage(5, false), storage(6, false), storage(7, true),
-                storage(8, true), storage(9, false),
+                storage(8, true), storage(9, false), storage(10, true), storage(11, false),
             ],
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("cellular physics body proxy bind group"), layout: &layout, entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: occupancy.wgpu_buffer().as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 1, resource: velocity.wgpu_buffer().as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: count.wgpu_buffer().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: actor_counts.wgpu_buffer().as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 3, resource: parameters.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 4, resource: rigid_material_identifiers.wgpu_buffer().as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 5, resource: rigid_appearances.wgpu_buffer().as_entire_binding() },
@@ -77,6 +88,8 @@ impl CellularPhysicsBodyProxy {
                 wgpu::BindGroupEntry { binding: 7, resource: rigid_cells.wgpu_buffer().as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 8, resource: rigid_transforms.wgpu_buffer().as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 9, resource: rigid_owners.wgpu_buffer().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 10, resource: actor_proxies.wgpu_buffer().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 11, resource: actor_claims.wgpu_buffer().as_entire_binding() },
             ],
         });
         let shader = super::create_simulation_shader_module(device,
@@ -90,18 +103,22 @@ impl CellularPhysicsBodyProxy {
             &wgpu::ComputePipelineDescriptor { label: Some(label), layout: Some(&pipeline_layout),
                 module: &shader, entry_point: Some(entry_point),
                 compilation_options: Default::default(), cache: None });
-        Self { occupancy, velocity, count, rigid_material_identifiers, rigid_appearances,
+        Self { occupancy, velocity, actor_counts, actor_claims, actor_proxies,
+            rigid_material_identifiers, rigid_appearances,
             rigid_claims, rigid_owners, rigid_cells, rigid_transforms, parameters, bind_group,
+            bind_group_layout: layout,
             clear_pipeline: pipeline("clear_cellular_physics_body_proxy", "cellular physics body proxy clear pipeline"),
-            pawn_pipeline: pipeline("rasterize_pawn_proxy", "cellular pawn proxy raster pipeline"),
+            actor_count_clear_pipeline: pipeline("clear_actor_counts", "actor proxy count clear pipeline"),
+            actor_claim_pipeline: pipeline("claim_actor_proxy", "actor proxy claim pipeline"),
+            actor_count_pipeline: pipeline("count_actor_proxy", "actor proxy count pipeline"),
+            actor_resolve_pipeline: pipeline("resolve_actor_proxy", "actor proxy resolve pipeline"),
             rigid_claim_pipeline: pipeline("claim_rigid_cell_proxy", "rigid cellular proxy claim pipeline"),
             rigid_resolve_pipeline: pipeline("resolve_rigid_cell_proxy", "rigid cellular proxy resolve pipeline"),
-            buffered_cell_count, topology_revision: u64::MAX }
+            buffered_cell_count, topology_revision: u64::MAX, actor_capacity }
     }
 
     pub const fn occupancy_buffer(&self) -> &AcceleratorBuffer { &self.occupancy }
     pub const fn velocity_buffer(&self) -> &AcceleratorBuffer { &self.velocity }
-    pub const fn count_buffer(&self) -> &AcceleratorBuffer { &self.count }
     pub const fn rigid_material_identifiers_buffer(&self) -> &AcceleratorBuffer
     { &self.rigid_material_identifiers }
     pub const fn rigid_appearances_buffer(&self) -> &AcceleratorBuffer { &self.rigid_appearances }
@@ -111,11 +128,11 @@ impl CellularPhysicsBodyProxy {
     pub(crate) fn rasterize(
         &mut self, accelerator: &Accelerator, origin: TileCoordinates, width: u16, height: u16,
         ring_offset_x: u16, ring_offset_y: u16, gravity: [f32; 2],
-        pawn: Option<([f32; 2], [f32; 2], [f32; 2], [f32; 2])>, is_fluid_permeable: bool,
+        actors: &[ActorCellularProxyState],
         bodies: &[RigidCellularBody],
         body_states: &[RigidCellularBodyState], topology_revision: u64,
     ) {
-        // ponytail: fixed resident-cell capacity; growable topology storage if dense body counts matter
+        self.ensure_actor_capacity(accelerator, actors.len());
         let rigid_cell_count: u32 = bodies.iter().map(|body| body.cells.len() as u32).sum::<u32>()
             .min(self.buffered_cell_count);
         if self.topology_revision != topology_revision {
@@ -136,38 +153,72 @@ impl CellularPhysicsBodyProxy {
                 state.inverse_angular_inertia,
             ]).flat_map(f32::to_le_bytes).collect();
         accelerator.wgpu_queue().write_buffer(self.rigid_transforms.wgpu_buffer(), 0, &transforms);
-        let (center, velocity, collider, drive, occupancy) = pawn.map_or(
-            ([0.0; 2], [0.0; 2], [0.0; 2], [0.0; 2], 0u32),
-            |(center, velocity, collider, drive)| (center, velocity, collider, drive,
-                if is_fluid_permeable { 2u32 } else { 1u32 }));
+        let actor_bytes: Vec<u8> = actors.iter().flat_map(|actor| {
+            let (kind, shape) = actor.shape.gpu_parameters();
+            [actor.center[0].to_bits(), actor.center[1].to_bits(),
+                actor.velocity[0].to_bits(), actor.velocity[1].to_bits(),
+                actor.drive[0].to_bits(), actor.drive[1].to_bits(),
+                shape[0].to_bits(), shape[1].to_bits(), kind, actor.occupancy_kind, 0, 0]
+        }).flat_map(u32::to_le_bytes).collect();
+        if !actor_bytes.is_empty() { accelerator.wgpu_queue().write_buffer(
+            self.actor_proxies.wgpu_buffer(), 0, &actor_bytes); }
         let values = [origin.x as u32, origin.y as u32, u32::from(width), u32::from(height),
-            u32::from(ring_offset_x), u32::from(ring_offset_y), center[0].to_bits(), center[1].to_bits(),
-            velocity[0].to_bits(), velocity[1].to_bits(), drive[0].to_bits(), drive[1].to_bits(),
-            collider[0].to_bits(), collider[1].to_bits(), gravity[0].to_bits(), gravity[1].to_bits(),
-            self.buffered_cell_count, occupancy, rigid_cell_count, bodies.len() as u32, 0, 0, 0, 0];
+            u32::from(ring_offset_x), u32::from(ring_offset_y), gravity[0].to_bits(), gravity[1].to_bits(),
+            self.buffered_cell_count, actors.len() as u32, rigid_cell_count, bodies.len() as u32,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
         let bytes: Vec<u8> = values.into_iter().flat_map(u32::to_le_bytes).collect();
         accelerator.wgpu_queue().write_buffer(&self.parameters, 0, &bytes);
         let mut encoder = accelerator.wgpu_device().create_command_encoder(
             &wgpu::CommandEncoderDescriptor { label: Some("cellular physics body proxy rasterization") });
-        for (pipeline, label, count) in [
-            (&self.clear_pipeline, "clear cellular physics body proxy", self.buffered_cell_count),
-            (&self.pawn_pipeline, "rasterize cellular pawn proxy", self.buffered_cell_count),
-            (&self.rigid_claim_pipeline, "claim rigid cellular proxy", rigid_cell_count),
-            (&self.rigid_resolve_pipeline, "resolve rigid cellular proxy", rigid_cell_count),
+        for (pipeline, label, count, actor_dispatch) in [
+            (&self.clear_pipeline, "clear cellular physics body proxy", self.buffered_cell_count, false),
+            (&self.actor_count_clear_pipeline, "clear actor proxy counts", actors.len() as u32, false),
+            (&self.actor_claim_pipeline, "claim actor proxies", actors.len() as u32, true),
+            (&self.actor_count_pipeline, "count actor proxies", actors.len() as u32, true),
+            (&self.actor_resolve_pipeline, "resolve actor proxies", actors.len() as u32, true),
+            (&self.rigid_claim_pipeline, "claim rigid cellular proxy", rigid_cell_count, false),
+            (&self.rigid_resolve_pipeline, "resolve rigid cellular proxy", rigid_cell_count, false),
         ] {
             let mut pass = accelerator.begin_compute_pass(&mut encoder, label);
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.dispatch_workgroups(count.div_ceil(64), 1, 1);
+            pass.dispatch_workgroups(if actor_dispatch { count } else { count.div_ceil(64) }, 1, 1);
         }
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
+    }
+
+    fn ensure_actor_capacity(&mut self, accelerator: &Accelerator, count: usize) {
+        if count <= self.actor_capacity { return; }
+        self.actor_counts.free();
+        self.actor_proxies.free();
+        self.actor_capacity = count.next_power_of_two();
+        self.actor_counts = accelerator.allocate::<u32>(self.actor_capacity);
+        self.actor_proxies = accelerator.allocate::<[u32; 12]>(self.actor_capacity);
+        self.bind_group = accelerator.wgpu_device().create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("cellular physics body proxy bind group"), layout: &self.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: self.occupancy.wgpu_buffer().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: self.velocity.wgpu_buffer().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: self.actor_counts.wgpu_buffer().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: self.parameters.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: self.rigid_material_identifiers.wgpu_buffer().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: self.rigid_appearances.wgpu_buffer().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: self.rigid_claims.wgpu_buffer().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 7, resource: self.rigid_cells.wgpu_buffer().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 8, resource: self.rigid_transforms.wgpu_buffer().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 9, resource: self.rigid_owners.wgpu_buffer().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 10, resource: self.actor_proxies.wgpu_buffer().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 11, resource: self.actor_claims.wgpu_buffer().as_entire_binding() },
+            ],
+        });
     }
 }
 
 impl Drop for CellularPhysicsBodyProxy {
 
     fn drop(&mut self) {
-        self.occupancy.free(); self.velocity.free(); self.count.free();
+        self.occupancy.free(); self.velocity.free(); self.actor_counts.free();
+        self.actor_claims.free(); self.actor_proxies.free();
         self.rigid_material_identifiers.free(); self.rigid_appearances.free();
         self.rigid_claims.free(); self.rigid_owners.free(); self.rigid_cells.free();
         self.rigid_transforms.free();
@@ -180,6 +231,7 @@ mod tests {
 
     use super::*;
     use crate::{
+        actors::{ActorCellularProxyState, ActorCollisionShape},
         materials::{
             MaterialForm,
             MaterialIdentifier,
@@ -216,6 +268,17 @@ mod tests {
             angular_velocity: 0.0, center_of_mass: [0.5; 2], inverse_mass: 1.0,
             inverse_angular_inertia: 1.0,
         }];
+        let actors = [
+            ActorCellularProxyState { center: [-1.0, 0.0], velocity: [0.0; 2],
+                drive: [1.0, 0.0], shape: ActorCollisionShape::Circle { radius: 0.375 },
+                occupancy_kind: 1 },
+            ActorCellularProxyState { center: [-1.0, 0.0], velocity: [0.0; 2],
+                drive: [0.0; 2], shape: ActorCollisionShape::Capsule {
+                    radius: 0.25, height: 0.75 }, occupancy_kind: 2 },
+            ActorCellularProxyState { center: [1.5, 0.0], velocity: [0.0; 2],
+                drive: [0.0; 2], shape: ActorCollisionShape::Rectangle {
+                    width: 0.5, height: 0.75 }, occupancy_kind: 1 },
+        ];
         proxy.rasterize(
             &accelerator,
             TileCoordinates { x: -12, y: -12 },
@@ -224,8 +287,7 @@ mod tests {
             0,
             0,
             [0.0, -1.0],
-            None,
-            false,
+            &actors,
             &bodies,
             &body_states,
             0,

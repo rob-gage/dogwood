@@ -11,6 +11,7 @@ use engine::{
     },
     physics::{
         actors::{
+            ActorCollisionShape,
             ActorPawn,
             ActorPawnMovement,
             ActorPawnSwimmingConfiguration,
@@ -160,14 +161,15 @@ impl DemoGame {
         );
         scene.apply_edits(&mut gas_edits)?;
         let mut pawn_configuration: ActorPawn = ActorPawn::new();
+        pawn_configuration.collision_shape = Some(ActorCollisionShape::Circle {
+            radius: 0.375,
+        });
         pawn_configuration.walking = Some(ActorPawnWalkingConfiguration {
             speed: 4.0,
             acceleration: 24.0,
             mass: 8.0,
             jump_velocity: 7.0,
             maximum_slope_angle: 50.0_f32.to_radians(),
-            collider_width: 0.75,
-            collider_height: 0.75,
         });
         pawn_configuration.swimming = Some(ActorPawnSwimmingConfiguration {
             maximum_speed: 3.5,

@@ -29,8 +29,8 @@ pub fn create_composed_shader_module(
             "engine_compute/src/material_identifier.wgsl",
         ),
         (
-            include_str!("capsule_collision.wgsl"),
-            "engine_compute/src/capsule_collision.wgsl",
+            include_str!("actor_collision_shape.wgsl"),
+            "engine_compute/src/actor_collision_shape.wgsl",
         ),
     ] {
         composer
