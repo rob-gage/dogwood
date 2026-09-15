@@ -185,9 +185,8 @@ impl<G: Game> EditorApplication<G> {
             EditorTool::Eraser => edits.erase(cells.into_iter().collect()),
             EditorTool::Impulse => unreachable!(),
         }
-        if scene.apply_edits(&mut edits).is_ok() {
-            self.stroke_anchor = Some(anchor);
-        }
+        scene.queue_edits(edits);
+        self.stroke_anchor = Some(anchor);
     }
 
     /// Adjusts the brush size and restarts the current stamp when it changes

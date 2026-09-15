@@ -216,25 +216,26 @@ impl Gases {
         concentrations: &[(usize, u32)],
         clear_cells: &[usize],
     ) {
-        for physical_index in clear_cells {
-            accelerator.wgpu_queue().write_buffer(
-                self.velocity.wgpu_buffer(), *physical_index as u64 * 8, &[0; 8],
-            );
-            for species in 0..self.gas_count {
-                let index: u64 = u64::from(species) * u64::from(self.buffered_cell_count) +
-                    *physical_index as u64;
-                accelerator.wgpu_queue().write_buffer(
-                    self.concentrations.wgpu_buffer(), index * 4, &[0; 4],
-                );
+        fn runs(indices: &[usize], mut write: impl FnMut(usize, usize)) {
+            let mut start = 0; while start < indices.len() { let mut end = start + 1;
+                while end < indices.len() && indices[end] == indices[end - 1] + 1 { end += 1; }
+                write(indices[start], end - start); start = end;
             }
         }
-        for (physical_index, species) in concentrations {
-            let index: u64 = u64::from(*species) * u64::from(self.buffered_cell_count) +
-                *physical_index as u64;
-            accelerator.wgpu_queue().write_buffer(
-                self.concentrations.wgpu_buffer(), index * 4,
-                &AUTHORED_CONCENTRATION.to_bits().to_le_bytes(),
-            );
+        runs(clear_cells, |index, count| accelerator.wgpu_queue().write_buffer(
+            self.velocity.wgpu_buffer(), index as u64 * 8, &vec![0; count * 8]));
+        for species in 0..self.gas_count {
+            runs(clear_cells, |index, count| accelerator.wgpu_queue().write_buffer(
+                self.concentrations.wgpu_buffer(),
+                (u64::from(species) * u64::from(self.buffered_cell_count) + index as u64) * 4,
+                &vec![0; count * 4]));
+            let mut authored: Vec<usize> = concentrations.iter().filter_map(|(cell, value)|
+                (*value == species).then_some(*cell)).collect();
+            authored.sort_unstable();
+            runs(&authored, |index, count| accelerator.wgpu_queue().write_buffer(
+                self.concentrations.wgpu_buffer(),
+                (u64::from(species) * u64::from(self.buffered_cell_count) + index as u64) * 4,
+                &vec![AUTHORED_CONCENTRATION.to_bits().to_le_bytes(); count].into_iter().flatten().collect::<Vec<_>>()));
         }
     }
 

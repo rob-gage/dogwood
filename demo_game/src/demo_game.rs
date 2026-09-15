@@ -160,7 +160,7 @@ impl DemoGame {
                 (-44..-28).map(move |x| CellCoordinates { x, y })
             }).collect(),
         );
-        scene.apply_edits(&mut gas_edits)?;
+        scene.queue_edits(gas_edits);
         let mut pawn_configuration: ActorPawn = ActorPawn::new();
         pawn_configuration.collision_shape = Some(ActorCollisionShape::Circle {
             radius: 0.375,

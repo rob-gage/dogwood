@@ -116,6 +116,8 @@ pub struct Scene {
     chunks_streaming_identifier_next: u64,
     /// Elapsed time not yet consumed by fixed ticks
     tick_time: Duration,
+    /// Mandatory world-space edits submitted by editor and gameplay producers.
+    pending_runtime_edits: SceneEditBatch,
     /// The width of the active tile area
     simulation_width: u16,
     /// The height of the active tile area
@@ -358,6 +360,7 @@ impl Scene {
             chunk_streaming_responses,
             chunks_streaming_identifier_next: 0,
             tick_time: Duration::ZERO,
+            pending_runtime_edits: SceneEditBatch::new(),
             tiles,
             tile_streaming_batch_size: simulation.streaming_batch_size,
             simulation_width: simulation.width,
@@ -504,13 +507,17 @@ impl Scene {
         self.area_buffered().contains(position.tile_coordinates)
     }
 
-    /// Applies queued material edits to resident cellular world state
-    pub fn apply_edits(&mut self, edits: &mut SceneEditBatch) -> Result<(), io::Error> {
+    /// Queues mandatory runtime material edits for one coalesced update-time flush.
+    pub fn queue_edits(&mut self, edits: SceneEditBatch) { self.pending_runtime_edits.append(edits); }
+
+    /// Applies a scene-owned transaction immediately; nonresident requests remain queued.
+    fn apply_edits_immediate(&mut self, edits: &mut SceneEditBatch) -> Result<(), io::Error> {
         let mut cell_edits: HashMap<usize, (CellCoordinates, MaterialIdentifier, CellularAppearance, f32)> =
             HashMap::new();
         let mut fluid_edits: HashMap<usize, u32> = HashMap::new();
         let mut gas_edits: HashSet<(usize, u32)> = HashSet::new();
         let mut gas_clear_cells: HashSet<usize> = HashSet::new();
+        let mut deferred = SceneEditBatch::new();
         for edit in edits.drain() {
             match edit {
                 SceneEdit::PlaceCells { cells } => {
@@ -563,7 +570,7 @@ impl Scene {
                                 }
                                 None => { }
                             }
-                        }
+                        } else { deferred.place_cells(vec![SceneEditCellPlacement { coordinates, material_identifier, appearance }]); }
                     }
                 }
                 SceneEdit::Erase { cells } => {
@@ -582,11 +589,12 @@ impl Scene {
                                     gas_edits.remove(&(physical_index, species));
                                 }
                             }
-                        }
+                        } else { deferred.erase(vec![coordinates]); }
                     }
                 }
             }
         }
+        edits.append(deferred);
         let mut cell_edits: Vec<(usize, CellCoordinates, MaterialIdentifier, CellularAppearance, f32)> =
             cell_edits.into_iter().map(|(index, (coordinates, material_identifier, appearance, integrity))| {
                 (index, coordinates, material_identifier, appearance, integrity)
@@ -681,6 +689,12 @@ impl Scene {
         self.fluid_downloads_submit()?;
         self.fluid_uploads_submit()?;
         self.gas_downloads_submit()?;
+        if !self.pending_runtime_edits.is_empty() {
+            let mut edits = SceneEditBatch::new();
+            std::mem::swap(&mut edits, &mut self.pending_runtime_edits);
+            self.apply_edits_immediate(&mut edits)?;
+            self.pending_runtime_edits.append(edits);
+        }
         self.accelerator.poll().map_err(|error| io::Error::other(error.to_string()))?;
         self.apply_completed_rigid_cellular_reactions()?;
         self.cellular_collision.collect_collision()?;
@@ -956,7 +970,7 @@ impl Scene {
             let divisor: f32 = cells.len() as f32;
             let mut edits = SceneEditBatch::new();
             edits.erase(component.clone());
-            self.apply_edits(&mut edits)?;
+            self.apply_edits_immediate(&mut edits)?;
             for coordinates in &component { snapshot.clear_static_cell(coordinates.x, coordinates.y); }
             self.rigid_cellular_bodies.push(self.physics_world.insert_rigid_cellular_body(
                 [minimum_x as f32 / 8.0, minimum_y as f32 / 8.0], 0.0,
@@ -2506,7 +2520,7 @@ mod tests {
         let coordinates: CellCoordinates = CellCoordinates { x: -16, y: 0 };
         let mut edits: SceneEditBatch = SceneEditBatch::new();
         edits.place_material(vapor, CellularAppearance::NEUTRAL, vec![coordinates]);
-        scene.apply_edits(&mut edits).unwrap();
+        scene.apply_edits_immediate(&mut edits).unwrap();
         scene.shift_to(TileCoordinates { x: 1, y: 0 }).unwrap();
         scene.origin_target = scene.origin;
         let started: Instant = Instant::now();
@@ -2583,7 +2597,7 @@ mod tests {
             CellularAppearance::NEUTRAL,
             vec![CellCoordinates { x: 0, y: 8 }],
         );
-        scene.apply_edits(&mut edits).unwrap();
+        scene.apply_edits_immediate(&mut edits).unwrap();
         scene.update(Duration::from_secs(1) / 60, true).unwrap();
         accelerator.poll().unwrap();
     }
@@ -2618,7 +2632,7 @@ mod tests {
         }).chain((0..=2).map(|y| CellCoordinates { x: 3, y })).collect();
         let mut edits = SceneEditBatch::new();
         edits.place_material(stone, CellularAppearance::NEUTRAL, cells.clone());
-        scene.apply_edits(&mut edits).unwrap();
+        scene.apply_edits_immediate(&mut edits).unwrap();
         let mut static_masks = vec![[0u32; 2]; 25];
         for cell in &cells {
             let tile_x = cell.x.div_euclid(8) + 2;

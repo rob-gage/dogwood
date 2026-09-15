@@ -51,4 +51,9 @@ impl SceneEditBatch {
         self.edits.drain(..)
     }
 
+    pub const fn is_empty(&self) -> bool { self.edits.is_empty() }
+
+    /// Appends requests without changing their producer ordering.
+    pub fn append(&mut self, mut other: Self) { self.edits.append(&mut other.edits); }
+
 }

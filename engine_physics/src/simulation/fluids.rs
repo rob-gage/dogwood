@@ -370,12 +370,12 @@ impl Fluids {
         ring_offset_x: u16,
         ring_offset_y: u16,
     ) {
-        for (index, material_identifier) in edits {
-            accelerator.wgpu_queue().write_buffer(
-                self.edit_cells.wgpu_buffer(), *index as u64 * 4,
-                &material_identifier.to_le_bytes(),
-            );
-        }
+        // One bounded upload per aggregate scene-edit flush. The edit shader already
+        // scans this dense ring buffer, so a sparse sequence of tiny writes buys nothing.
+        let mut cells = vec![crate::materials::MaterialIdentifier::NULL.as_u32(); self.buffered_cell_count as usize];
+        for (index, material_identifier) in edits { cells[*index] = *material_identifier; }
+        let bytes: Vec<u8> = cells.into_iter().flat_map(u32::to_le_bytes).collect();
+        accelerator.wgpu_queue().write_buffer(self.edit_cells.wgpu_buffer(), 0, &bytes);
         self.write_parameters(
             accelerator, active_origin, active_width, active_height,
             buffered_origin, buffered_width, buffered_height,
