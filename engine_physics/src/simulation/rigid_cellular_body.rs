@@ -1,13 +1,15 @@
 // Copyright Rob Gage 2026
 
 use crate::{
-    materials::MaterialIdentifier,
+    materials::{Material, MaterialIdentifier, MaterialRegistry},
     tiles::CellularAppearance,
 };
 use rapier2d::prelude::{
+    MassProperties,
     Pose,
     RigidBodyHandle,
     SharedShape,
+    Vector,
 };
 use std::collections::HashSet;
 
@@ -19,6 +21,34 @@ pub(crate) struct RigidCellularBody {
 }
 
 impl RigidCellularBody {
+
+    /// Calculates aggregate local mass properties from constituent cellular material
+    pub(crate) fn mass_properties(
+        cells: &[([i32; 2], MaterialIdentifier, CellularAppearance)],
+        materials: &MaterialRegistry,
+    ) -> MassProperties {
+        let (total_mass, weighted_center) = cells.iter().fold(
+            (0.0, [0.0; 2]),
+            |(total, weighted), (cell, identifier, _)| {
+                let Some(Material::CellularStatic { mass, .. }) = materials.get(*identifier)
+                    else { panic!("Rigid cellular body contains a non-static material"); };
+                let center = [(cell[0] as f32 + 0.5) / 8.0,
+                    (cell[1] as f32 + 0.5) / 8.0];
+                (total + mass, [weighted[0] + mass * center[0],
+                    weighted[1] + mass * center[1]])
+            },
+        );
+        assert!(total_mass.is_finite() && total_mass > 0.0);
+        let center = [weighted_center[0] / total_mass, weighted_center[1] / total_mass];
+        let inertia = cells.iter().map(|(cell, identifier, _)| {
+            let Some(Material::CellularStatic { mass, .. }) = materials.get(*identifier)
+                else { unreachable!() };
+            let offset = [(cell[0] as f32 + 0.5) / 8.0 - center[0],
+                (cell[1] as f32 + 0.5) / 8.0 - center[1]];
+            mass / 384.0 + mass * (offset[0] * offset[0] + offset[1] * offset[1])
+        }).sum();
+        MassProperties::new(Vector::new(center[0], center[1]), total_mass, inertia)
+    }
 
     /// Builds a greedy rectangle compound in body-local tile units
     pub(crate) fn collision_shape(

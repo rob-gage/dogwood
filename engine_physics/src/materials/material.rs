@@ -11,6 +11,8 @@ pub enum Material {
         name: String,
         /// The graphics information for this `Material`
         graphics: MaterialAppearance,
+        /// Mass of one canonical 1/8 by 1/8 cellular cell
+        mass: f32,
         /// Load below which this material takes no structural damage
         pressure_ignore_threshold: f32,
         /// Structural integrity assigned to newly placed/generated cells

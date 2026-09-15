@@ -6,6 +6,7 @@ use super::{
     RigidCellularBodyState,
 };
 use crate::actors::ActorCollisionShape;
+use crate::materials::MaterialRegistry;
 use rapier2d::{
     prelude::{
         ColliderBuilder,
@@ -46,6 +47,7 @@ impl ScenePhysicsWorld {
         &mut self,
         position: [f32; 2],
         angle: f32,
+        materials: &MaterialRegistry,
         cells: Vec<([i32; 2], crate::materials::MaterialIdentifier,
             crate::tiles::CellularAppearance)>,
         friction: f32,
@@ -53,16 +55,18 @@ impl ScenePhysicsWorld {
         linear_velocity: [f32; 2],
         angular_velocity: f32,
     ) -> RigidCellularBody {
+        let mass_properties = RigidCellularBody::mass_properties(&cells, materials);
         let handle: RigidBodyHandle = self.rapier.insert_body(
             RigidBodyBuilder::dynamic()
                 .translation(Vector::new(position[0], position[1]))
                 .rotation(angle)
                 .linvel(Vector::new(linear_velocity[0], linear_velocity[1]))
-                .angvel(angular_velocity),
+                .angvel(angular_velocity)
+                .additional_mass_properties(mass_properties),
         );
         self.rapier.insert_collider(
             ColliderBuilder::new(RigidCellularBody::collision_shape(&cells))
-                .density(64.0)
+                .density(0.0)
                 .friction(friction)
                 .restitution(restitution)
                 .solver_groups(Self::rigid_solver_groups()),

@@ -159,7 +159,8 @@ impl CellularPhysicsBodyProxy {
             [actor.center[0].to_bits(), actor.center[1].to_bits(),
                 actor.velocity[0].to_bits(), actor.velocity[1].to_bits(),
                 actor.drive[0].to_bits(), actor.drive[1].to_bits(),
-                shape[0].to_bits(), shape[1].to_bits(), kind, actor.occupancy_kind, 0, 0]
+                shape[0].to_bits(), shape[1].to_bits(), kind, actor.occupancy_kind,
+                actor.mass.to_bits(), 0]
         }).flat_map(u32::to_le_bytes).collect();
         if !actor_bytes.is_empty() { accelerator.wgpu_queue().write_buffer(
             self.actor_proxies.wgpu_buffer(), 0, &actor_bytes); }
@@ -272,13 +273,13 @@ mod tests {
         let actors = [
             ActorCellularProxyState { center: [-1.0, 0.0], velocity: [0.0; 2],
                 drive: [1.0, 0.0], shape: ActorCollisionShape::Circle { radius: 0.375 },
-                occupancy_kind: 1 },
+                occupancy_kind: 1, mass: 1.0 },
             ActorCellularProxyState { center: [-1.0, 0.0], velocity: [0.0; 2],
                 drive: [0.0; 2], shape: ActorCollisionShape::Capsule {
-                    radius: 0.25, height: 0.75 }, occupancy_kind: 2 },
+                    radius: 0.25, height: 0.75 }, occupancy_kind: 2, mass: 1.0 },
             ActorCellularProxyState { center: [1.5, 0.0], velocity: [0.0; 2],
                 drive: [0.0; 2], shape: ActorCollisionShape::Rectangle {
-                    width: 0.5, height: 0.75 }, occupancy_kind: 1 },
+                    width: 0.5, height: 0.75 }, occupancy_kind: 1, mass: 1.0 },
         ];
         proxy.rasterize(
             &accelerator,

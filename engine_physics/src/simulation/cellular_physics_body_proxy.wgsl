@@ -2,7 +2,7 @@
 
 #define_import_path compute::cellular_physics_body_proxy
 
-#import utility::actor_collision_shape::{ actor_shape_from_parameters, actor_shape_world_extent, world_position_is_inside_actor_shape, }
+#import utility::actor_collision_shape::{ actor_shape_from_parameters, actor_shape_intersects_axis_aligned_cell, actor_shape_world_extent, }
 #import utility::cell_coordinates::{ CELLS_PER_TILE_FLOAT, world_cell_from_logical_tile_major_index, }
 #import utility::tile_ring::{INVALID_PHYSICAL_CELL_INDEX, physical_cell_index_from_world_cell}
 
@@ -15,7 +15,7 @@ struct Parameters {
 struct ActorProxy {
     center: vec2<f32>, velocity: vec2<f32>, drive: vec2<f32>,
     shape_parameters: vec2<f32>, shape_kind: u32, occupancy_kind: u32,
-    padding: vec2<u32>,
+    mass: f32, padding: u32,
 }
 
 struct RigidCell {
@@ -56,7 +56,7 @@ fn clear_actor_counts(@builtin(global_invocation_id) invocation: vec3<u32>) {
 fn actor_bounds(actor: ActorProxy) -> vec4<i32> {
     let shape = actor_shape_from_parameters(actor.center, parameters.gravity,
         actor.shape_parameters, actor.shape_kind);
-    let extent = actor_shape_world_extent(shape);
+    let extent = actor_shape_world_extent(shape) + vec2<f32>(0.5 / CELLS_PER_TILE_FLOAT);
     return vec4<i32>(vec2<i32>(floor((actor.center - extent) * CELLS_PER_TILE_FLOAT)),
         vec2<i32>(ceil((actor.center + extent) * CELLS_PER_TILE_FLOAT)));
 }
@@ -65,7 +65,8 @@ fn actor_claim_candidate(actor_index: u32, actor: ActorProxy, cell: vec2<i32>) {
     let position = (vec2<f32>(cell) + vec2<f32>(0.5)) / CELLS_PER_TILE_FLOAT;
     let shape = actor_shape_from_parameters(actor.center, parameters.gravity,
         actor.shape_parameters, actor.shape_kind);
-    if !world_position_is_inside_actor_shape(position, shape) { return; }
+    if !actor_shape_intersects_axis_aligned_cell(
+            position, 0.5 / CELLS_PER_TILE_FLOAT, shape) { return; }
     let index = physical_cell_index_from_world_cell(cell, parameters.buffered_origin,
         parameters.buffered_tile_size, parameters.ring_offset);
     if index != INVALID_PHYSICAL_CELL_INDEX { atomicMin(&actor_claims[index], actor_index); }

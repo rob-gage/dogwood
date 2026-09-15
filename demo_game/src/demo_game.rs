@@ -86,6 +86,7 @@ impl DemoGame {
         let stone: MaterialIdentifier = materials.register(Material::CellularStatic {
             name: "Stone".into(),
             graphics: stone_graphics,
+            mass: 1.0,
             pressure_ignore_threshold: 8.0,
             default_integrity: 20.0,
             debris_material: Some(stone_debris),

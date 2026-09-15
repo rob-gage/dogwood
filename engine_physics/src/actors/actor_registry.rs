@@ -160,6 +160,7 @@ impl ActorRegistry {
                 } else { [0.0; 2] },
                 shape,
                 occupancy_kind: if pawn.swimming.is_some() { 2 } else { 1 },
+                mass: pawn.walking.map_or(0.0, |configuration| configuration.mass),
             })
         }).collect()
     }
@@ -271,6 +272,9 @@ impl ActorRegistry {
     /// Rejects invalid configured swimming parameters before inserting a pawn
     fn validate_pawn(pawn: &ActorPawn) {
         if let Some(shape) = pawn.collision_shape { assert!(shape.is_valid()); }
+        if let Some(configuration) = pawn.walking {
+            assert!(configuration.mass.is_finite() && configuration.mass > 0.0);
+        }
         let Some(ActorPawnSwimmingConfiguration {
             maximum_speed,
             acceleration,

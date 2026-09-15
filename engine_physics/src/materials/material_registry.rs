@@ -71,8 +71,9 @@ impl MaterialRegistry {
     /// Returns whether all simulation properties of a material are valid
     fn material_is_valid(material: &Material) -> bool {
         match material {
-            Material::CellularStatic { pressure_transmission, friction, restitution, .. } =>
-                pressure_transmission.is_finite() && (0.0..=1.0).contains(pressure_transmission) &&
+            Material::CellularStatic { mass, pressure_transmission, friction, restitution, .. } =>
+                mass.is_finite() && *mass > 0.0 && pressure_transmission.is_finite() &&
+                (0.0..=1.0).contains(pressure_transmission) &&
                 friction.is_finite() && (0.0..=1.0).contains(friction) &&
                 restitution.is_finite() && (0.0..=1.0).contains(restitution),
             Material::CellularDynamic { mass, pressure_transmission, friction, restitution, .. } =>
@@ -247,6 +248,7 @@ impl MaterialRegistry {
                 .with_radiance_influence(radiance_influence);
             let material = match form {
                 MaterialForm::CellularStatic => {
+                    let mass = f32::from_bits(Self::read_u32(reader)?);
                     let pressure_ignore_threshold = f32::from_bits(Self::read_u32(reader)?);
                     let default_integrity = f32::from_bits(Self::read_u32(reader)?);
                     let debris_identifier = MaterialIdentifier::from_u32(Self::read_u32(reader)?);
@@ -256,7 +258,7 @@ impl MaterialRegistry {
                     let pressure_transmission = f32::from_bits(Self::read_u32(reader)?);
                     let friction = f32::from_bits(Self::read_u32(reader)?);
                     let restitution = f32::from_bits(Self::read_u32(reader)?);
-                    Material::CellularStatic { name, graphics, pressure_ignore_threshold,
+                    Material::CellularStatic { name, graphics, mass, pressure_ignore_threshold,
                         default_integrity, debris_material, debris_yield_rate, pressure_transmission,
                         friction, restitution }
                 }
@@ -326,8 +328,9 @@ impl MaterialRegistry {
                 writer.write_all(&value.to_bits().to_le_bytes())?;
             }
             match material {
-                Material::CellularStatic { pressure_ignore_threshold, default_integrity,
+                Material::CellularStatic { mass, pressure_ignore_threshold, default_integrity,
                     debris_material, debris_yield_rate, pressure_transmission, friction, restitution, .. } => {
+                    writer.write_all(&mass.to_bits().to_le_bytes())?;
                     writer.write_all(&pressure_ignore_threshold.to_bits().to_le_bytes())?;
                     writer.write_all(&default_integrity.to_bits().to_le_bytes())?;
                     writer.write_all(&debris_material.unwrap_or(MaterialIdentifier::NULL).as_u32().to_le_bytes())?;

@@ -9,4 +9,5 @@ pub(crate) struct ActorCellularProxyState {
     pub drive: [f32; 2],
     pub shape: ActorCollisionShape,
     pub occupancy_kind: u32,
+    pub mass: f32,
 }

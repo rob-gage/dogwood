@@ -944,7 +944,8 @@ impl Scene {
             self.apply_edits(&mut edits)?;
             for coordinates in &component { snapshot.clear_static_cell(coordinates.x, coordinates.y); }
             self.rigid_cellular_bodies.push(self.physics_world.insert_rigid_cellular_body(
-                [minimum_x as f32 / 8.0, minimum_y as f32 / 8.0], 0.0, cells,
+                [minimum_x as f32 / 8.0, minimum_y as f32 / 8.0], 0.0,
+                self.data.materials(), cells,
                 friction / divisor, restitution / divisor, [0.0; 2], 0.0,
             ));
             self.rigid_cellular_topology_revision =
@@ -976,17 +977,14 @@ impl Scene {
         let remaining = body.cells.into_iter().filter(|cell| !removed.contains(&cell.0)).collect();
         for cells in RigidCellularBody::connected_components(remaining) {
             if cells.is_empty() { continue; }
-            let local_center = cells.iter().fold([0.0; 2], |sum, cell| [
-                sum[0] + (cell.0[0] as f32 + 0.5) / 8.0,
-                sum[1] + (cell.0[1] as f32 + 0.5) / 8.0,
-            ]);
-            let divisor = cells.len() as f32;
-            let local_center = [local_center[0] / divisor, local_center[1] / divisor];
+            let local_center = RigidCellularBody::mass_properties(
+                &cells, self.data.materials(),
+            ).local_com;
             let child_center = [
-                state.translation[0] + state.angle.cos() * local_center[0] -
-                    state.angle.sin() * local_center[1],
-                state.translation[1] + state.angle.sin() * local_center[0] +
-                    state.angle.cos() * local_center[1],
+                state.translation[0] + state.angle.cos() * local_center.x -
+                    state.angle.sin() * local_center.y,
+                state.translation[1] + state.angle.sin() * local_center.x +
+                    state.angle.cos() * local_center.y,
             ];
             let offset = [child_center[0] - state.center_of_mass[0],
                 child_center[1] - state.center_of_mass[1]];
@@ -996,8 +994,8 @@ impl Scene {
             ];
             let (friction, restitution) = self.rigid_cellular_material_response(&cells);
             self.rigid_cellular_bodies.push(self.physics_world.insert_rigid_cellular_body(
-                state.translation, state.angle, cells, friction, restitution, child_velocity,
-                state.angular_velocity,
+                state.translation, state.angle, self.data.materials(), cells, friction,
+                restitution, child_velocity, state.angular_velocity,
             ));
         }
         self.rigid_cellular_contact_active.resize(self.rigid_cellular_bodies.len(), false);
@@ -2579,6 +2577,7 @@ mod tests {
         let stone: MaterialIdentifier = materials.register(Material::CellularStatic {
             name: "Stone".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(110, 105, 100)),
+            mass: 1.0,
             pressure_ignore_threshold: 1.0,
             default_integrity: 1.0,
             debris_material: None,
