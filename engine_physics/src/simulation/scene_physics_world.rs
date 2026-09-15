@@ -180,7 +180,6 @@ impl ScenePhysicsWorld {
             rows[ty * 8 + y] |= ((if y < 4 { lo } else { hi }) >> ((y % 4) * 8) & 0xff) << (tx * 8);
         }}}
         if rows.iter().all(|r| *r == 0) { return None; }
-        if rows.iter().all(|r| *r == u32::MAX) { return Some(SharedShape::cuboid(2.0, 2.0)); }
         let mut parts = Vec::new();
         for y in 0..32 { while rows[y] != 0 { let x = rows[y].trailing_zeros() as usize; let w = (rows[y] >> x).trailing_ones() as usize;
             let mask = if w == 32 { u32::MAX } else { (((1u64 << w) - 1) as u32) << x }; let mut h = 1;
@@ -490,9 +489,52 @@ mod tests {
         simulation::CollisionOccupancySnapshot,
         tiles::TileCoordinates,
     };
-    use rapier2d::prelude::Vector;
+    use rapier2d::prelude::{Pose, Vector};
     use crate::{materials::{Material, MaterialRegistry}, tiles::CellularAppearance};
     use engine_graphics::{Color, MaterialAppearance};
+
+    fn assert_patch_bounds(masks: [[u32; 2]; 16], origin: [f32; 2], expected: [f32; 4]) {
+        let shape = ScenePhysicsWorld::terrain_patch_shape(&masks).unwrap();
+        let aabb = shape.compute_aabb(&Pose::translation(origin[0], origin[1]));
+        assert!((aabb.mins.x - expected[0]).abs() < 1e-5 && (aabb.mins.y - expected[1]).abs() < 1e-5 &&
+            (aabb.maxs.x - expected[2]).abs() < 1e-5 && (aabb.maxs.y - expected[3]).abs() < 1e-5,
+            "actual {:?}..{:?}", aabb.mins, aabb.maxs);
+    }
+
+    #[test]
+    fn full_and_almost_full_patch_keep_the_same_exterior_bounds() {
+        let full = [[u32::MAX; 2]; 16];
+        assert_patch_bounds(full, [0.0, -4.0], [0.0, -4.0, 4.0, 0.0]);
+        assert_patch_bounds(full, [-8.0, 12.0], [-8.0, 12.0, -4.0, 16.0]);
+        let mut hole = full;
+        hole[5][0] &= !(1 << 9); // Interior cell; exterior must not move.
+        assert_patch_bounds(hole, [0.0, -4.0], [0.0, -4.0, 4.0, 0.0]);
+    }
+
+    #[test]
+    fn generated_full_floor_and_one_pixel_edit_have_the_same_rest_height() {
+        let mut materials = MaterialRegistry::new();
+        let stone = materials.register(Material::CellularStatic { name: "Stone".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(90, 90, 90)), mass: 1.0,
+            pressure_ignore_threshold: 1.0, default_integrity: 1.0, debris_material: None,
+            debris_yield_rate: 0.0, pressure_transmission: 1.0, friction: 0.5, restitution: 0.0 });
+        let mut world = ScenePhysicsWorld::new();
+        let snapshot = |hole: bool| { let mut masks = vec![[u32::MAX; 2]; 16];
+            if hole { masks[5][0] &= !(1 << 9); }
+            CollisionOccupancySnapshot { sequence: 0, origin: TileCoordinates { x: 0, y: -4 }, width: 4, height: 4,
+                static_masks: masks.into_boxed_slice(), dynamic_masks: vec![[0; 2]; 16].into_boxed_slice() }
+        };
+        world.update_cellular_snapshot(snapshot(false));
+        let body = world.insert_rigid_cellular_body([1.0, 1.0], 0.0, &materials,
+            vec![([0, 0], stone, CellularAppearance::NEUTRAL)], 0.5, 0.0, [0.0, 0.0], 0.0);
+        for _ in 0..180 { world.prepare_rigid_cellular_terrain(std::slice::from_ref(&body), [0.0, -9.81], 1.0 / 60.0); world.step([0.0, -9.81], 1.0 / 60.0); }
+        let full_height = world.rigid_cellular_body_state(&body).unwrap().translation[1];
+        world.update_cellular_snapshot(snapshot(true));
+        for _ in 0..60 { world.prepare_rigid_cellular_terrain(std::slice::from_ref(&body), [0.0, -9.81], 1.0 / 60.0); world.step([0.0, -9.81], 1.0 / 60.0); }
+        let edited_height = world.rigid_cellular_body_state(&body).unwrap().translation[1];
+        assert!(full_height > -0.01 && (full_height - edited_height).abs() < 0.01,
+            "full={full_height}, edited={edited_height}");
+    }
 
     #[test]
     fn stale_rigid_reaction_cannot_create_energy_without_grid_transfer() {
