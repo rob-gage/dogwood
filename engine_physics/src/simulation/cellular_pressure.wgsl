@@ -84,6 +84,20 @@ struct RigidReaction {
     impulse_y: atomic<i32>,
     angular_impulse: atomic<i32>,
     overflow: atomic<i32>,
+    constraint_x: atomic<i32>,
+    constraint_y: atomic<i32>,
+    constraint_angular: atomic<i32>,
+    constraint_energy: atomic<u32>,
+    support_x: atomic<i32>,
+    support_y: atomic<i32>,
+    support_angular: atomic<i32>,
+    support_energy: atomic<u32>,
+    recovery_x: atomic<i32>,
+    recovery_y: atomic<i32>,
+    recovery_angular: atomic<i32>,
+    recovery_energy: atomic<u32>,
+    source_motion: vec3<f32>,
+    kinematic_constraint: atomic<u32>,
 }
 
 struct RigidContactStatistics {
@@ -133,6 +147,7 @@ fn initialize_rigid_contact_state(@builtin(global_invocation_id) invocation: vec
     atomicStore(&rigid_contact_statistics[body].padding_1, 0u);
     atomicStore(&rigid_contact_statistics[body].padding_2, 0u);
     let motion: vec4<f32> = rigid_transforms[body * 3u + 1u];
+    rigid_reactions[body].source_motion = motion.xyz;
     atomicStore(&rigid_predicted_motion[body].x, i32(round(motion.x * 4096.0)));
     atomicStore(&rigid_predicted_motion[body].y, i32(round(motion.y * 4096.0)));
     atomicStore(&rigid_predicted_motion[body].angular, i32(round(motion.z * 4096.0)));
@@ -563,11 +578,19 @@ fn process_rigid_actor_contact(
     if any(reaction != reaction) || any(abs(reaction) > vec2<f32>(1000000.0)) ||
             abs(torque) > 1000000.0 { return; }
     if all(reaction == vec2<f32>(0.0)) { return; }
-    let credit: f32 = max(0.0, dot(linear, reaction) + angular * torque +
-        0.5 * count * (mass_record.z * dot(reaction, reaction) + mass_record.w * torque * torque));
+    let event: vec2<f32> = -normal * drive;
+    let event_torque: f32 = radius.x * event.y - radius.y * event.x;
+    let event_credit: f32 = max(0.0, dot(linear, event) + angular * event_torque +
+        0.5 * count * (mass_record.z * dot(event, event) + mass_record.w * event_torque * event_torque));
     atomicAdd(&rigid_contact_statistics[body].padding_1,
-        u32(ceil(min(credit, 1000000.0) * 256.0)));
-    accumulate_rigid_sweep_reaction(body, reaction, radius);
+        u32(ceil(min(event_credit, 1000000.0) * 256.0)));
+    accumulate_rigid_sweep_reaction(body, event, radius);
+    let kinematic: vec2<f32> = reaction - event;
+    let kinematic_torque: f32 = torque - event_torque;
+    let credit: f32 = max(0.0, dot(linear, kinematic) + angular * kinematic_torque +
+        0.5 * count * (mass_record.z * dot(kinematic, kinematic) + mass_record.w * kinematic_torque * kinematic_torque));
+    if any(kinematic != vec2<f32>(0.0)) { atomicStore(&rigid_reactions[body].kinematic_constraint, 1u); }
+    accumulate_rigid_constraint(body, kinematic, radius, credit, 0u);
     atomicAdd(&rigid_predicted_motion[body].x, i32(round(reaction.x * mass_record.z * 4096.0)));
     atomicAdd(&rigid_predicted_motion[body].y, i32(round(reaction.y * mass_record.z * 4096.0)));
     atomicAdd(&rigid_predicted_motion[body].angular, i32(round(torque * mass_record.w * 4096.0)));
@@ -685,7 +708,7 @@ fn process_rigid_cellular_contact(
     if constrained && penetration > CELL_SIZE * 0.02 && rigid_inverse_effective_mass > 0.000001 {
         let correction_speed: f32 = min(0.25,
             (penetration - CELL_SIZE * 0.02) * 0.2 / parameters.delta_time);
-        penetration_impulse = correction_speed /
+        penetration_impulse = max(0.0, correction_speed - max(-approach, 0.0)) /
             (simultaneous_contacts * rigid_inverse_effective_mass);
         constraint_normal_impulse += penetration_impulse;
     }
@@ -693,7 +716,7 @@ fn process_rigid_cellular_contact(
         &rigid_contact_statistics[body].geometric_support[channel]);
     var support_impulse: f32 = 0.0;
     if geometric_contacts != 0u && mass_record.z > 0.000001 &&
-            constrained && approach >= -0.0001 {
+            constrained {
         support_impulse = max(0.0,
             dot(parameters.gravity * parameters.delta_time / mass_record.z, normal)) /
                 f32(geometric_contacts);
@@ -743,8 +766,8 @@ fn process_rigid_cellular_contact(
     }
     let reaction: vec2<f32> = -impulse;
     let torque: f32 = radius.x * reaction.y - radius.y * reaction.x;
-    if support_impulse + penetration_impulse > 0.0 {
-        let support_reaction: vec2<f32> = -normal * (support_impulse + penetration_impulse);
+    if penetration_impulse > 0.0 {
+        let support_reaction: vec2<f32> = -normal * penetration_impulse;
         let support_torque: f32 = radius.x * support_reaction.y -
             radius.y * support_reaction.x;
         let support_credit: f32 = max(0.0,
@@ -752,7 +775,7 @@ fn process_rigid_cellular_contact(
             0.5 * max(f32(geometric_contacts), simultaneous_contacts) * (
                 mass_record.z * dot(support_reaction, support_reaction) +
                 mass_record.w * support_torque * support_torque);
-        atomicAdd(&rigid_contact_statistics[body].padding_1,
+        atomicAdd(&rigid_reactions[body].recovery_energy,
             u32(ceil(min(support_credit, 1000000.0) * 256.0)));
     }
     if any(reaction != reaction) || any(abs(reaction) > vec2<f32>(1000000.0)) ||
@@ -760,25 +783,58 @@ fn process_rigid_cellular_contact(
         atomicStore(&rigid_reactions[body].overflow, 1);
         return;
     }
-    var overflowed: bool = saturating_rigid_atomic_add(body,
-        i32(round(reaction.x * LINEAR_FIXED_SCALE)), 0u);
-    overflowed = saturating_rigid_atomic_add(body,
-        i32(round(reaction.y * LINEAR_FIXED_SCALE)), 1u) || overflowed;
-    overflowed = saturating_rigid_atomic_add(body,
-        i32(round(torque * ANGULAR_FIXED_SCALE)), 2u) || overflowed;
-    if overflowed { atomicStore(&rigid_reactions[body].overflow, 1); }
+    accumulate_rigid_sweep_reaction(body, -transfer_impulse, radius);
+    let support_reaction: vec2<f32> = -normal * support_impulse;
+    let support_torque: f32 = radius.x * support_reaction.y - radius.y * support_reaction.x;
+    let support_credit: f32 = 0.5 * f32(geometric_contacts) * (
+        mass_record.z * dot(support_reaction, support_reaction) +
+        mass_record.w * support_torque * support_torque);
+    accumulate_rigid_constraint(body, support_reaction, radius, support_credit, 1u);
+    let recovery_reaction: vec2<f32> = -normal * penetration_impulse;
+    accumulate_rigid_constraint(body, recovery_reaction, radius, 0.0, 2u);
+    accumulate_rigid_constraint(body, reaction + transfer_impulse - support_reaction - recovery_reaction, radius, 0.0, 0u);
     atomicAdd(&rigid_predicted_motion[body].x,
-        i32(round(reaction.x * mass_record.z * 4096.0)));
+        i32(round((reaction.x - support_reaction.x) * mass_record.z * 4096.0)));
     atomicAdd(&rigid_predicted_motion[body].y,
-        i32(round(reaction.y * mass_record.z * 4096.0)));
+        i32(round((reaction.y - support_reaction.y) * mass_record.z * 4096.0)));
     atomicAdd(&rigid_predicted_motion[body].angular,
-        i32(round(torque * mass_record.w * 4096.0)));
+        i32(round((torque - support_torque) * mass_record.w * 4096.0)));
     atomicAdd(&rigid_contact_statistics[body].contact_count, 1u);
     if static_cell { atomicAdd(&rigid_contact_statistics[body].static_contact_count, 1u); }
     if dynamic {
         let moving_grain: bool = approach > 0.02 || length(other_velocity) > 0.02;
         atomicAdd(&rigid_contact_statistics[body].padding_2,
             select(1u, 0x00010001u, moving_grain));
+    }
+}
+
+fn accumulate_rigid_constraint(body: u32, impulse: vec2<f32>, radius: vec2<f32>, credit: f32, kind: u32) {
+    let torque: f32 = radius.x * impulse.y - radius.y * impulse.x;
+    // State uses finer quantization: per-step support must not lose gravity to rounding.
+    let scaled: vec3<f32> = round(vec3<f32>(impulse, torque) * 65536.0);
+    if any(scaled != scaled) || any(abs(scaled) > vec3<f32>(2147483000.0)) {
+        atomicStore(&rigid_reactions[body].overflow, 1);
+        return;
+    }
+    let value: vec3<i32> = vec3<i32>(scaled);
+    var old: vec3<i32>;
+    if kind == 1u {
+        old.x = atomicAdd(&rigid_reactions[body].support_x, value.x);
+        old.y = atomicAdd(&rigid_reactions[body].support_y, value.y);
+        old.z = atomicAdd(&rigid_reactions[body].support_angular, value.z);
+        atomicAdd(&rigid_reactions[body].support_energy, u32(ceil(min(credit, 1000000.0) * 256.0)));
+    } else if kind == 2u {
+        old.x = atomicAdd(&rigid_reactions[body].recovery_x, value.x);
+        old.y = atomicAdd(&rigid_reactions[body].recovery_y, value.y);
+        old.z = atomicAdd(&rigid_reactions[body].recovery_angular, value.z);
+    } else {
+        old.x = atomicAdd(&rigid_reactions[body].constraint_x, value.x);
+        old.y = atomicAdd(&rigid_reactions[body].constraint_y, value.y);
+        old.z = atomicAdd(&rigid_reactions[body].constraint_angular, value.z);
+        atomicAdd(&rigid_reactions[body].constraint_energy, u32(ceil(min(credit, 1000000.0) * 256.0)));
+    }
+    if any(abs(vec3<f32>(old) + scaled) > vec3<f32>(2147483000.0)) {
+        atomicStore(&rigid_reactions[body].overflow, 1);
     }
 }
 

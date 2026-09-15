@@ -119,6 +119,23 @@ impl Fixture {
     }
 
     fn tick(&mut self, gravity: [f32; 2], sources: usize) -> RigidGranularReactionBatch {
+        let mut batch = self.tick_raw(gravity, sources);
+        // Legacy synchronous assertions inspect the total response for one pose.
+        for i in 0..3 {
+            batch.reactions[0][i] +=
+                batch.constraints[0][i] + batch.supports[0][i] + batch.recovery[0][i];
+        }
+        batch.energy_budgets[0] +=
+            batch.constraints[0][3] + batch.supports[0][3] + batch.recovery[0][3];
+        batch
+    }
+
+    fn tick_raw(&mut self, gravity: [f32; 2], sources: usize) -> RigidGranularReactionBatch {
+        self.submit(gravity, sources);
+        self.collect(1).pop().unwrap()
+    }
+
+    fn submit(&mut self, gravity: [f32; 2], sources: usize) {
         self.pressure
             .simulate(
                 &self.accelerator,
@@ -134,11 +151,16 @@ impl Fixture {
                 1,
             )
             .unwrap();
+    }
+
+    fn collect(&mut self, count: usize) -> Vec<RigidGranularReactionBatch> {
         let start = Instant::now();
+        let mut completed = Vec::new();
         loop {
             self.accelerator.poll().unwrap();
-            if let Some(batch) = self.pressure.collect_rigid_reactions().unwrap().pop() {
-                return batch;
+            completed.extend(self.pressure.collect_rigid_reactions().unwrap());
+            if completed.len() >= count {
+                return completed;
             }
             assert!(start.elapsed() < Duration::from_secs(10));
             std::thread::yield_now();
@@ -243,6 +265,138 @@ impl Fixture {
         self.words(&self.rigid_materials, index, &[self.stone.as_u32()]);
         self.words(&self.occupancy, index, &[3]);
     }
+}
+
+#[test]
+fn delayed_static_support() {
+    let _lock = crate::GPU_TEST_LOCK.lock().unwrap();
+    for axis in [1, 0] {
+        let mut f = Fixture::new();
+        let mut gravity = [0.0; 2];
+        gravity[axis] = -9.8;
+        if axis == 1 {
+            f.words(&f.cells, 8, &[f.stone.as_u32(); 8]);
+        } else {
+            for y in 0..8 {
+                f.words(&f.cells, y * 8 + 1, &[f.stone.as_u32()]);
+            }
+        }
+        let position = if axis == 1 {
+            [0.25, 0.28]
+        } else {
+            [0.28, 0.4375]
+        };
+        let (mut world, body) = f.static_body(position, 0.0, [0.0; 2], 4);
+        let mut pending = std::collections::VecDeque::new();
+        let mut minimum = 1.0f32;
+        let mut maximum_speed = 0.0f32;
+        let mut support = [0.0; 4];
+        let mut recovery = [0.0; 4];
+        for tick in 0..240 {
+            if tick != 0 && tick % 3 == 0 {
+                pending.extend(f.collect(3));
+            }
+            if tick >= 3 {
+                let batch: RigidGranularReactionBatch = pending.pop_front().unwrap();
+                world.apply_rigid_cellular_body_reaction(
+                    &body,
+                    [batch.reactions[0][0], batch.reactions[0][1]],
+                    batch.reactions[0][2],
+                    batch.energy_budgets[0],
+                    true,
+                );
+                world.apply_rigid_constraint(
+                    &body,
+                    batch.constraints[0],
+                    batch.source_motion[0],
+                    true,
+                );
+                support = batch.supports[0];
+                recovery = batch.recovery[0];
+            }
+            world.apply_rigid_support(&body, support);
+            world.apply_rigid_recovery(&body, recovery);
+            world.step(gravity, 1.0 / 60.0);
+            f.upload(&world, &body);
+            f.submit(gravity, 4);
+            let state = world.rigid_cellular_body_state(&body).unwrap();
+            if tick > 60 {
+                minimum = minimum.min(state.translation[axis]);
+                maximum_speed = maximum_speed.max(state.linear_velocity[axis].abs());
+                assert!(state.angular_velocity.abs() < 0.01);
+            }
+        }
+        eprintln!("delayed floor minimum={minimum}, maximum speed={maximum_speed}");
+        assert!(minimum > 0.225 && maximum_speed < 0.3);
+        f.collect(3);
+        f.words(&f.cells, 0, &[0; 64]);
+        let absent = f.tick_raw(gravity, 4);
+        assert_eq!(absent.supports[0], [0.0; 4]);
+        assert_eq!(absent.recovery[0], [0.0; 4]);
+        world.apply_rigid_constraint(&body, absent.constraints[0], absent.source_motion[0], true);
+        for _ in 0..20 {
+            world.apply_rigid_support(&body, absent.supports[0]);
+            world.step(gravity, 1.0 / 60.0);
+        }
+        assert!(world.rigid_cellular_body_state(&body).unwrap().translation[axis] < minimum - 0.1);
+    }
+}
+
+#[test]
+fn delayed_packed_sand_support() {
+    let _lock = crate::GPU_TEST_LOCK.lock().unwrap();
+    let mut f = Fixture::new();
+    f.words(&f.cells, 0, &[f.sand.as_u32(); 24]);
+    let (mut world, body) = f.static_body([0.25, 0.39], 0.0, [0.0; 2], 4);
+    let mut pending = std::collections::VecDeque::new();
+    let mut support = [0.0; 4];
+    let mut recovery = [0.0; 4];
+    let mut minimum = 1.0f32;
+    let mut maximum = 0.0f32;
+    for tick in 0..240 {
+        if tick != 0 && tick % 3 == 0 {
+            pending.extend(f.collect(3));
+        }
+        if tick >= 3 {
+            let batch: RigidGranularReactionBatch = pending.pop_front().unwrap();
+            world.apply_rigid_cellular_body_reaction(
+                &body,
+                [batch.reactions[0][0], batch.reactions[0][1]],
+                batch.reactions[0][2],
+                batch.energy_budgets[0],
+                true,
+            );
+            world.apply_rigid_constraint(&body, batch.constraints[0], batch.source_motion[0], true);
+            support = batch.supports[0];
+            recovery = batch.recovery[0];
+        }
+        world.apply_rigid_support(&body, support);
+        world.apply_rigid_recovery(&body, recovery);
+        world.step([0.0, -9.8], 1.0 / 60.0);
+        f.upload(&world, &body);
+        let state = world.rigid_cellular_body_state(&body).unwrap();
+        f.words(&f.owners, 0, &[0; 64]);
+        f.words(&f.occupancy, 0, &[0; 64]);
+        let row = (state.translation[1] * 8.0).floor() as usize;
+        assert!(row < 7);
+        for x in 2..6 {
+            f.proxy(row * 8 + x);
+        }
+        f.submit([0.0, -9.8], 0);
+        if tick > 60 {
+            minimum = minimum.min(state.translation[1]);
+            maximum = maximum.max(state.translation[1]);
+            assert!(state.angular_velocity.abs() < 0.05);
+        }
+    }
+    f.collect(3);
+    eprintln!("delayed sand height range {minimum}..{maximum}");
+    assert!(minimum > 0.31 && maximum - minimum < 0.003);
+    let grain = f.read_floats(&f.kinematics);
+    assert!(
+        grain.iter().all(|v| v.abs() < 0.01),
+        "support launched packed grains"
+    );
 }
 
 #[test]
@@ -469,4 +623,44 @@ fn actor_drive_kinematic_constraint_and_canonical_contact() {
         wide.reactions[0]
     );
     assert_eq!(wide.granular_contact_counts[0], 0);
+    // Backlogged actor drive remains three distinct events, never newest-state-only.
+    for _ in 0..3 {
+        f.submit([0.0; 2], 0);
+    }
+    let events = f.collect(3);
+    assert_eq!(events.len(), 3);
+    assert!(
+        events
+            .windows(2)
+            .all(|pair| pair[1].sequence == pair[0].sequence + 1)
+    );
+    assert!(
+        (events
+            .iter()
+            .map(|batch| batch.reactions[0][1])
+            .sum::<f32>()
+            - 3.0)
+            .abs()
+            < 0.03
+    );
+    assert!(events.iter().all(|batch| batch.constraints[0] == [0.0; 4]));
+
+    // Exercise the CPU state path as well as the legacy aggregate shader assertions.
+    f.words(&f.owners, 0, &[0; 64]);
+    f.words(&f.occupancy, 0, &[0; 64]);
+    f.floats(&f.velocity, 0, &[0.0; 256]);
+    f.proxy(27);
+    f.words(&f.occupancy, 26, &[1]);
+    let (mut world, body) = f.static_body([0.375, 0.375], 0.0, [-1.0, 0.0], 1);
+    let block = f.tick_raw([0.0; 2], 0);
+    assert_eq!(block.reactions[0], [0.0; 3]);
+    world.apply_rigid_constraint(&body, block.constraints[0], block.source_motion[0], true);
+    assert!(
+        world
+            .rigid_cellular_body_state(&body)
+            .unwrap()
+            .linear_velocity[0]
+            .abs()
+            < 0.01
+    );
 }

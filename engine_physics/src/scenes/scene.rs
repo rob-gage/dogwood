@@ -172,6 +172,8 @@ pub struct Scene {
     rigid_cellular_topology_revision: u64,
     /// Last asynchronously confirmed cellular contact state per rigid vector index
     rigid_cellular_contact_active: Vec<bool>,
+    rigid_cellular_support: Vec<[f32; 4]>,
+    rigid_cellular_recovery: Vec<[f32; 4]>,
     /// Last asynchronously confirmed granular contact state per rigid vector index
     rigid_granular_contact_active: Vec<bool>,
     /// Prior static snapshot used to ignore initial islands and detect topology changes
@@ -384,6 +386,8 @@ impl Scene {
             rigid_cellular_bodies: Vec::new(),
             rigid_cellular_topology_revision: 0,
             rigid_cellular_contact_active: Vec::new(),
+            rigid_cellular_support: Vec::new(),
+            rigid_cellular_recovery: Vec::new(),
             rigid_granular_contact_active: Vec::new(),
             rigid_detachment_snapshot: None,
             fluids,
@@ -711,6 +715,7 @@ impl Scene {
     /// Applies every compatible completed GPU reaction in submission order
     fn apply_completed_rigid_cellular_reactions(&mut self) -> Result<(), io::Error> {
         let body_count: usize = self.rigid_cellular_bodies.len();
+        let mut newest = None;
         for batch in self.cellular_pressure.collect_rigid_reactions()? {
             if batch.topology_revision != self.rigid_cellular_topology_revision ||
                     batch.body_count != body_count {
@@ -728,8 +733,19 @@ impl Scene {
                     &self.rigid_cellular_bodies[index], [reaction[0], reaction[1]],
                     reaction[2], batch.energy_budgets[index], wake,
                 ) { return Err(io::Error::other("Rigid cellular body handle is missing")); }
+            }
+            newest = Some(batch);
+        }
+        if let Some(batch) = newest {
+            self.rigid_cellular_support = batch.supports.to_vec();
+            self.rigid_cellular_recovery = batch.recovery.to_vec();
+            for index in 0..body_count {
+                let contacts = batch.contact_counts[index] != 0;
+                let wake = contacts != self.rigid_cellular_contact_active[index] || batch.moving_contact_counts[index] != 0;
+                self.physics_world.apply_rigid_constraint(&self.rigid_cellular_bodies[index],
+                    batch.constraints[index], batch.source_motion[index], wake);
                 self.rigid_cellular_contact_active[index] = contacts;
-                self.rigid_granular_contact_active[index] = granular_contacts;
+                self.rigid_granular_contact_active[index] = batch.granular_contact_counts[index] != 0;
             }
         }
         Ok(())
@@ -743,6 +759,12 @@ impl Scene {
         }
         let delta_time: f32 = 1.0 / TICK_RATE as f32;
         if is_simulation_active {
+            for (body, support) in self.rigid_cellular_bodies.iter().zip(&self.rigid_cellular_support) {
+                self.physics_world.apply_rigid_support(body, *support);
+            }
+            for (body, recovery) in self.rigid_cellular_bodies.iter().zip(&self.rigid_cellular_recovery) {
+                self.physics_world.apply_rigid_recovery(body, *recovery);
+            }
             self.physics_world.step(self.gravity, delta_time);
         }
         self.actor_registry.simulate_actor_pawns(
@@ -952,6 +974,8 @@ impl Scene {
             ));
             self.rigid_cellular_topology_revision =
                 self.rigid_cellular_topology_revision.wrapping_add(1);
+            self.rigid_cellular_support.clear();
+            self.rigid_cellular_recovery.clear();
             self.rigid_cellular_contact_active.resize(self.rigid_cellular_bodies.len(), false);
             self.rigid_granular_contact_active.resize(self.rigid_cellular_bodies.len(), false);
         }
@@ -973,6 +997,8 @@ impl Scene {
         let body = self.rigid_cellular_bodies.swap_remove(body_index);
         self.rigid_cellular_topology_revision =
             self.rigid_cellular_topology_revision.wrapping_add(1);
+        self.rigid_cellular_support.clear();
+        self.rigid_cellular_recovery.clear();
         self.rigid_cellular_contact_active.clear();
         self.rigid_granular_contact_active.clear();
         self.physics_world.remove_rigid_cellular_body(&body);

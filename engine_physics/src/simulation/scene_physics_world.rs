@@ -27,6 +27,8 @@ use rapier2d::{
 
 /// Owns Rapier rigid bodies and the CPU-readable cellular collision snapshot
 pub struct ScenePhysicsWorld {
+    step_support: Vec<(RigidBodyHandle, Vector, f32)>,
+    step_recovery: Vec<(RigidBodyHandle, Vector, f32)>,
     rapier: PhysicsWorld,
     /// Latest asynchronously completed canonical cellular collision snapshot
     cellular_terrain_snapshot: Option<CollisionOccupancySnapshot>,
@@ -37,6 +39,8 @@ impl ScenePhysicsWorld {
     /// Creates an empty scene collision world
     pub fn new() -> Self {
         Self {
+            step_support: Vec::new(),
+            step_recovery: Vec::new(),
             rapier: PhysicsWorld::new(),
             cellular_terrain_snapshot: None,
         }
@@ -116,6 +120,69 @@ impl ScenePhysicsWorld {
         self.rapier.gravity = Vector::new(gravity[0], gravity[1]);
         self.rapier.integration_parameters.dt = delta_time;
         self.rapier.step();
+        for (handle, velocity, angular) in self.step_recovery.drain(..) {
+            if let Some(body) = self.rapier.bodies.get_mut(handle) {
+                body.set_linvel(body.linvel() - velocity, false);
+                body.set_angvel(body.angvel() - angular, false);
+            }
+        }
+        for (handle, force, torque) in self.step_support.drain(..) {
+            if let Some(body) = self.rapier.bodies.get_mut(handle) {
+                body.add_force(-force, false);
+                body.add_torque(-torque, false);
+            }
+        }
+    }
+
+    /// Applies one already-integrated GPU impulse batch to its authoritative body
+    pub(crate) fn apply_rigid_constraint(
+        &mut self, body: &RigidCellularBody, constraint: [f32; 4], source: [f32; 4], wake: bool,
+    ) -> bool {
+        let Some(state) = self.rigid_cellular_body_state(body) else { return false; };
+        let effective = state.inverse_mass * (constraint[0] * constraint[0] + constraint[1] * constraint[1]) +
+            state.inverse_angular_inertia * constraint[2] * constraint[2];
+        if effective <= 1e-12 {
+            return self.apply_rigid_cellular_body_reaction(body, [0.0; 2], 0.0, 0.0, wake);
+        }
+        // The GPU impulse defines a velocity target along its generalized contact direction.
+        // Re-evaluate that target against current motion instead of replaying stale stopping work.
+        let target = source[0] * constraint[0] + source[1] * constraint[1] + source[2] * constraint[2] + effective;
+        let target = if source[3] == 0.0 { target.max(0.0) } else { target };
+        let current = state.linear_velocity[0] * constraint[0] + state.linear_velocity[1] * constraint[1] + state.angular_velocity * constraint[2];
+        let scale = ((target - current) / effective).max(0.0);
+        self.apply_rigid_cellular_body_reaction(body,
+            [constraint[0] * scale, constraint[1] * scale], constraint[2] * scale, constraint[3], wake)
+    }
+
+    pub(crate) fn apply_rigid_support(&mut self, body: &RigidCellularBody, support: [f32; 4]) -> bool {
+        let Some(rigid) = self.rapier.bodies.get_mut(body.handle) else { return false; };
+        if rigid.is_sleeping() { return true; }
+        // Spread the confirmed one-step impulse through Rapier's integration substeps.
+        // An upfront velocity kick cancels final gravity velocity but introduces position drift.
+        let impulse = Vector::new(support[0], support[1]);
+        let quadratic = 0.5 * (rigid.mass_properties().local_mprops.inv_mass * impulse.length_squared() +
+            rigid.mass_properties().effective_world_inv_inertia * support[2] * support[2]);
+        let linear = rigid.linvel().dot(impulse) + rigid.angvel() * support[2];
+        let budget = support[3].max(0.0);
+        let scale = if linear + quadratic <= budget { 1.0 } else if quadratic > 0.0 {
+            ((linear * linear + 4.0 * quadratic * budget).sqrt() - linear) / (2.0 * quadratic)
+        } else { 0.0 }.clamp(0.0, 1.0);
+        let force = impulse * (60.0 * scale);
+        let torque = support[2] * (60.0 * scale);
+        rigid.add_force(force, false);
+        rigid.add_torque(torque, false);
+        self.step_support.push((body.handle, force, torque));
+        true
+    }
+
+    pub(crate) fn apply_rigid_recovery(&mut self, body: &RigidCellularBody, recovery: [f32; 4]) -> bool {
+        let Some(before) = self.rigid_cellular_body_state(body) else { return false; };
+        self.apply_rigid_cellular_body_reaction(body, [recovery[0], recovery[1]], recovery[2], recovery[3], false);
+        let after = self.rigid_cellular_body_state(body).unwrap();
+        self.step_recovery.push((body.handle,
+            Vector::new(after.linear_velocity[0] - before.linear_velocity[0], after.linear_velocity[1] - before.linear_velocity[1]),
+            after.angular_velocity - before.angular_velocity));
+        true
     }
 
     /// Applies one already-integrated GPU impulse batch to its authoritative body
@@ -147,6 +214,7 @@ impl ScenePhysicsWorld {
             1.0
         }.clamp(0.0, 1.0);
         if rigid_body.is_sleeping() && !wake { return true; }
+        if wake { rigid_body.wake_up(true); }
         if scale > 0.0 && impulse != [0.0; 2] {
             rigid_body.apply_impulse(linear * scale, wake);
         }

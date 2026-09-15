@@ -218,7 +218,7 @@ impl CellularPressure {
         let rigid_contact_statistics: AcceleratorBuffer =
             accelerator.allocate::<[u32; 12]>(rigid_body_capacity);
         let rigid_reactions: AcceleratorBuffer =
-            accelerator.allocate::<[i32; 4]>(rigid_body_capacity);
+            accelerator.allocate::<[i32; 20]>(rigid_body_capacity);
         let rigid_predicted_motion: AcceleratorBuffer =
             accelerator.allocate::<[i32; 4]>(rigid_body_capacity);
         let parameters: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -338,7 +338,7 @@ impl CellularPressure {
                 immediate_size: 0,
             },
         );
-        let reaction_readback_size: u64 = rigid_body_capacity as u64 * 64;
+        let reaction_readback_size: u64 = rigid_body_capacity as u64 * 128;
         let rigid_reaction_readback_slots: Vec<RigidGranularReadbackSlot> =
             (0..RIGID_REACTION_READBACK_SLOT_COUNT).map(|_| RigidGranularReadbackSlot {
                 buffer: device.create_buffer(&wgpu::BufferDescriptor {
@@ -576,7 +576,7 @@ impl CellularPressure {
                     matches!(*status, RigidGranularReadbackStatus::Available)
                 })
             }).unwrap_or_else(|| {
-                let size = self.rigid_body_capacity as u64 * 64;
+                let size = self.rigid_body_capacity as u64 * 128;
                 self.rigid_reaction_readback_slots.push(RigidGranularReadbackSlot {
                     buffer: accelerator.wgpu_device().create_buffer(&wgpu::BufferDescriptor {
                         label: Some("rigid reaction readback backlog"), size,
@@ -599,7 +599,7 @@ impl CellularPressure {
                     let sequence: u64 = self.rigid_reaction_sequence_next;
                     self.rigid_reaction_sequence_next =
                         self.rigid_reaction_sequence_next.wrapping_add(1);
-                    let reaction_size: u64 = u64::from(rigid_body_count) * 16;
+                    let reaction_size: u64 = u64::from(rigid_body_count) * 80;
                     let statistics_size: u64 = u64::from(rigid_body_count) * 48;
                     let statistics_offset: u64 = reaction_size;
                     encoder.copy_buffer_to_buffer(
@@ -627,7 +627,26 @@ impl CellularPressure {
                         Ok(()) => mapped_buffer.slice(0..mapped_size).get_mapped_range()
                             .map_err(|error| error.to_string()).and_then(|mapped| {
                                 let mut reactions = Vec::with_capacity(body_count);
-                                for bytes in mapped[..body_count * 16].chunks_exact(16) {
+                                let mut constraints = Vec::with_capacity(body_count);
+                                let mut supports = Vec::with_capacity(body_count);
+                                let mut recovery = Vec::with_capacity(body_count);
+                                let mut source_motion = Vec::with_capacity(body_count);
+                                for bytes in mapped[..body_count * 80].chunks_exact(80) {
+                                    let state = |offset: usize| [
+                                        i32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as f32 / 65536.0,
+                                        i32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as f32 / 65536.0,
+                                        i32::from_le_bytes(bytes[offset + 8..offset + 12].try_into().unwrap()) as f32 / 65536.0,
+                                        u32::from_le_bytes(bytes[offset + 12..offset + 16].try_into().unwrap()) as f32 / 256.0,
+                                    ];
+                                    constraints.push(state(16));
+                                    supports.push(state(32));
+                                    recovery.push(state(48));
+                                    source_motion.push([
+                                        f32::from_le_bytes(bytes[64..68].try_into().unwrap()),
+                                        f32::from_le_bytes(bytes[68..72].try_into().unwrap()),
+                                        f32::from_le_bytes(bytes[72..76].try_into().unwrap()),
+                                        u32::from_le_bytes(bytes[76..80].try_into().unwrap()) as f32,
+                                    ]);
                                     let overflow = i32::from_le_bytes(
                                         bytes[12..16].try_into().unwrap(),
                                     );
@@ -648,7 +667,7 @@ impl CellularPressure {
                                             64.0,
                                     ]);
                                 }
-                                let statistics_start: usize = body_count * 16;
+                                let statistics_start: usize = body_count * 80;
                                 let contact_counts = mapped[statistics_start..
                                     statistics_start + body_count * 48].chunks_exact(48)
                                     .map(|bytes| {
@@ -687,6 +706,10 @@ impl CellularPressure {
                                     granular_contact_counts,
                                     moving_contact_counts,
                                     energy_budgets,
+                                    constraints: constraints.into_boxed_slice(),
+                                    supports: supports.into_boxed_slice(),
+                                    recovery: recovery.into_boxed_slice(),
+                                    source_motion: source_motion.into_boxed_slice(),
                                 })
                             }),
                         Err(_) => Err("Rigid granular reaction readback failed".to_owned()),
@@ -812,7 +835,7 @@ impl CellularPressure {
         self.rigid_body_capacity = count.next_power_of_two();
         self.rigid_contact_statistics =
             accelerator.allocate::<[u32; 12]>(self.rigid_body_capacity);
-        self.rigid_reactions = accelerator.allocate::<[i32; 4]>(self.rigid_body_capacity);
+        self.rigid_reactions = accelerator.allocate::<[i32; 20]>(self.rigid_body_capacity);
         self.rigid_predicted_motion = accelerator.allocate::<[i32; 4]>(self.rigid_body_capacity);
         for (binding, buffer) in &mut self.bound_buffers {
             if *binding == 27 { *buffer = self.rigid_reactions.wgpu_buffer().clone(); }
@@ -825,7 +848,7 @@ impl CellularPressure {
             accelerator.wgpu_device(), &self.bind_group_layout,
             &self.parameters, &self.bound_buffers,
         );
-        let size: u64 = self.rigid_body_capacity as u64 * 64;
+        let size: u64 = self.rigid_body_capacity as u64 * 128;
         self.rigid_reaction_readback_slots =
             (0..RIGID_REACTION_READBACK_SLOT_COUNT).map(|_| RigidGranularReadbackSlot {
                 buffer: accelerator.wgpu_device().create_buffer(&wgpu::BufferDescriptor {
@@ -1102,8 +1125,8 @@ mod tests {
             assert_eq!(batch.body_count, 1);
             assert!(batch.static_contact_counts[0] > 0);
             assert_eq!(batch.granular_contact_counts[0], 0);
-            assert!(batch.reactions[0][1].is_finite() && batch.reactions[0][1] > 0.1);
-            assert!(batch.reactions[0][1] < 5.0, "explosive reaction: {:?}", batch.reactions[0]);
+            assert!(batch.constraints[0][1].is_finite() && batch.constraints[0][1] > 0.1);
+            assert!(batch.constraints[0][1] < 5.0, "explosive reaction: {:?}", batch.constraints[0]);
         }
     }
 
