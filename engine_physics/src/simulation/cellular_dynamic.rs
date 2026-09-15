@@ -25,7 +25,6 @@ pub struct CellularDynamic {
     parameters: wgpu::Buffer,
     /// All concrete cellular dynamic input, scratch, and output bindings
     bind_group: wgpu::BindGroup,
-    prepare_pipeline: wgpu::ComputePipeline,
     /// Clears destination claims before proposals are submitted
     clear_claims_pipeline: wgpu::ComputePipeline,
     /// Integrates dynamic cells, traces paths, and submits destination claims
@@ -165,12 +164,6 @@ impl CellularDynamic {
                 "cellular dynamic clear claims pipeline",
                 "clear_cellular_dynamic_destination_claims",
             );
-        let prepare_pipeline: wgpu::ComputePipeline =
-            Self::create_cellular_dynamic_compute_pipeline(
-                device, &pipeline_layout, &shader,
-                "cellular dynamic velocity preparation pipeline",
-                "prepare_cellular_dynamic_velocity",
-            );
         let propose_pipeline: wgpu::ComputePipeline =
             Self::create_cellular_dynamic_compute_pipeline(
                 device, &pipeline_layout, &shader,
@@ -191,7 +184,6 @@ impl CellularDynamic {
             proposals,
             parameters,
             bind_group,
-            prepare_pipeline,
             clear_claims_pipeline,
             propose_pipeline,
             resolve_pipeline,
@@ -244,33 +236,6 @@ impl CellularDynamic {
         );
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
         self.tick = self.tick.wrapping_add(1);
-    }
-
-    pub(crate) fn prepare_velocity(
-        &self,
-        accelerator: &Accelerator,
-        buffered_origin: TileCoordinates,
-        buffered_width: u16,
-        buffered_height: u16,
-        ring_offset_x: u16,
-        ring_offset_y: u16,
-        gravity: [f32; 2],
-        delta_time: f32,
-    ) {
-        self.write_tick_parameters(
-            accelerator, buffered_origin, buffered_width, buffered_height,
-            ring_offset_x, ring_offset_y, gravity, delta_time,
-        );
-        let mut encoder = accelerator.wgpu_device().create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: Some("cellular dynamic velocity preparation") },
-        );
-        let mut pass = accelerator.begin_compute_pass(&mut encoder,
-            "prepare cellular dynamic velocity");
-        pass.set_pipeline(&self.prepare_pipeline);
-        pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.dispatch_workgroups(self.buffered_cell_count.div_ceil(64), 1, 1);
-        drop(pass);
-        accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
 
     fn write_tick_parameters(

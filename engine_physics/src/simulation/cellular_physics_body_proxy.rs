@@ -123,7 +123,13 @@ impl CellularPhysicsBodyProxy {
     { &self.rigid_material_identifiers }
     pub const fn rigid_appearances_buffer(&self) -> &AcceleratorBuffer { &self.rigid_appearances }
     pub(crate) const fn rigid_owners_buffer(&self) -> &AcceleratorBuffer { &self.rigid_owners }
+    pub(crate) const fn rigid_cells_buffer(&self) -> &AcceleratorBuffer { &self.rigid_cells }
     pub(crate) const fn rigid_transforms_buffer(&self) -> &AcceleratorBuffer { &self.rigid_transforms }
+
+    pub(crate) fn rigid_cell_count(&self, bodies: &[RigidCellularBody]) -> usize {
+        bodies.iter().map(|body| body.cells.len()).sum::<usize>()
+            .min(self.buffered_cell_count as usize)
+    }
 
     pub(crate) fn rasterize(
         &mut self, accelerator: &Accelerator, origin: TileCoordinates, width: u16, height: u16,

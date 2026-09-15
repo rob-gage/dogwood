@@ -146,19 +146,13 @@ impl ScenePhysicsWorld {
         } else {
             1.0
         }.clamp(0.0, 1.0);
+        if rigid_body.is_sleeping() && !wake { return true; }
         if scale > 0.0 && impulse != [0.0; 2] {
             rigid_body.apply_impulse(linear * scale, wake);
         }
         if scale > 0.0 && angular_impulse != 0.0 {
             rigid_body.apply_torque_impulse(angular_impulse * scale, wake);
         }
-        true
-    }
-
-    /// Wakes one authoritative rigid body for granular support maintenance
-    pub(crate) fn wake_rigid_cellular_body(&mut self, body: &RigidCellularBody) -> bool {
-        let Some(rigid_body) = self.rapier.bodies.get_mut(body.handle) else { return false; };
-        rigid_body.wake_up(true);
         true
     }
 
@@ -377,6 +371,30 @@ mod tests {
         physics.step([0.0, 0.0], 1.0 / 60.0);
         let state = physics.rigid_cellular_body_state(&body).unwrap();
         assert!(state.linear_velocity[0] > 0.0);
+    }
+
+    #[test]
+    fn rigid_cellular_bodies_still_collide_through_rapier() {
+        let mut materials = MaterialRegistry::new();
+        let stone = materials.register(Material::CellularStatic {
+            name: "Stone".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(90, 90, 90)),
+            mass: 1.0, pressure_ignore_threshold: 1000.0, default_integrity: 100.0,
+            debris_material: None, debris_yield_rate: 0.0,
+            pressure_transmission: 1.0, friction: 0.5, restitution: 0.0,
+        });
+        let cell = || vec![([0, 0], stone, CellularAppearance::NEUTRAL)];
+        let mut physics = ScenePhysicsWorld::new();
+        let left = physics.insert_rigid_cellular_body(
+            [0.0, 0.0], 0.0, &materials, cell(), 0.5, 0.0, [1.0, 0.0], 0.0,
+        );
+        let right = physics.insert_rigid_cellular_body(
+            [0.3, 0.0], 0.0, &materials, cell(), 0.5, 0.0, [-1.0, 0.0], 0.0,
+        );
+        for _ in 0..20 { physics.step([0.0, 0.0], 1.0 / 60.0); }
+        let left_x = physics.rigid_cellular_body_state(&left).unwrap().translation[0];
+        let right_x = physics.rigid_cellular_body_state(&right).unwrap().translation[0];
+        assert!(left_x + 0.12 <= right_x, "rigid bodies interpenetrated: {left_x}, {right_x}");
     }
 
     #[test]

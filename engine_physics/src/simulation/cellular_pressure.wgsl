@@ -30,7 +30,11 @@ struct Parameters {
     tick: u32,
     buffered_cell_count: u32,
     damage_rate: f32,
-    padding: vec2<u32>,
+    gas_count: u32,
+    rigid_body_count: u32,
+    gravity: vec2<f32>,
+    rigid_cell_count: u32,
+    padding: u32,
 }
 
 struct StaticProperties {
@@ -73,7 +77,6 @@ struct MechanicalFluidCell {
 @group(0) @binding(22) var<storage, read> rigid_owners: array<u32>;
 @group(0) @binding(23) var<storage, read> rigid_material_identifiers: array<u32>;
 @group(0) @binding(24) var<storage, read> rigid_transforms: array<vec4<f32>>;
-@group(0) @binding(25) var<storage, read_write> rigid_shadow_velocity: array<vec4<f32>>;
 
 struct RigidReaction {
     impulse_x: atomic<i32>,
@@ -91,38 +94,47 @@ struct RigidContactStatistics {
     motion_support: array<atomic<u32>, 4>,
 }
 
-@group(0) @binding(26) var<storage, read_write> rigid_sweep_reactions: array<RigidReaction>;
+struct RigidStaticContact {
+    found: u32,
+    body: u32,
+    material: u32,
+    channel: u32,
+    cell_index: u32,
+    normal: vec2<f32>,
+    point: vec2<f32>,
+    penetration: f32,
+}
+
 @group(0) @binding(27) var<storage, read_write> rigid_reactions: array<RigidReaction>;
 @group(0) @binding(28) var<storage, read_write> rigid_contact_statistics: array<RigidContactStatistics>;
+@group(0) @binding(29) var<storage, read> rigid_cells: array<vec4<u32>>;
+struct RigidPredictedMotion {
+    x: atomic<i32>, y: atomic<i32>, angular: atomic<i32>, padding: atomic<i32>,
+}
+@group(0) @binding(30) var<storage, read_write> rigid_predicted_motion: array<RigidPredictedMotion>;
 @group(1) @binding(0) var<storage, read_write> pressure_indirect_dispatch: array<atomic<u32>>;
 
 const IMMOVABLE_CONTACT_MASS: f32 = 1000000.0;
 const CONTACT_PRESSURE_TRANSFER: f32 = 0.02;
 const LINEAR_FIXED_SCALE: f32 = 256.0;
 const ANGULAR_FIXED_SCALE: f32 = 64.0;
+const CELL_SIZE: f32 = 0.125;
+const CELL_HALF: f32 = 0.0625;
+const CELL_RADIUS: f32 = 0.08838835;
+var<workgroup> pressure_tile_has_source: atomic<u32>;
 
 @compute @workgroup_size(64)
-fn initialize_rigid_shadow_velocity(@builtin(global_invocation_id) invocation: vec3<u32>) {
+fn initialize_rigid_contact_state(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let body: u32 = invocation.x;
-    if body >= parameters.padding.y { return; }
-    rigid_shadow_velocity[body] = rigid_transforms[body * 3u + 1u];
+    if body >= parameters.rigid_body_count { return; }
     atomicStore(&rigid_contact_statistics[body].contact_count, 0u);
     atomicStore(&rigid_contact_statistics[body].static_contact_count, 0u);
     atomicStore(&rigid_contact_statistics[body].padding_1, 0u);
-    for (var channel: u32 = 0u; channel < 4u; channel++) {
-        atomicStore(&rigid_contact_statistics[body].geometric_support[channel], 0u);
-        atomicStore(&rigid_contact_statistics[body].motion_support[channel], 0u);
-    }
-    atomicStore(&rigid_sweep_reactions[body].impulse_x, 0);
-    atomicStore(&rigid_sweep_reactions[body].impulse_y, 0);
-    atomicStore(&rigid_sweep_reactions[body].angular_impulse, 0);
-    atomicStore(&rigid_sweep_reactions[body].overflow, 0);
-}
-
-@compute @workgroup_size(64)
-fn clear_rigid_contact_support(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    let body: u32 = invocation.x;
-    if body >= parameters.padding.y { return; }
+    atomicStore(&rigid_contact_statistics[body].padding_2, 0u);
+    let motion: vec4<f32> = rigid_transforms[body * 3u + 1u];
+    atomicStore(&rigid_predicted_motion[body].x, i32(round(motion.x * 4096.0)));
+    atomicStore(&rigid_predicted_motion[body].y, i32(round(motion.y * 4096.0)));
+    atomicStore(&rigid_predicted_motion[body].angular, i32(round(motion.z * 4096.0)));
     for (var channel: u32 = 0u; channel < 4u; channel++) {
         atomicStore(&rigid_contact_statistics[body].geometric_support[channel], 0u);
         atomicStore(&rigid_contact_statistics[body].motion_support[channel], 0u);
@@ -130,29 +142,19 @@ fn clear_rigid_contact_support(@builtin(global_invocation_id) invocation: vec3<u
 }
 
 @compute @workgroup_size(64)
-fn advance_rigid_shadow_velocity(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    let body: u32 = invocation.x;
-    if body >= parameters.padding.y { return; }
-    let impulse: vec2<f32> = vec2<f32>(
-        f32(atomicLoad(&rigid_sweep_reactions[body].impulse_x)) / LINEAR_FIXED_SCALE,
-        f32(atomicLoad(&rigid_sweep_reactions[body].impulse_y)) / LINEAR_FIXED_SCALE,
-    );
-    let torque: f32 = f32(atomicLoad(&rigid_sweep_reactions[body].angular_impulse)) /
-        ANGULAR_FIXED_SCALE;
-    let mass: vec4<f32> = rigid_transforms[body * 3u + 2u];
-    rigid_shadow_velocity[body].x += impulse.x * mass.z;
-    rigid_shadow_velocity[body].y += impulse.y * mass.z;
-    rigid_shadow_velocity[body].z += torque * mass.w;
-    var overflowed: bool = saturating_rigid_atomic_add(body,
-        atomicExchange(&rigid_sweep_reactions[body].impulse_x, 0), 3u);
-    overflowed = saturating_rigid_atomic_add(body,
-        atomicExchange(&rigid_sweep_reactions[body].impulse_y, 0), 4u) || overflowed;
-    overflowed = saturating_rigid_atomic_add(body,
-        atomicExchange(&rigid_sweep_reactions[body].angular_impulse, 0), 5u) || overflowed;
-    if overflowed { atomicStore(&rigid_reactions[body].overflow, 1); }
-    if atomicExchange(&rigid_sweep_reactions[body].overflow, 0) != 0 {
-        atomicStore(&rigid_reactions[body].overflow, 1);
-    }
+fn gather_rigid_static_contacts(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let contact: RigidStaticContact = find_rigid_static_contact(invocation.x);
+    if contact.found == 0u { return; }
+    process_rigid_cellular_contact(contact.body, rigid_cells[invocation.x * 2u].w,
+        contact.cell_index, -contact.normal, contact.point, contact.penetration, true);
+}
+
+@compute @workgroup_size(64)
+fn resolve_rigid_static_contacts(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let contact: RigidStaticContact = find_rigid_static_contact(invocation.x);
+    if contact.found == 0u { return; }
+    process_rigid_cellular_contact(contact.body, rigid_cells[invocation.x * 2u].w,
+        contact.cell_index, -contact.normal, contact.point, contact.penetration, false);
 }
 
 // Clears the transient coarse mask before current pressure sources are discovered
@@ -164,10 +166,15 @@ fn clear_active_cellular_pressure_tiles(@builtin(global_invocation_id) invocatio
 
 // Marks source tiles and the one-tile halo reachable by the fixed six-pass stencil
 @compute @workgroup_size(64)
-fn mark_active_cellular_pressure_tiles(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    let logical_tile_index: u32 = invocation.x;
+fn mark_active_cellular_pressure_tiles(
+    @builtin(workgroup_id) workgroup: vec3<u32>,
+    @builtin(local_invocation_index) lane: u32,
+) {
+    let logical_tile_index: u32 = workgroup.x;
     let tile_count: u32 = parameters.buffered_tile_size.x * parameters.buffered_tile_size.y;
     if logical_tile_index >= tile_count { return; }
+    if lane == 0u { atomicStore(&pressure_tile_has_source, 0u); }
+    workgroupBarrier();
     let logical_tile: vec2<u32> = vec2<u32>(
         logical_tile_index % parameters.buffered_tile_size.x,
         logical_tile_index / parameters.buffered_tile_size.x,
@@ -178,26 +185,50 @@ fn mark_active_cellular_pressure_tiles(@builtin(global_invocation_id) invocation
     let cell_start: u32 =
         (physical_tile.y * parameters.buffered_tile_size.x + physical_tile.x) *
             CELL_COUNT_PER_TILE;
-    var has_source: bool = false;
-    for (var local: u32 = 0u; local < CELL_COUNT_PER_TILE; local++) {
-        let index: u32 = cell_start + local;
-        if any(pending_pressure[index] != vec4<f32>(0.0)) ||
-                external_body_occupancy[index] != 0u ||
-                mechanical_fluid_cells[index].mass > 0.0 {
-            has_source = true;
-            break;
+    let index: u32 = cell_start + lane;
+    let cell: vec2<i32> = world_cell_from_logical_tile_major_index(
+        logical_tile_index * CELL_COUNT_PER_TILE + lane,
+        parameters.buffered_origin, parameters.buffered_tile_size,
+    );
+    var has_source: bool = any(pending_pressure[index] != vec4<f32>(0.0)) ||
+        external_body_occupancy[index] == 1u || external_body_occupancy[index] == 2u;
+    let material: u32 = cellular_material_identifiers[index];
+    let form: u32 = material_form_from_identifier(material);
+    for (var channel: u32 = 0u; channel < 4u && !has_source; channel++) {
+        let neighbor: u32 = cellular_pressure_physical_cell_index_from_world_cell(
+            cell + world_cell_direction_from_pressure_channel(channel));
+        if neighbor == INVALID_PHYSICAL_CELL_INDEX { continue; }
+        let neighbor_form: u32 = material_form_from_identifier(
+            cellular_material_identifiers[neighbor]);
+        let rigid_interface: bool = (rigid_owners[index] != 0u) !=
+            (rigid_owners[neighbor] != 0u);
+        let fluid_interface: bool = (mechanical_fluid_cells[index].mass > 0.0) !=
+            (mechanical_fluid_cells[neighbor].mass > 0.0) &&
+            (form == CELLULAR_DYNAMIC_MATERIAL_FORM ||
+                form == CELLULAR_STATIC_MATERIAL_FORM ||
+                neighbor_form == CELLULAR_DYNAMIC_MATERIAL_FORM ||
+                neighbor_form == CELLULAR_STATIC_MATERIAL_FORM ||
+                gas_cell_is_open(index) || gas_cell_is_open(neighbor));
+        let gas_interface: bool = (gas_cell_is_open(index) != gas_cell_is_open(neighbor)) &&
+            (form != 0u || neighbor_form != 0u ||
+                mechanical_fluid_cells[index].mass > 0.0 ||
+                mechanical_fluid_cells[neighbor].mass > 0.0) &&
+            (length(gas_velocity[index]) > 0.0001 ||
+                length(gas_velocity[neighbor]) > 0.0001);
+        var granular_impact: bool = false;
+        if form == CELLULAR_DYNAMIC_MATERIAL_FORM &&
+                (neighbor_form == CELLULAR_DYNAMIC_MATERIAL_FORM ||
+                    neighbor_form == CELLULAR_STATIC_MATERIAL_FORM) {
+            granular_impact = dot(
+                cellular_kinematics[index].xy - cellular_kinematics[neighbor].xy,
+                vec2<f32>(world_cell_direction_from_pressure_channel(channel)),
+            ) > 0.0001;
         }
-        if any(gas_velocity[index] != vec2<f32>(0.0)) {
-            has_source = true;
-            break;
-        }
-        let material: u32 = cellular_material_identifiers[index];
-        if material_form_from_identifier(material) == CELLULAR_DYNAMIC_MATERIAL_FORM {
-            has_source = true;
-            break;
-        }
+        has_source = rigid_interface || fluid_interface || gas_interface || granular_impact;
     }
-    if !has_source { return; }
+    if has_source { atomicStore(&pressure_tile_has_source, 1u); }
+    workgroupBarrier();
+    if lane != 0u || atomicLoad(&pressure_tile_has_source) == 0u { return; }
     for (var offset_y: i32 = -1; offset_y <= 1; offset_y++) {
         for (var offset_x: i32 = -1; offset_x <= 1; offset_x++) {
             let active_tile: vec2<i32> = vec2<i32>(logical_tile) +
@@ -297,6 +328,30 @@ fn gather_rigid_contacts_horizontal_even(
 }
 
 @compute @workgroup_size(64)
+fn gather_rigid_contacts(
+    @builtin(workgroup_id) workgroup: vec3<u32>,
+    @builtin(local_invocation_index) local_index: u32,
+) {
+    let logical_index: u32 = logical_cell_index_from_active_pressure_workgroup(
+        workgroup.x, local_index);
+    if logical_index >= parameters.buffered_cell_count { return; }
+    let cell: vec2<i32> = cellular_pressure_world_cell_from_logical_index(logical_index);
+    let index: u32 = cellular_pressure_physical_cell_index_from_world_cell(cell);
+    if index == INVALID_PHYSICAL_CELL_INDEX { return; }
+    for (var channel: u32 = 0u; channel < 4u; channel++) {
+        let direction: vec2<i32> = world_cell_direction_from_pressure_channel(channel);
+        let neighbor: u32 = cellular_pressure_physical_cell_index_from_world_cell(
+            cell + direction);
+        if neighbor == INVALID_PHYSICAL_CELL_INDEX { continue; }
+        if rigid_owners[index] != 0u && rigid_owners[neighbor] == 0u {
+            process_rigid_cellular_face(index, neighbor, vec2<f32>(direction),
+                (vec2<f32>(cell) + vec2<f32>(0.5) + vec2<f32>(direction) * 0.5) / 8.0,
+                true);
+        }
+    }
+}
+
+@compute @workgroup_size(64)
 fn gather_rigid_contacts_horizontal_odd(
     @builtin(workgroup_id) workgroup: vec3<u32>,
     @builtin(local_invocation_index) local_index: u32,
@@ -327,9 +382,6 @@ fn process_cellular_face(
     if logical_index >= parameters.buffered_cell_count { return; }
     let cell: vec2<i32> = cellular_pressure_world_cell_from_logical_index(logical_index);
     if (select(cell.y, cell.x, horizontal) & 1) != parity { return; }
-    if horizontal {
-        process_rigid_static_overlap(cell, gather);
-    }
     let direction: vec2<i32> = select(vec2<i32>(0, 1), vec2<i32>(1, 0), horizontal);
     let first: u32 = cellular_pressure_physical_cell_index_from_world_cell(cell);
     let second: u32 = cellular_pressure_physical_cell_index_from_world_cell(cell + direction);
@@ -443,7 +495,7 @@ fn process_rigid_static_overlap(cell: vec2<i32>, gather: bool) {
         f32(is_static_cell(below)) - f32(is_static_cell(above)),
     );
     let body: u32 = rigid_owners[index] - 1u;
-    let motion: vec2<f32> = rigid_shadow_velocity[body].xy;
+    let motion: vec2<f32> = rigid_transforms[body * 3u + 1u].xy;
     var normal: vec2<f32> = vec2<f32>(0.0);
     if length(gradient) > 0.0 {
         normal = -normalize(gradient);
@@ -466,8 +518,21 @@ fn process_rigid_cellular_face(
     rigid: u32, other: u32, normal: vec2<f32>, point: vec2<f32>, gather: bool,
 ) {
     let owner: u32 = rigid_owners[rigid];
-    if owner == 0u || owner > parameters.padding.y { return; }
-    let body: u32 = owner - 1u;
+    if owner == 0u || owner > parameters.rigid_body_count { return; }
+    // Static contacts are discovered by the swept/overlap pass. Sending the
+    // adjacent grid face as well would solve the same contact twice.
+    if material_form_from_identifier(cellular_material_identifiers[other]) ==
+            CELLULAR_STATIC_MATERIAL_FORM { return; }
+    process_rigid_cellular_contact(owner - 1u, rigid_material_identifiers[rigid], other,
+        normal, point, 0.0, gather);
+}
+
+// The single rigid/cellular response solver. Static-specific code may discover a swept or
+// overlap contact, but it must feed that geometry here rather than implement different physics.
+fn process_rigid_cellular_contact(
+    body: u32, rigid_material: u32, other: u32, normal: vec2<f32>, point: vec2<f32>,
+    penetration: f32, gather: bool,
+) {
     let material: u32 = cellular_material_identifiers[other];
     let form: u32 = material_form_from_identifier(material);
     let dynamic: bool = form == CELLULAR_DYNAMIC_MATERIAL_FORM;
@@ -477,7 +542,10 @@ fn process_rigid_cellular_face(
     if !dynamic && !static_cell && !fluid && !gas { return; }
     let mass_record: vec4<f32> = rigid_transforms[body * 3u + 2u];
     let radius: vec2<f32> = point - mass_record.xy;
-    let shadow: vec4<f32> = rigid_shadow_velocity[body];
+    let shadow: vec4<f32> = vec4<f32>(
+        f32(atomicLoad(&rigid_predicted_motion[body].x)) / 4096.0,
+        f32(atomicLoad(&rigid_predicted_motion[body].y)) / 4096.0,
+        f32(atomicLoad(&rigid_predicted_motion[body].angular)) / 4096.0, 0.0);
     let rigid_velocity: vec2<f32> = shadow.xy +
         shadow.z * vec2<f32>(-radius.y, radius.x);
     let other_velocity: vec2<f32> = select(
@@ -490,12 +558,12 @@ fn process_rigid_cellular_face(
     let channel: u32 = dominant_cardinal_channel(normal);
     if gather {
         atomicAdd(&rigid_contact_statistics[body].geometric_support[channel], 1u);
-        if approach > 0.0001 {
+        if approach > 0.02 || dynamic && length(other_velocity) > 0.02 ||
+                penetration > 0.0001 {
             atomicAdd(&rigid_contact_statistics[body].motion_support[channel], 1u);
         }
         return;
     }
-    if approach <= 0.0001 { return; }
     let normal_arm: f32 = radius.x * normal.y - radius.y * normal.x;
     let rigid_inverse_effective_mass: f32 = mass_record.z +
         mass_record.w * normal_arm * normal_arm;
@@ -506,10 +574,7 @@ fn process_rigid_cellular_face(
     other_inverse_mass = select(other_inverse_mass, gas_cell_inverse_mass(other), gas);
     let simultaneous_contacts: f32 = f32(max(
         atomicLoad(&rigid_contact_statistics[body].motion_support[channel]), 1u));
-    let inverse_mass_sum: f32 =
-        simultaneous_contacts * rigid_inverse_effective_mass + other_inverse_mass;
-    if inverse_mass_sum <= 0.0 { return; }
-    let rigid_material: u32 = rigid_material_identifiers[rigid];
+    let inverse_mass_sum: f32 = rigid_inverse_effective_mass + other_inverse_mass;
     let rigid_index: u32 = material_index_from_identifier(rigid_material);
     let rigid_properties: StaticProperties = cellular_static_properties[rigid_index];
     var restitution: f32 = 0.0;
@@ -525,8 +590,46 @@ fn process_rigid_cellular_face(
         restitution = min(rigid_properties.restitution, properties.z);
         friction = min(rigid_properties.friction, properties.y);
     }
-    let normal_impulse: f32 = (1.0 + clamp(restitution, 0.0, 1.0)) * approach /
-        inverse_mass_sum;
+    var normal_impulse: f32 = 0.0;
+    if dynamic || static_cell {
+        let rigid_toward: f32 = max(0.0, dot(rigid_velocity, normal));
+        let grain_toward: f32 = max(0.0, -dot(other_velocity, normal));
+        let toward_sum: f32 = rigid_toward + grain_toward;
+        if toward_sum > 0.0001 {
+            let relative_approach: f32 = max(approach, 0.0);
+            let grain_approach: f32 = relative_approach * grain_toward / toward_sum;
+            let rigid_approach: f32 = relative_approach * rigid_toward / toward_sum;
+            if inverse_mass_sum > 0.0 {
+                normal_impulse += (1.0 + clamp(restitution, 0.0, 1.0)) *
+                    grain_approach / inverse_mass_sum;
+            }
+            if rigid_inverse_effective_mass > 0.000001 {
+                normal_impulse += rigid_approach /
+                    rigid_inverse_effective_mass / simultaneous_contacts;
+            }
+        }
+    } else if inverse_mass_sum > 0.0 {
+        normal_impulse = (1.0 + clamp(restitution, 0.0, 1.0)) *
+            max(approach, 0.0) /
+                (simultaneous_contacts * rigid_inverse_effective_mass + other_inverse_mass);
+    }
+    if penetration > CELL_SIZE * 0.02 && rigid_inverse_effective_mass > 0.000001 {
+        let correction_speed: f32 = min(CELL_SIZE / parameters.delta_time,
+            (penetration - CELL_SIZE * 0.02) * 0.2 / parameters.delta_time);
+        normal_impulse += correction_speed /
+            (simultaneous_contacts * rigid_inverse_effective_mass + other_inverse_mass);
+    }
+    let geometric_contacts: u32 = atomicLoad(
+        &rigid_contact_statistics[body].geometric_support[channel]);
+    var support_impulse: f32 = 0.0;
+    if geometric_contacts != 0u && mass_record.z > 0.000001 &&
+            (static_cell || dynamic) && approach >= -0.0001 {
+        support_impulse = max(0.0,
+            dot(parameters.gravity * parameters.delta_time / mass_record.z, normal)) /
+                f32(geometric_contacts);
+        normal_impulse += support_impulse;
+    }
+    if normal_impulse <= 0.0 { return; }
     let tangent: vec2<f32> = vec2<f32>(-normal.y, normal.x);
     let tangent_arm: f32 = radius.x * tangent.y - radius.y * tangent.x;
     let tangent_inverse_mass: f32 = mass_record.z + mass_record.w * tangent_arm * tangent_arm +
@@ -561,9 +664,21 @@ fn process_rigid_cellular_face(
     }
     let reaction: vec2<f32> = -impulse;
     let torque: f32 = radius.x * reaction.y - radius.y * reaction.x;
+    if support_impulse > 0.0 {
+        let support_reaction: vec2<f32> = -normal * support_impulse;
+        let support_torque: f32 = radius.x * support_reaction.y -
+            radius.y * support_reaction.x;
+        let support_credit: f32 = max(0.0,
+            dot(rigid_velocity, support_reaction) + shadow.z * support_torque) +
+            0.5 * f32(geometric_contacts) * (
+                mass_record.z * dot(support_reaction, support_reaction) +
+                mass_record.w * support_torque * support_torque);
+        atomicAdd(&rigid_contact_statistics[body].padding_1,
+            u32(round(min(support_credit, 1000000.0) * 256.0)));
+    }
     if any(reaction != reaction) || any(abs(reaction) > vec2<f32>(1000000.0)) ||
             abs(torque) > 1000000.0 {
-        atomicStore(&rigid_sweep_reactions[body].overflow, 1);
+        atomicStore(&rigid_reactions[body].overflow, 1);
         return;
     }
     var overflowed: bool = saturating_rigid_atomic_add(body,
@@ -572,9 +687,20 @@ fn process_rigid_cellular_face(
         i32(round(reaction.y * LINEAR_FIXED_SCALE)), 1u) || overflowed;
     overflowed = saturating_rigid_atomic_add(body,
         i32(round(torque * ANGULAR_FIXED_SCALE)), 2u) || overflowed;
-    if overflowed { atomicStore(&rigid_sweep_reactions[body].overflow, 1); }
+    if overflowed { atomicStore(&rigid_reactions[body].overflow, 1); }
+    atomicAdd(&rigid_predicted_motion[body].x,
+        i32(round(reaction.x * mass_record.z * 4096.0)));
+    atomicAdd(&rigid_predicted_motion[body].y,
+        i32(round(reaction.y * mass_record.z * 4096.0)));
+    atomicAdd(&rigid_predicted_motion[body].angular,
+        i32(round(torque * mass_record.w * 4096.0)));
     atomicAdd(&rigid_contact_statistics[body].contact_count, 1u);
     if static_cell { atomicAdd(&rigid_contact_statistics[body].static_contact_count, 1u); }
+    if dynamic {
+        let moving_grain: bool = approach > 0.02 || length(other_velocity) > 0.02;
+        atomicAdd(&rigid_contact_statistics[body].padding_2,
+            select(1u, 0x00010001u, moving_grain));
+    }
 }
 
 fn gas_cell_is_open(index: u32) -> bool {
@@ -584,7 +710,7 @@ fn gas_cell_is_open(index: u32) -> bool {
 
 fn gas_cell_inverse_mass(index: u32) -> f32 {
     var density: f32 = 1.0;
-    for (var species: u32 = 0u; species < parameters.padding.x; species++) {
+    for (var species: u32 = 0u; species < parameters.gas_count; species++) {
         let concentration: f32 = gas_concentrations[
             species * parameters.buffered_cell_count + index];
         density += concentration * (gas_properties[species * 2u].x - 1.0);
@@ -657,27 +783,25 @@ fn resolve_fluid_cellular_face(fluid: u32, cellular: u32, normal: vec2<f32>) {
         normal_impulse * CONTACT_PRESSURE_TRANSFER);
 }
 
-// Converts queued sources into the first directional pressure field
 @compute @workgroup_size(64)
-fn seed_cellular_pressure(
+fn propagate_pending_cellular_pressure(
     @builtin(workgroup_id) workgroup: vec3<u32>,
     @builtin(local_invocation_index) local_index: u32,
 ) {
     let logical_index: u32 = logical_cell_index_from_active_pressure_workgroup(workgroup.x, local_index);
     if logical_index >= parameters.buffered_cell_count { return; }
+    let cell: vec2<i32> = cellular_pressure_world_cell_from_logical_index(logical_index);
     let index: u32 = cellular_pressure_physical_cell_index_from_world_cell(
-        cellular_pressure_world_cell_from_logical_index(logical_index),
-    );
+        cell);
     if index == INVALID_PHYSICAL_CELL_INDEX { return; }
     retained_pressure[index] = vec4<f32>(0.0);
-    pressure_b[index] = vec4<f32>(0.0);
-    var source: vec4<f32> = pending_pressure[index];
-    pending_pressure[index] = vec4<f32>(0.0);
-    // Actor resolve has already divided each drive impulse across that actor's won cells.
-    if external_body_occupancy[index] == 1u || external_body_occupancy[index] == 2u {
-        source += encode_directional_pressure(external_body_velocity[index].zw);
+    pressure_a[index] = vec4<f32>(0.0);
+    let source: vec4<f32> = pending_pressure_source(index);
+    for (var channel: u32 = 0u; channel < 4u; channel++) {
+        retained_pressure[index][channel] = source[channel] -
+            calculate_outgoing_cellular_pressure(cell, channel, source[channel]);
+        pressure_b[index][channel] = gather_pending_cellular_pressure(cell, channel);
     }
-    pressure_a[index] = source;
 }
 
 // Alternating entry points preserve explicit pressure ping-pong ordering on the CPU
@@ -697,9 +821,44 @@ fn propagate_cellular_pressure_b(
     @builtin(workgroup_id) workgroup: vec3<u32>,
     @builtin(local_invocation_index) local_index: u32,
 ) {
+    let logical_index: u32 = logical_cell_index_from_active_pressure_workgroup(
+        workgroup.x, local_index);
+    if logical_index < parameters.buffered_cell_count {
+        let index: u32 = cellular_pressure_physical_cell_index_from_world_cell(
+            cellular_pressure_world_cell_from_logical_index(logical_index));
+        if index != INVALID_PHYSICAL_CELL_INDEX { pending_pressure[index] = vec4<f32>(0.0); }
+    }
     propagate_cellular_pressure(
-        logical_cell_index_from_active_pressure_workgroup(workgroup.x, local_index), false,
+        logical_index, false,
     );
+}
+
+@compute @workgroup_size(64)
+fn finalize_cellular_pressure(
+    @builtin(workgroup_id) workgroup: vec3<u32>,
+    @builtin(local_invocation_index) local_index: u32,
+) {
+    let logical_index: u32 = logical_cell_index_from_active_pressure_workgroup(
+        workgroup.x, local_index);
+    if logical_index >= parameters.buffered_cell_count { return; }
+    let cell: vec2<i32> = cellular_pressure_world_cell_from_logical_index(logical_index);
+    let index: u32 = cellular_pressure_physical_cell_index_from_world_cell(cell);
+    if index == INVALID_PHYSICAL_CELL_INDEX { return; }
+    let current: vec4<f32> = pressure_b[index];
+    var load: vec4<f32> = retained_pressure[index];
+    for (var channel: u32 = 0u; channel < 4u; channel++) {
+        load[channel] += current[channel] -
+            calculate_outgoing_cellular_pressure(cell, channel, current[channel]);
+        load[channel] += gather_incoming_cellular_pressure(cell, channel, false);
+    }
+    let material: u32 = cellular_material_identifiers[index];
+    if material_form_from_identifier(material) == CELLULAR_STATIC_MATERIAL_FORM {
+        apply_cellular_static_pressure_damage(cell, index, material, load);
+    }
+    pressure_a[index] = vec4<f32>(0.0);
+    pressure_b[index] = vec4<f32>(0.0);
+    retained_pressure[index] = vec4<f32>(0.0);
+    pending_pressure[index] = vec4<f32>(0.0);
 }
 
 // Applies all retained pressure after the fixed propagation budget has been consumed
@@ -829,6 +988,35 @@ fn gather_incoming_cellular_pressure(
     return gathered;
 }
 
+fn pending_pressure_source(index: u32) -> vec4<f32> {
+    var source: vec4<f32> = pending_pressure[index];
+    if external_body_occupancy[index] == 1u || external_body_occupancy[index] == 2u {
+        source += encode_directional_pressure(external_body_velocity[index].zw);
+    }
+    return source;
+}
+
+fn gather_pending_cellular_pressure(cell: vec2<i32>, channel: u32) -> f32 {
+    let destination: u32 = cellular_pressure_physical_cell_index_from_world_cell(cell);
+    let destination_transmission: f32 =
+        cellular_pressure_transmission_at_physical_cell_index(destination);
+    if destination_transmission <= 0.0 { return 0.0; }
+    var gathered: f32 = 0.0;
+    for (var side: i32 = -1; side <= 1; side++) {
+        let source_cell: vec2<i32> = cell - world_cell_direction_from_pressure_channel(channel) -
+            world_cell_side_offset_from_pressure_channel(channel, side);
+        let source: u32 = cellular_pressure_physical_cell_index_from_world_cell(source_cell);
+        if source == INVALID_PHYSICAL_CELL_INDEX { continue; }
+        let source_transmission: f32 =
+            cellular_pressure_transmission_at_physical_cell_index(source);
+        if source_transmission <= 0.0 { continue; }
+        let weight: f32 = select(0.2, 0.6, side == 0);
+        gathered += pending_pressure_source(source)[channel] *
+            min(source_transmission, destination_transmission) * weight;
+    }
+    return gathered;
+}
+
 // Returns source-material transmission, with transient body cells effectively perfect
 fn cellular_pressure_transmission_at_physical_cell_index(index: u32) -> f32 {
     if index == INVALID_PHYSICAL_CELL_INDEX { return 0.0; }
@@ -915,6 +1103,147 @@ fn encode_directional_pressure(value: vec2<f32>) -> vec4<f32> {
     );
 }
 
+fn find_rigid_static_contact(source: u32) -> RigidStaticContact {
+    if source >= parameters.rigid_cell_count { return empty_rigid_static_contact(); }
+    let cell: vec4<u32> = rigid_cells[source * 2u];
+    let body: u32 = cell.z;
+    if body >= parameters.rigid_body_count { return empty_rigid_static_contact(); }
+    let pose: vec4<f32> = rigid_transforms[body * 3u];
+    let motion: vec4<f32> = rigid_transforms[body * 3u + 1u];
+    let local_center: vec2<f32> =
+        (vec2<f32>(bitcast<vec2<i32>>(cell.xy)) + vec2<f32>(0.5)) * CELL_SIZE;
+    let axis_x: vec2<f32> = pose.zw;
+    let axis_y: vec2<f32> = vec2<f32>(-axis_x.y, axis_x.x);
+    let current: vec2<f32> = pose.xy + axis_x * local_center.x + axis_y * local_center.y;
+    let angle_step: f32 = clamp(motion.z * parameters.delta_time, -3.14159265, 3.14159265);
+    let previous_axis_x: vec2<f32> = vec2<f32>(
+        axis_x.x * cos(angle_step) + axis_x.y * sin(angle_step),
+        -axis_x.x * sin(angle_step) + axis_x.y * cos(angle_step));
+    let previous_axis_y: vec2<f32> = vec2<f32>(-previous_axis_x.y, previous_axis_x.x);
+    let previous_unbounded: vec2<f32> = pose.xy - motion.xy * parameters.delta_time +
+        previous_axis_x * local_center.x + previous_axis_y * local_center.y;
+    let sweep: vec2<f32> = current - previous_unbounded;
+    let sweep_scale: f32 = min(1.0, 2.0 / max(length(sweep), 0.0001));
+    let previous: vec2<f32> = current - sweep * sweep_scale;
+    let rotational_expansion: f32 = min(CELL_SIZE * 2.0,
+        abs(angle_step) * length(local_center));
+    let extent: f32 = CELL_RADIUS + rotational_expansion;
+    let minimum: vec2<i32> = vec2<i32>(floor(
+        (min(previous, current) - vec2<f32>(extent)) * 8.0));
+    let maximum: vec2<i32> = vec2<i32>(floor(
+        (max(previous, current) + vec2<f32>(extent)) * 8.0));
+    var best: RigidStaticContact = empty_rigid_static_contact();
+    var best_time: f32 = 2.0;
+    for (var y: i32 = minimum.y; y <= maximum.y; y++) {
+        for (var x: i32 = minimum.x; x <= maximum.x; x++) {
+            let world_cell: vec2<i32> = vec2<i32>(x, y);
+            let index: u32 = cellular_pressure_physical_cell_index_from_world_cell(world_cell);
+            if index == INVALID_PHYSICAL_CELL_INDEX { continue; }
+            let material: u32 = cellular_material_identifiers[index];
+            if material_form_from_identifier(material) != CELLULAR_STATIC_MATERIAL_FORM {
+                continue;
+            }
+            let static_center: vec2<f32> =
+                (vec2<f32>(world_cell) + vec2<f32>(0.5)) * CELL_SIZE;
+            let overlap: vec4<f32> = rigid_static_overlap_contact(
+                current, axis_x, axis_y, static_center);
+            var hit: vec4<f32> = overlap;
+            var time: f32 = 0.0;
+            if overlap.w < 0.0 {
+                hit = rigid_static_swept_contact(previous, current, static_center, extent);
+                time = hit.z;
+            }
+            if hit.w >= 0.0 && time < best_time {
+                best_time = time;
+                let normal: vec2<f32> = hit.xy;
+                let point_center: vec2<f32> = mix(previous, current, time);
+                best = RigidStaticContact(1u, body, material,
+                    dominant_cardinal_channel(normal), index, normal,
+                    point_center - normal * CELL_RADIUS, hit.w);
+            }
+        }
+    }
+    return best;
+}
+
+fn rigid_static_overlap_contact(
+    center: vec2<f32>, axis_x: vec2<f32>, axis_y: vec2<f32>,
+    static_center: vec2<f32>,
+) -> vec4<f32> {
+    let difference: vec2<f32> = center - static_center;
+    var best_axis: vec2<f32> = vec2<f32>(0.0);
+    var best_penetration: f32 = 3.402823e+38;
+    let axes: array<vec2<f32>, 4> = array<vec2<f32>, 4>(
+        vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 1.0), axis_x, axis_y);
+    for (var index: u32 = 0u; index < 4u; index++) {
+        let axis: vec2<f32> = axes[index];
+        let rigid_radius: f32 = CELL_HALF *
+            (abs(dot(axis_x, axis)) + abs(dot(axis_y, axis)));
+        let static_radius: f32 = CELL_HALF * (abs(axis.x) + abs(axis.y));
+        let penetration: f32 = rigid_radius + static_radius - abs(dot(difference, axis));
+        if penetration < 0.0 { return vec4<f32>(0.0, 0.0, 0.0, -1.0); }
+        if penetration < best_penetration {
+            best_penetration = penetration;
+            best_axis = select(-axis, axis, dot(difference, axis) >= 0.0);
+        }
+    }
+    return vec4<f32>(best_axis, 0.0, best_penetration);
+}
+
+fn rigid_static_swept_contact(
+    start: vec2<f32>, finish: vec2<f32>, static_center: vec2<f32>, extent: f32,
+) -> vec4<f32> {
+    let movement: vec2<f32> = finish - start;
+    let minimum: vec2<f32> = static_center - vec2<f32>(CELL_HALF + extent);
+    let maximum: vec2<f32> = static_center + vec2<f32>(CELL_HALF + extent);
+    var enter: f32 = 0.0;
+    var leave: f32 = 1.0;
+    var normal: vec2<f32> = vec2<f32>(0.0);
+    for (var axis: u32 = 0u; axis < 2u; axis++) {
+        if abs(movement[axis]) <= 0.0001 {
+            if start[axis] < minimum[axis] || start[axis] > maximum[axis] {
+                return vec4<f32>(0.0, 0.0, 2.0, -1.0);
+            }
+            continue;
+        }
+        let first: f32 = (minimum[axis] - start[axis]) / movement[axis];
+        let second: f32 = (maximum[axis] - start[axis]) / movement[axis];
+        let axis_enter: f32 = min(first, second);
+        let axis_leave: f32 = max(first, second);
+        if axis_enter > enter {
+            enter = axis_enter;
+            normal = vec2<f32>(0.0);
+            normal[axis] = select(1.0, -1.0, movement[axis] > 0.0);
+        }
+        leave = min(leave, axis_leave);
+    }
+    if enter > leave || enter < 0.0 || enter > 1.0 {
+        return vec4<f32>(0.0, 0.0, 2.0, -1.0);
+    }
+    return vec4<f32>(normal, enter, 0.0);
+}
+
+fn empty_rigid_static_contact() -> RigidStaticContact {
+    return RigidStaticContact(0u, 0u, 0u, 0u, 0u,
+        vec2<f32>(0.0), vec2<f32>(0.0), -1.0);
+}
+
+fn accumulate_rigid_sweep_reaction(body: u32, impulse: vec2<f32>, radius: vec2<f32>) {
+    let torque: f32 = radius.x * impulse.y - radius.y * impulse.x;
+    if any(impulse != impulse) || any(abs(impulse) > vec2<f32>(1000000.0)) ||
+            abs(torque) > 1000000.0 {
+        atomicStore(&rigid_reactions[body].overflow, 1);
+        return;
+    }
+    var overflowed: bool = saturating_rigid_atomic_add(body,
+        i32(round(impulse.x * LINEAR_FIXED_SCALE)), 0u);
+    overflowed = saturating_rigid_atomic_add(body,
+        i32(round(impulse.y * LINEAR_FIXED_SCALE)), 1u) || overflowed;
+    overflowed = saturating_rigid_atomic_add(body,
+        i32(round(torque * ANGULAR_FIXED_SCALE)), 2u) || overflowed;
+    if overflowed { atomicStore(&rigid_reactions[body].overflow, 1); }
+}
+
 fn dominant_cardinal_channel(normal: vec2<f32>) -> u32 {
     if abs(normal.x) >= abs(normal.y) { return select(1u, 0u, normal.x >= 0.0); }
     return select(3u, 2u, normal.y >= 0.0);
@@ -924,11 +1253,8 @@ fn saturating_rigid_atomic_add(body: u32, value: i32, accumulator: u32) -> bool 
     let maximum: i32 = bitcast<i32>(0x7fffffffu);
     let minimum: i32 = bitcast<i32>(0x80000000u);
     var old: i32 = 0;
-    if accumulator == 0u { old = atomicLoad(&rigid_sweep_reactions[body].impulse_x); }
-    else if accumulator == 1u { old = atomicLoad(&rigid_sweep_reactions[body].impulse_y); }
-    else if accumulator == 2u { old = atomicLoad(&rigid_sweep_reactions[body].angular_impulse); }
-    else if accumulator == 3u { old = atomicLoad(&rigid_reactions[body].impulse_x); }
-    else if accumulator == 4u { old = atomicLoad(&rigid_reactions[body].impulse_y); }
+    if accumulator == 0u { old = atomicLoad(&rigid_reactions[body].impulse_x); }
+    else if accumulator == 1u { old = atomicLoad(&rigid_reactions[body].impulse_y); }
     else { old = atomicLoad(&rigid_reactions[body].angular_impulse); }
     loop {
         var next: i32 = 0;
@@ -943,25 +1269,10 @@ fn saturating_rigid_atomic_add(body: u32, value: i32, accumulator: u32) -> bool 
             next = old + value;
         }
         if accumulator == 0u {
-            let result = atomicCompareExchangeWeak(
-                &rigid_sweep_reactions[body].impulse_x, old, next);
-            if result.exchanged { return overflowed; }
-            old = result.old_value;
-        } else if accumulator == 1u {
-            let result = atomicCompareExchangeWeak(
-                &rigid_sweep_reactions[body].impulse_y, old, next);
-            if result.exchanged { return overflowed; }
-            old = result.old_value;
-        } else if accumulator == 2u {
-            let result = atomicCompareExchangeWeak(
-                &rigid_sweep_reactions[body].angular_impulse, old, next);
-            if result.exchanged { return overflowed; }
-            old = result.old_value;
-        } else if accumulator == 3u {
             let result = atomicCompareExchangeWeak(&rigid_reactions[body].impulse_x, old, next);
             if result.exchanged { return overflowed; }
             old = result.old_value;
-        } else if accumulator == 4u {
+        } else if accumulator == 1u {
             let result = atomicCompareExchangeWeak(&rigid_reactions[body].impulse_y, old, next);
             if result.exchanged { return overflowed; }
             old = result.old_value;

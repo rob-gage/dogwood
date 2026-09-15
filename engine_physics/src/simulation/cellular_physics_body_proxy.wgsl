@@ -137,18 +137,30 @@ fn rigid_cell_world_bounds(index: u32) -> vec4<i32> {
     return vec4<i32>(minimum, maximum);
 }
 
-// Maps a candidate world-cell center back into body-local cell space
+// Conservatively intersects one rotated rigid cell with a canonical world-cell AABB.
 fn rigid_source_contains_world_cell(source: u32, world_cell: vec2<i32>) -> bool {
     let cell: RigidCell = rigid_cells[source];
     let transform: vec4<f32> = rigid_transforms[cell.body * 3u];
+    let axis_x: vec2<f32> = transform.zw;
+    let axis_y: vec2<f32> = vec2<f32>(-axis_x.y, axis_x.x);
+    let local_center: vec2<f32> = (vec2<f32>(cell.local) + vec2<f32>(0.5)) /
+        CELLS_PER_TILE_FLOAT;
+    let rigid_center: vec2<f32> = transform.xy +
+        axis_x * local_center.x + axis_y * local_center.y;
     let world_center: vec2<f32> =
         (vec2<f32>(world_cell) + vec2<f32>(0.5)) / CELLS_PER_TILE_FLOAT;
-    let relative: vec2<f32> = world_center - transform.xy;
-    let local: vec2<f32> = vec2<f32>(
-        transform.z * relative.x + transform.w * relative.y,
-        -transform.w * relative.x + transform.z * relative.y,
+    let difference: vec2<f32> = rigid_center - world_center;
+    let axes: array<vec2<f32>, 4> = array<vec2<f32>, 4>(
+        vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 1.0), axis_x, axis_y,
     );
-    return all(vec2<i32>(floor(local * CELLS_PER_TILE_FLOAT)) == cell.local);
+    let half: f32 = 0.5 / CELLS_PER_TILE_FLOAT;
+    for (var index: u32 = 0u; index < 4u; index++) {
+        let axis: vec2<f32> = axes[index];
+        let rigid_radius: f32 = half * (abs(dot(axis_x, axis)) + abs(dot(axis_y, axis)));
+        let world_radius: f32 = half * (abs(axis.x) + abs(axis.y));
+        if abs(dot(difference, axis)) > rigid_radius + world_radius { return false; }
+    }
+    return true;
 }
 
 @compute @workgroup_size(64)
