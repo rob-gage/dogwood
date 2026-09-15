@@ -207,7 +207,7 @@ fn seed_cellular_pressure(
     var source: vec4<f32> = pending_pressure[index];
     pending_pressure[index] = vec4<f32>(0.0);
     // Divide one authoritative body impulse across its rasterized proxy cells
-    if external_body_occupancy[index] != 0u {
+    if external_body_occupancy[index] == 1u || external_body_occupancy[index] == 2u {
         let occupied_count: u32 = max(1u, atomicLoad(&external_body_count[0]));
         source += encode_directional_pressure(
             external_body_velocity[index].zw / f32(occupied_count),
@@ -275,11 +275,13 @@ fn resolve_cellular_dynamic_contact_velocity(cell: vec2<i32>, index: u32) -> vec
     let tick_start_velocity: vec2<f32> =
         cellular_contact_velocity_at_physical_cell_index(index);
     var velocity: vec2<f32> = tick_start_velocity;
+    if external_body_occupancy[index] == 3u { return velocity; }
     for (var channel: u32 = 0u; channel < 4u; channel++) {
         let offset: vec2<i32> = world_cell_direction_from_pressure_channel(channel);
         let normal: vec2<f32> = vec2<f32>(offset);
         let neighbor: u32 = cellular_pressure_physical_cell_index_from_world_cell(cell + offset);
         if neighbor == INVALID_PHYSICAL_CELL_INDEX ||
+                external_body_occupancy[neighbor] == 3u ||
                 cellular_pressure_transmission_at_physical_cell_index(neighbor) <= 0.0 {
             continue;
         }
@@ -317,7 +319,8 @@ fn resolve_cellular_dynamic_contact_velocity(cell: vec2<i32>, index: u32) -> vec
 
 // Gathers dynamic impact pressure at its destination without float atomics or write conflicts
 fn gather_cellular_contact_pressure(cell: vec2<i32>, index: u32) -> vec4<f32> {
-    if cellular_pressure_transmission_at_physical_cell_index(index) <= 0.0 {
+    if external_body_occupancy[index] == 3u ||
+            cellular_pressure_transmission_at_physical_cell_index(index) <= 0.0 {
         return vec4<f32>(0.0);
     }
     let destination_velocity: vec2<f32> =
@@ -327,6 +330,7 @@ fn gather_cellular_contact_pressure(cell: vec2<i32>, index: u32) -> vec4<f32> {
         let offset: vec2<i32> = world_cell_direction_from_pressure_channel(channel);
         let neighbor: u32 = cellular_pressure_physical_cell_index_from_world_cell(cell + offset);
         if neighbor == INVALID_PHYSICAL_CELL_INDEX ||
+                external_body_occupancy[neighbor] == 3u ||
                 material_form_from_identifier(cellular_material_identifiers[neighbor]) !=
                     CELLULAR_DYNAMIC_MATERIAL_FORM {
             continue;

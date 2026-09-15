@@ -14,6 +14,10 @@ mod scene_simulation;
 mod scene_simulation_configuration;
 mod scene_physics_world;
 mod rigid_cellular_body;
+mod rigid_cellular_body_state;
+mod rigid_granular_reaction_batch;
+mod rigid_granular_readback_slot;
+mod rigid_granular_readback_status;
 
 fn create_simulation_shader_module(
     device: &wgpu::Device,
@@ -36,3 +40,5 @@ pub use scene_simulation::SceneSimulation;
 pub use scene_simulation_configuration::SceneSimulationConfiguration;
 pub use scene_physics_world::ScenePhysicsWorld;
 pub(crate) use rigid_cellular_body::RigidCellularBody;
+pub(crate) use rigid_cellular_body_state::RigidCellularBodyState;
+pub(crate) use rigid_granular_reaction_batch::RigidGranularReactionBatch;

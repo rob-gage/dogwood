@@ -97,6 +97,12 @@ const ARTIFICIAL_PRESSURE_DELTA_Q_RATIO: f32 = 0.3;
 const MAXIMUM_CORRECTION_CELLS: f32 = 0.25;
 const HARD_EXTERNAL_BODY_OCCUPANCY: u32 = 1u;
 const SWIMMER_EXTERNAL_BODY_OCCUPANCY: u32 = 2u;
+const RIGID_EXTERNAL_BODY_OCCUPANCY: u32 = 3u;
+
+fn is_hard_external_body(occupancy: u32) -> bool {
+    return occupancy == HARD_EXTERNAL_BODY_OCCUPANCY ||
+        occupancy == RIGID_EXTERNAL_BODY_OCCUPANCY;
+}
 
 // Removes every authoritative particle whose current world cell was edited
 @compute @workgroup_size(64)
@@ -362,13 +368,13 @@ fn resolve_fluid_velocity_against_neighboring_cellular_contacts(
         );
         if neighbor_index == INVALID_PHYSICAL_CELL_INDEX ||
                 (cellular_material_identifiers[neighbor_index] == EMPTY_MATERIAL_IDENTIFIER &&
-                    external_body_occupancy[neighbor_index] != HARD_EXTERNAL_BODY_OCCUPANCY) {
+                    !is_hard_external_body(external_body_occupancy[neighbor_index])) {
             continue;
         }
         var boundary_velocity: vec2<f32> = select(
             vec2<f32>(0.0),
             external_body_velocity[neighbor_index].xy,
-            external_body_occupancy[neighbor_index] == HARD_EXTERNAL_BODY_OCCUPANCY,
+            is_hard_external_body(external_body_occupancy[neighbor_index]),
         );
         let boundary_speed: f32 = length(boundary_velocity) * CELLS_PER_TILE_FLOAT;
         let body_push_speed: f32 = fluid_constraint_properties_from_identifier(material_identifier).w;
@@ -769,7 +775,7 @@ fn project_fluid_particle_out_of_cellular_collision(initial_position: vec2<f32>)
                 let index: u32 = fluid_physical_cell_index_from_world_cell(cell);
                 if index == INVALID_PHYSICAL_CELL_INDEX ||
                         (cellular_material_identifiers[index] == EMPTY_MATERIAL_IDENTIFIER &&
-                            external_body_occupancy[index] != HARD_EXTERNAL_BODY_OCCUPANCY) {
+                            !is_hard_external_body(external_body_occupancy[index])) {
                     continue;
                 }
                 let minimum: vec2<f32> = vec2<f32>(cell) / CELLS_PER_TILE_FLOAT;

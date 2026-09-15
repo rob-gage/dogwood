@@ -24,6 +24,7 @@ use crate::simulation::{
     Fluids,
     Gases,
     RigidCellularBody,
+    RigidCellularBodyState,
     SceneSimulationConfiguration,
     ScenePhysicsWorld,
 };
@@ -169,6 +170,8 @@ pub struct Scene {
     rigid_cellular_bodies: Vec<RigidCellularBody>,
     /// Changes whenever rigid body-local topology changes
     rigid_cellular_topology_revision: u64,
+    /// Last asynchronously confirmed granular contact state per rigid vector index
+    rigid_granular_contact_active: Vec<bool>,
     /// Prior static snapshot used to ignore initial islands and detect topology changes
     rigid_detachment_snapshot: Option<CollisionOccupancySnapshot>,
     /// GPU-authoritative fluid particles and their transient cellular representation
@@ -292,6 +295,9 @@ impl Scene {
             cellular_physics_body_proxy.occupancy_buffer(),
             cellular_physics_body_proxy.velocity_buffer(),
             cellular_physics_body_proxy.count_buffer(),
+            cellular_physics_body_proxy.rigid_owners_buffer(),
+            cellular_physics_body_proxy.rigid_material_identifiers_buffer(),
+            cellular_physics_body_proxy.rigid_transforms_buffer(),
             buffered_cell_count,
         );
         let cellular_collision: CellularCollision = CellularCollision::new(
@@ -370,6 +376,7 @@ impl Scene {
             cellular_physics_body_proxy,
             rigid_cellular_bodies: Vec::new(),
             rigid_cellular_topology_revision: 0,
+            rigid_granular_contact_active: Vec::new(),
             rigid_detachment_snapshot: None,
             fluids,
             gases,
@@ -663,6 +670,7 @@ impl Scene {
         self.fluid_uploads_submit()?;
         self.gas_downloads_submit()?;
         self.accelerator.poll().map_err(|error| io::Error::other(error.to_string()))?;
+        self.apply_completed_rigid_granular_reactions()?;
         self.cellular_collision.collect_collision()?;
         self.tile_downloads_apply_completed()?;
         self.fluid_downloads_apply_completed()?;
@@ -687,6 +695,40 @@ impl Scene {
         (self.tick_time.as_secs_f32() * TICK_RATE as f32).clamp(0.0, 1.0)
     }
 
+    /// Applies every compatible completed GPU reaction in submission order
+    fn apply_completed_rigid_granular_reactions(&mut self) -> Result<(), io::Error> {
+        for batch in self.cellular_pressure.collect_rigid_reactions()? {
+            if batch.topology_revision != self.rigid_cellular_topology_revision ||
+                    batch.body_count != self.rigid_cellular_bodies.len() {
+                continue;
+            }
+            for index in 0..batch.body_count {
+                let reaction: [f32; 3] = batch.reactions[index];
+                if !self.physics_world.apply_rigid_cellular_body_reaction(
+                    &self.rigid_cellular_bodies[index],
+                    [reaction[0], reaction[1]],
+                    reaction[2],
+                ) {
+                    return Err(io::Error::other("Rigid cellular body handle is missing"));
+                }
+                let contacted: bool = batch.contact_counts[index] != 0;
+                if self.rigid_granular_contact_active[index] && !contacted &&
+                        !self.physics_world.wake_rigid_cellular_body(
+                            &self.rigid_cellular_bodies[index],
+                        ) {
+                    return Err(io::Error::other("Rigid cellular body handle is missing"));
+                }
+                if contacted && !self.physics_world.wake_rigid_cellular_body(
+                    &self.rigid_cellular_bodies[index],
+                ) {
+                    return Err(io::Error::other("Rigid cellular body handle is missing"));
+                }
+                self.rigid_granular_contact_active[index] = contacted;
+            }
+        }
+        Ok(())
+    }
+
     /// Runs one fixed-rate physics simulation tick
     fn tick(&mut self, is_simulation_active: bool) -> Result<(), io::Error> {
         if let Some(mut snapshot) = self.cellular_collision.latest.take() {
@@ -694,16 +736,17 @@ impl Scene {
             self.physics_world.update_cellular_terrain(snapshot);
         }
         let delta_time: f32 = 1.0 / TICK_RATE as f32;
-        let mut cellular_collision_regions: Vec<[i32; 4]> = self.actor_registry
+        let cellular_collision_regions: Vec<[i32; 4]> = self.actor_registry
             .cellular_collision_regions(self.gravity, delta_time);
-        cellular_collision_regions.extend(
-            self.physics_world.rigid_cellular_body_collision_regions(
-                &self.rigid_cellular_bodies,
-                delta_time,
-            ),
-        );
         self.physics_world.update_dynamic_cellular_terrain(&cellular_collision_regions);
         if is_simulation_active {
+            for (index, active) in self.rigid_granular_contact_active.iter().enumerate() {
+                if *active && !self.physics_world.wake_rigid_cellular_body(
+                    &self.rigid_cellular_bodies[index],
+                ) {
+                    return Err(io::Error::other("Rigid cellular body handle is missing"));
+                }
+            }
             self.physics_world.step(self.gravity, delta_time);
         }
         self.actor_registry.simulate_actor_pawns(
@@ -724,10 +767,10 @@ impl Scene {
         if let Some(position) = possessed_position { self.follow_position(position); }
         let buffer_size: i32 = i32::from(self.simulation_buffer_size);
         let dimensions: u16 = u16::from(self.simulation_buffer_size) * 2;
-        let rigid_body_states: Vec<([f32; 2], f32, [f32; 2], f32, [f32; 2])> =
-            self.rigid_cellular_bodies.iter().filter_map(|body| {
-                self.physics_world.rigid_cellular_body_state(body)
-            }).collect();
+        let rigid_body_states: Vec<RigidCellularBodyState> = self.rigid_cellular_bodies.iter()
+            .map(|body| self.physics_world.rigid_cellular_body_state(body).ok_or_else(|| {
+                io::Error::other("Rigid cellular body handle is missing")
+            })).collect::<Result<_, _>>()?;
         self.cellular_physics_body_proxy.rasterize(
             self.accelerator.as_ref(), TileCoordinates { x: self.origin.x - buffer_size, y: self.origin.y - buffer_size },
             self.simulation_width + dimensions, self.simulation_height + dimensions, self.tiles_ring_offset_x,
@@ -743,8 +786,9 @@ impl Scene {
             self.cellular_pressure.simulate(
                 self.accelerator.as_ref(), TileCoordinates { x: self.origin.x - buffer_size, y: self.origin.y - buffer_size },
                 self.simulation_width + dimensions, self.simulation_height + dimensions, self.tiles_ring_offset_x,
-                self.tiles_ring_offset_y, 1.0 / TICK_RATE as f32,
-            );
+                self.tiles_ring_offset_y, 1.0 / TICK_RATE as f32, self.gravity,
+                self.rigid_cellular_bodies.len(), self.rigid_cellular_topology_revision,
+            )?;
             self.cellular_dynamic.simulate_cellular_dynamic_tick(
                 self.accelerator.as_ref(),
                 &self.cellular_material_identifiers,
@@ -913,6 +957,7 @@ impl Scene {
             ));
             self.rigid_cellular_topology_revision =
                 self.rigid_cellular_topology_revision.wrapping_add(1);
+            self.rigid_granular_contact_active.resize(self.rigid_cellular_bodies.len(), false);
         }
         self.rigid_detachment_snapshot = Some(snapshot.clone());
         Ok(())
@@ -926,9 +971,13 @@ impl Scene {
         removed: &HashSet<[i32; 2]>,
     ) {
         if body_index >= self.rigid_cellular_bodies.len() || removed.is_empty() { return; }
+        let Some(state) = self.physics_world.rigid_cellular_body_state(
+            &self.rigid_cellular_bodies[body_index],
+        ) else { return; };
         let body = self.rigid_cellular_bodies.swap_remove(body_index);
-        let Some((translation, angle, linear_velocity, angular_velocity, center_of_mass)) =
-            self.physics_world.rigid_cellular_body_state(&body) else { return; };
+        self.rigid_cellular_topology_revision =
+            self.rigid_cellular_topology_revision.wrapping_add(1);
+        self.rigid_granular_contact_active.clear();
         self.physics_world.remove_rigid_cellular_body(&body);
         let remaining = body.cells.into_iter().filter(|cell| !removed.contains(&cell.0)).collect();
         for cells in RigidCellularBody::connected_components(remaining) {
@@ -940,21 +989,24 @@ impl Scene {
             let divisor = cells.len() as f32;
             let local_center = [local_center[0] / divisor, local_center[1] / divisor];
             let child_center = [
-                translation[0] + angle.cos() * local_center[0] - angle.sin() * local_center[1],
-                translation[1] + angle.sin() * local_center[0] + angle.cos() * local_center[1],
+                state.translation[0] + state.angle.cos() * local_center[0] -
+                    state.angle.sin() * local_center[1],
+                state.translation[1] + state.angle.sin() * local_center[0] +
+                    state.angle.cos() * local_center[1],
             ];
-            let offset = [child_center[0] - center_of_mass[0], child_center[1] - center_of_mass[1]];
+            let offset = [child_center[0] - state.center_of_mass[0],
+                child_center[1] - state.center_of_mass[1]];
             let child_velocity = [
-                linear_velocity[0] - angular_velocity * offset[1],
-                linear_velocity[1] + angular_velocity * offset[0],
+                state.linear_velocity[0] - state.angular_velocity * offset[1],
+                state.linear_velocity[1] + state.angular_velocity * offset[0],
             ];
             let (friction, restitution) = self.rigid_cellular_material_response(&cells);
             self.rigid_cellular_bodies.push(self.physics_world.insert_rigid_cellular_body(
-                translation, angle, cells, friction, restitution, child_velocity, angular_velocity,
+                state.translation, state.angle, cells, friction, restitution, child_velocity,
+                state.angular_velocity,
             ));
         }
-        self.rigid_cellular_topology_revision =
-            self.rigid_cellular_topology_revision.wrapping_add(1);
+        self.rigid_granular_contact_active.resize(self.rigid_cellular_bodies.len(), false);
     }
 
     /// Averages the existing static material response for one concrete body
@@ -2580,13 +2632,13 @@ mod tests {
         assert!(scene.rigid_cellular_bodies[0].cells.len() == 8);
         let initial_y = scene.physics_world.rigid_cellular_body_state(
             &scene.rigid_cellular_bodies[0],
-        ).unwrap().0[1];
+        ).unwrap().translation[1];
         scene.physics_world.update_cellular_terrain(separated);
         for _ in 0..8 { scene.physics_world.step(scene.gravity, 1.0 / TICK_RATE as f32); }
         let state = scene.physics_world.rigid_cellular_body_state(
             &scene.rigid_cellular_bodies[0],
         ).unwrap();
-        assert!(state.0[1] < initial_y);
+        assert!(state.translation[1] < initial_y);
         scene.cellular_physics_body_proxy.rasterize(
             accelerator.as_ref(), TileCoordinates { x: -2, y: -2 }, 5, 5, 0, 0,
             scene.gravity, None, false, &scene.rigid_cellular_bodies, &[state],

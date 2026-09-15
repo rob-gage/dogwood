@@ -15,8 +15,22 @@ use engine_compute::{
     Accelerator,
     AcceleratorBuffer,
 };
+use super::{
+    rigid_granular_readback_slot::RigidGranularReadbackSlot,
+    rigid_granular_readback_status::RigidGranularReadbackStatus,
+    RigidGranularReactionBatch,
+};
+use std::{
+    collections::BTreeMap,
+    io,
+    sync::{
+        Arc,
+        Mutex,
+    },
+};
 
 const PRESSURE_DAMAGE_RATE: f32 = 10.0;
+const RIGID_REACTION_READBACK_SLOT_COUNT: usize = 3;
 
 /// Applies transient directional cellular pressure and static integrity damage
 pub struct CellularPressure {
@@ -32,6 +46,18 @@ pub struct CellularPressure {
     active_tile_indices: AcceleratorBuffer,
     /// GPU-written indirect dispatch record for active pressure tiles
     indirect_dispatch: wgpu::Buffer,
+    rigid_contact_statistics: AcceleratorBuffer,
+    rigid_reactions: AcceleratorBuffer,
+    rigid_contact_parameters: wgpu::Buffer,
+    rigid_contact_bind_group: wgpu::BindGroup,
+    rigid_contact_clear_pipeline: wgpu::ComputePipeline,
+    rigid_contact_gather_pipeline: wgpu::ComputePipeline,
+    rigid_contact_resolve_pipeline: wgpu::ComputePipeline,
+    rigid_reaction_readback_slots: Box<[RigidGranularReadbackSlot]>,
+    rigid_reaction_completed: BTreeMap<u64, RigidGranularReactionBatch>,
+    rigid_reaction_sequence_next: u64,
+    rigid_reaction_sequence_apply_next: u64,
+    rigid_topology_revision: u64,
     parameters: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     /// Compaction-only binding for the indirect dispatch record
@@ -70,6 +96,9 @@ impl CellularPressure {
         external_body_occupancy: &AcceleratorBuffer,
         external_body_velocity: &AcceleratorBuffer,
         external_body_count: &AcceleratorBuffer,
+        rigid_owners: &AcceleratorBuffer,
+        rigid_material_identifiers: &AcceleratorBuffer,
+        rigid_transforms: &AcceleratorBuffer,
         buffered_cell_count: usize,
     ) -> Self {
         let device: &wgpu::Device = accelerator.wgpu_device();
@@ -157,6 +186,18 @@ impl CellularPressure {
                 wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let rigid_contact_statistics: AcceleratorBuffer =
+            accelerator.allocate::<[u32; 12]>(buffered_cell_count as usize);
+        let rigid_reactions: AcceleratorBuffer =
+            accelerator.allocate::<[i32; 4]>(buffered_cell_count as usize);
+        let rigid_contact_parameters: wgpu::Buffer = device.create_buffer(
+            &wgpu::BufferDescriptor {
+                label: Some("rigid granular contact parameters"),
+                size: 48,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
         let parameters: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("cellular pressure parameters"),
             size: 64,
@@ -200,6 +241,34 @@ impl CellularPressure {
                 label: Some("cellular pressure indirect bind group layout"),
                 entries: &[Self::storage_layout_entry(0, false)],
             });
+        let rigid_contact_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                label: Some("rigid granular contact bind group layout"),
+                entries: &[
+                    Self::storage_layout_entry(0, true),
+                    Self::storage_layout_entry(1, false),
+                    Self::storage_layout_entry(2, true),
+                    Self::storage_layout_entry(3, true),
+                    Self::storage_layout_entry(4, true),
+                    Self::storage_layout_entry(5, true),
+                    Self::storage_layout_entry(6, true),
+                    Self::storage_layout_entry(7, true),
+                    Self::storage_layout_entry(8, false),
+                    Self::storage_layout_entry(9, false),
+                    Self::storage_layout_entry(10, true),
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 11,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            },
+        );
         let bind_group: wgpu::BindGroup = device.create_bind_group(
             &wgpu::BindGroupDescriptor {
                 label: Some("cellular pressure bind group"),
@@ -237,6 +306,29 @@ impl CellularPressure {
                 }],
             },
         );
+        let rigid_contact_bind_group: wgpu::BindGroup = device.create_bind_group(
+            &wgpu::BindGroupDescriptor {
+                label: Some("rigid granular contact bind group"),
+                layout: &rigid_contact_layout,
+                entries: &[
+                    Self::binding(0, material_ids),
+                    Self::binding(1, kinematics),
+                    Self::binding(2, &pressure_b),
+                    Self::binding(3, &dynamic_properties),
+                    Self::binding(4, &static_properties),
+                    Self::binding(5, rigid_owners),
+                    Self::binding(6, rigid_material_identifiers),
+                    Self::binding(7, rigid_transforms),
+                    Self::binding(8, &rigid_contact_statistics),
+                    Self::binding(9, &rigid_reactions),
+                    Self::binding(10, &active_tile_indices),
+                    wgpu::BindGroupEntry {
+                        binding: 11,
+                        resource: rigid_contact_parameters.as_entire_binding(),
+                    },
+                ],
+            },
+        );
         let shader: wgpu::ShaderModule = super::create_simulation_shader_module(
             device,
             "cellular pressure shader",
@@ -257,6 +349,30 @@ impl CellularPressure {
                 immediate_size: 0,
             },
         );
+        let rigid_contact_shader: wgpu::ShaderModule = super::create_simulation_shader_module(
+            device,
+            "rigid granular contact shader",
+            include_str!("rigid_granular_contact.wgsl"),
+            "engine_physics/src/simulation/rigid_granular_contact.wgsl",
+        );
+        let rigid_contact_pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
+            &wgpu::PipelineLayoutDescriptor {
+                label: Some("rigid granular contact pipeline layout"),
+                bind_group_layouts: &[Some(&rigid_contact_layout)],
+                immediate_size: 0,
+            },
+        );
+        let reaction_readback_size: u64 = u64::from(buffered_cell_count) * 64;
+        let rigid_reaction_readback_slots: Box<[RigidGranularReadbackSlot]> =
+            (0..RIGID_REACTION_READBACK_SLOT_COUNT).map(|_| RigidGranularReadbackSlot {
+                buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("rigid granular reaction readback"),
+                    size: reaction_readback_size,
+                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }),
+                status: Arc::new(Mutex::new(RigidGranularReadbackStatus::Available)),
+            }).collect();
         Self {
             static_properties,
             dynamic_properties,
@@ -267,6 +383,30 @@ impl CellularPressure {
             active_tiles,
             active_tile_indices,
             indirect_dispatch,
+            rigid_contact_statistics,
+            rigid_reactions,
+            rigid_contact_parameters,
+            rigid_contact_bind_group,
+            rigid_contact_clear_pipeline: Self::create_pipeline(
+                device, &rigid_contact_pipeline_layout, &rigid_contact_shader,
+                "rigid granular contact statistics clear pipeline",
+                "clear_rigid_granular_contact_statistics",
+            ),
+            rigid_contact_gather_pipeline: Self::create_pipeline(
+                device, &rigid_contact_pipeline_layout, &rigid_contact_shader,
+                "rigid granular contact statistics gather pipeline",
+                "gather_rigid_granular_contact_statistics",
+            ),
+            rigid_contact_resolve_pipeline: Self::create_pipeline(
+                device, &rigid_contact_pipeline_layout, &rigid_contact_shader,
+                "rigid granular contact resolution pipeline",
+                "resolve_rigid_granular_contacts",
+            ),
+            rigid_reaction_readback_slots,
+            rigid_reaction_completed: BTreeMap::new(),
+            rigid_reaction_sequence_next: 0,
+            rigid_reaction_sequence_apply_next: 0,
+            rigid_topology_revision: u64::MAX,
             parameters,
             bind_group,
             indirect_bind_group,
@@ -346,15 +486,37 @@ impl CellularPressure {
         ring_x: u16,
         ring_y: u16,
         delta_time: f32,
-    ) {
+        gravity: [f32; 2],
+        rigid_body_count: usize,
+        rigid_topology_revision: u64,
+    ) -> Result<(), io::Error> {
+        let rigid_body_count: u32 = rigid_body_count.try_into()
+            .map_err(|_| io::Error::other("Rigid body count exceeds GPU indexing range"))?;
+        if rigid_body_count > self.buffered_cell_count {
+            return Err(io::Error::other("Rigid body count exceeds contact buffer capacity"));
+        }
         self.write_parameters(
             accelerator, origin, width, height, ring_x, ring_y,
             CellCoordinates { x: 0, y: 0 }, 0.0, 0.0, delta_time,
+        );
+        let rigid_values: [u32; 12] = [
+            origin.x as u32, origin.y as u32, u32::from(width), u32::from(height),
+            u32::from(ring_x), u32::from(ring_y), gravity[0].to_bits(), gravity[1].to_bits(),
+            delta_time.to_bits(), rigid_body_count, self.buffered_cell_count, 0,
+        ];
+        accelerator.wgpu_queue().write_buffer(
+            &self.rigid_contact_parameters,
+            0,
+            &rigid_values.into_iter().flat_map(u32::to_le_bytes).collect::<Vec<_>>(),
         );
         let mut encoder: wgpu::CommandEncoder = accelerator.wgpu_device()
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("cellular pressure simulation"),
             });
+        if self.rigid_topology_revision != rigid_topology_revision {
+            encoder.clear_buffer(self.rigid_reactions.wgpu_buffer(), 0, None);
+            self.rigid_topology_revision = rigid_topology_revision;
+        }
         let tile_count: u32 = self.buffered_cell_count / 64;
         for (pipeline, label) in [
             (&self.clear_active_tiles_pipeline, "clear active cellular pressure tiles"),
@@ -377,9 +539,45 @@ impl CellularPressure {
             pass.set_bind_group(1, &self.indirect_bind_group, &[]);
             pass.dispatch_workgroups(tile_count.div_ceil(64), 1, 1);
         }
+        {
+            let mut pass: wgpu::ComputePass<'_> = accelerator.begin_compute_pass(
+                &mut encoder,
+                "clear rigid granular contact statistics",
+            );
+            pass.set_pipeline(&self.rigid_contact_clear_pipeline);
+            pass.set_bind_group(0, &self.rigid_contact_bind_group, &[]);
+            pass.dispatch_workgroups(rigid_body_count.max(1).div_ceil(64), 1, 1);
+        }
         for (pipeline, label) in [
             (&self.copy_contact_velocity_pipeline, "copy cellular contact velocities"),
-            (&self.resolve_contacts_pipeline, "resolve cellular contacts"),
+        ] {
+            let mut pass: wgpu::ComputePass<'_> =
+                accelerator.begin_compute_pass(&mut encoder, label);
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &self.bind_group, &[]);
+            pass.dispatch_workgroups_indirect(&self.indirect_dispatch, 0);
+        }
+        {
+            let mut pass: wgpu::ComputePass<'_> = accelerator.begin_compute_pass(
+                &mut encoder,
+                "gather rigid granular contact statistics",
+            );
+            pass.set_pipeline(&self.rigid_contact_gather_pipeline);
+            pass.set_bind_group(0, &self.rigid_contact_bind_group, &[]);
+            pass.dispatch_workgroups_indirect(&self.indirect_dispatch, 0);
+        }
+        for (pipeline, bind_group, label) in [
+            (&self.resolve_contacts_pipeline, &self.bind_group, "resolve cellular contacts"),
+            (&self.rigid_contact_resolve_pipeline, &self.rigid_contact_bind_group,
+                "resolve rigid granular contacts"),
+        ] {
+            let mut pass: wgpu::ComputePass<'_> =
+                accelerator.begin_compute_pass(&mut encoder, label);
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, bind_group, &[]);
+            pass.dispatch_workgroups_indirect(&self.indirect_dispatch, 0);
+        }
+        for (pipeline, label) in [
             (&self.seed_pipeline, "seed cellular pressure"),
             (&self.propagate_a_pipeline, "propagate cellular pressure A 1"),
             (&self.propagate_b_pipeline, "propagate cellular pressure B 1"),
@@ -395,8 +593,124 @@ impl CellularPressure {
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.dispatch_workgroups_indirect(&self.indirect_dispatch, 0);
         }
+        let readback_slot: Option<&RigidGranularReadbackSlot> =
+            self.rigid_reaction_readback_slots.iter().find(|slot| {
+                slot.status.lock().is_ok_and(|status| {
+                    matches!(*status, RigidGranularReadbackStatus::Available)
+                })
+            });
+        let mut mapping = None;
+        if rigid_body_count != 0 {
+            if let Some(slot) = readback_slot {
+                let mut status = slot.status.lock().map_err(|_| {
+                    io::Error::other("Rigid granular readback state is unavailable")
+                })?;
+                if matches!(*status, RigidGranularReadbackStatus::Available) {
+                    *status = RigidGranularReadbackStatus::Mapping;
+                    let sequence: u64 = self.rigid_reaction_sequence_next;
+                    self.rigid_reaction_sequence_next =
+                        self.rigid_reaction_sequence_next.wrapping_add(1);
+                    let reaction_size: u64 = u64::from(rigid_body_count) * 16;
+                    let statistics_size: u64 = u64::from(rigid_body_count) * 48;
+                    let statistics_offset: u64 = reaction_size;
+                    encoder.copy_buffer_to_buffer(
+                        self.rigid_reactions.wgpu_buffer(), 0,
+                        &slot.buffer, 0, reaction_size,
+                    );
+                    encoder.copy_buffer_to_buffer(
+                        self.rigid_contact_statistics.wgpu_buffer(), 0,
+                        &slot.buffer, statistics_offset, statistics_size,
+                    );
+                    encoder.clear_buffer(self.rigid_reactions.wgpu_buffer(), 0, Some(reaction_size));
+                    mapping = Some((slot, sequence, statistics_offset + statistics_size));
+                }
+            }
+        }
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
+        if let Some((slot, sequence, mapped_size)) = mapping {
+            let mapped_buffer: wgpu::Buffer = slot.buffer.clone();
+            let callback_status = slot.status.clone();
+            let body_count: usize = rigid_body_count as usize;
+            mapped_buffer.clone().slice(0..mapped_size).map_async(
+                wgpu::MapMode::Read,
+                move |result| {
+                    let result: Result<RigidGranularReactionBatch, String> = match result {
+                        Ok(()) => mapped_buffer.slice(0..mapped_size).get_mapped_range()
+                            .map_err(|error| error.to_string()).and_then(|mapped| {
+                                let mut reactions = Vec::with_capacity(body_count);
+                                for bytes in mapped[..body_count * 16].chunks_exact(16) {
+                                    let overflow = i32::from_le_bytes(
+                                        bytes[12..16].try_into().unwrap(),
+                                    );
+                                    if overflow != 0 {
+                                        drop(mapped);
+                                        mapped_buffer.unmap();
+                                        return Err(
+                                            "Rigid granular reaction accumulator overflowed"
+                                                .to_owned(),
+                                        );
+                                    }
+                                    reactions.push([
+                                        i32::from_le_bytes(bytes[0..4].try_into().unwrap()) as f32 /
+                                            256.0,
+                                        i32::from_le_bytes(bytes[4..8].try_into().unwrap()) as f32 /
+                                            256.0,
+                                        i32::from_le_bytes(bytes[8..12].try_into().unwrap()) as f32 /
+                                            64.0,
+                                    ]);
+                                }
+                                let statistics_start: usize = body_count * 16;
+                                let contact_counts = mapped[statistics_start..
+                                    statistics_start + body_count * 48].chunks_exact(48)
+                                    .map(|bytes| {
+                                        u32::from_le_bytes(bytes[0..4].try_into().unwrap())
+                                    }).collect::<Vec<_>>().into_boxed_slice();
+                                drop(mapped);
+                                mapped_buffer.unmap();
+                                Ok(RigidGranularReactionBatch {
+                                    sequence,
+                                    topology_revision: rigid_topology_revision,
+                                    body_count,
+                                    reactions: reactions.into_boxed_slice(),
+                                    contact_counts,
+                                })
+                            }),
+                        Err(_) => Err("Rigid granular reaction readback failed".to_owned()),
+                    };
+                    if let Ok(mut status) = callback_status.lock() {
+                        *status = RigidGranularReadbackStatus::Complete(result);
+                    }
+                },
+            );
+        }
         self.tick = self.tick.wrapping_add(1);
+        Ok(())
+    }
+
+    /// Collects completed mappings and returns every now-contiguous ordered batch
+    pub(crate) fn collect_rigid_reactions(
+        &mut self,
+    ) -> Result<Vec<RigidGranularReactionBatch>, io::Error> {
+        for slot in &self.rigid_reaction_readback_slots {
+            let mut status = slot.status.lock().map_err(|_| {
+                io::Error::other("Rigid granular readback state is unavailable")
+            })?;
+            if matches!(*status, RigidGranularReadbackStatus::Complete(_)) {
+                let RigidGranularReadbackStatus::Complete(result) =
+                    std::mem::replace(&mut *status, RigidGranularReadbackStatus::Available)
+                else { unreachable!() };
+                let batch = result.map_err(io::Error::other)?;
+                self.rigid_reaction_completed.insert(batch.sequence, batch);
+            }
+        }
+        let mut ordered = Vec::new();
+        while let Some(batch) = self.rigid_reaction_completed
+                .remove(&self.rigid_reaction_sequence_apply_next) {
+            ordered.push(batch);
+            self.rigid_reaction_sequence_apply_next =
+                self.rigid_reaction_sequence_apply_next.wrapping_add(1);
+        }
+        Ok(ordered)
     }
 
     pub fn clear_transient_state(
@@ -519,8 +833,12 @@ impl Drop for CellularPressure {
         self.retained_pressure.free();
         self.active_tiles.free();
         self.active_tile_indices.free();
+        self.rigid_contact_statistics.free();
+        self.rigid_reactions.free();
         self.indirect_dispatch.destroy();
         self.parameters.destroy();
+        self.rigid_contact_parameters.destroy();
+        for slot in &self.rigid_reaction_readback_slots { slot.buffer.destroy(); }
     }
 
 }

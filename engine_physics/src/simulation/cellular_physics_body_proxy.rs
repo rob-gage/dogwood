@@ -1,6 +1,9 @@
 // Copyright Rob Gage 2026
 
-use super::RigidCellularBody;
+use super::{
+    RigidCellularBody,
+    RigidCellularBodyState,
+};
 use crate::tiles::TileCoordinates;
 use engine_compute::{
     Accelerator,
@@ -15,6 +18,7 @@ pub struct CellularPhysicsBodyProxy {
     rigid_material_identifiers: AcceleratorBuffer,
     rigid_appearances: AcceleratorBuffer,
     rigid_claims: AcceleratorBuffer,
+    rigid_owners: AcceleratorBuffer,
     rigid_cells: AcceleratorBuffer,
     rigid_transforms: AcceleratorBuffer,
     parameters: wgpu::Buffer,
@@ -38,6 +42,7 @@ impl CellularPhysicsBodyProxy {
         let rigid_material_identifiers = accelerator.allocate::<u32>(buffered_cell_count as usize);
         let rigid_appearances = accelerator.allocate::<u32>(buffered_cell_count as usize);
         let rigid_claims = accelerator.allocate::<u32>(buffered_cell_count as usize);
+        let rigid_owners = accelerator.allocate::<u32>(buffered_cell_count as usize);
         let rigid_cells = accelerator.allocate::<[u32; 8]>(buffered_cell_count as usize);
         let rigid_transforms = accelerator.allocate::<[f32; 12]>(buffered_cell_count as usize);
         let parameters = device.create_buffer(&wgpu::BufferDescriptor {
@@ -57,7 +62,7 @@ impl CellularPhysicsBodyProxy {
                     ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false, min_binding_size: None }, count: None },
                 storage(4, false), storage(5, false), storage(6, false), storage(7, true),
-                storage(8, true),
+                storage(8, true), storage(9, false),
             ],
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -71,6 +76,7 @@ impl CellularPhysicsBodyProxy {
                 wgpu::BindGroupEntry { binding: 6, resource: rigid_claims.wgpu_buffer().as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 7, resource: rigid_cells.wgpu_buffer().as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 8, resource: rigid_transforms.wgpu_buffer().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 9, resource: rigid_owners.wgpu_buffer().as_entire_binding() },
             ],
         });
         let shader = super::create_simulation_shader_module(device,
@@ -85,7 +91,7 @@ impl CellularPhysicsBodyProxy {
                 module: &shader, entry_point: Some(entry_point),
                 compilation_options: Default::default(), cache: None });
         Self { occupancy, velocity, count, rigid_material_identifiers, rigid_appearances,
-            rigid_claims, rigid_cells, rigid_transforms, parameters, bind_group,
+            rigid_claims, rigid_owners, rigid_cells, rigid_transforms, parameters, bind_group,
             clear_pipeline: pipeline("clear_cellular_physics_body_proxy", "cellular physics body proxy clear pipeline"),
             pawn_pipeline: pipeline("rasterize_pawn_proxy", "cellular pawn proxy raster pipeline"),
             rigid_claim_pipeline: pipeline("claim_rigid_cell_proxy", "rigid cellular proxy claim pipeline"),
@@ -99,13 +105,15 @@ impl CellularPhysicsBodyProxy {
     pub const fn rigid_material_identifiers_buffer(&self) -> &AcceleratorBuffer
     { &self.rigid_material_identifiers }
     pub const fn rigid_appearances_buffer(&self) -> &AcceleratorBuffer { &self.rigid_appearances }
+    pub(crate) const fn rigid_owners_buffer(&self) -> &AcceleratorBuffer { &self.rigid_owners }
+    pub(crate) const fn rigid_transforms_buffer(&self) -> &AcceleratorBuffer { &self.rigid_transforms }
 
     pub(crate) fn rasterize(
         &mut self, accelerator: &Accelerator, origin: TileCoordinates, width: u16, height: u16,
         ring_offset_x: u16, ring_offset_y: u16, gravity: [f32; 2],
         pawn: Option<([f32; 2], [f32; 2], [f32; 2], [f32; 2])>, is_fluid_permeable: bool,
         bodies: &[RigidCellularBody],
-        body_states: &[([f32; 2], f32, [f32; 2], f32, [f32; 2])], topology_revision: u64,
+        body_states: &[RigidCellularBodyState], topology_revision: u64,
     ) {
         // ponytail: fixed resident-cell capacity; growable topology storage if dense body counts matter
         let rigid_cell_count: u32 = bodies.iter().map(|body| body.cells.len() as u32).sum::<u32>()
@@ -121,11 +129,11 @@ impl CellularPhysicsBodyProxy {
             accelerator.wgpu_queue().write_buffer(self.rigid_cells.wgpu_buffer(), 0, &cells);
             self.topology_revision = topology_revision;
         }
-        let transforms: Vec<u8> = body_states.iter().flat_map(
-            |(translation, angle, linear_velocity, angular_velocity, center)| [
-                translation[0], translation[1], angle.cos(), angle.sin(),
-                linear_velocity[0], linear_velocity[1], *angular_velocity, 0.0,
-                center[0], center[1], 0.0, 0.0,
+        let transforms: Vec<u8> = body_states.iter().flat_map(|state| [
+                state.translation[0], state.translation[1], state.angle.cos(), state.angle.sin(),
+                state.linear_velocity[0], state.linear_velocity[1], state.angular_velocity, 0.0,
+                state.center_of_mass[0], state.center_of_mass[1], state.inverse_mass,
+                state.inverse_angular_inertia,
             ]).flat_map(f32::to_le_bytes).collect();
         accelerator.wgpu_queue().write_buffer(self.rigid_transforms.wgpu_buffer(), 0, &transforms);
         let (center, velocity, collider, drive, occupancy) = pawn.map_or(
@@ -161,7 +169,8 @@ impl Drop for CellularPhysicsBodyProxy {
     fn drop(&mut self) {
         self.occupancy.free(); self.velocity.free(); self.count.free();
         self.rigid_material_identifiers.free(); self.rigid_appearances.free();
-        self.rigid_claims.free(); self.rigid_cells.free(); self.rigid_transforms.free();
+        self.rigid_claims.free(); self.rigid_owners.free(); self.rigid_cells.free();
+        self.rigid_transforms.free();
         self.parameters.destroy();
     }
 }
@@ -202,7 +211,11 @@ mod tests {
         let buffered_cell_count: usize = 72 * 51 * 64;
         let mut proxy = CellularPhysicsBodyProxy::new(&accelerator, buffered_cell_count);
         let bodies = [body];
-        let body_states = [([0.0; 2], 0.0, [0.0; 2], 0.0, [0.5; 2])];
+        let body_states = [RigidCellularBodyState {
+            translation: [0.0; 2], angle: 0.0, linear_velocity: [0.0; 2],
+            angular_velocity: 0.0, center_of_mass: [0.5; 2], inverse_mass: 1.0,
+            inverse_angular_inertia: 1.0,
+        }];
         proxy.rasterize(
             &accelerator,
             TileCoordinates { x: -12, y: -12 },

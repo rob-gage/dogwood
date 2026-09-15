@@ -120,7 +120,9 @@ fn calculate_cellular_dynamic_movement_proposals(@builtin(global_invocation_id) 
         }
     }
     if source_inside_body && all(destination_cell == source_cell) {
-        destination_cell = choose_cellular_dynamic_external_body_exit_destination(source_cell);
+        destination_cell = choose_cellular_dynamic_external_body_exit_destination(
+            source_cell, velocity,
+        );
     }
     // publish integrated matter state before atomically competing for its destination
     let destination_index: u32 = physical_cell_index_from_world_cell(
@@ -262,7 +264,30 @@ fn trace_cellular_dynamic_displacement(
 // Chooses an immutable-empty neighboring cell outside the external body proxy
 fn choose_cellular_dynamic_external_body_exit_destination(
     source_world_cell: vec2<i32>,
+    velocity: vec2<f32>,
 ) -> vec2<i32> {
+    let source_index: u32 = physical_cell_index_from_world_cell(
+        source_world_cell, parameters.buffered_origin, parameters.buffered_tile_size,
+        parameters.ring_offset,
+    );
+    if source_index != INVALID_PHYSICAL_CELL_INDEX &&
+            external_body_occupancy[source_index] == 3u &&
+            any(abs(velocity) > vec2<f32>(0.0001)) {
+        let along_velocity: vec2<i32> = select(
+            vec2<i32>(0, i32(sign(velocity.y))),
+            vec2<i32>(i32(sign(velocity.x)), 0),
+            abs(velocity.x) >= abs(velocity.y),
+        );
+        let velocity_exit: u32 = physical_cell_index_from_world_cell(
+            source_world_cell + along_velocity, parameters.buffered_origin,
+            parameters.buffered_tile_size, parameters.ring_offset,
+        );
+        if velocity_exit != INVALID_PHYSICAL_CELL_INDEX &&
+                cellular_material_identifiers[velocity_exit] == EMPTY_MATERIAL_IDENTIFIER &&
+                external_body_occupancy[velocity_exit] == 0u {
+            return source_world_cell + along_velocity;
+        }
+    }
     let first = hash_cellular_dynamic_claim_priority(source_world_cell, parameters.tick) & 3u;
     for (var offset = 0u; offset < 4u; offset++) {
         let direction = (first + offset) & 3u;

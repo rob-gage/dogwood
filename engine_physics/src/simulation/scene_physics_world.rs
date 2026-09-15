@@ -3,6 +3,7 @@
 use super::{
     CollisionOccupancySnapshot,
     RigidCellularBody,
+    RigidCellularBodyState,
 };
 use rapier2d::{
     control::{
@@ -11,8 +12,12 @@ use rapier2d::{
         KinematicCharacterController,
     },
     prelude::{
+        CCDSolver,
         ColliderBuilder,
         ColliderHandle,
+        Group,
+        InteractionGroups,
+        LockedAxes,
         PhysicsWorld,
         Pose,
         RigidBodyBuilder,
@@ -34,6 +39,8 @@ pub struct ScenePhysicsWorld {
     cellular_terrain_snapshot: Option<CollisionOccupancySnapshot>,
     /// Dynamic snapshot sequence and pawn regions currently represented in Rapier
     dynamic_cellular_terrain_state: Option<(u64, Vec<[i32; 4]>)>,
+    /// Whether Rapier's CCD fixed-target cache predates current cellular terrain
+    ccd_fixed_targets_dirty: bool,
 }
 
 impl ScenePhysicsWorld {
@@ -46,6 +53,7 @@ impl ScenePhysicsWorld {
             dynamic_cellular_terrain: Vec::new(),
             cellular_terrain_snapshot: None,
             dynamic_cellular_terrain_state: None,
+            ccd_fixed_targets_dirty: false,
         }
     }
 
@@ -72,7 +80,8 @@ impl ScenePhysicsWorld {
             ColliderBuilder::new(RigidCellularBody::collision_shape(&cells))
                 .density(64.0)
                 .friction(friction)
-                .restitution(restitution),
+                .restitution(restitution)
+                .solver_groups(Self::rigid_solver_groups()),
             Some(handle),
         );
         RigidCellularBody { handle, cells }
@@ -82,63 +91,22 @@ impl ScenePhysicsWorld {
     pub(crate) fn rigid_cellular_body_state(
         &self,
         body: &RigidCellularBody,
-    ) -> Option<([f32; 2], f32, [f32; 2], f32, [f32; 2])> {
+    ) -> Option<RigidCellularBodyState> {
         let rigid_body = self.rapier.bodies.get(body.handle)?;
+        assert!(!rigid_body.locked_axes().intersects(
+            LockedAxes::TRANSLATION_LOCKED_X | LockedAxes::TRANSLATION_LOCKED_Y,
+        ), "Rigid cellular GPU contact requires unlocked translation axes");
         let position = rigid_body.position();
         let center = rigid_body.center_of_mass();
-        Some((
-            [position.translation.x, position.translation.y],
-            position.rotation.angle(),
-            [rigid_body.linvel().x, rigid_body.linvel().y],
-            rigid_body.angvel(),
-            [center.x, center.y],
-        ))
-    }
-
-    /// Returns conservative world-cell collision regions for the next rigid-body step
-    pub(crate) fn rigid_cellular_body_collision_regions(
-        &self,
-        bodies: &[RigidCellularBody],
-        delta_time: f32,
-    ) -> Vec<[i32; 4]> {
-        bodies.iter().filter_map(|body| {
-            let rigid_body = self.rapier.bodies.get(body.handle)?;
-            let mut bounds: Option<[f32; 4]> = None;
-            for handle in rigid_body.colliders() {
-                let collider = self.rapier.colliders.get(*handle)?;
-                let aabb = collider.compute_aabb();
-                bounds = Some(bounds.map_or(
-                    [aabb.mins.x, aabb.mins.y, aabb.maxs.x, aabb.maxs.y],
-                    |current| [
-                        current[0].min(aabb.mins.x),
-                        current[1].min(aabb.mins.y),
-                        current[2].max(aabb.maxs.x),
-                        current[3].max(aabb.maxs.y),
-                    ],
-                ));
-            }
-            let bounds = bounds?;
-            let center = rigid_body.center_of_mass();
-            let radius: f32 = [
-                [bounds[0], bounds[1]],
-                [bounds[0], bounds[3]],
-                [bounds[2], bounds[1]],
-                [bounds[2], bounds[3]],
-            ].into_iter().map(|corner| {
-                (corner[0] - center.x).hypot(corner[1] - center.y)
-            }).fold(0.0, f32::max);
-            let angle: f32 = (rigid_body.angvel().abs() * delta_time)
-                .min(std::f32::consts::PI);
-            let rotational_margin: f32 = radius * 2.0 * (angle * 0.5).sin();
-            let motion = rigid_body.linvel() * delta_time;
-            let margin: f32 = 1.0 / 8.0 + rotational_margin;
-            Some([
-                ((bounds[0] + motion.x.min(0.0) - margin) * 8.0).floor() as i32,
-                ((bounds[1] + motion.y.min(0.0) - margin) * 8.0).floor() as i32,
-                ((bounds[2] + motion.x.max(0.0) + margin) * 8.0).ceil() as i32,
-                ((bounds[3] + motion.y.max(0.0) + margin) * 8.0).ceil() as i32,
-            ])
-        }).collect()
+        Some(RigidCellularBodyState {
+            translation: [position.translation.x, position.translation.y],
+            angle: position.rotation.angle(),
+            linear_velocity: [rigid_body.linvel().x, rigid_body.linvel().y],
+            angular_velocity: rigid_body.angvel(),
+            center_of_mass: [center.x, center.y],
+            inverse_mass: rigid_body.mass_properties().local_mprops.inv_mass,
+            inverse_angular_inertia: rigid_body.mass_properties().effective_world_inv_inertia,
+        })
     }
 
     /// Removes one rigid body and all attached colliders
@@ -169,10 +137,11 @@ impl ScenePhysicsWorld {
                 ],
                 false,
             );
-            Self::replace_cellular_collider(
+            self.ccd_fixed_targets_dirty |= Self::replace_cellular_collider(
                 &mut self.rapier,
                 &mut self.static_cellular_terrain,
                 shape,
+                InteractionGroups::all(),
             );
         }
         self.cellular_terrain_snapshot = Some(snapshot);
@@ -191,11 +160,15 @@ impl ScenePhysicsWorld {
         while self.dynamic_cellular_terrain.len() > shapes.len() {
             if let Some(handle) = self.dynamic_cellular_terrain.pop().flatten() {
                 self.rapier.remove_collider(handle);
+                self.ccd_fixed_targets_dirty = true;
             }
         }
         self.dynamic_cellular_terrain.resize_with(shapes.len(), || None);
         for (handle, shape) in self.dynamic_cellular_terrain.iter_mut().zip(shapes) {
-            Self::replace_cellular_collider(&mut self.rapier, handle, shape);
+            self.ccd_fixed_targets_dirty |=
+                Self::replace_cellular_collider(
+                    &mut self.rapier, handle, shape, Self::pawn_terrain_solver_groups(),
+                );
         }
         self.dynamic_cellular_terrain_state = Some((snapshot.sequence, regions));
     }
@@ -311,17 +284,25 @@ impl ScenePhysicsWorld {
         rapier: &mut PhysicsWorld,
         handle: &mut Option<ColliderHandle>,
         shape: Option<SharedShape>,
-    ) {
+        solver_groups: InteractionGroups,
+    ) -> bool {
         match (shape, *handle) {
-            (Some(shape), Some(handle)) => rapier.colliders[handle].set_shape(shape),
+            (Some(shape), Some(handle)) => {
+                rapier.colliders[handle].set_shape(shape);
+                true
+            }
             (Some(shape), None) => {
-                *handle = Some(rapier.insert_collider(ColliderBuilder::new(shape).build(), None));
+                *handle = Some(rapier.insert_collider(
+                    ColliderBuilder::new(shape).solver_groups(solver_groups).build(), None,
+                ));
+                true
             }
             (None, Some(current)) => {
                 rapier.remove_collider(current);
                 *handle = None;
+                true
             }
-            (None, None) => (),
+            (None, None) => false,
         }
     }
 
@@ -329,7 +310,41 @@ impl ScenePhysicsWorld {
     pub fn step(&mut self, gravity: [f32; 2], delta_time: f32) {
         self.rapier.gravity = Vector::new(gravity[0], gravity[1]);
         self.rapier.integration_parameters.dt = delta_time;
+        if self.ccd_fixed_targets_dirty {
+            self.rapier.ccd_solver = CCDSolver::new();
+            self.ccd_fixed_targets_dirty = false;
+        }
         self.rapier.step();
+    }
+
+    /// Applies one already-integrated GPU impulse batch to its authoritative body
+    pub(crate) fn apply_rigid_cellular_body_reaction(
+        &mut self,
+        body: &RigidCellularBody,
+        impulse: [f32; 2],
+        angular_impulse: f32,
+    ) -> bool {
+        let Some(rigid_body) = self.rapier.bodies.get_mut(body.handle) else { return false; };
+        if impulse != [0.0; 2] { rigid_body.apply_impulse(Vector::new(impulse[0], impulse[1]), true); }
+        if angular_impulse != 0.0 { rigid_body.apply_torque_impulse(angular_impulse, true); }
+        true
+    }
+
+    /// Wakes one authoritative rigid body for granular support maintenance
+    pub(crate) fn wake_rigid_cellular_body(&mut self, body: &RigidCellularBody) -> bool {
+        let Some(rigid_body) = self.rapier.bodies.get_mut(body.handle) else { return false; };
+        rigid_body.wake_up(true);
+        true
+    }
+
+    fn rigid_solver_groups() -> InteractionGroups {
+        InteractionGroups::all()
+            .with_memberships(Group::GROUP_1)
+            .with_filter(Group::ALL & !Group::GROUP_2)
+    }
+
+    fn pawn_terrain_solver_groups() -> InteractionGroups {
+        InteractionGroups::all().with_memberships(Group::GROUP_2)
     }
 
     /// Resolves a character shape's desired translation against the scene collision world

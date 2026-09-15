@@ -27,6 +27,7 @@ struct RigidCell {
 @group(0) @binding(6) var<storage, read_write> rigid_claims: array<atomic<u32>>;
 @group(0) @binding(7) var<storage, read> rigid_cells: array<RigidCell>;
 @group(0) @binding(8) var<storage, read> rigid_transforms: array<vec4<f32>>;
+@group(0) @binding(9) var<storage, read_write> rigid_owners: array<u32>;
 
 @compute @workgroup_size(64)
 fn clear_cellular_physics_body_proxy(@builtin(global_invocation_id) invocation: vec3<u32>) {
@@ -35,6 +36,7 @@ fn clear_cellular_physics_body_proxy(@builtin(global_invocation_id) invocation: 
     velocity[invocation.x] = vec4<f32>(0.0);
     rigid_material_identifiers[invocation.x] = 0u;
     rigid_appearances[invocation.x] = 0u;
+    rigid_owners[invocation.x] = 0u;
     atomicStore(&rigid_claims[invocation.x], 0xffffffffu);
     if invocation.x == 0u { atomicStore(&count[0], 0u); }
 }
@@ -121,13 +123,13 @@ fn resolve_rigid_cell_proxy(@builtin(global_invocation_id) invocation: vec3<u32>
             let point: vec2<f32> = (vec2<f32>(f32(x), f32(y)) + vec2<f32>(0.5)) /
                 CELLS_PER_TILE_FLOAT;
             let radius: vec2<f32> = point - center_of_mass;
-            occupancy[index] = 1u;
+            occupancy[index] = 3u;
+            rigid_owners[index] = cell.body + 1u;
             let point_velocity: vec2<f32> =
                 motion.xy + motion.z * vec2<f32>(-radius.y, radius.x);
             velocity[index] = vec4<f32>(point_velocity.x, point_velocity.y, 0.0, 0.0);
             rigid_material_identifiers[index] = cell.material_identifier;
             rigid_appearances[index] = cell.appearance;
-            atomicAdd(&count[0], 1u);
         }
     }
 }
