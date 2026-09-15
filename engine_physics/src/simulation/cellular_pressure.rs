@@ -919,6 +919,10 @@ impl Drop for CellularPressure {
 }
 
 #[cfg(test)]
+#[path = "rigid_contact_tests.rs"]
+mod rigid_contact_tests;
+
+#[cfg(test)]
 mod tests {
 
     use super::*;

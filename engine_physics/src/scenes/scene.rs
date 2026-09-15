@@ -723,7 +723,7 @@ impl Scene {
                 let contacts = static_contacts || granular_contacts ||
                     batch.contact_counts[index] != 0;
                 let wake = contacts != self.rigid_cellular_contact_active[index] ||
-                    granular_contacts && batch.moving_contact_counts[index] != 0;
+                    batch.moving_contact_counts[index] != 0;
                 if !self.physics_world.apply_rigid_cellular_body_reaction(
                     &self.rigid_cellular_bodies[index], [reaction[0], reaction[1]],
                     reaction[2], batch.energy_budgets[index], wake,
