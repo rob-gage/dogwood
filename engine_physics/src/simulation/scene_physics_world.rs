@@ -765,7 +765,12 @@ impl ScenePhysicsWorld {
             .with_filter(Group::GROUP_1)
     }
     fn pawn_solver_groups() -> InteractionGroups {
-        Self::pawn_collision_groups()
+        InteractionGroups::all()
+            .with_memberships(Group::GROUP_2)
+            .with_filter(Group::GROUP_1)
+    }
+    fn pawn_query_groups() -> InteractionGroups {
+        InteractionGroups::all().with_memberships(Group::GROUP_1 | Group::GROUP_3 | Group::GROUP_4)
     }
 
     /// Resolves authoritative actor motion through Rapier terrain and rigid-body queries.
@@ -863,9 +868,14 @@ impl ScenePhysicsWorld {
                 remaining,
                 primitive.as_ref(),
                 options,
-                exclude.map_or_else(QueryFilter::default, |h| {
-                    QueryFilter::default().exclude_collider(h)
-                }),
+                exclude.map_or_else(
+                    || QueryFilter::default().groups(Self::pawn_query_groups()),
+                    |h| {
+                        QueryFilter::default()
+                            .groups(Self::pawn_query_groups())
+                            .exclude_collider(h)
+                    },
+                ),
             ) {
                 if hit.time_of_impact + 1e-4 < earliest {
                     earliest = hit.time_of_impact;
@@ -946,9 +956,14 @@ impl ScenePhysicsWorld {
             desired,
             primitive.as_ref(),
             options,
-            exclude.map_or_else(QueryFilter::default, |h| {
-                QueryFilter::default().exclude_collider(h)
-            }),
+            exclude.map_or_else(
+                || QueryFilter::default().groups(Self::pawn_query_groups()),
+                |h| {
+                    QueryFilter::default()
+                        .groups(Self::pawn_query_groups())
+                        .exclude_collider(h)
+                },
+            ),
         ) {
             if hit.normal1.dot(up) > 1e-4 && hit.time_of_impact <= earliest {
                 earliest = hit.time_of_impact;
@@ -1474,6 +1489,15 @@ mod tests {
         let dynamic = ScenePhysicsWorld::dynamic_collision_groups();
         let static_terrain = ScenePhysicsWorld::terrain_collision_groups();
         assert!(rigid.test(dynamic));
+        assert!(rigid.test(ScenePhysicsWorld::pawn_solver_groups()));
+        assert!(
+            !ScenePhysicsWorld::pawn_solver_groups()
+                .test(ScenePhysicsWorld::terrain_solver_groups())
+        );
+        assert!(
+            !ScenePhysicsWorld::pawn_solver_groups()
+                .test(ScenePhysicsWorld::dynamic_solver_groups())
+        );
         assert!(
             ScenePhysicsWorld::rigid_solver_groups()
                 .test(ScenePhysicsWorld::dynamic_solver_groups())
