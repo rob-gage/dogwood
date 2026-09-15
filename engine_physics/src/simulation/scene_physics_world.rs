@@ -293,10 +293,8 @@ impl ScenePhysicsWorld {
             shape, position, desired, up, walkable_normal, ignored_cell_normal, collisions,
         );
         if snap_distance > 0.0 && desired.dot(up) <= 0.0 && !grounded {
-            let (snap, snapped) = self.resolve_actor_translation(
-                shape, position + translation, -up * snap_distance, up, walkable_normal,
-                None, collisions,
-            );
+            let (snap, snapped) = self.resolve_actor_support(shape, position + translation,
+                snap_distance, up);
             if snapped {
                 translation += snap;
                 grounded = true;
@@ -400,6 +398,62 @@ impl ScenePhysicsWorld {
             if active_normals == 0 { consumed += remaining; break; }
         }
         (consumed, grounded)
+    }
+
+    /// Casts only along gravity-relative down without allowing a support correction to slide.
+    pub(crate) fn resolve_actor_support(
+        &self,
+        shape: ActorCollisionShape,
+        position: Vector,
+        distance: f32,
+        up: Vector,
+    ) -> (Vector, bool) {
+        if !distance.is_finite() || distance <= 0.0 { return (Vector::ZERO, false); }
+        let offset = 1.0 / 1024.0;
+        let desired = -up * distance;
+        let primitive = shape.rapier_shape();
+        let extent = shape.world_extent(up) + Vector::splat(offset);
+        let minimum = (position + desired).min(position) - extent;
+        let maximum = (position + desired).max(position) + extent;
+        let bounds = [(minimum.x * 8.0).floor() as i32, (minimum.y * 8.0).floor() as i32,
+            (maximum.x * 8.0).ceil() as i32, (maximum.y * 8.0).ceil() as i32];
+        let moving_pose = shape.pose(position, up);
+        let cell = SharedShape::cuboid(1.0 / 16.0, 1.0 / 16.0);
+        let options = ShapeCastOptions { max_time_of_impact: 1.0,
+            target_distance: offset, stop_at_penetration: false,
+            compute_impact_geometry_on_penetration: true };
+        let mut earliest = 1.0f32;
+        let mut support = false;
+        for y in bounds[1]..bounds[3] {
+            for x in bounds[0]..bounds[2] {
+                let occupied = self.cellular_terrain_snapshot.as_ref().is_some_and(|snapshot|
+                    snapshot.is_static_cell_occupied(x, y) == Some(true) ||
+                    snapshot.is_dynamic_cell_occupied(x, y) == Some(true));
+                if !occupied { continue; }
+                let cell_pose = Pose::translation(x as f32 / 8.0 + 1.0 / 16.0,
+                    y as f32 / 8.0 + 1.0 / 16.0);
+                let Ok(Some(hit)) = cast_shapes(&moving_pose, desired, primitive.as_ref(),
+                    &cell_pose, Vector::ZERO, cell.as_ref(), options) else { continue; };
+                if (moving_pose.rotation * hit.normal2).dot(up) > 1e-4 &&
+                        hit.time_of_impact <= earliest {
+                    earliest = hit.time_of_impact;
+                    support = true;
+                }
+            }
+        }
+        let query = match self.static_cellular_terrain {
+            Some(terrain) => self.rapier.query_pipeline().with_filter(
+                QueryFilter::default().exclude_collider(terrain)),
+            None => self.rapier.query_pipeline(),
+        };
+        if let Some((_handle, hit)) = query.cast_shape(&moving_pose, desired, primitive.as_ref(),
+                options) {
+            if hit.normal1.dot(up) > 1e-4 && hit.time_of_impact <= earliest {
+                earliest = hit.time_of_impact;
+                support = true;
+            }
+        }
+        (-up * (distance * earliest), support)
     }
 
 }

@@ -200,16 +200,19 @@ pub trait SceneSimulation {
         let walkable_normal: f32 = configuration.maximum_slope_angle.cos();
         let desired_translation: Vector = desired_velocity * delta_time;
         let virtual_surface = was_grounded && !jump_requested && surface_direction.is_some();
-        let (resolved_translation, collision_grounded) = physics_world.move_actor(
-            collision_shape, Vector::new(world_x, world_y), desired_translation, up,
-            walkable_normal, if virtual_surface { 0.0 } else { 1.0 / 8.0 },
-            surface_direction.map(|_| -tangent * travel_direction),
-            &mut |normal| {
+        let mut collisions = |normal: Vector| {
                 let normal_up: f32 = normal.dot(up);
                 if normal_up >= walkable_normal { contacted_walkable_surface = true; }
                 else if normal_up > -walkable_normal { contacted_wall = true; }
-            },
-        );
+            };
+        let (resolved_translation, collision_grounded) = if virtual_surface {
+            Self::traverse_actor_pawn_virtual_surface(physics_world, collision_shape,
+                Vector::new(world_x, world_y), desired_translation, tangent, up,
+                walkable_normal, &mut collisions)
+        } else {
+            physics_world.move_actor(collision_shape, Vector::new(world_x, world_y),
+                desired_translation, up, walkable_normal, 1.0 / 8.0, None, &mut collisions)
+        };
         let virtual_surface_complete = virtual_surface && (resolved_translation - desired_translation)
             .length_squared() <= 4.0 / (1024.0 * 1024.0);
         Self::integrate_actor_position(
@@ -276,6 +279,30 @@ pub trait SceneSimulation {
         Some((tangent * direction * lookahead_run + up * lookahead_rise).normalize())
     }
 
+    /// Traverses a validated cellular staircase above its raw risers, then settles on support.
+    fn traverse_actor_pawn_virtual_surface(
+        physics_world: &ScenePhysicsWorld,
+        collision_shape: ActorCollisionShape,
+        position: Vector,
+        desired: Vector,
+        tangent: Vector,
+        up: Vector,
+        walkable_normal: f32,
+        collisions: &mut impl FnMut(Vector),
+    ) -> (Vector, bool) {
+        let requested_rise = desired.dot(up);
+        // A canonical cell is the maximum discrete riser accepted by the validated probe.
+        let clearance = 1.0 / 8.0 + requested_rise.max(0.0);
+        let (raised, _) = physics_world.move_actor(collision_shape, position, up * clearance,
+            up, walkable_normal, 0.0, None, collisions);
+        if raised.dot(up) < clearance - 1.0 / 1024.0 { return (raised, false); }
+        let (forward, _) = physics_world.move_actor(collision_shape, position + raised,
+            tangent * desired.dot(tangent), up, walkable_normal, 0.0, None, collisions);
+        let (settled, grounded) = physics_world.resolve_actor_support(collision_shape,
+            position + raised + forward, clearance - requested_rise, up);
+        (raised + forward + settled, grounded)
+    }
+
     /// Measures signed support-height change at one gravity-relative tangent distance
     fn probe_actor_pawn_support_rise(
         physics_world: &ScenePhysicsWorld,
@@ -301,13 +328,9 @@ pub trait SceneSimulation {
             return None;
         }
         let forward_position: Vector = raised_position + probe_forward;
-        let mut found_support: bool = false;
-        let (probe_down, grounded) = physics_world.move_actor(collision_shape, forward_position,
-            -up * (rise_clearance + maximum_rise + 1.0 / 8.0), up,
-            maximum_slope_angle.cos(), 0.0, None, &mut |normal| {
-                if normal.dot(up) > 1e-4 { found_support = true; }
-            });
-        if !found_support && !grounded { return None; }
+        let (probe_down, grounded) = physics_world.resolve_actor_support(collision_shape,
+            forward_position, rise_clearance + maximum_rise + 1.0 / 8.0, up);
+        if !grounded { return None; }
         Some((probe_up + probe_forward + probe_down).dot(up))
     }
 
@@ -467,6 +490,23 @@ mod tests {
     #[test]
     fn midpoint_probe_rejects_locally_too_steep_staircase() {
         assert!(probe_staircase(|x| x * 2).is_none());
+    }
+
+    #[test]
+    fn virtual_surface_traversal_clears_a_riser_without_losing_surface_distance() {
+        let mut physics = ScenePhysicsWorld::new();
+        physics.update_cellular_terrain(staircase_snapshot(|x| x));
+        let surface = Scene::probe_actor_pawn_walking_surface(&physics,
+            ActorCollisionShape::Rectangle { width: 0.05, height: 0.5 },
+            Vector::new(0.0625, 0.251),
+            Vector::X, Vector::Y, 1.0, 50.0_f32.to_radians(), 1.0 / 60.0)
+            .expect("45 degree staircase");
+        let position = Vector::new(0.1, 0.2885);
+        let desired = surface * 0.1;
+        let (movement, _) = Scene::traverse_actor_pawn_virtual_surface(&physics,
+            ActorCollisionShape::Rectangle { width: 0.05, height: 0.5 }, position, desired,
+            Vector::X, Vector::Y, 50.0_f32.to_radians().cos(), &mut |_| { });
+        assert!((movement - desired).length() < 1.0 / 1024.0);
     }
 
 }
