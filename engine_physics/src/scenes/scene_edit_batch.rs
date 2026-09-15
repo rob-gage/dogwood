@@ -41,6 +41,11 @@ impl SceneEditBatch {
         self.edits.push(SceneEdit::PlaceCells { cells });
     }
 
+    /// Adds one atomic authored rigid cellular body.
+    pub fn place_rigid_body(&mut self, cells: Vec<SceneEditCellPlacement>) {
+        self.edits.push(SceneEdit::PlaceRigidBody { cells });
+    }
+
     /// Adds a request to erase material from cells
     pub fn erase(&mut self, cells: Vec<CellCoordinates>) {
         self.edits.push(SceneEdit::Erase { cells });

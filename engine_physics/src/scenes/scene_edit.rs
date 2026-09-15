@@ -9,6 +9,10 @@ pub enum SceneEdit {
     PlaceCells {
         cells: Vec<SceneEditCellPlacement>,
     },
+    /// Creates one authoritative body-local rigid cellular body.
+    PlaceRigidBody {
+        cells: Vec<SceneEditCellPlacement>,
+    },
     /// Erases material from cells
     Erase {
         cells: Vec<CellCoordinates>,

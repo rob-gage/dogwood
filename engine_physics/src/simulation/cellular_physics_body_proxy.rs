@@ -131,6 +131,8 @@ impl CellularPhysicsBodyProxy {
             .min(self.buffered_cell_count as usize)
     }
 
+    pub(crate) const fn rigid_cell_capacity(&self) -> usize { self.buffered_cell_count as usize }
+
     pub(crate) fn rasterize(
         &mut self, accelerator: &Accelerator, origin: TileCoordinates, width: u16, height: u16,
         ring_offset_x: u16, ring_offset_y: u16, gravity: [f32; 2],

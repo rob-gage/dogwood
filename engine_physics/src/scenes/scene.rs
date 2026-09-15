@@ -64,6 +64,7 @@ use engine_graphics::{
 };
 use std::{
     collections::{
+        BTreeMap,
         HashMap,
         HashSet,
         VecDeque,
@@ -520,6 +521,14 @@ impl Scene {
         let mut deferred = SceneEditBatch::new();
         for edit in edits.drain() {
             match edit {
+                SceneEdit::PlaceRigidBody { cells } => {
+                    if cells.is_empty() { continue; }
+                    if !cells.iter().all(|cell| self.cell_edit_index(cell.coordinates).is_some()) {
+                        deferred.place_rigid_body(cells);
+                    } else {
+                        self.insert_authored_rigid_cellular_body(cells);
+                    }
+                }
                 SceneEdit::PlaceCells { cells } => {
                     for SceneEditCellPlacement {
                         coordinates,
@@ -972,17 +981,10 @@ impl Scene {
             edits.erase(component.clone());
             self.apply_edits_immediate(&mut edits)?;
             for coordinates in &component { snapshot.clear_static_cell(coordinates.x, coordinates.y); }
-            self.rigid_cellular_bodies.push(self.physics_world.insert_rigid_cellular_body(
-                [minimum_x as f32 / 8.0, minimum_y as f32 / 8.0], 0.0,
-                self.data.materials(), cells,
-                friction / divisor, restitution / divisor, [0.0; 2], 0.0,
-            ));
-            self.rigid_cellular_topology_revision =
-                self.rigid_cellular_topology_revision.wrapping_add(1);
-            self.rigid_cellular_support.clear();
-            self.rigid_cellular_recovery.clear();
-            self.rigid_cellular_contact_active.resize(self.rigid_cellular_bodies.len(), false);
-            self.rigid_granular_contact_active.resize(self.rigid_cellular_bodies.len(), false);
+            self.insert_rigid_cellular_body(
+                [minimum_x as f32 / 8.0, minimum_y as f32 / 8.0], cells,
+                friction / divisor, restitution / divisor,
+            );
         }
         self.rigid_detachment_snapshot = Some(snapshot.clone());
         Ok(())
@@ -1048,6 +1050,38 @@ impl Scene {
             });
         let divisor = cells.len().max(1) as f32;
         (friction / divisor, restitution / divisor)
+    }
+
+    /// Validates and inserts one direct, non-canonical rigid cellular body.
+    fn insert_authored_rigid_cellular_body(&mut self, placements: Vec<SceneEditCellPlacement>) {
+        let mut unique: BTreeMap<(i32, i32), SceneEditCellPlacement> = BTreeMap::new();
+        for placement in placements { unique.insert((placement.coordinates.x, placement.coordinates.y), placement); }
+        if unique.is_empty() || !unique.values().all(|cell| matches!(
+            self.data.materials().get(cell.material_identifier), Some(Material::CellularStatic { .. })
+        )) { return; }
+        let used: usize = self.rigid_cellular_bodies.iter().map(|body| body.cells.len()).sum();
+        if used + unique.len() > self.cellular_physics_body_proxy.rigid_cell_capacity() { return; }
+        let min_x = unique.keys().map(|(x, _)| *x).min().unwrap();
+        let min_y = unique.keys().map(|(_, y)| *y).min().unwrap();
+        let cells: Vec<_> = unique.into_values().map(|cell| (
+            [cell.coordinates.x - min_x, cell.coordinates.y - min_y],
+            cell.material_identifier, cell.appearance,
+        )).collect();
+        let (friction, restitution) = self.rigid_cellular_material_response(&cells);
+        self.insert_rigid_cellular_body([min_x as f32 / 8.0, min_y as f32 / 8.0], cells, friction, restitution);
+    }
+
+    /// Centralizes topology invalidation for every rigid-body insertion.
+    fn insert_rigid_cellular_body(
+        &mut self, position: [f32; 2], cells: Vec<([i32; 2], MaterialIdentifier, CellularAppearance)>,
+        friction: f32, restitution: f32,
+    ) {
+        self.rigid_cellular_bodies.push(self.physics_world.insert_rigid_cellular_body(
+            position, 0.0, self.data.materials(), cells, friction, restitution, [0.0; 2], 0.0));
+        self.rigid_cellular_topology_revision = self.rigid_cellular_topology_revision.wrapping_add(1);
+        self.rigid_cellular_support.clear(); self.rigid_cellular_recovery.clear();
+        self.rigid_cellular_contact_active.resize(self.rigid_cellular_bodies.len(), false);
+        self.rigid_granular_contact_active.resize(self.rigid_cellular_bodies.len(), false);
     }
 
     /// Resolves one world cell to a resident physical GPU cell
@@ -2672,6 +2706,38 @@ mod tests {
             scene.rigid_cellular_topology_revision,
         );
         accelerator.poll().unwrap();
+    }
+
+    #[test]
+    fn queued_authored_rigid_body_is_atomic_and_body_local() {
+        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let accelerator = Arc::new(Accelerator::new().unwrap());
+        let mut materials = MaterialRegistry::new();
+        let stone = materials.register(Material::CellularStatic { name: "Stone".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(1, 1, 1)), mass: 2.0,
+            pressure_ignore_threshold: 1.0, default_integrity: 1.0, debris_material: None,
+            debris_yield_rate: 0.0, pressure_transmission: 1.0, friction: 0.7, restitution: 0.05 });
+        let sand = materials.register(Material::CellularDynamic { name: "Sand".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(1, 1, 1)), mass: 1.0,
+            pressure_transmission: 1.0, friction: 0.5, restitution: 0.0 });
+        let mut scene = Scene::new(&accelerator, materials, SceneSimulationConfiguration {
+            gravity: [0.0, -8.0], width: 4, height: 4, buffer_size: 2, streaming_batch_size: 1 }).unwrap();
+        let mut edits = SceneEditBatch::new();
+        edits.place_rigid_body(vec![
+            SceneEditCellPlacement { coordinates: CellCoordinates { x: 10, y: 20 }, material_identifier: stone, appearance: CellularAppearance(3) },
+            SceneEditCellPlacement { coordinates: CellCoordinates { x: 11, y: 20 }, material_identifier: stone, appearance: CellularAppearance(4) },
+            SceneEditCellPlacement { coordinates: CellCoordinates { x: 10, y: 20 }, material_identifier: stone, appearance: CellularAppearance(5) },
+        ]);
+        edits.place_rigid_body(vec![SceneEditCellPlacement { coordinates: CellCoordinates { x: 12, y: 20 }, material_identifier: sand, appearance: CellularAppearance::NEUTRAL }]);
+        scene.queue_edits(edits);
+        scene.update(Duration::ZERO, false).unwrap();
+        assert_eq!(scene.rigid_cellular_bodies.len(), 1);
+        let body = &scene.rigid_cellular_bodies[0];
+        assert_eq!(body.cells.len(), 2);
+        assert_eq!(body.cells[0].0, [0, 0]);
+        assert_eq!(body.cells[1].0, [1, 0]);
+        assert_eq!(body.cells[0].2.0, 5);
+        assert_eq!(scene.rigid_cellular_topology_revision, 1);
     }
 
 }
