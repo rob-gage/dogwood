@@ -84,6 +84,7 @@ fn clear_rigid_granular_contact_statistics(
     let body: u32 = invocation.x;
     if body >= parameters.body_count { return; }
     atomicStore(&contact_statistics[body].contact_count, 0u);
+    atomicStore(&contact_statistics[body].padding_0, 0u);
     for (var channel: u32 = 0u; channel < 4u; channel++) {
         atomicStore(&contact_statistics[body].geometric_support[channel], 0u);
         atomicStore(&contact_statistics[body].motion_support[channel], 0u);

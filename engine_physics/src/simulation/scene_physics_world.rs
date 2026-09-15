@@ -8,9 +8,7 @@ use super::{
 use crate::actors::ActorCollisionShape;
 use rapier2d::{
     prelude::{
-        CCDSolver,
         ColliderBuilder,
-        ColliderHandle,
         Group,
         InteractionGroups,
         LockedAxes,
@@ -24,18 +22,13 @@ use rapier2d::{
 };
 use rapier2d::{
     parry::query::{cast_shapes, ShapeCastOptions},
-    pipeline::QueryFilter,
 };
 
-/// Owns the Rapier collision world and its derived cellular terrain
+/// Owns Rapier rigid bodies and the CPU-readable cellular collision snapshot
 pub struct ScenePhysicsWorld {
     rapier: PhysicsWorld,
-    /// World-scale static cellular terrain, rebuilt only when static occupancy changes
-    static_cellular_terrain: Option<ColliderHandle>,
     /// Latest asynchronously completed canonical cellular collision snapshot
     cellular_terrain_snapshot: Option<CollisionOccupancySnapshot>,
-    /// Whether Rapier's CCD fixed-target cache predates current cellular terrain
-    ccd_fixed_targets_dirty: bool,
 }
 
 impl ScenePhysicsWorld {
@@ -44,9 +37,7 @@ impl ScenePhysicsWorld {
     pub fn new() -> Self {
         Self {
             rapier: PhysicsWorld::new(),
-            static_cellular_terrain: None,
             cellular_terrain_snapshot: None,
-            ccd_fixed_targets_dirty: false,
         }
     }
 
@@ -108,146 +99,18 @@ impl ScenePhysicsWorld {
         self.rapier.remove_body(body.handle);
     }
 
-    /// Updates world-scale Rapier terrain only when static cellular occupancy changes
-    pub fn update_cellular_terrain(
+    /// Replaces the latest CPU-readable cellular collision snapshot
+    pub fn update_cellular_snapshot(
         &mut self,
         snapshot: CollisionOccupancySnapshot,
     ) {
-        let static_changed: bool = self.cellular_terrain_snapshot.as_ref().is_none_or(|current| {
-            current.origin != snapshot.origin || current.width != snapshot.width ||
-                current.height != snapshot.height || current.static_masks != snapshot.static_masks
-        });
-        if static_changed {
-            let origin_x: i32 = snapshot.origin.x * 8;
-            let origin_y: i32 = snapshot.origin.y * 8;
-            let shape: Option<SharedShape> = Self::cellular_collision_shape(
-                &snapshot,
-                [
-                    origin_x,
-                    origin_y,
-                    origin_x + i32::from(snapshot.width) * 8,
-                    origin_y + i32::from(snapshot.height) * 8,
-                ],
-            );
-            self.ccd_fixed_targets_dirty |= Self::replace_cellular_collider(
-                &mut self.rapier,
-                &mut self.static_cellular_terrain,
-                shape,
-                InteractionGroups::all(),
-            );
-        }
         self.cellular_terrain_snapshot = Some(snapshot);
-    }
-
-    /// Builds greedy cellular rectangles inside one world-cell area
-    fn cellular_collision_shape(
-        snapshot: &CollisionOccupancySnapshot,
-        area: [i32; 4],
-    ) -> Option<SharedShape> {
-        let snapshot_x: i32 = snapshot.origin.x * 8;
-        let snapshot_y: i32 = snapshot.origin.y * 8;
-        let minimum_x: i32 = area[0].max(snapshot_x);
-        let minimum_y: i32 = area[1].max(snapshot_y);
-        let maximum_x: i32 = area[2].min(snapshot_x + i32::from(snapshot.width) * 8);
-        let maximum_y: i32 = area[3].min(snapshot_y + i32::from(snapshot.height) * 8);
-        let width: i32 = maximum_x - minimum_x;
-        let height: i32 = maximum_y - minimum_y;
-        if width <= 0 || height <= 0 { return None; }
-        let mut consumed: Vec<bool> = vec![false; (width * height) as usize];
-        let occupied = |x: i32, y: i32| snapshot.is_static_cell_occupied(x, y) == Some(true);
-        let mut parts: Vec<(Pose, SharedShape)> = Vec::new();
-        for relative_y in 0..height {
-            let mut relative_x: i32 = 0;
-            while relative_x < width {
-                let index: usize = (relative_y * width + relative_x) as usize;
-                if consumed[index] || !occupied(
-                    minimum_x + relative_x,
-                    minimum_y + relative_y,
-                ) {
-                    relative_x += 1;
-                    continue;
-                }
-                let rectangle_x: i32 = relative_x;
-                let mut rectangle_width: i32 = 1;
-                while rectangle_x + rectangle_width < width {
-                    let next_x: i32 = rectangle_x + rectangle_width;
-                    let next_index: usize = (relative_y * width + next_x) as usize;
-                    if consumed[next_index] || !occupied(
-                        minimum_x + next_x,
-                        minimum_y + relative_y,
-                    ) { break; }
-                    rectangle_width += 1;
-                }
-                let mut rectangle_height: i32 = 1;
-                while relative_y + rectangle_height < height &&
-                        (rectangle_x..rectangle_x + rectangle_width).all(|x| {
-                            let index: usize =
-                                ((relative_y + rectangle_height) * width + x) as usize;
-                            !consumed[index] && occupied(
-                                minimum_x + x,
-                                minimum_y + relative_y + rectangle_height,
-                            )
-                        }) {
-                    rectangle_height += 1;
-                }
-                for y in relative_y..relative_y + rectangle_height {
-                    for x in rectangle_x..rectangle_x + rectangle_width {
-                        consumed[(y * width + x) as usize] = true;
-                    }
-                }
-                let world_x: i32 = minimum_x + rectangle_x;
-                let world_y: i32 = minimum_y + relative_y;
-                parts.push((
-                    Pose::translation(
-                        world_x as f32 / 8.0 + rectangle_width as f32 / 16.0,
-                        world_y as f32 / 8.0 + rectangle_height as f32 / 16.0,
-                    ),
-                    SharedShape::cuboid(
-                        rectangle_width as f32 / 16.0,
-                        rectangle_height as f32 / 16.0,
-                    ),
-                ));
-                relative_x += rectangle_width;
-            }
-        }
-        (!parts.is_empty()).then(|| SharedShape::compound(parts))
-    }
-
-    /// Changes one persistent collider handle to represent an optional derived shape
-    fn replace_cellular_collider(
-        rapier: &mut PhysicsWorld,
-        handle: &mut Option<ColliderHandle>,
-        shape: Option<SharedShape>,
-        solver_groups: InteractionGroups,
-    ) -> bool {
-        match (shape, *handle) {
-            (Some(shape), Some(handle)) => {
-                rapier.colliders[handle].set_shape(shape);
-                true
-            }
-            (Some(shape), None) => {
-                *handle = Some(rapier.insert_collider(
-                    ColliderBuilder::new(shape).solver_groups(solver_groups).build(), None,
-                ));
-                true
-            }
-            (None, Some(current)) => {
-                rapier.remove_collider(current);
-                *handle = None;
-                true
-            }
-            (None, None) => false,
-        }
     }
 
     /// Advances Rapier's collision world by one fixed scene step
     pub fn step(&mut self, gravity: [f32; 2], delta_time: f32) {
         self.rapier.gravity = Vector::new(gravity[0], gravity[1]);
         self.rapier.integration_parameters.dt = delta_time;
-        if self.ccd_fixed_targets_dirty {
-            self.rapier.ccd_solver = CCDSolver::new();
-            self.ccd_fixed_targets_dirty = false;
-        }
         self.rapier.step();
     }
 
@@ -257,10 +120,13 @@ impl ScenePhysicsWorld {
         body: &RigidCellularBody,
         impulse: [f32; 2],
         angular_impulse: f32,
+        wake: bool,
     ) -> bool {
         let Some(rigid_body) = self.rapier.bodies.get_mut(body.handle) else { return false; };
-        if impulse != [0.0; 2] { rigid_body.apply_impulse(Vector::new(impulse[0], impulse[1]), true); }
-        if angular_impulse != 0.0 { rigid_body.apply_torque_impulse(angular_impulse, true); }
+        if impulse != [0.0; 2] {
+            rigid_body.apply_impulse(Vector::new(impulse[0], impulse[1]), wake);
+        }
+        if angular_impulse != 0.0 { rigid_body.apply_torque_impulse(angular_impulse, wake); }
         true
     }
 
@@ -360,11 +226,7 @@ impl ScenePhysicsWorld {
                     }
                 }
             }
-            let query = match self.static_cellular_terrain {
-                Some(terrain) => self.rapier.query_pipeline().with_filter(
-                    QueryFilter::default().exclude_collider(terrain)),
-                None => self.rapier.query_pipeline(),
-            };
+            let query = self.rapier.query_pipeline();
             if let Some((_handle, hit)) = query.cast_shape(&moving_pose, remaining,
                     primitive.as_ref(), options) {
                 if hit.time_of_impact + 1e-4 < earliest {
@@ -441,11 +303,7 @@ impl ScenePhysicsWorld {
                 }
             }
         }
-        let query = match self.static_cellular_terrain {
-            Some(terrain) => self.rapier.query_pipeline().with_filter(
-                QueryFilter::default().exclude_collider(terrain)),
-            None => self.rapier.query_pipeline(),
-        };
+        let query = self.rapier.query_pipeline();
         if let Some((_handle, hit)) = query.cast_shape(&moving_pose, desired, primitive.as_ref(),
                 options) {
             if hit.normal1.dot(up) > 1e-4 && hit.time_of_impact <= earliest {
@@ -469,26 +327,6 @@ mod tests {
     use rapier2d::prelude::Vector;
 
     #[test]
-    fn cellular_terrain_builds_only_static_world_geometry() {
-        let mut physics: ScenePhysicsWorld = ScenePhysicsWorld::new();
-        physics.update_cellular_terrain(CollisionOccupancySnapshot {
-            sequence: 0,
-            origin: TileCoordinates { x: 0, y: 0 },
-            width: 1,
-            height: 1,
-            static_masks: vec![[0b11, 0]].into_boxed_slice(),
-            dynamic_masks: vec![[1 << 8, 1 << 31]].into_boxed_slice(),
-        });
-        let static_handle = physics.static_cellular_terrain.expect("static terrain collider");
-        let static_parts = physics.rapier.colliders[static_handle].shape().as_compound()
-            .expect("compound static terrain").shapes();
-        assert!(static_parts.len() == 1);
-        assert!(static_parts[0].1.as_cuboid().is_some_and(|cuboid| {
-            cuboid.half_extents.x == 0.125 && cuboid.half_extents.y == 0.0625
-        }));
-    }
-
-    #[test]
     fn every_actor_primitive_casts_directly_against_cellular_occupancy() {
         for shape in [
             ActorCollisionShape::Circle { radius: 0.25 },
@@ -497,7 +335,7 @@ mod tests {
         ] {
             for static_occupancy in [true, false] {
                 let mut physics = ScenePhysicsWorld::new();
-                physics.update_cellular_terrain(CollisionOccupancySnapshot {
+                physics.update_cellular_snapshot(CollisionOccupancySnapshot {
                     sequence: 0,
                     origin: TileCoordinates { x: 0, y: 0 },
                     width: 1,
@@ -517,7 +355,7 @@ mod tests {
     #[test]
     fn starting_overlap_allows_separating_dynamic_cell_motion() {
         let mut physics = ScenePhysicsWorld::new();
-        physics.update_cellular_terrain(CollisionOccupancySnapshot {
+        physics.update_cellular_snapshot(CollisionOccupancySnapshot {
             sequence: 0,
             origin: TileCoordinates { x: 0, y: 0 },
             width: 1,

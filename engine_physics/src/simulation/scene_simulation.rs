@@ -460,7 +460,7 @@ mod tests {
 
     fn probe_staircase(height: impl Fn(i32) -> i32) -> Option<Vector> {
         let mut physics = ScenePhysicsWorld::new();
-        physics.update_cellular_terrain(staircase_snapshot(height));
+        physics.update_cellular_snapshot(staircase_snapshot(height));
         Scene::probe_actor_pawn_walking_surface(
             &physics,
             ActorCollisionShape::Rectangle { width: 0.05, height: 0.5 },
@@ -495,7 +495,7 @@ mod tests {
     #[test]
     fn virtual_surface_traversal_clears_a_riser_without_losing_surface_distance() {
         let mut physics = ScenePhysicsWorld::new();
-        physics.update_cellular_terrain(staircase_snapshot(|x| x));
+        physics.update_cellular_snapshot(staircase_snapshot(|x| x));
         let surface = Scene::probe_actor_pawn_walking_surface(&physics,
             ActorCollisionShape::Rectangle { width: 0.05, height: 0.5 },
             Vector::new(0.0625, 0.251),

@@ -7,4 +7,5 @@ pub(crate) struct RigidGranularReactionBatch {
     pub(crate) body_count: usize,
     pub(crate) reactions: Box<[[f32; 3]]>,
     pub(crate) contact_counts: Box<[u32]>,
+    pub(crate) static_contact_counts: Box<[u32]>,
 }

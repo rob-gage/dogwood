@@ -123,6 +123,7 @@ impl CellularPhysicsBodyProxy {
     { &self.rigid_material_identifiers }
     pub const fn rigid_appearances_buffer(&self) -> &AcceleratorBuffer { &self.rigid_appearances }
     pub(crate) const fn rigid_owners_buffer(&self) -> &AcceleratorBuffer { &self.rigid_owners }
+    pub(crate) const fn rigid_cells_buffer(&self) -> &AcceleratorBuffer { &self.rigid_cells }
     pub(crate) const fn rigid_transforms_buffer(&self) -> &AcceleratorBuffer { &self.rigid_transforms }
 
     pub(crate) fn rasterize(
