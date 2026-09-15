@@ -22,6 +22,7 @@ pub struct EditorInterface {
     pub selected_tool: Option<MaterialIdentifier>,
     pub eraser_selected: bool,
     pub impulse_selected: bool,
+    pub rigid_body_placement_enabled: bool,
     pub view_mode: EditorViewMode,
     pub show_tile_borders: bool,
     pub show_chunk_borders: bool,
@@ -36,6 +37,7 @@ pub struct EditorInterface {
     pub circle_requested: Rc<Cell<bool>>,
     pub eraser_requested: Rc<Cell<bool>>,
     pub impulse_requested: Rc<Cell<bool>>,
+    pub rigid_body_placement_requested: Rc<Cell<Option<bool>>>,
     pub material_requested: Rc<Cell<Option<MaterialIdentifier>>>,
     pub view_mode_requested: Rc<Cell<EditorViewMode>>,
     pub tile_borders_requested: Rc<Cell<bool>>,
@@ -151,6 +153,10 @@ impl Widget for EditorInterface {
                 }
             });
             egui::CollapsingHeader::new("Materials").default_open(true).show(ui, |ui| {
+                let mut rigid_body_placement_enabled = self.rigid_body_placement_enabled;
+                if ui.checkbox(&mut rigid_body_placement_enabled, "Rigid Body Placement").changed() {
+                    self.rigid_body_placement_requested.set(Some(rigid_body_placement_enabled));
+                }
                 for (identifier, name, color) in &self.materials {
                     if Self::material_button(ui, self.selected_tool == Some(*identifier), name, *color) {
                         self.material_requested.set(Some(*identifier));

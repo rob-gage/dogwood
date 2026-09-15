@@ -11,6 +11,7 @@ use engine::{
             ActorPawnNoclipConfiguration,
         },
         materials::MaterialIdentifier,
+        materials::Material,
         scenes::{
             SceneEditCellPlacement,
             SceneEditBatch,
@@ -30,6 +31,7 @@ use std::{
     error::Error,
     rc::Rc,
     sync::Arc,
+    time::{Duration, Instant},
 };
 use crate::{
     editor_brush::EditorBrush,
@@ -37,6 +39,8 @@ use crate::{
     editor_tool::EditorTool,
     editor_view_mode::EditorViewMode,
 };
+
+const RIGID_BODY_PLACEMENT_INTERVAL: Duration = Duration::from_millis(150);
 
 /// A windowed editor application for a `Game`
 pub struct EditorApplication<G: Game> {
@@ -60,6 +64,12 @@ pub struct EditorApplication<G: Game> {
     brush: EditorBrush,
     /// The preceding anchor of the current primary Scene interaction
     stroke_anchor: Option<CellCoordinates>,
+    /// A single rigid placement click waiting for the normal editor update
+    rigid_body_placement_requested: Option<CellCoordinates>,
+    /// Time of the last rigid placement submitted to the Scene queue
+    last_rigid_body_placement: Option<Instant>,
+    /// Whether static material clicks create rigid bodies
+    rigid_body_placement_enabled: bool,
     /// Unconsumed high-resolution wheel movement in physical pixels
     pixel_scroll_y: f64,
     /// The concrete editor action selected for the primary interaction
@@ -92,6 +102,9 @@ impl<G: Game> EditorApplication<G> {
             is_primary_scene_interaction_held: false,
             brush: EditorBrush::new(),
             stroke_anchor: None,
+            rigid_body_placement_requested: None,
+            last_rigid_body_placement: None,
+            rigid_body_placement_enabled: false,
             pixel_scroll_y: 0.0,
             tool: EditorTool::Eraser,
             view_mode: EditorViewMode::Normal,
@@ -139,6 +152,10 @@ impl<G: Game> EditorApplication<G> {
     /// Applies the current brush stroke through the scene edit boundary
     fn paint_hovered_cells(&mut self) {
         if !self.is_primary_scene_interaction_held { return; }
+        if self.rigid_body_placement_enabled && matches!(self.tool, EditorTool::Material(identifier)
+            if self.application.game().scene().is_some_and(|scene| matches!(
+                scene.materials().get(identifier), Some(Material::CellularStatic { .. })
+            ))) { return; }
         let Some(anchor): Option<CellCoordinates> = self.hovered_cell() else {
             self.stroke_anchor = None;
             return;
@@ -189,6 +206,28 @@ impl<G: Game> EditorApplication<G> {
         self.stroke_anchor = Some(anchor);
     }
 
+    /// Queues one body for one accepted static-material click.
+    fn place_requested_rigid_body(&mut self) {
+        let Some(anchor) = self.rigid_body_placement_requested.take() else { return; };
+        let EditorTool::Material(material_identifier) = self.tool else { return; };
+        let Some(scene) = self.application.game().scene() else { return; };
+        let Some(Material::CellularStatic { graphics, .. }) = scene.materials().get(material_identifier) else { return; };
+        let now = Instant::now();
+        if self.last_rigid_body_placement.is_some_and(|last|
+            now.duration_since(last) < RIGID_BODY_PLACEMENT_INTERVAL) { return; }
+        let variation = graphics.variation();
+        let cells = self.brush.cells(anchor).into_iter().map(|coordinates| SceneEditCellPlacement {
+            coordinates,
+            material_identifier,
+            appearance: CellularAppearance::from_seed(coordinates.appearance_seed(), variation),
+        }).collect();
+        let Some(scene) = self.application.game_mutable().scene_mutable() else { return; };
+        let mut edits = SceneEditBatch::new();
+        edits.place_rigid_body(cells);
+        scene.queue_edits(edits);
+        self.last_rigid_body_placement = Some(now);
+    }
+
     /// Adjusts the brush size and restarts the current stamp when it changes
     fn adjust_brush_size(&mut self, adjustment: i32) {
         if self.brush.adjust_size(adjustment) { self.stroke_anchor = None; }
@@ -208,6 +247,7 @@ impl<G: Game> EditorApplication<G> {
             CursorLeft { .. } => {
                 self.cursor_position = None;
                 self.stroke_anchor = None;
+                self.rigid_body_placement_requested = None;
             }
             MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
                 if ui_consumed && self.hovered_cell().is_none() { return; }
@@ -216,6 +256,16 @@ impl<G: Game> EditorApplication<G> {
                         self.hovered_cell().is_some();
                     if self.is_primary_scene_interaction_held {
                         self.stroke_anchor = None;
+                        let static_material = match self.tool {
+                            EditorTool::Material(material_identifier) => self.application.game().scene()
+                                .filter(|scene| matches!(scene.materials().get(material_identifier),
+                                    Some(Material::CellularStatic { .. })))
+                                .map(|_| material_identifier),
+                            _ => None,
+                        };
+                        if self.rigid_body_placement_enabled && static_material.is_some() {
+                            self.rigid_body_placement_requested = self.hovered_cell();
+                        }
                     }
                 }
             }
@@ -246,6 +296,7 @@ impl<G: Game> EditorApplication<G> {
                 self.cursor_position = None;
                 self.is_primary_scene_interaction_held = false;
                 self.stroke_anchor = None;
+                self.rigid_body_placement_requested = None;
             }
             _ => {}
         }
@@ -327,6 +378,7 @@ impl<G: Game> EditorApplication<G> {
         let circle_requested: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         let eraser_requested: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         let impulse_requested: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+        let rigid_body_placement_requested: Rc<Cell<Option<bool>>> = Rc::new(Cell::new(None));
         let material_requested: Rc<Cell<Option<MaterialIdentifier>>> = Rc::new(Cell::new(None));
         let free_fly_action: Rc<Cell<bool>> = free_fly_requested.clone();
         let return_action: Rc<Cell<bool>> = return_requested.clone();
@@ -357,6 +409,7 @@ impl<G: Game> EditorApplication<G> {
             selected_tool: match self.tool { EditorTool::Material(identifier) => Some(identifier), _ => None },
             eraser_selected: matches!(self.tool, EditorTool::Eraser),
             impulse_selected: matches!(self.tool, EditorTool::Impulse),
+            rigid_body_placement_enabled: self.rigid_body_placement_enabled,
             view_mode: self.view_mode,
             show_tile_borders: self.show_tile_borders,
             show_chunk_borders: self.show_chunk_borders,
@@ -371,6 +424,7 @@ impl<G: Game> EditorApplication<G> {
             circle_requested: circle_action,
             eraser_requested: eraser_action,
             impulse_requested: impulse_requested.clone(),
+            rigid_body_placement_requested: rigid_body_placement_requested.clone(),
             material_requested: material_requested.clone(),
             view_mode_requested: view_mode_requested.clone(),
             tile_borders_requested: tile_borders_requested.clone(),
@@ -385,10 +439,17 @@ impl<G: Game> EditorApplication<G> {
         if impulse_requested.get() {
             self.tool = EditorTool::Impulse;
             self.stroke_anchor = None;
+            self.rigid_body_placement_requested = None;
         }
         if let Some(material_identifier) = material_requested.get() {
             self.tool = EditorTool::Material(material_identifier);
             self.stroke_anchor = None;
+            self.rigid_body_placement_requested = None;
+        }
+        if let Some(enabled) = rigid_body_placement_requested.get() {
+            self.rigid_body_placement_enabled = enabled;
+            self.stroke_anchor = None;
+            self.rigid_body_placement_requested = None;
         }
         if square_requested.get() && self.brush.select_square() { self.stroke_anchor = None; }
         if circle_requested.get() && self.brush.select_circle() { self.stroke_anchor = None; }
@@ -409,6 +470,7 @@ impl<G: Game> EditorApplication<G> {
             self.is_return_pending = true;
             self.update_return();
         }
+        self.place_requested_rigid_body();
         self.paint_hovered_cells();
     }
     pub fn launch(
