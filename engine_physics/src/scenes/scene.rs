@@ -38,6 +38,12 @@ const TICK_RATE: u32 = 60;
 
 const RIGID_DETACHMENT_MAXIMUM_CELLS: usize = 1024;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RigidCellRemovalCause {
+    Erase,
+    Fracture,
+}
+
 /// A scene that can be simulated by the engine
 pub struct Scene {
     /// The `Accelerator` this `Scene` is running on
@@ -840,7 +846,7 @@ impl Scene {
                 .collect();
             removals.sort_unstable_by_key(|(body, _)| std::cmp::Reverse(*body));
             for (body, cells) in removals {
-                self.remove_rigid_cellular_body_cells(body, &cells);
+                self.remove_rigid_cellular_body_cells(body, &cells, RigidCellRemovalCause::Erase);
             }
         }
         let body_count: usize = self.rigid_cellular_bodies.len();
@@ -902,7 +908,11 @@ impl Scene {
                     .collect();
                 removals.sort_unstable_by_key(|(body, _)| std::cmp::Reverse(*body));
                 for (body, cells) in removals {
-                    self.remove_rigid_cellular_body_cells(body, &cells);
+                    self.remove_rigid_cellular_body_cells(
+                        body,
+                        &cells,
+                        RigidCellRemovalCause::Fracture,
+                    );
                 }
             }
         }
@@ -1265,9 +1275,52 @@ impl Scene {
         Ok(())
     }
 
+    fn rigid_cell_debris_placement(
+        &self,
+        state: &RigidCellularBodyState,
+        cell: &RigidCellularBodyCell,
+    ) -> Option<SceneEditCellPlacement> {
+        let Some(Material::CellularStatic {
+            debris_material: Some(material_identifier),
+            debris_yield_rate,
+            ..
+        }) = self.data.materials().get(cell.material)
+        else {
+            return None;
+        };
+        let seed = cell
+            .state_slot
+            .wrapping_mul(747_796_405)
+            .wrapping_add(2_891_336_453);
+        if (seed % 10_000) as f32 >= debris_yield_rate * 10_000.0 {
+            return None;
+        }
+        let local = [
+            (cell.local[0] as f32 + 0.5) / 8.0,
+            (cell.local[1] as f32 + 0.5) / 8.0,
+        ];
+        let world = [
+            state.translation[0] + state.angle.cos() * local[0] - state.angle.sin() * local[1],
+            state.translation[1] + state.angle.sin() * local[0] + state.angle.cos() * local[1],
+        ];
+        Some(SceneEditCellPlacement {
+            coordinates: CellCoordinates {
+                x: (world[0] * 8.0).floor() as i32,
+                y: (world[1] * 8.0).floor() as i32,
+            },
+            material_identifier: *material_identifier,
+            appearance: cell.appearance,
+        })
+    }
+
     /// Removes body-local cells and replaces the body with its remaining connected pieces
     #[allow(dead_code)]
-    fn remove_rigid_cellular_body_cells(&mut self, body_index: usize, removed: &HashSet<[i32; 2]>) {
+    fn remove_rigid_cellular_body_cells(
+        &mut self,
+        body_index: usize,
+        removed: &HashSet<[i32; 2]>,
+        cause: RigidCellRemovalCause,
+    ) {
         if body_index >= self.rigid_cellular_bodies.len() || removed.is_empty() {
             return;
         }
@@ -1285,11 +1338,17 @@ impl Scene {
         self.rigid_cellular_contact_active.clear();
         self.rigid_granular_contact_active.clear();
         self.physics_world.remove_rigid_cellular_body(&body);
+        let mut debris = Vec::new();
         for cell in body
             .cells
             .iter()
             .filter(|cell| removed.contains(&cell.local))
         {
+            if cause == RigidCellRemovalCause::Fracture {
+                if let Some(placement) = self.rigid_cell_debris_placement(&state, cell) {
+                    debris.push(placement);
+                }
+            }
             self.release_rigid_cell_state(cell.state_slot);
         }
         let remaining = body
@@ -1297,49 +1356,15 @@ impl Scene {
             .into_iter()
             .filter(|cell| !removed.contains(&cell.local))
             .collect();
-        let mut debris = Vec::new();
         for cells in RigidCellularBody::connected_components(remaining) {
             if cells.is_empty() {
                 continue;
             }
             if cells.len() < self.rigid_component_minimum(&cells) {
                 for cell in cells {
-                    let Some(Material::CellularStatic {
-                        debris_material: Some(material_identifier),
-                        debris_yield_rate,
-                        ..
-                    }) = self.data.materials().get(cell.material)
-                    else {
-                        self.release_rigid_cell_state(cell.state_slot);
-                        continue;
-                    };
-                    let seed = cell
-                        .state_slot
-                        .wrapping_mul(747_796_405)
-                        .wrapping_add(2_891_336_453);
-                    if (seed % 10_000) as f32 >= debris_yield_rate * 10_000.0 {
-                        self.release_rigid_cell_state(cell.state_slot);
-                        continue;
+                    if let Some(placement) = self.rigid_cell_debris_placement(&state, &cell) {
+                        debris.push(placement);
                     }
-                    let local = [
-                        (cell.local[0] as f32 + 0.5) / 8.0,
-                        (cell.local[1] as f32 + 0.5) / 8.0,
-                    ];
-                    let world = [
-                        state.translation[0] + state.angle.cos() * local[0]
-                            - state.angle.sin() * local[1],
-                        state.translation[1]
-                            + state.angle.sin() * local[0]
-                            + state.angle.cos() * local[1],
-                    ];
-                    debris.push(SceneEditCellPlacement {
-                        coordinates: CellCoordinates {
-                            x: (world[0] * 8.0).floor() as i32,
-                            y: (world[1] * 8.0).floor() as i32,
-                        },
-                        material_identifier: *material_identifier,
-                        appearance: cell.appearance,
-                    });
                     self.release_rigid_cell_state(cell.state_slot);
                 }
                 continue;
