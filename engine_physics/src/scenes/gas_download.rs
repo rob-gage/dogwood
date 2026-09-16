@@ -36,7 +36,7 @@ impl GasDownload {
                 .wgpu_device()
                 .create_buffer(&wgpu::BufferDescriptor {
                     label: Some("Gas download buffer"),
-                    size: u64::from(maximum_cell_count) * u64::from(4 + gas_count) * 4,
+                    size: u64::from(maximum_cell_count) * u64::from(5 + gas_count) * 4,
                     usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 }),
@@ -60,7 +60,7 @@ impl GasDownload {
     ) -> Result<Vec<ChunkGasCell>, io::Error> {
         let dimensions: [u16; 2] = area.dimensions();
         let cell_count: usize = usize::from(dimensions[0]) * usize::from(dimensions[1]) * 64;
-        let stride: usize = 4 + gas_identifiers.len();
+        let stride: usize = 5 + gas_identifiers.len();
         if bytes.len() != cell_count * stride * 4 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -84,6 +84,7 @@ impl GasDownload {
                 f32::from_bits(Self::u32_at(bytes, offset + 8)),
                 f32::from_bits(Self::u32_at(bytes, offset + 12)),
             ];
+            let temperature = f32::from_bits(Self::u32_at(bytes, offset + 16));
             if !velocity.into_iter().all(f32::is_finite) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -93,7 +94,7 @@ impl GasDownload {
             let mut species: Vec<(MaterialIdentifier, f32)> = Vec::new();
             for (species_index, identifier) in gas_identifiers.iter().enumerate() {
                 let concentration: f32 =
-                    f32::from_bits(Self::u32_at(bytes, offset + (4 + species_index) * 4));
+                    f32::from_bits(Self::u32_at(bytes, offset + (5 + species_index) * 4));
                 if !concentration.is_finite() || concentration < 0.0 {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
@@ -108,6 +109,7 @@ impl GasDownload {
                 cells.push(ChunkGasCell {
                     coordinates,
                     velocity,
+                    temperature,
                     species,
                 });
             }

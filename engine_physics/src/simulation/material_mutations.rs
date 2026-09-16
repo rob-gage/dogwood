@@ -33,6 +33,7 @@ impl MaterialMutations {
         fluid_edits_pending: &AcceleratorBuffer,
         gas_velocity: &AcceleratorBuffer,
         gas_concentrations: &AcceleratorBuffer,
+        gas_temperatures: &AcceleratorBuffer,
         buffered_cell_count: usize,
         _gas_count: u32,
     ) -> Self {
@@ -98,6 +99,7 @@ impl MaterialMutations {
                 storage(12, false),
                 storage(13, false),
                 storage(14, false),
+                storage(15, false),
                 wgpu::BindGroupLayoutEntry {
                     binding: 9,
                     visibility: wgpu::ShaderStages::COMPUTE,
@@ -169,6 +171,10 @@ impl MaterialMutations {
                 wgpu::BindGroupEntry {
                     binding: 14,
                     resource: fluid_edit_temperatures.wgpu_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 15,
+                    resource: gas_temperatures.wgpu_buffer().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 9,
@@ -371,6 +377,7 @@ mod tests {
             &accelerator.allocate::<u32>(1),
             &gas_velocity,
             &gas_concentrations,
+            &accelerator.allocate::<f32>(64),
             64,
             0,
         );
@@ -432,6 +439,7 @@ mod tests {
             &fluid_pending,
             &gas_velocity,
             &gas_concentrations,
+            &accelerator.allocate::<f32>(64),
             64,
             0,
         );

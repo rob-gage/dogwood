@@ -259,6 +259,16 @@ impl Scene {
             &material_graphics.gas_properties,
             buffered_cell_count,
         );
+        let ambient_gas_temperature =
+            vec![simulation.ambient_temperature.to_bits().to_le_bytes(); buffered_cell_count]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>();
+        accelerator.wgpu_queue().write_buffer(
+            gases.temperature_buffer().wgpu_buffer(),
+            0,
+            &ambient_gas_temperature,
+        );
         let cellular_dynamic: CellularDynamic = CellularDynamic::new(
             accelerator.as_ref(),
             &cellular_material_identifiers,
@@ -284,6 +294,7 @@ impl Scene {
             fluids.gpu_edits_pending_buffer(),
             gases.velocity_buffer(),
             gases.concentrations_buffer(),
+            gases.temperature_buffer(),
             buffered_cell_count,
             gases.gas_count(),
         );
@@ -2451,6 +2462,12 @@ impl Scene {
         if cells.is_empty() {
             return Ok(());
         }
+        let mut cells = cells;
+        for cell in &mut cells {
+            if !cell.temperature.is_finite() {
+                cell.temperature = self.ambient_temperature;
+            }
+        }
         let upload: GasUpload = GasUpload::new(area, cells);
         if let Err(error) = upload.validate(self.data.materials()) {
             self.gas_cells_restore(upload.cells)?;
@@ -2551,7 +2568,7 @@ impl Scene {
             let byte_count: usize = usize::from(dimensions[0])
                 * usize::from(dimensions[1])
                 * 64
-                * (4 + self.gases.gas_count() as usize)
+                * (5 + self.gases.gas_count() as usize)
                 * 4;
             let gas_identifiers: Vec<MaterialIdentifier> = self
                 .data
@@ -3567,7 +3584,7 @@ mod tests {
             scene.tiles_ring_offset_x,
             scene.tiles_ring_offset_y,
         );
-        let byte_count: u64 = 64 * u64::from(4 + scene.gases.gas_count()) * 4;
+        let byte_count: u64 = 64 * u64::from(5 + scene.gases.gas_count()) * 4;
         let (sender, receiver) = mpsc::sync_channel(1);
         download
             .buffer

@@ -123,7 +123,11 @@ impl Chunk {
             )
         })?;
         for _ in 0..count {
-            let cell: ChunkGasCell = ChunkGasCell::deserialize(reader)?;
+            let cell: ChunkGasCell = if legacy || v2 {
+                ChunkGasCell::deserialize_legacy(reader)?
+            } else {
+                ChunkGasCell::deserialize(reader)?
+            };
             if cell.tile_coordinates().chunk_coordinates() != tile_coordinates {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -338,6 +342,7 @@ mod tests {
         let gas_cell: ChunkGasCell = ChunkGasCell {
             coordinates: crate::tiles::CellCoordinates { x: -2, y: -510 },
             velocity: [0.5, 1.25],
+            temperature: 293.15,
             species: vec![(MaterialIdentifier::new(MaterialForm::Gas, 0), 0.75)],
         };
         chunk.insert_dormant_gas_cell(gas_cell.clone()).unwrap();

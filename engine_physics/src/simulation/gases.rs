@@ -23,6 +23,8 @@ pub struct Gases {
     velocity_scratch: AcceleratorBuffer,
     /// Authoritative species-major concentrations
     concentrations: AcceleratorBuffer,
+    /// Persistent shared gas-mixture temperature per physical cell.
+    gas_temperature: AcceleratorBuffer,
     /// Species advection and diffusion scratch field
     concentration_scratch: AcceleratorBuffer,
     /// Projection divergence scratch field
@@ -80,7 +82,7 @@ impl Gases {
             .expect("Gas concentration buffer exceeds GPU indexing range");
         let streaming_value_count: u32 = buffered_cell_count
             .checked_mul(
-                4u32.checked_add(gas_count)
+                5u32.checked_add(gas_count)
                     .expect("Gas streaming record is too large"),
             )
             .expect("Gas streaming buffer exceeds GPU indexing range");
@@ -90,6 +92,7 @@ impl Gases {
             accelerator.allocate::<[f32; 2]>(buffered_cell_count as usize);
         let concentrations: AcceleratorBuffer =
             accelerator.allocate::<f32>(concentration_count.max(1) as usize);
+        let gas_temperature = accelerator.allocate::<f32>(buffered_cell_count as usize);
         let concentration_scratch: AcceleratorBuffer =
             accelerator.allocate::<f32>(concentration_count.max(1) as usize);
         let divergence: AcceleratorBuffer =
@@ -134,6 +137,7 @@ impl Gases {
                     storage(10, true),
                     storage(11, true),
                     storage(12, false),
+                    storage(14, false),
                     wgpu::BindGroupLayoutEntry {
                         binding: 13,
                         visibility: wgpu::ShaderStages::COMPUTE,
@@ -163,6 +167,7 @@ impl Gases {
                 Self::binding(10, fluid_coverage),
                 Self::binding(11, gas_properties),
                 Self::binding(12, &streaming_data),
+                Self::binding(14, &gas_temperature),
                 wgpu::BindGroupEntry {
                     binding: 13,
                     resource: parameters.as_entire_binding(),
@@ -195,6 +200,7 @@ impl Gases {
             velocity,
             velocity_scratch,
             concentrations,
+            gas_temperature,
             concentration_scratch,
             divergence,
             pressure_a,
@@ -231,6 +237,9 @@ impl Gases {
     /// Returns the authoritative species-major concentration allocation
     pub const fn concentrations_buffer(&self) -> &AcceleratorBuffer {
         &self.concentrations
+    }
+    pub(crate) const fn temperature_buffer(&self) -> &AcceleratorBuffer {
+        &self.gas_temperature
     }
 
     /// Returns the number of independently registered gas species
@@ -496,6 +505,11 @@ impl Gases {
                 *physical_index as u64 * 8,
                 &velocity,
             );
+            accelerator.wgpu_queue().write_buffer(
+                self.gas_temperature.wgpu_buffer(),
+                *physical_index as u64 * 4,
+                &cell.temperature.to_bits().to_le_bytes(),
+            );
             for (identifier, concentration) in &cell.species {
                 let index: u64 = u64::from(identifier.index())
                     * u64::from(self.buffered_cell_count)
@@ -533,7 +547,7 @@ impl Gases {
         );
         let dimensions: [u16; 2] = download.area.dimensions();
         let count: u32 = u32::from(dimensions[0]) * u32::from(dimensions[1]) * 64;
-        let byte_count: u64 = u64::from(count) * u64::from(4 + self.gas_count) * 4;
+        let byte_count: u64 = u64::from(count) * u64::from(5 + self.gas_count) * 4;
         let mut encoder: wgpu::CommandEncoder =
             accelerator
                 .wgpu_device()
@@ -633,6 +647,7 @@ impl Drop for Gases {
         self.velocity.free();
         self.velocity_scratch.free();
         self.concentrations.free();
+        self.gas_temperature.free();
         self.concentration_scratch.free();
         self.divergence.free();
         self.pressure_a.free();
@@ -749,7 +764,7 @@ mod tests {
             0,
             0,
         );
-        let byte_count: u64 = cell_count as u64 * u64::from(4 + gases.gas_count()) * 4;
+        let byte_count: u64 = cell_count as u64 * u64::from(5 + gases.gas_count()) * 4;
         let (sender, receiver) = mpsc::sync_channel(1);
         download
             .buffer

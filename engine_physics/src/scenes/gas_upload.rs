@@ -61,6 +61,7 @@ mod tests {
                 coordinates: CellCoordinates { x: 8, y: 0 },
                 velocity: [0.0; 2],
                 species: vec![(MaterialIdentifier::from_u32(1), 1.0)],
+                temperature: 293.15,
             }],
         );
         assert!(upload.validate(&MaterialRegistry::new()).is_err());

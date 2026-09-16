@@ -43,6 +43,7 @@ struct Parameters {
 @group(0) @binding(10) var<storage, read> fluid_coverage: array<f32>;
 @group(0) @binding(11) var<storage, read> gas_properties: array<vec4<f32>>;
 @group(0) @binding(12) var<storage, read_write> streaming_data: array<u32>;
+@group(0) @binding(14) var<storage, read_write> gas_temperature: array<f32>;
 @group(0) @binding(13) var<uniform> parameters: Parameters;
 
 const INCOMPRESSIBILITY_MIXING: f32 = 1.0;
@@ -239,7 +240,7 @@ fn export_gas_area(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if output_index >= parameters.streaming_cell_count { return; }
     let cell: vec2<i32> = world_cell_from_gas_streaming_index(output_index);
     let index: u32 = gas_physical_cell_index_from_world_cell(cell);
-    let stride: u32 = 4u + parameters.gas_count;
+    let stride: u32 = 5u + parameters.gas_count;
     let start: u32 = output_index * stride;
     streaming_data[start] = bitcast<u32>(cell.x);
     streaming_data[start + 1u] = bitcast<u32>(cell.y);
@@ -249,7 +250,8 @@ fn export_gas_area(@builtin(global_invocation_id) invocation: vec3<u32>) {
     for (var species: u32 = 0u; species < parameters.gas_count; species++) {
         let concentration: u32 =
             gas_concentration_storage_index_from_species_and_physical_cell(species, index);
-        streaming_data[start + 4u + species] = bitcast<u32>(concentrations[concentration]);
+    streaming_data[start + 4u] = bitcast<u32>(gas_temperature[index]);
+    streaming_data[start + 5u + species] = bitcast<u32>(concentrations[concentration]);
         concentrations[concentration] = 0.0;
     }
 }
