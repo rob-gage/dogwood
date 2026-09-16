@@ -11,7 +11,9 @@ pub struct MaterialMutations {
     _static_defaults: AcceleratorBuffer,
     parameters: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
+    prepare_indirect_bind_group: wgpu::BindGroup,
     resolve_pipeline: wgpu::ComputePipeline,
+    prepare_pipeline: wgpu::ComputePipeline,
     indirect: wgpu::Buffer,
 }
 
@@ -24,6 +26,7 @@ impl MaterialMutations {
         integrities: &AcceleratorBuffer,
         kinematics: &AcceleratorBuffer,
         fluid_edits: &AcceleratorBuffer,
+        fluid_edits_pending: &AcceleratorBuffer,
         gas_velocity: &AcceleratorBuffer,
         gas_concentrations: &AcceleratorBuffer,
         buffered_cell_count: usize,
@@ -58,6 +61,12 @@ impl MaterialMutations {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let indirect = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("material mutation indirect"),
+            size: 12,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
+            mapped_at_creation: false,
+        });
         let storage = |binding, read_only| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
@@ -80,6 +89,7 @@ impl MaterialMutations {
                 storage(6, false),
                 storage(7, false),
                 storage(8, false),
+                storage(10, false),
                 wgpu::BindGroupLayoutEntry {
                     binding: 9,
                     visibility: wgpu::ShaderStages::COMPUTE,
@@ -133,6 +143,10 @@ impl MaterialMutations {
                     resource: gas_concentrations.wgpu_buffer().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: fluid_edits_pending.wgpu_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
                     binding: 9,
                     resource: parameters.as_entire_binding(),
                 },
@@ -149,6 +163,25 @@ impl MaterialMutations {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
+        let prepare_indirect_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("material mutation indirect preparation layout"),
+                entries: &[storage(0, false)],
+            });
+        let prepare_indirect_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("material mutation indirect preparation"),
+            layout: &prepare_indirect_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: indirect.as_entire_binding(),
+            }],
+        });
+        let prepare_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("material mutation preparation"),
+                bind_group_layouts: &[Some(&layout), Some(&prepare_indirect_layout)],
+                immediate_size: 0,
+            });
         let resolve_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("resolve material mutations"),
             layout: Some(&pipeline_layout),
@@ -157,11 +190,13 @@ impl MaterialMutations {
             compilation_options: Default::default(),
             cache: None,
         });
-        let indirect = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("material mutation indirect"),
-            size: 12,
-            usage: wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
+        let prepare_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("prepare material mutation dispatch"),
+            layout: Some(&prepare_pipeline_layout),
+            module: &shader,
+            entry_point: Some("prepare_material_mutation_dispatch"),
+            compilation_options: Default::default(),
+            cache: None,
         });
         let _ = gas_velocity;
         Self {
@@ -170,7 +205,9 @@ impl MaterialMutations {
             _static_defaults: static_defaults,
             parameters,
             bind_group,
+            prepare_indirect_bind_group,
             resolve_pipeline,
+            prepare_pipeline,
             indirect,
         }
     }
@@ -208,15 +245,14 @@ impl MaterialMutations {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("material mutations"),
                 });
-        // A zero count produces zero work; no cell-grid scan occurs when no producer requested a mutation.
-        encoder.copy_buffer_to_buffer(self.request_count.wgpu_buffer(), 0, &self.indirect, 0, 4);
-        accelerator.wgpu_queue().submit(Some(encoder.finish()));
-        let mut encoder =
-            accelerator
-                .wgpu_device()
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("resolve material mutations"),
-                });
+        {
+            let mut pass =
+                accelerator.begin_compute_pass(&mut encoder, "prepare material mutation dispatch");
+            pass.set_pipeline(&self.prepare_pipeline);
+            pass.set_bind_group(0, &self.bind_group, &[]);
+            pass.set_bind_group(1, &self.prepare_indirect_bind_group, &[]);
+            pass.dispatch_workgroups(1, 1, 1);
+        }
         {
             let mut pass =
                 accelerator.begin_compute_pass(&mut encoder, "resolve material mutations");
@@ -232,6 +268,54 @@ impl MaterialMutations {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::materials::MaterialIdentifier;
+    use crate::simulation::Fluids;
+    use engine_graphics::{Color, MaterialAppearance};
+    use std::{
+        sync::mpsc,
+        time::{Duration, Instant},
+    };
+
+    fn read_u32(accelerator: &Accelerator, source: &AcceleratorBuffer, count: u64) -> Vec<u32> {
+        let buffer = accelerator
+            .wgpu_device()
+            .create_buffer(&wgpu::BufferDescriptor {
+                label: Some("material mutation test readback"),
+                size: count * 4,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+        let mut encoder = accelerator
+            .wgpu_device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        encoder.copy_buffer_to_buffer(source.wgpu_buffer(), 0, &buffer, 0, count * 4);
+        accelerator.wgpu_queue().submit(Some(encoder.finish()));
+        let (sender, receiver) = mpsc::sync_channel(1);
+        buffer
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                sender.send(result).unwrap();
+            });
+        let start = Instant::now();
+        loop {
+            accelerator.poll().unwrap();
+            if let Ok(result) = receiver.try_recv() {
+                result.unwrap();
+                break;
+            }
+            assert!(start.elapsed() < Duration::from_secs(10));
+            std::thread::yield_now();
+        }
+        let result = buffer
+            .slice(..)
+            .get_mapped_range()
+            .unwrap()
+            .chunks_exact(4)
+            .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
+            .collect();
+        buffer.unmap();
+        result
+    }
 
     #[test]
     fn resolver_pipeline_compiles() {
@@ -252,6 +336,7 @@ mod tests {
             &integrities,
             &kinematics,
             &fluid_edits,
+            &accelerator.allocate::<u32>(1),
             &gas_velocity,
             &gas_concentrations,
             64,
@@ -260,5 +345,95 @@ mod tests {
         mutations.reset(&accelerator);
         mutations.resolve(&accelerator, 64, 0);
         accelerator.poll().unwrap();
+    }
+
+    #[test]
+    fn indirect_resolver_replaces_and_deletes_cells() {
+        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let accelerator = Accelerator::new().unwrap();
+        let mut materials = MaterialRegistry::new();
+        let static_material = materials.register(Material::CellularStatic {
+            name: "static".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(1, 1, 1)),
+            mass: 1.0,
+            pressure_ignore_threshold: 1.0,
+            default_integrity: 2.0,
+            minimum_rigid_body_cell_count: 1,
+            debris_material: None,
+            debris_yield_rate: 0.0,
+            pressure_transmission: 0.5,
+            friction: 0.5,
+            restitution: 0.0,
+        });
+        let dynamic_material = materials.register(Material::CellularDynamic {
+            name: "dynamic".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(2, 2, 2)),
+            mass: 1.0,
+            pressure_transmission: 0.5,
+            friction: 0.5,
+            restitution: 0.0,
+        });
+        let cells = accelerator.allocate::<u32>(64);
+        let appearances = accelerator.allocate::<u32>(64);
+        let integrities = accelerator.allocate::<f32>(64);
+        let kinematics = accelerator.allocate::<[f32; 4]>(64);
+        let fluid_edits = accelerator.allocate::<u32>(64);
+        let fluid_pending = accelerator.allocate::<u32>(1);
+        let gas_velocity = accelerator.allocate::<[f32; 2]>(64);
+        let gas_concentrations = accelerator.allocate::<f32>(64);
+        let mutations = MaterialMutations::new(
+            &accelerator,
+            &materials,
+            &cells,
+            &appearances,
+            &integrities,
+            &kinematics,
+            &fluid_edits,
+            &fluid_pending,
+            &gas_velocity,
+            &gas_concentrations,
+            64,
+            0,
+        );
+        accelerator.wgpu_queue().write_buffer(
+            cells.wgpu_buffer(),
+            0,
+            &[
+                static_material.as_u32().to_le_bytes(),
+                static_material.as_u32().to_le_bytes(),
+            ]
+            .concat(),
+        );
+        let requests = [
+            [0u32, static_material.as_u32(), dynamic_material.as_u32(), 0],
+            [
+                1u32,
+                static_material.as_u32(),
+                MaterialIdentifier::NULL.as_u32(),
+                0,
+            ],
+        ];
+        accelerator.wgpu_queue().write_buffer(
+            mutations.requests_buffer().wgpu_buffer(),
+            0,
+            &requests
+                .iter()
+                .flat_map(|request| request.iter().flat_map(|word| word.to_le_bytes()))
+                .collect::<Vec<_>>(),
+        );
+        accelerator.wgpu_queue().write_buffer(
+            mutations.request_count_buffer().wgpu_buffer(),
+            0,
+            &2u32.to_le_bytes(),
+        );
+        mutations.resolve(&accelerator, 64, 0);
+        assert_eq!(
+            read_u32(&accelerator, &cells, 2),
+            vec![dynamic_material.as_u32(), 0]
+        );
+        assert_eq!(
+            read_u32(&accelerator, &fluid_edits, 2),
+            vec![Fluids::erase_edit(), Fluids::erase_edit()]
+        );
     }
 }

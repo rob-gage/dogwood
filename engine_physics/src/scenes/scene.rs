@@ -261,6 +261,7 @@ impl Scene {
             &cellular_integrities,
             cellular_dynamic.kinematics_buffer(),
             fluids.edit_cells_buffer(),
+            fluids.gpu_edits_pending_buffer(),
             gases.velocity_buffer(),
             gases.concentrations_buffer(),
             buffered_cell_count,

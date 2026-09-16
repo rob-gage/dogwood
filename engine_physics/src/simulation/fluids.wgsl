@@ -18,6 +18,7 @@
     material_form_from_identifier,
     material_index_from_identifier,
 }
+#import utility::fluid_edit::FLUID_EDIT_ERASE
 #import utility::tile_ring::{INVALID_PHYSICAL_CELL_INDEX, physical_cell_index_from_world_cell}
 
 struct Particle {
@@ -98,6 +99,8 @@ struct DerivedFluidActorSample {
 @group(0) @binding(20) var<storage, read_write> sample_output: array<vec4<f32>>;
 @group(0) @binding(21) var<storage, read_write> mechanical_cells: array<MechanicalFluidCell>;
 @group(0) @binding(22) var<storage, read_write> mechanical_original_velocity: array<vec2<f32>>;
+@group(0) @binding(23) var<storage, read_write> gpu_edits_pending: array<atomic<u32>>;
+@group(1) @binding(0) var<storage, read_write> gpu_edit_dispatch: array<u32>;
 
 const INVALID_FLUID_PARTICLE_INDEX: u32 = 0xffffffffu;
 const INVALID_FLUID_BUCKET_INDEX: u32 = 0xffffffffu;
@@ -158,6 +161,22 @@ fn clear_fluid_edits(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if invocation.x < parameters.buffered_cell_count {
         edit_cells[invocation.x] = EMPTY_MATERIAL_IDENTIFIER;
     }
+}
+
+// Produces zero-work indirect records unless another GPU subsystem wrote a fluid edit.
+@compute @workgroup_size(1)
+fn prepare_gpu_fluid_edits(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    if invocation.x != 0u { return; }
+    let pending: u32 = atomicExchange(&gpu_edits_pending[0], 0u);
+    let particle_workgroups: u32 = select(0u, (parameters.particle_capacity + 63u) / 64u, pending != 0u);
+    let cell_workgroups: u32 = select(0u, (parameters.buffered_cell_count + 63u) / 64u, pending != 0u);
+    let bucket_workgroups: u32 = select(0u, (parameters.bucket_count + 63u) / 64u, pending != 0u);
+    gpu_edit_dispatch[0] = particle_workgroups; gpu_edit_dispatch[1] = 1u; gpu_edit_dispatch[2] = 1u;
+    gpu_edit_dispatch[3] = cell_workgroups; gpu_edit_dispatch[4] = 1u; gpu_edit_dispatch[5] = 1u;
+    gpu_edit_dispatch[6] = cell_workgroups; gpu_edit_dispatch[7] = 1u; gpu_edit_dispatch[8] = 1u;
+    gpu_edit_dispatch[9] = bucket_workgroups; gpu_edit_dispatch[10] = 1u; gpu_edit_dispatch[11] = 1u;
+    gpu_edit_dispatch[12] = particle_workgroups; gpu_edit_dispatch[13] = 1u; gpu_edit_dispatch[14] = 1u;
+    gpu_edit_dispatch[15] = cell_workgroups; gpu_edit_dispatch[16] = 1u; gpu_edit_dispatch[17] = 1u;
 }
 
 // Freezes active-area membership for all substeps in this fixed tick

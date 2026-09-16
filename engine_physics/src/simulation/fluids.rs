@@ -26,6 +26,8 @@ pub struct Fluids {
     free_count: AcceleratorBuffer,
     /// Ring-aligned transient fluid spawn or erase value for each cell
     edit_cells: AcceleratorBuffer,
+    /// Set by GPU producers when `edit_cells` contains one or more edits.
+    gpu_edits_pending: AcceleratorBuffer,
     /// Atomic head of each support-radius-sized spatial bucket
     bucket_heads: AcceleratorBuffer,
     /// Linked-list successor for each particle in the current spatial buckets
@@ -56,12 +58,15 @@ pub struct Fluids {
     parameters: wgpu::Buffer,
     /// All concrete particle, edit, collision, bucket, and derived-cell bindings
     bind_group: wgpu::BindGroup,
+    gpu_edit_prepare_bind_group: wgpu::BindGroup,
     /// Removes authoritative particles from edited cells
     edit_remove_pipeline: wgpu::ComputePipeline,
     /// Claims free slots for requested fluid cells
     edit_spawn_pipeline: wgpu::ComputePipeline,
     /// Clears transient edit values after they are consumed
     edit_clear_pipeline: wgpu::ComputePipeline,
+    prepare_gpu_edits_pipeline: wgpu::ComputePipeline,
+    gpu_edit_dispatch: wgpu::Buffer,
     /// Integrates gravity into predicted positions without replacing authoritative positions
     predict_pipeline: wgpu::ComputePipeline,
     /// Snapshots active-area membership once for the entire fixed tick
@@ -133,6 +138,13 @@ impl Fluids {
         let free_count: AcceleratorBuffer = accelerator.allocate::<u32>(1);
         let edit_cells: AcceleratorBuffer =
             accelerator.allocate::<u32>(buffered_cell_count as usize);
+        let gpu_edits_pending: AcceleratorBuffer = accelerator.allocate::<u32>(1);
+        let gpu_edit_dispatch = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("GPU fluid edit indirect dispatch"),
+            size: 72,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
+            mapped_at_creation: false,
+        });
         let bucket_heads: AcceleratorBuffer = accelerator.allocate::<u32>(bucket_count as usize);
         let next_particle: AcceleratorBuffer =
             accelerator.allocate::<u32>(particle_capacity as usize);
@@ -219,6 +231,7 @@ impl Fluids {
                     storage(20, false),
                     storage(21, false),
                     storage(22, false),
+                    storage(23, false),
                 ],
             });
         let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -251,6 +264,7 @@ impl Fluids {
                 Self::binding(20, &sample_output),
                 Self::binding(21, &mechanical_cells),
                 Self::binding(22, &mechanical_original_velocity),
+                Self::binding(23, &gpu_edits_pending),
             ],
         });
         let shader: wgpu::ShaderModule = super::create_simulation_shader_module(
@@ -265,6 +279,25 @@ impl Fluids {
                 bind_group_layouts: &[Some(&layout)],
                 immediate_size: 0,
             });
+        let gpu_edit_prepare_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("GPU fluid edit preparation layout"),
+                entries: &[storage(0, false)],
+            });
+        let gpu_edit_prepare_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("GPU fluid edit preparation"),
+            layout: &gpu_edit_prepare_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: gpu_edit_dispatch.as_entire_binding(),
+            }],
+        });
+        let gpu_edit_prepare_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("GPU fluid edit preparation"),
+                bind_group_layouts: &[Some(&layout), Some(&gpu_edit_prepare_layout)],
+                immediate_size: 0,
+            });
         let pipeline = |entry_point, label| {
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(label),
@@ -275,11 +308,21 @@ impl Fluids {
                 cache: None,
             })
         };
+        let prepare_gpu_edits_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("GPU fluid edit preparation pipeline"),
+                layout: Some(&gpu_edit_prepare_pipeline_layout),
+                module: &shader,
+                entry_point: Some("prepare_gpu_fluid_edits"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
         Self {
             particles,
             free_indices,
             free_count,
             edit_cells,
+            gpu_edits_pending,
             bucket_heads,
             next_particle,
             predicted_positions,
@@ -296,6 +339,7 @@ impl Fluids {
             sample_output,
             parameters,
             bind_group,
+            gpu_edit_prepare_bind_group,
             edit_remove_pipeline: pipeline(
                 "remove_edited_fluid_particles",
                 "fluid edit removal pipeline",
@@ -305,6 +349,8 @@ impl Fluids {
                 "fluid edit spawn pipeline",
             ),
             edit_clear_pipeline: pipeline("clear_fluid_edits", "fluid edit clear pipeline"),
+            prepare_gpu_edits_pipeline,
+            gpu_edit_dispatch,
             predict_pipeline: pipeline("predict_fluid_particles", "fluid prediction pipeline"),
             classify_active_pipeline: pipeline(
                 "classify_active_fluid_particles",
@@ -392,6 +438,10 @@ impl Fluids {
         &self.edit_cells
     }
 
+    pub(crate) const fn gpu_edits_pending_buffer(&self) -> &AcceleratorBuffer {
+        &self.gpu_edits_pending
+    }
+
     /// Consumes edits written by another GPU subsystem using the same authoritative pool.
     pub(crate) fn consume_gpu_edits(
         &self,
@@ -426,28 +476,35 @@ impl Fluids {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("GPU fluid edits"),
                 });
-        self.dispatch(
+        {
+            let mut pass = accelerator.begin_compute_pass(&mut encoder, "prepare GPU fluid edits");
+            pass.set_pipeline(&self.prepare_gpu_edits_pipeline);
+            pass.set_bind_group(0, &self.bind_group, &[]);
+            pass.set_bind_group(1, &self.gpu_edit_prepare_bind_group, &[]);
+            pass.dispatch_workgroups(1, 1, 1);
+        }
+        self.dispatch_indirect(
             accelerator,
             &mut encoder,
             &self.edit_remove_pipeline,
-            self.particle_capacity,
+            0,
             "remove GPU edited fluid particles",
         );
-        self.dispatch(
+        self.dispatch_indirect(
             accelerator,
             &mut encoder,
             &self.edit_spawn_pipeline,
-            self.buffered_cell_count,
+            12,
             "spawn GPU edited fluid particles",
         );
-        self.dispatch(
+        self.dispatch_indirect(
             accelerator,
             &mut encoder,
             &self.edit_clear_pipeline,
-            self.buffered_cell_count,
+            24,
             "clear GPU fluid edits",
         );
-        self.encode_rebuild(accelerator, &mut encoder);
+        self.encode_rebuild_indirect(accelerator, &mut encoder);
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
 
@@ -956,6 +1013,34 @@ impl Fluids {
         );
     }
 
+    fn encode_rebuild_indirect(
+        &self,
+        accelerator: &Accelerator,
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
+        self.dispatch_indirect(
+            accelerator,
+            encoder,
+            &self.clear_buckets_pipeline,
+            36,
+            "clear GPU edited fluid buckets",
+        );
+        self.dispatch_indirect(
+            accelerator,
+            encoder,
+            &self.insert_buckets_pipeline,
+            48,
+            "insert GPU edited fluid particles",
+        );
+        self.dispatch_indirect(
+            accelerator,
+            encoder,
+            &self.raster_pipeline,
+            60,
+            "rasterize GPU edited fluid cells",
+        );
+    }
+
     fn dispatch(
         &self,
         accelerator: &Accelerator,
@@ -968,6 +1053,20 @@ impl Fluids {
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.dispatch_workgroups(count.div_ceil(64), 1, 1);
+    }
+
+    fn dispatch_indirect(
+        &self,
+        accelerator: &Accelerator,
+        encoder: &mut wgpu::CommandEncoder,
+        pipeline: &wgpu::ComputePipeline,
+        offset: u64,
+        label: &str,
+    ) {
+        let mut pass: wgpu::ComputePass<'_> = accelerator.begin_compute_pass(encoder, label);
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.dispatch_workgroups_indirect(&self.gpu_edit_dispatch, offset);
     }
 
     fn write_parameters(
@@ -1053,6 +1152,7 @@ impl Drop for Fluids {
         self.free_indices.free();
         self.free_count.free();
         self.edit_cells.free();
+        self.gpu_edits_pending.free();
         self.bucket_heads.free();
         self.next_particle.free();
         self.predicted_positions.free();
@@ -1097,6 +1197,17 @@ mod tests {
             &properties,
             1,
             1,
+        );
+        fluids.consume_gpu_edits(
+            &accelerator,
+            TileCoordinates { x: 0, y: 0 },
+            1,
+            1,
+            TileCoordinates { x: 0, y: 0 },
+            1,
+            1,
+            0,
+            0,
         );
         accelerator.poll().unwrap();
         drop(fluids);
