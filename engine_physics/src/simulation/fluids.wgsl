@@ -19,6 +19,8 @@
     material_index_from_identifier,
 }
 #import utility::fluid_edit::FLUID_EDIT_ERASE
+#import utility::material_identifier::material_dense_index
+#import utility::thermal_material::{ThermalMaterialRecord, ThermalMaterialParameters, thermal_material_conductivity, thermal_material_specific_heat_capacity}
 #import utility::tile_ring::{INVALID_PHYSICAL_CELL_INDEX, physical_cell_index_from_world_cell}
 
 struct Particle {
@@ -62,6 +64,7 @@ struct DerivedFluidCellSample {
     mechanical_material_identifier: u32,
     mechanical_mass: f32,
     mechanical_velocity: vec2<f32>,
+    thermal: vec4<f32>,
 }
 
 struct MechanicalFluidCell {
@@ -104,6 +107,9 @@ struct DerivedFluidActorSample {
 @group(0) @binding(23) var<storage, read_write> gpu_edits_pending: array<atomic<u32>>;
 @group(0) @binding(24) var<storage, read_write> edit_amounts: array<f32>;
 @group(0) @binding(25) var<storage, read_write> edit_temperatures: array<f32>;
+@group(0) @binding(26) var<storage, read> thermal_material_properties: array<ThermalMaterialRecord>;
+@group(0) @binding(27) var<uniform> thermal_material_parameters: ThermalMaterialParameters;
+@group(0) @binding(28) var<storage, read_write> derived_thermal: array<vec4<f32>>;
 @group(1) @binding(0) var<storage, read_write> gpu_edit_dispatch: array<u32>;
 
 const INVALID_FLUID_PARTICLE_INDEX: u32 = 0xffffffffu;
@@ -466,6 +472,7 @@ fn rasterize_fluid_particle_coverage_into_cells(@builtin(global_invocation_id) i
         sample.mechanical_velocity,
     );
     mechanical_original_velocity[physical_index] = sample.mechanical_velocity;
+    derived_thermal[physical_index] = sample.thermal;
 }
 
 // Each authoritative particle retains its center cell's solved velocity delta.
@@ -496,6 +503,10 @@ fn gather_fluid_particle_sample_for_cell(center: vec2<f32>) -> DerivedFluidCellS
     var mechanical_material_identifier: u32 = EMPTY_MATERIAL_IDENTIFIER;
     var mechanical_mass: f32 = 0.0;
     var mechanical_momentum: vec2<f32> = vec2<f32>(0.0);
+    var thermal_capacity: f32 = 0.0;
+    var thermal_energy: f32 = 0.0;
+    var conductivity_weighted: f32 = 0.0;
+    var amount_sum: f32 = 0.0;
     for (var bucket_y: i32 = -1; bucket_y <= 1; bucket_y++) {
         for (var bucket_x: i32 = -1; bucket_x <= 1; bucket_x++) {
             let bucket_index: u32 = fluid_spatial_bucket_index_from_coordinates(
@@ -516,6 +527,17 @@ fn gather_fluid_particle_sample_for_cell(center: vec2<f32>) -> DerivedFluidCellS
                     mechanical_mass += particle_mass;
                     mechanical_momentum += particle.velocity * particle_mass;
                     mechanical_material_identifier = particle.material_identifier;
+                    let dense = material_dense_index(particle.material_identifier,
+                        thermal_material_parameters.offsets, thermal_material_parameters.counts);
+                    if dense != 0xffffffffu && dense < arrayLength(&thermal_material_properties) {
+                        let record = thermal_material_properties[dense];
+                        let amount = max(particle.amount, 0.0);
+                        let capacity = amount * thermal_material_specific_heat_capacity(record);
+                        thermal_capacity += capacity;
+                        thermal_energy += capacity * particle.temperature;
+                        conductivity_weighted += amount * thermal_material_conductivity(record);
+                        amount_sum += amount;
+                    }
                 }
                 let distance_cells: f32 = length(
                     particle.position * CELLS_PER_TILE_FLOAT - center,
@@ -535,6 +557,7 @@ fn gather_fluid_particle_sample_for_cell(center: vec2<f32>) -> DerivedFluidCellS
             }
         }
     }
+    let average_conductivity = select(0.0, conductivity_weighted / amount_sum, amount_sum > 0.000001);
     return DerivedFluidCellSample(
         material_identifier,
         min(weight_sum, 1.0),
@@ -545,6 +568,8 @@ fn gather_fluid_particle_sample_for_cell(center: vec2<f32>) -> DerivedFluidCellS
         mechanical_mass,
         select(vec2<f32>(0.0), mechanical_momentum / max(mechanical_mass, 0.000001),
             mechanical_mass > 0.0),
+        vec4<f32>(thermal_capacity, thermal_energy,
+            clamp(weight_sum, 0.0, 1.0) * average_conductivity, 0.0),
     );
 }
 

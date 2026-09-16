@@ -25,6 +25,10 @@ pub fn create_composed_shader_module(
             "engine_compute/src/material_identifier.wgsl",
         ),
         (
+            include_str!("thermal_material.wgsl"),
+            "engine_compute/src/thermal_material.wgsl",
+        ),
+        (
             include_str!("fluid_edit.wgsl"),
             "engine_compute/src/fluid_edit.wgsl",
         ),

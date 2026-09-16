@@ -46,6 +46,7 @@ pub struct Fluids {
     derived_coverage: AcceleratorBuffer,
     /// Ring-aligned weighted average velocity derived from nearby particles
     derived_velocity: AcceleratorBuffer,
+    derived_thermal: AcceleratorBuffer,
     mechanical_cells: AcceleratorBuffer,
     mechanical_original_velocity: AcceleratorBuffer,
     /// Fixed-capacity records used only during residency ownership transfers
@@ -122,6 +123,8 @@ impl Fluids {
         external_body_occupancy: &AcceleratorBuffer,
         external_body_velocity: &AcceleratorBuffer,
         fluid_properties: &AcceleratorBuffer,
+        thermal_properties: &AcceleratorBuffer,
+        thermal_parameters: &wgpu::Buffer,
         buffered_width: u16,
         buffered_height: u16,
     ) -> Self {
@@ -162,6 +165,8 @@ impl Fluids {
         let derived_coverage: AcceleratorBuffer =
             accelerator.allocate::<f32>(buffered_cell_count as usize);
         let derived_velocity: AcceleratorBuffer =
+            accelerator.allocate::<[f32; 4]>(buffered_cell_count as usize);
+        let derived_thermal: AcceleratorBuffer =
             accelerator.allocate::<[f32; 4]>(buffered_cell_count as usize);
         let mechanical_cells: AcceleratorBuffer =
             accelerator.allocate::<[u32; 4]>(buffered_cell_count as usize);
@@ -238,6 +243,18 @@ impl Fluids {
                     storage(23, false),
                     storage(24, false),
                     storage(25, false),
+                    storage(26, true),
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 27,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    storage(28, false),
                 ],
             });
         let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -273,6 +290,12 @@ impl Fluids {
                 Self::binding(23, &gpu_edits_pending),
                 Self::binding(24, &edit_amounts),
                 Self::binding(25, &edit_temperatures),
+                Self::binding(26, thermal_properties),
+                wgpu::BindGroupEntry {
+                    binding: 27,
+                    resource: thermal_parameters.as_entire_binding(),
+                },
+                Self::binding(28, &derived_thermal),
             ],
         });
         let shader: wgpu::ShaderModule = super::create_simulation_shader_module(
@@ -341,6 +364,7 @@ impl Fluids {
             derived_material_identifiers,
             derived_coverage,
             derived_velocity,
+            derived_thermal,
             mechanical_cells,
             mechanical_original_velocity,
             streaming_particles,
@@ -894,6 +918,10 @@ impl Fluids {
         self.particle_capacity
     }
 
+    pub(crate) const fn derived_thermal_buffer(&self) -> &AcceleratorBuffer {
+        &self.derived_thermal
+    }
+
     /// Returns the tile buffer required by active movement and PBF support
     pub fn minimum_buffer_tiles() -> u8 {
         let predicted_movement: f32 = MAXIMUM_MOVEMENT_CELLS as f32 / PBF_SUBSTEP_COUNT as f32
@@ -1205,6 +1233,7 @@ impl Drop for Fluids {
         self.derived_material_identifiers.free();
         self.derived_coverage.free();
         self.derived_velocity.free();
+        self.derived_thermal.free();
         self.mechanical_cells.free();
         self.mechanical_original_velocity.free();
         self.streaming_particles.free();
@@ -1233,12 +1262,23 @@ mod tests {
         let occupancy = accelerator.allocate::<u32>(64);
         let velocity = accelerator.allocate::<[f32; 4]>(64);
         let properties = accelerator.allocate::<[f32; 4]>(2);
+        let thermal_properties = accelerator.allocate::<[u32; 16]>(1);
+        let thermal_parameters = accelerator
+            .wgpu_device()
+            .create_buffer(&wgpu::BufferDescriptor {
+                label: None,
+                size: 32,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
         let fluids = Fluids::new(
             &accelerator,
             &cells,
             &occupancy,
             &velocity,
             &properties,
+            &thermal_properties,
+            &thermal_parameters,
             1,
             1,
         );
@@ -1265,6 +1305,15 @@ mod tests {
         let occupancy = accelerator.allocate::<u32>(64);
         let velocity = accelerator.allocate::<[f32; 4]>(64);
         let properties = accelerator.allocate::<[f32; 4]>(2);
+        let thermal_properties = accelerator.allocate::<[u32; 16]>(1);
+        let thermal_parameters = accelerator
+            .wgpu_device()
+            .create_buffer(&wgpu::BufferDescriptor {
+                label: None,
+                size: 32,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
         accelerator.wgpu_queue().write_buffer(
             properties.wgpu_buffer(),
             0,
@@ -1279,6 +1328,8 @@ mod tests {
             &occupancy,
             &velocity,
             &properties,
+            &thermal_properties,
+            &thermal_parameters,
             1,
             1,
         );

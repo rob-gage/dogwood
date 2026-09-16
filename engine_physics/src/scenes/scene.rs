@@ -244,12 +244,16 @@ impl Scene {
             accelerator.allocate::<f32>(buffered_cell_count);
         let cellular_physics_body_proxy =
             CellularPhysicsBodyProxy::new(accelerator.as_ref(), buffered_cell_count);
+        let thermal_material_table =
+            ThermalMaterialTable::new(accelerator.as_ref(), data.materials());
         let fluids: Fluids = Fluids::new(
             accelerator.as_ref(),
             &cellular_material_identifiers,
             cellular_physics_body_proxy.occupancy_buffer(),
             cellular_physics_body_proxy.velocity_buffer(),
             &material_graphics.fluid_properties,
+            thermal_material_table.properties_buffer(),
+            thermal_material_table.parameters_buffer(),
             simulation.width + buffer_size,
             simulation.height + buffer_size,
         );
@@ -314,8 +318,6 @@ impl Scene {
             fluids.particle_capacity(),
             buffered_cell_count as u32,
         );
-        let thermal_material_table =
-            ThermalMaterialTable::new(accelerator.as_ref(), data.materials());
         let cellular_pressure: CellularPressure = CellularPressure::new(
             accelerator.as_ref(),
             data.materials(),
