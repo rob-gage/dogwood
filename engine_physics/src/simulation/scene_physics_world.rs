@@ -9,6 +9,8 @@ use rapier2d::prelude::{
     QueryFilter, RigidBodyBuilder, RigidBodyHandle, SharedShape, Vector,
 };
 use std::collections::{HashMap, HashSet};
+#[cfg(debug_assertions)]
+use std::time::Instant;
 
 const TERRAIN_COLLISION_PATCH_TILES: i32 = 4;
 const TERRAIN_COLLISION_PATCH_CELLS: i32 = TERRAIN_COLLISION_PATCH_TILES * 8;
@@ -113,7 +115,6 @@ impl ScenePhysicsWorld {
                 .rotation(angle)
                 .linvel(Vector::new(linear_velocity[0], linear_velocity[1]))
                 .angvel(angular_velocity)
-                .ccd_enabled(true)
                 .additional_mass_properties(mass_properties),
         );
         self.rapier.insert_collider(
@@ -262,6 +263,8 @@ impl ScenePhysicsWorld {
         gravity: [f32; 2],
         dt: f32,
     ) {
+        #[cfg(debug_assertions)]
+        let started = Instant::now();
         self.terrain_tick += 1;
         if !self.snapshot_updated_this_tick {
             self.terrain_statistics.collision_snapshot_age += 1;
@@ -493,6 +496,21 @@ impl ScenePhysicsWorld {
             .values()
             .filter(|p| p.collider.is_some())
             .count();
+        #[cfg(debug_assertions)]
+        tracing::trace!(
+            elapsed_us = started.elapsed().as_micros(),
+            awake_rigid = bodies
+                .iter()
+                .filter(|body| self
+                    .rapier
+                    .bodies
+                    .get(body.handle)
+                    .is_some_and(|body| !body.is_sleeping()))
+                .count(),
+            required_dynamic_tiles = self.required_dynamic_tiles.len(),
+            required_terrain_patches = self.required_terrain_patches.len(),
+            "cellular terrain preparation"
+        );
     }
 
     fn terrain_patch_shape(masks: &[[u32; 2]; 16]) -> Option<SharedShape> {
@@ -558,6 +576,8 @@ impl ScenePhysicsWorld {
 
     /// Advances Rapier's collision world by one fixed scene step
     pub fn step(&mut self, gravity: [f32; 2], delta_time: f32) {
+        #[cfg(debug_assertions)]
+        let started = Instant::now();
         self.rapier.gravity = Vector::new(gravity[0], gravity[1]);
         self.rapier.integration_parameters.dt = delta_time;
         self.rapier.step();
@@ -573,6 +593,11 @@ impl ScenePhysicsWorld {
                 body.add_torque(-torque, false);
             }
         }
+        #[cfg(debug_assertions)]
+        tracing::trace!(
+            elapsed_us = started.elapsed().as_micros(),
+            "rapier rigid step"
+        );
     }
 
     /// Applies one already-integrated GPU impulse batch to its authoritative body
@@ -839,6 +864,8 @@ impl ScenePhysicsWorld {
         exclude: Option<ColliderHandle>,
         collisions: &mut impl FnMut(Vector),
     ) -> (Vector, bool) {
+        #[cfg(debug_assertions)]
+        let started = Instant::now();
         let offset = 1.0 / 1024.0;
         let primitive = shape.rapier_shape();
         let mut consumed = Vector::ZERO;
@@ -910,6 +937,11 @@ impl ScenePhysicsWorld {
                 break;
             }
         }
+        #[cfg(debug_assertions)]
+        tracing::trace!(
+            elapsed_us = started.elapsed().as_micros(),
+            "pawn rigid/terrain shape casts"
+        );
         (consumed, grounded)
     }
 
@@ -932,6 +964,8 @@ impl ScenePhysicsWorld {
         up: Vector,
         exclude: Option<ColliderHandle>,
     ) -> (Vector, bool) {
+        #[cfg(debug_assertions)]
+        let started = Instant::now();
         if !distance.is_finite() || distance <= 0.0 {
             return (Vector::ZERO, false);
         }
@@ -966,6 +1000,11 @@ impl ScenePhysicsWorld {
                 support = true;
             }
         }
+        #[cfg(debug_assertions)]
+        tracing::trace!(
+            elapsed_us = started.elapsed().as_micros(),
+            "pawn support shape cast"
+        );
         (-up * (distance * earliest), support)
     }
 }

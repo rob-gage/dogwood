@@ -125,6 +125,12 @@ impl RigidCellularBody {
                 SharedShape::cuboid(width as f32 / 16.0, height as f32 / 16.0),
             ));
         }
+        #[cfg(debug_assertions)]
+        tracing::trace!(
+            cells = cells.len(),
+            compound_children = parts.len(),
+            "rigid collider complexity"
+        );
         SharedShape::compound(parts)
     }
 

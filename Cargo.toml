@@ -15,6 +15,12 @@ members = ["cli",
 ]
 resolver = "2"
 
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
 [workspace.package]
 license = "AGPL-3.0-only"
 

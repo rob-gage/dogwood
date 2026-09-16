@@ -455,6 +455,10 @@ mod tests {
             materials,
             SceneSimulationConfiguration {
                 gravity: [0.0, -1.0],
+                ambient_temperature: 293.15,
+                empty_space_thermal_conductivity: 0.0,
+                empty_space_heat_capacity: 1.0,
+                maximum_gas_concentration: 4.0,
                 width: 1,
                 height: 1,
                 buffer_size: 2,
