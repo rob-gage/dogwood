@@ -20,4 +20,6 @@ pub(crate) struct RigidGranularReactionBatch {
     pub(crate) recovery: Box<[[f32; 4]]>,
     /// Submitted linear/angular motion and whether the target includes actor kinematics.
     pub(crate) source_motion: Box<[[f32; 4]]>,
+    /// Stable rigid-cell slots fractured by pressure in this topology revision.
+    pub(crate) fractured_slots: Box<[u32]>,
 }

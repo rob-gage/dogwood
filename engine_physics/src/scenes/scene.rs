@@ -824,6 +824,18 @@ impl Scene {
                 self.rigid_granular_contact_active[index] =
                     batch.granular_contact_counts[index] != 0;
             }
+            let fractured: HashSet<u32> = batch.fractured_slots.iter().copied().collect();
+            let mut removals: Vec<(usize, HashSet<[i32; 2]>)> = self
+                .rigid_cellular_bodies.iter().enumerate().filter_map(|(body, rigid)| {
+                    let cells: HashSet<[i32; 2]> = rigid.cells.iter()
+                        .filter(|cell| fractured.contains(&cell.state_slot))
+                        .map(|cell| cell.local).collect();
+                    (!cells.is_empty()).then_some((body, cells))
+                }).collect();
+            removals.sort_unstable_by_key(|(body, _)| std::cmp::Reverse(*body));
+            for (body, cells) in removals {
+                self.remove_rigid_cellular_body_cells(body, &cells);
+            }
         }
         Ok(())
     }

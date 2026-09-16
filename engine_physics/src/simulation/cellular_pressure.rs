@@ -44,6 +44,7 @@ pub struct CellularPressure {
     rigid_reaction_sequence_next: u64,
     rigid_reaction_sequence_apply_next: u64,
     rigid_topology_revision: u64,
+    rigid_fracture_word_count: u64,
     parameters: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     bind_group_layout: wgpu::BindGroupLayout,
@@ -220,6 +221,7 @@ impl CellularPressure {
             accelerator.allocate::<[i32; 4]>(rigid_body_capacity);
         let rigid_damage: AcceleratorBuffer = accelerator.allocate::<u32>(buffered_cell_count as usize);
         let rigid_fractures: AcceleratorBuffer = accelerator.allocate::<u32>((buffered_cell_count as usize).div_ceil(32));
+        let rigid_fracture_word_count = u64::from(buffered_cell_count).div_ceil(32);
         let parameters: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("cellular pressure parameters"),
             size: 80,
@@ -340,7 +342,7 @@ impl CellularPressure {
                 bind_group_layouts: &[Some(&layout), Some(&indirect_bind_group_layout)],
                 immediate_size: 0,
             });
-        let reaction_readback_size: u64 = rigid_body_capacity as u64 * 128;
+        let reaction_readback_size: u64 = rigid_body_capacity as u64 * 128 + rigid_fracture_word_count * 4;
         let rigid_reaction_readback_slots: Vec<RigidGranularReadbackSlot> = (0
             ..RIGID_REACTION_READBACK_SLOT_COUNT)
             .map(|_| RigidGranularReadbackSlot {
@@ -374,6 +376,7 @@ impl CellularPressure {
             rigid_reaction_sequence_next: 0,
             rigid_reaction_sequence_apply_next: 0,
             rigid_topology_revision: u64::MAX,
+            rigid_fracture_word_count,
             parameters,
             bind_group,
             bind_group_layout: layout,
@@ -648,7 +651,7 @@ impl CellularPressure {
                     .is_ok_and(|status| matches!(*status, RigidGranularReadbackStatus::Available))
             })
             .unwrap_or_else(|| {
-                let size = self.rigid_body_capacity as u64 * 128;
+                let size = self.rigid_body_capacity as u64 * 128 + self.rigid_fracture_word_count * 4;
                 self.rigid_reaction_readback_slots
                     .push(RigidGranularReadbackSlot {
                         buffer: accelerator
@@ -678,6 +681,7 @@ impl CellularPressure {
                     let reaction_size: u64 = u64::from(rigid_body_count) * 80;
                     let statistics_size: u64 = u64::from(rigid_body_count) * 48;
                     let statistics_offset: u64 = reaction_size;
+                    let fractures_offset: u64 = statistics_offset + statistics_size;
                     encoder.copy_buffer_to_buffer(
                         self.rigid_reactions.wgpu_buffer(),
                         0,
@@ -697,12 +701,16 @@ impl CellularPressure {
                         0,
                         Some(reaction_size),
                     );
-                    mapping = Some((slot, sequence, statistics_offset + statistics_size));
+                    encoder.copy_buffer_to_buffer(
+                        self.rigid_fractures.wgpu_buffer(), 0, &slot.buffer,
+                        fractures_offset, self.rigid_fracture_word_count * 4,
+                    );
+                    mapping = Some((slot, sequence, fractures_offset, fractures_offset + self.rigid_fracture_word_count * 4));
                 }
             }
         }
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
-        if let Some((slot, sequence, mapped_size)) = mapping {
+        if let Some((slot, sequence, fractures_offset, mapped_size)) = mapping {
             let mapped_buffer: wgpu::Buffer = slot.buffer.clone();
             let callback_status = slot.status.clone();
             let body_count: usize = rigid_body_count as usize;
@@ -813,6 +821,12 @@ impl CellularPressure {
                                     })
                                     .collect::<Vec<_>>()
                                     .into_boxed_slice();
+                                let fractured_slots = mapped[fractures_offset as usize..mapped_size as usize]
+                                    .chunks_exact(4).enumerate().flat_map(|(word, bytes)| {
+                                        let bits = u32::from_le_bytes(bytes.try_into().unwrap());
+                                        (0..32).filter_map(move |bit| ((bits & (1 << bit)) != 0)
+                                            .then_some((word as u32) * 32 + bit))
+                                    }).collect::<Vec<_>>().into_boxed_slice();
                                 drop(mapped);
                                 mapped_buffer.unmap();
                                 Ok(RigidGranularReactionBatch {
@@ -829,6 +843,7 @@ impl CellularPressure {
                                     supports: supports.into_boxed_slice(),
                                     recovery: recovery.into_boxed_slice(),
                                     source_motion: source_motion.into_boxed_slice(),
+                                    fractured_slots,
                                 })
                             }),
                         Err(_) => Err("Rigid granular reaction readback failed".to_owned()),
@@ -980,7 +995,7 @@ impl CellularPressure {
             &self.parameters,
             &self.bound_buffers,
         );
-        let size: u64 = self.rigid_body_capacity as u64 * 128;
+        let size: u64 = self.rigid_body_capacity as u64 * 128 + self.rigid_fracture_word_count * 4;
         self.rigid_reaction_readback_slots = (0..RIGID_REACTION_READBACK_SLOT_COUNT)
             .map(|_| RigidGranularReadbackSlot {
                 buffer: accelerator
