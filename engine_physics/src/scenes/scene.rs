@@ -35,6 +35,7 @@ pub const CHUNK_STREAMING_QUEUE_CAPACITY: usize = 64;
 
 /// The fixed scene tick rate
 const TICK_RATE: u32 = 60;
+const MAX_CATCH_UP_TICKS: u32 = 4;
 
 const RIGID_DETACHMENT_MAXIMUM_CELLS: usize = 1024;
 
@@ -798,8 +799,11 @@ impl Scene {
         self.tile_uploads_clean()?;
         self.tick_time += elapsed;
         let tick_time: Duration = Duration::from_secs(1) / TICK_RATE;
+        self.tick_time = self
+            .tick_time
+            .min(tick_time.saturating_mul(MAX_CATCH_UP_TICKS));
         let mut ticks: u32 = 0;
-        while self.tick_time >= tick_time {
+        while self.tick_time >= tick_time && ticks < MAX_CATCH_UP_TICKS {
             // A catch-up update may submit several fixed ticks. Give tiny reaction
             // readbacks a nonblocking chance to complete between them so each
             // reaction is applied as its own fixed-tick batch.
@@ -810,6 +814,9 @@ impl Scene {
             self.tick(is_simulation_active)?;
             self.tick_time -= tick_time;
             ticks = ticks.saturating_add(1);
+        }
+        if ticks == MAX_CATCH_UP_TICKS && self.tick_time >= tick_time {
+            self.tick_time = tick_time.saturating_sub(Duration::from_nanos(1));
         }
         Ok(ticks)
     }
