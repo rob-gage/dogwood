@@ -46,11 +46,34 @@ impl FluidDownload {
         bytes: &[u8],
         particle_capacity: u32,
     ) -> Result<Vec<ChunkFluidParticle>, io::Error> {
+        if bytes.len() < 16 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Downloaded fluid buffer is truncated",
+            ));
+        }
         let count: usize = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
         if count > particle_capacity as usize {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Downloaded fluid particle count exceeds pool capacity",
+            ));
+        }
+        let required = 16usize
+            .checked_add(
+                count
+                    .checked_mul(ChunkFluidParticle::GPU_SIZE)
+                    .ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::InvalidData, "Downloaded fluid size overflow")
+                    })?,
+            )
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "Downloaded fluid size overflow")
+            })?;
+        if bytes.len() < required {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Downloaded fluid buffer is truncated",
             ));
         }
         (0..count)

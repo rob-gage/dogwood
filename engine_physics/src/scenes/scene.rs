@@ -271,6 +271,7 @@ impl Scene {
             fluids.coverage_buffer(),
             &material_graphics.gas_properties,
             buffered_cell_count,
+            simulation.ambient_temperature,
         );
         let ambient_gas_temperature =
             vec![simulation.ambient_temperature.to_bits().to_le_bytes(); buffered_cell_count]
@@ -1278,7 +1279,7 @@ impl Scene {
                     .rigid_cell_count(&self.rigid_cellular_bodies),
                 self.rigid_cellular_topology_revision,
             )?;
-            self.material_mutations.resolve(
+            self.material_mutations.resolve_requests(
                 self.accelerator.as_ref(),
                 u32::from(self.simulation_width + dimensions)
                     * u32::from(self.simulation_height + dimensions)
@@ -1370,7 +1371,15 @@ impl Scene {
                 ],
                 thermal_ring,
             );
-            self.material_mutations.encode_resolve(
+            self.material_mutations.encode_requests(
+                self.accelerator.as_ref(),
+                &mut thermal_encoder,
+                u32::from(self.simulation_width + dimensions)
+                    * u32::from(self.simulation_height + dimensions)
+                    * 64,
+                self.gases.gas_count(),
+            );
+            self.material_mutations.encode_thermal_condensation(
                 self.accelerator.as_ref(),
                 &mut thermal_encoder,
                 u32::from(self.simulation_width + dimensions)
@@ -2799,7 +2808,9 @@ impl Scene {
                             bytes.and_then(|bytes| {
                                 GasDownload::deserialize(&bytes, area, &gas_identifiers)
                             });
-                        download.lock().unwrap().result = Some(result);
+                        if let Ok(mut state) = download.lock() {
+                            state.result = Some(result);
+                        }
                     });
                 });
         }
@@ -3197,7 +3208,9 @@ impl Scene {
                             bytes.and_then(|bytes| {
                                 FluidDownload::deserialize(&bytes, particle_capacity)
                             });
-                        download.lock().unwrap().result = Some(result);
+                        if let Ok(mut state) = download.lock() {
+                            state.result = Some(result);
+                        }
                     });
                 });
         }
@@ -3224,7 +3237,7 @@ impl Scene {
                 self.area_buffered().dimensions()[1],
                 self.tiles_ring_offset_x,
                 self.tiles_ring_offset_y,
-            );
+            )?;
             state.is_started = true;
             let buffer: wgpu::Buffer = state.buffer.clone();
             let mapped_buffer: wgpu::Buffer = buffer.clone();
@@ -3249,9 +3262,10 @@ impl Scene {
                         Err(_) => Err(io::Error::other("Fluid upload result readback failed")),
                     };
                     std::thread::spawn(move || {
-                        let result: Result<Vec<ChunkFluidParticle>, io::Error> =
-                            bytes.and_then(|bytes| upload.lock().unwrap().failed_particles(&bytes));
-                        upload.lock().unwrap().result = Some(result);
+                        if let Ok(mut state) = upload.lock() {
+                            let result = bytes.and_then(|bytes| state.failed_particles(&bytes));
+                            state.result = Some(result);
+                        }
                     });
                 });
         }

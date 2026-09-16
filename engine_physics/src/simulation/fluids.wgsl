@@ -875,7 +875,8 @@ fn claim_free_fluid_particle_index() -> u32 {
     return INVALID_FLUID_PARTICLE_INDEX;
 }
 
-// Atomically returns one authoritative fluid-particle slot to the free stack
+// Atomically returns one authoritative fluid-particle slot to the free stack.
+// Release and claim operations are in distinct ordered passes.
 fn release_fluid_particle_index(particle_index: u32) {
     if particle_index >= arrayLength(&particles) { return; }
     var available: u32 = atomicLoad(&free_count[0]);

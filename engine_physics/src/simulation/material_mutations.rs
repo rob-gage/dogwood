@@ -295,19 +295,27 @@ impl MaterialMutations {
         &self.gas_fluid_candidates
     }
     pub fn resolve(&self, accelerator: &Accelerator, buffered_cell_count: u32, gas_count: u32) {
+        self.resolve_requests(accelerator, buffered_cell_count, gas_count);
+    }
+    pub(crate) fn resolve_requests(
+        &self,
+        accelerator: &Accelerator,
+        buffered_cell_count: u32,
+        gas_count: u32,
+    ) {
         let mut encoder =
             accelerator
                 .wgpu_device()
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("material mutations"),
+                    label: Some("material mutation requests"),
                 });
-        self.encode_resolve(accelerator, &mut encoder, buffered_cell_count, gas_count);
+        self.encode_requests(accelerator, &mut encoder, buffered_cell_count, gas_count);
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
-    pub(crate) fn encode_resolve(
+    pub(crate) fn encode_requests(
         &self,
         accelerator: &Accelerator,
-        mut encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut wgpu::CommandEncoder,
         buffered_cell_count: u32,
         gas_count: u32,
     ) {
@@ -324,27 +332,34 @@ impl MaterialMutations {
         );
         {
             let mut pass =
-                accelerator.begin_compute_pass(&mut encoder, "prepare material mutation dispatch");
+                accelerator.begin_compute_pass(encoder, "prepare material mutation dispatch");
             pass.set_pipeline(&self.prepare_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.set_bind_group(1, &self.prepare_indirect_bind_group, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }
         {
-            let mut pass =
-                accelerator.begin_compute_pass(&mut encoder, "resolve material mutations");
+            let mut pass = accelerator.begin_compute_pass(encoder, "resolve material mutations");
             pass.set_pipeline(&self.resolve_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.dispatch_workgroups_indirect(&self.indirect, 0);
         }
+        encoder.clear_buffer(self.request_count.wgpu_buffer(), 0, None);
+    }
+    pub(crate) fn encode_thermal_condensation(
+        &self,
+        accelerator: &Accelerator,
+        encoder: &mut wgpu::CommandEncoder,
+        buffered_cell_count: u32,
+        gas_count: u32,
+    ) {
         {
             let mut pass =
-                accelerator.begin_compute_pass(&mut encoder, "aggregate gas fluid condensation");
+                accelerator.begin_compute_pass(encoder, "aggregate gas fluid condensation");
             pass.set_pipeline(&self.allocate_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.dispatch_workgroups(buffered_cell_count.div_ceil(64), gas_count, 2);
         }
-        encoder.clear_buffer(self.request_count.wgpu_buffer(), 0, None);
     }
 }
 
@@ -641,6 +656,8 @@ mod tests {
             .write_buffer(free_count.wgpu_buffer(), 0, &4u32.to_le_bytes());
         let fluid = MaterialIdentifier::new(crate::materials::MaterialForm::Fluid, 0).as_u32();
         for tick in 1..=4 {
+            // Pressure resolution must not consume the previous thermal candidate buffer.
+            mutations.resolve_requests(&accelerator, 64, 1);
             let gas = read_u32(&accelerator, &gas_concentrations, 64);
             let candidates: Vec<[u32; 6]> = gas
                 .iter()
@@ -664,7 +681,7 @@ mod tests {
                     .flat_map(|candidate| candidate.iter().flat_map(|word| word.to_le_bytes()))
                     .collect::<Vec<_>>(),
             );
-            mutations.resolve(&accelerator, 64, 1);
+            mutations.resolve_thermal_condensation(&accelerator, 64, 1);
             let particle_words = read_u32(&accelerator, &particles, 40);
             assert_eq!(
                 particle_words

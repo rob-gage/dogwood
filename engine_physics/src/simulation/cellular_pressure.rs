@@ -665,6 +665,9 @@ impl CellularPressure {
                 });
         if self.rigid_topology_revision != rigid_topology_revision {
             encoder.clear_buffer(self.rigid_reactions.wgpu_buffer(), 0, None);
+            self.rigid_reaction_completed
+                .retain(|_, batch| batch.topology_revision == rigid_topology_revision);
+            self.rigid_reaction_sequence_apply_next = self.rigid_reaction_sequence_next;
             self.rigid_topology_revision = rigid_topology_revision;
         }
         encoder.clear_buffer(self.rigid_fractures.wgpu_buffer(), 0, None);
@@ -805,31 +808,20 @@ impl CellularPressure {
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.dispatch_workgroups_indirect(&self.rigid_damage_dispatch, 0);
         }
-        let readback_slot_index: usize = self
-            .rigid_reaction_readback_slots
-            .iter()
-            .position(|slot| {
-                slot.status
-                    .lock()
-                    .is_ok_and(|status| matches!(*status, RigidGranularReadbackStatus::Available))
-            })
-            .unwrap_or_else(|| {
-                let size =
-                    self.rigid_body_capacity as u64 * 128 + 4 + self.rigid_fracture_word_count * 4;
-                self.rigid_reaction_readback_slots
-                    .push(RigidGranularReadbackSlot {
-                        buffer: accelerator
-                            .wgpu_device()
-                            .create_buffer(&wgpu::BufferDescriptor {
-                                label: Some("rigid reaction readback backlog"),
-                                size,
-                                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                                mapped_at_creation: false,
-                            }),
-                        status: Arc::new(Mutex::new(RigidGranularReadbackStatus::Available)),
-                    });
-                self.rigid_reaction_readback_slots.len() - 1
-            });
+        let readback_slot_index: usize = if rigid_body_count == 0 {
+            0
+        } else if let Some(index) = self.rigid_reaction_readback_slots.iter().position(|slot| {
+            slot.status
+                .lock()
+                .is_ok_and(|status| matches!(*status, RigidGranularReadbackStatus::Available))
+        }) {
+            index
+        } else {
+            tracing::warn!("rigid reaction readback pool saturated; skipping this batch");
+            accelerator.wgpu_queue().submit(Some(encoder.finish()));
+            self.tick = self.tick.wrapping_add(1);
+            return Ok(());
+        };
         let mut mapping = None;
         if rigid_body_count != 0 {
             {
@@ -1077,6 +1069,8 @@ impl CellularPressure {
                 self.rigid_reaction_completed.insert(batch.sequence, batch);
             }
         }
+        self.rigid_reaction_completed
+            .retain(|_, batch| batch.topology_revision == self.rigid_topology_revision);
         let mut ordered = Vec::new();
         while let Some(batch) = self
             .rigid_reaction_completed
@@ -1566,8 +1560,8 @@ mod tests {
                 .collect::<Vec<_>>(),
         );
 
-        // Do not poll while submitting: this deliberately occupies every initial
-        // readback slot and proves later ticks receive distinct elastic slots.
+        // Do not poll while submitting: this deliberately exercises the bounded
+        // readback pool without permitting an unbounded staging allocation.
         for _ in 0..5 {
             pressure
                 .simulate(
@@ -1585,16 +1579,19 @@ mod tests {
                 )
                 .unwrap();
         }
-        assert!(pressure.rigid_reaction_readback_slots.len() >= 5);
+        assert_eq!(
+            pressure.rigid_reaction_readback_slots.len(),
+            RIGID_REACTION_READBACK_SLOT_COUNT
+        );
         let started = Instant::now();
         let mut batches = Vec::new();
-        while batches.len() < 5 {
+        while batches.len() < RIGID_REACTION_READBACK_SLOT_COUNT {
             accelerator.poll().unwrap();
             batches.extend(pressure.collect_rigid_reactions().unwrap());
             assert!(started.elapsed() < Duration::from_secs(5));
             std::thread::yield_now();
         }
-        assert_eq!(batches.len(), 5);
+        assert_eq!(batches.len(), RIGID_REACTION_READBACK_SLOT_COUNT);
         for batch in batches {
             assert_eq!(batch.body_count, 1);
             assert!(batch.static_contact_counts[0] > 0);

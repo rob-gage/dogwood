@@ -7,6 +7,7 @@ use crate::{
     tiles::{TileArea, TileCoordinates},
 };
 use engine_compute::{Accelerator, AcceleratorBuffer};
+use std::io;
 
 const SUPPORT_RADIUS_CELLS: f32 = 2.5;
 const PARTICLE_RADIUS_CELLS: f32 = 0.45;
@@ -1012,11 +1013,11 @@ impl Fluids {
         buffered_height: u16,
         ring_offset_x: u16,
         ring_offset_y: u16,
-    ) {
+    ) -> Result<(), io::Error> {
         let mut bytes: Vec<u8> =
             Vec::with_capacity(upload.particles.len() * ChunkFluidParticle::GPU_SIZE);
         for particle in &upload.particles {
-            particle.serialize_gpu(&mut bytes);
+            particle.serialize_gpu(&mut bytes)?;
         }
         accelerator
             .wgpu_queue()
@@ -1063,6 +1064,7 @@ impl Fluids {
             upload.particles.len() as u64 * 4,
         );
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
+        Ok(())
     }
 
     fn encode_rebuild(&self, accelerator: &Accelerator, encoder: &mut wgpu::CommandEncoder) {

@@ -45,7 +45,7 @@ fn resolve_rigid_destruction(@builtin(global_invocation_id) invocation: vec3<u32
     let index = destroy_requests[request + 1u];
     if index >= parameters.buffered_cell_count { destroy_results[request] = vec2<u32>(0xffffffffu); return; }
     let source = atomicLoad(&rigid_claims[index]);
-    if source == 0xffffffffu { destroy_results[request] = vec2<u32>(source); return; }
+    if source == 0xffffffffu || source >= arrayLength(&rigid_cells) { destroy_results[request] = vec2<u32>(0xffffffffu); return; }
     let cell = rigid_cells[source];
     destroy_results[request] = vec2<u32>(cell.state_slot, cell.state_generation);
 }

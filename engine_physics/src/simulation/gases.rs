@@ -54,6 +54,7 @@ pub struct Gases {
     export_pipeline: wgpu::ComputePipeline,
     buffered_cell_count: u32,
     gas_count: u32,
+    ambient_temperature: f32,
 }
 
 impl Gases {
@@ -66,6 +67,7 @@ impl Gases {
         fluid_coverage: &AcceleratorBuffer,
         gas_properties: &AcceleratorBuffer,
         buffered_cell_count: usize,
+        ambient_temperature: f32,
     ) -> Self {
         let device: &wgpu::Device = accelerator.wgpu_device();
         let buffered_cell_count: u32 = buffered_cell_count
@@ -231,6 +233,7 @@ impl Gases {
             export_pipeline: pipeline("export_gas_area", "gas streamed area export pipeline"),
             buffered_cell_count,
             gas_count,
+            ambient_temperature,
         }
     }
 
@@ -647,7 +650,7 @@ impl Gases {
             MAXIMUM_SPEED_CELLS_PER_SECOND.to_bits(),
             FLUID_OBSTACLE_COVERAGE.to_bits(),
             AMBIENT_DENSITY.to_bits(),
-            0,
+            self.ambient_temperature.to_bits(),
             0,
             0,
         ];
@@ -734,6 +737,7 @@ mod tests {
             &fluid,
             &graphics.gas_properties,
             cell_count,
+            293.15,
         );
         let physical_index = |x: u32, y: u32| -> usize {
             let tile_x: u32 = x / 8;
@@ -926,6 +930,7 @@ mod tests {
             &fluid,
             &graphics.gas_properties,
             cell_count,
+            293.15,
         );
         let started: Instant = Instant::now();
         for _ in 0..60 {

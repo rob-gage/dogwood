@@ -110,6 +110,7 @@ impl ChunkFluidParticle {
 
     /// Writes one persistent dormant particle record
     pub fn serialize<W: io::Write>(&self, writer: &mut W) -> Result<(), io::Error> {
+        self.validate()?;
         writer.write_all(&self.material_identifier.as_u32().to_le_bytes())?;
         for value in self.position.into_iter().chain(self.velocity) {
             writer.write_all(&value.to_bits().to_le_bytes())?;
@@ -120,14 +121,19 @@ impl ChunkFluidParticle {
     }
 
     /// Appends one aligned GPU particle record
-    pub fn serialize_gpu(&self, bytes: &mut Vec<u8>) {
+    pub fn serialize_gpu(&self, bytes: &mut Vec<u8>) -> Result<(), io::Error> {
+        self.validate()?;
         bytes.extend_from_slice(&self.material_identifier.as_u32().to_le_bytes());
         bytes.extend_from_slice(&0u32.to_le_bytes());
         for value in self.position.into_iter().chain(self.velocity) {
             bytes.extend_from_slice(&value.to_bits().to_le_bytes());
         }
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
         bytes.extend_from_slice(&self.amount.to_bits().to_le_bytes());
         bytes.extend_from_slice(&self.temperature.to_bits().to_le_bytes());
+        debug_assert_eq!(bytes.len() % Self::GPU_SIZE, 0);
+        Ok(())
     }
 
     fn read_u32<R: io::Read>(reader: &mut R) -> Result<u32, io::Error> {
@@ -158,5 +164,62 @@ impl ChunkFluidParticle {
             ));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    fn particle(index: u32) -> ChunkFluidParticle {
+        ChunkFluidParticle {
+            material_identifier: MaterialIdentifier::new(MaterialForm::Fluid, index),
+            position: [index as f32 + 0.25, -(index as f32) - 0.5],
+            velocity: [index as f32 + 1.0, -(index as f32) - 2.0],
+            amount: index as f32 + 0.5,
+            temperature: 273.15 + index as f32,
+        }
+    }
+
+    #[test]
+    fn gpu_record_is_complete_and_round_trips() {
+        let source = particle(1);
+        let mut bytes = Vec::new();
+        source.serialize_gpu(&mut bytes).unwrap();
+        assert_eq!(bytes.len(), ChunkFluidParticle::GPU_SIZE);
+        let decoded = ChunkFluidParticle::deserialize_gpu(&bytes).unwrap();
+        assert_eq!(decoded.material_identifier, source.material_identifier);
+        assert_eq!(decoded.position, source.position);
+        assert_eq!(decoded.velocity, source.velocity);
+        assert_eq!(decoded.amount, source.amount);
+        assert_eq!(decoded.temperature, source.temperature);
+    }
+
+    #[test]
+    fn gpu_records_keep_their_stride() {
+        let sources: Vec<_> = (0..3).map(particle).collect();
+        let mut bytes = Vec::new();
+        for source in &sources {
+            source.serialize_gpu(&mut bytes).unwrap();
+        }
+        assert_eq!(bytes.len(), sources.len() * ChunkFluidParticle::GPU_SIZE);
+        for (index, source) in sources.iter().enumerate() {
+            let start = index * ChunkFluidParticle::GPU_SIZE;
+            let decoded = ChunkFluidParticle::deserialize_gpu(
+                &bytes[start..start + ChunkFluidParticle::GPU_SIZE],
+            )
+            .unwrap();
+            assert_eq!(decoded.position, source.position);
+            assert_eq!(decoded.temperature, source.temperature);
+        }
+    }
+
+    #[test]
+    fn persistent_serialization_keeps_validation_strict() {
+        let mut invalid = particle(0);
+        invalid.amount = 0.0;
+        assert!(invalid.serialize(&mut Cursor::new(Vec::new())).is_err());
+        assert!(invalid.serialize_gpu(&mut Vec::new()).is_err());
     }
 }

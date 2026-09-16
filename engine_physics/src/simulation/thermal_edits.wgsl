@@ -27,7 +27,7 @@ fn apply_thermal_requests(@builtin(global_invocation_id) id: vec3<u32>) {
     if (cellular_materials[cell] != 0u) { cellular_temperatures[cell] = max(0.0, cellular_temperatures[cell] + delta); }
     if (cellular_materials[cell] == 0u && rigid_claims[cell] == 0xffffffffu) { gas_temperatures[cell] = max(0.0, gas_temperatures[cell] + delta); }
     let claim = rigid_claims[cell];
-    if (claim != 0xffffffffu) {
+    if (claim != 0xffffffffu && claim < arrayLength(&rigid_cells)) {
         let slot = rigid_cells[claim].state_slot;
         if (slot < arrayLength(&rigid_temperatures)) {
             var old = atomicLoad(&rigid_flags[slot]);

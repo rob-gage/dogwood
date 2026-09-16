@@ -155,6 +155,7 @@ fn effective_pressure_material(index: u32) -> u32 {
 }
 
 fn rigid_cell_state_slot(source: u32) -> u32 {
+    if source >= arrayLength(&rigid_cells) / 2u { return 0xffffffffu; }
     return rigid_cells[source * 2u + 1u].y;
 }
 
@@ -162,6 +163,7 @@ fn accumulate_rigid_pressure_damage(index: u32, material: u32, load: vec4<f32>) 
     let source: u32 = rigid_claims[index];
     if source == 0xffffffffu { return; }
     let slot: u32 = rigid_cell_state_slot(source);
+    if slot >= arrayLength(&rigid_damage) { return; }
     let properties = cellular_static_properties[material_index_from_identifier(material)];
     let overload = max(0.0, load.x + load.y + load.z + load.w - properties.pressure_ignore_threshold);
     atomicMax(&rigid_damage[slot], bitcast<u32>(overload));
@@ -176,6 +178,7 @@ fn accumulate_rigid_pressure_damage(index: u32, material: u32, load: vec4<f32>) 
 fn apply_rigid_pressure_damage(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if invocation.x >= parameters.rigid_cell_count { return; }
     let slot = rigid_cell_state_slot(invocation.x);
+    if slot >= arrayLength(&rigid_damage) { return; }
     let overload = bitcast<f32>(atomicExchange(&rigid_damage[slot], 0u));
     if overload == 0.0 { return; }
     rigid_cell_integrities[slot] -= overload * parameters.delta_time * parameters.damage_rate;

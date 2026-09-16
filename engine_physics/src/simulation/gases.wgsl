@@ -26,7 +26,7 @@ struct Parameters {
     maximum_speed: f32,
     fluid_obstacle_coverage: f32,
     ambient_density: f32,
-    padding_0: u32,
+    ambient_temperature: f32,
     padding_1: vec2<u32>,
 }
 
@@ -231,6 +231,7 @@ fn clear_gas_area(@builtin(global_invocation_id) invocation: vec3<u32>) {
             gas_concentration_storage_index_from_species_and_physical_cell(species, index)
         ] = 0.0;
     }
+    gas_temperature[index] = parameters.ambient_temperature;
 }
 
 // Exports one fixed gas record and clears the same outgoing physical cell
