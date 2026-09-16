@@ -64,7 +64,7 @@ impl DemoGame {
             mass: 1.0,
             pressure_ignore_threshold: 8.0,
             default_integrity: 20.0,
-            minimum_rigid_body_cell_count: 4,
+            minimum_rigid_body_cell_count: 12,
             debris_material: Some(stone_debris),
             debris_yield_rate: 0.8,
             pressure_transmission: 0.8,
