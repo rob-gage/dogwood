@@ -252,7 +252,7 @@ impl Gases {
     pub fn apply_edits(
         &self,
         accelerator: &Accelerator,
-        concentrations: &[(usize, u32)],
+        concentrations: &[(usize, u32, f32)],
         clear_cells: &[usize],
     ) {
         fn runs(indices: &[usize], mut write: impl FnMut(usize, usize)) {
@@ -283,7 +283,7 @@ impl Gases {
             });
             let mut authored: Vec<usize> = concentrations
                 .iter()
-                .filter_map(|(cell, value)| (*value == species).then_some(*cell))
+                .filter_map(|(cell, value, _)| (*value == species).then_some(*cell))
                 .collect();
             authored.sort_unstable();
             runs(&authored, |index, count| {
@@ -296,6 +296,16 @@ impl Gases {
                         .collect::<Vec<_>>(),
                 )
             });
+            for &(cell, _, temperature) in concentrations
+                .iter()
+                .filter(|(_, value, _)| *value == species)
+            {
+                accelerator.wgpu_queue().write_buffer(
+                    self.gas_temperature.wgpu_buffer(),
+                    cell as u64 * 4,
+                    &temperature.to_bits().to_le_bytes(),
+                );
+            }
         }
     }
 
@@ -718,11 +728,11 @@ mod tests {
             let tile_y: u32 = y / 8;
             ((tile_y * u32::from(width) + tile_x) * 64 + (y % 8) * 8 + x % 8) as usize
         };
-        let mut edits: Vec<(usize, u32)> = Vec::new();
+        let mut edits: Vec<(usize, u32, f32)> = Vec::new();
         for y in 5..11 {
             for x in 12..20 {
-                edits.push((physical_index(x, y), vapor.index()));
-                edits.push((physical_index(x, y), tracer.index()));
+                edits.push((physical_index(x, y), vapor.index(), 400.0));
+                edits.push((physical_index(x, y), tracer.index(), 300.0));
             }
         }
         gases.apply_edits(&accelerator, &edits, &[]);

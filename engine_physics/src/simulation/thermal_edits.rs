@@ -234,3 +234,72 @@ impl Drop for ThermalEdits {
         self.parameters.destroy();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn dispatch_applies_cellular_delta() {
+        let accelerator = engine_compute::Accelerator::new().unwrap();
+        let alloc = |n: usize| accelerator.allocate::<u32>(n);
+        let materials = alloc(1);
+        let temperatures = accelerator.allocate::<f32>(1);
+        let gas_temperatures = accelerator.allocate::<f32>(1);
+        let particles = accelerator.allocate::<[u32; 10]>(1);
+        let claims = alloc(1);
+        let rigid_cells = accelerator.allocate::<[u32; 8]>(1);
+        let rigid_temperatures = accelerator.allocate::<f32>(1);
+        accelerator
+            .wgpu_queue()
+            .write_buffer(materials.wgpu_buffer(), 0, &1u32.to_le_bytes());
+        accelerator.wgpu_queue().write_buffer(
+            temperatures.wgpu_buffer(),
+            0,
+            &300.0f32.to_bits().to_le_bytes(),
+        );
+        accelerator.wgpu_queue().write_buffer(
+            claims.wgpu_buffer(),
+            0,
+            &0xffffffffu32.to_le_bytes(),
+        );
+        let edits = ThermalEdits::new(
+            &accelerator,
+            &materials,
+            &temperatures,
+            &gas_temperatures,
+            &particles,
+            &claims,
+            &rigid_cells,
+            &rigid_temperatures,
+            1,
+            1,
+            1,
+        );
+        edits.apply(&accelerator, &[0], 10.0, [0, 0], [1, 1], [0, 0]);
+        accelerator.poll().unwrap();
+        let readback = accelerator
+            .wgpu_device()
+            .create_buffer(&wgpu::BufferDescriptor {
+                label: None,
+                size: 4,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+        let mut encoder = accelerator
+            .wgpu_device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        encoder.copy_buffer_to_buffer(temperatures.wgpu_buffer(), 0, &readback, 0, 4);
+        accelerator.wgpu_queue().submit(Some(encoder.finish()));
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        readback
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |r| sender.send(r).unwrap());
+        while receiver.try_recv().is_err() {
+            accelerator.poll().unwrap();
+            std::thread::yield_now();
+        }
+        let mapped = readback.slice(..).get_mapped_range().unwrap();
+        let value = f32::from_bits(u32::from_le_bytes(mapped[..4].try_into().unwrap()));
+        assert_eq!(value, 310.0);
+    }
+}

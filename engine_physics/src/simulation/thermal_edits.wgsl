@@ -1,7 +1,8 @@
 #define_import_path compute::thermal_edits
 #import utility::tile_ring::{physical_cell_index_from_world_cell, INVALID_PHYSICAL_CELL_INDEX}
 
-struct Parameters { ring_origin: vec2<i32>, ring_tiles: vec2<u32>, ring_offset: vec2<u32>, capacity: u32, request_count: u32, common_delta: f32, padding: vec3<u32> }
+// 48 bytes: six 8-byte vectors followed by six scalar u32/f32 words.
+struct Parameters { ring_origin: vec2<i32>, ring_tiles: vec2<u32>, ring_offset: vec2<u32>, capacity: u32, request_count: u32, common_delta: f32, padding_0: u32, padding_1: u32, padding_2: u32 }
 struct Particle { material_identifier: u32, is_active: u32, position: vec2<f32>, velocity: vec2<f32>, prediction_collision_displacement: vec2<f32>, amount: f32, temperature: f32 }
 struct RigidCell { local: vec2<i32>, body: u32, material_identifier: u32, appearance: u32, state_slot: u32, state_generation: u32, padding: u32 }
 @group(0) @binding(0) var<storage, read> requests: array<vec2<u32>>;

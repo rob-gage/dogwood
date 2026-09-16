@@ -656,7 +656,7 @@ impl Scene {
             (CellCoordinates, MaterialIdentifier, CellularAppearance, f32),
         > = HashMap::new();
         let mut fluid_edits: HashMap<usize, u32> = HashMap::new();
-        let mut gas_edits: HashSet<(usize, u32)> = HashSet::new();
+        let mut gas_edits: BTreeMap<(usize, u32), f32> = BTreeMap::new();
         let mut gas_clear_cells: HashSet<usize> = HashSet::new();
         let mut rigid_destroy_indices = Vec::new();
         let mut deferred = SceneEditBatch::new();
@@ -737,7 +737,10 @@ impl Scene {
                                     }
                                 }
                                 Some(Material::Gas { .. }) => {
-                                    gas_edits.insert((physical_index, material_identifier.index()));
+                                    gas_edits.insert(
+                                        (physical_index, material_identifier.index()),
+                                        self.initial_temperature(material_identifier),
+                                    );
                                 }
                                 None => {}
                             }
@@ -925,8 +928,20 @@ impl Scene {
             );
         }
         if !gas_edits.is_empty() || !gas_clear_cells.is_empty() {
-            let mut gas_edits: Vec<(usize, u32)> = gas_edits.into_iter().collect();
-            gas_edits.sort_unstable();
+            let mut authored_temperature_by_cell = BTreeMap::<usize, (f32, usize)>::new();
+            // BTreeMap ordering plus this average keeps shared-cell gas temperature deterministic.
+            for (&(cell, _), &temperature) in &gas_edits {
+                let entry = authored_temperature_by_cell.entry(cell).or_insert((0.0, 0));
+                entry.0 += temperature;
+                entry.1 += 1;
+            }
+            let gas_edits: Vec<(usize, u32, f32)> = gas_edits
+                .into_iter()
+                .map(|((cell, species), _)| {
+                    let (sum, count) = authored_temperature_by_cell[&cell];
+                    (cell, species, sum / count as f32)
+                })
+                .collect();
             let mut gas_clear_cells: Vec<usize> = gas_clear_cells.into_iter().collect();
             gas_clear_cells.sort_unstable();
             self.gases
