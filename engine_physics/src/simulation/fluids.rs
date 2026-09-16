@@ -471,6 +471,12 @@ impl Fluids {
     pub(crate) const fn particles_buffer(&self) -> &AcceleratorBuffer {
         &self.particles
     }
+    pub(crate) const fn free_indices_buffer(&self) -> &AcceleratorBuffer {
+        &self.free_indices
+    }
+    pub(crate) const fn free_count_buffer(&self) -> &AcceleratorBuffer {
+        &self.free_count
+    }
 
     pub(crate) const fn edit_cells_buffer(&self) -> &AcceleratorBuffer {
         &self.edit_cells

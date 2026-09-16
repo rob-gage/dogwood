@@ -10,7 +10,10 @@ use engine::{
             ActorCollisionShape, ActorPawn, ActorPawnMovement, ActorPawnSwimmingConfiguration,
             ActorPawnWalkingConfiguration,
         },
-        materials::{Material, MaterialIdentifier, MaterialRegistryBuilder},
+        materials::{
+            Material, MaterialIdentifier, MaterialRegistryBuilder, MaterialThermalProperties,
+            MaterialThermalTransition,
+        },
         scenes::{Scene, SceneData, SceneEditBatch, ScenePosition, SceneVelocity},
         simulation::SceneSimulationConfiguration,
         tiles::{CellCoordinates, CellularAppearance, TileCoordinates},
@@ -71,7 +74,7 @@ impl DemoGame {
             friction: 0.8,
             restitution: 0.02,
         });
-        materials.register(Material::Fluid {
+        let water = materials.register(Material::Fluid {
             name: "Water".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(45, 125, 210)),
             pressure_transmission: 0.95,
@@ -102,6 +105,75 @@ impl DemoGame {
             dissipation: 0.0001,
             compressibility: 0.1,
         });
+        let ice = materials.register(Material::CellularStatic {
+            name: "Ice".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(180, 220, 245)),
+            mass: 1.0,
+            pressure_ignore_threshold: 1.0,
+            default_integrity: 1.0,
+            minimum_rigid_body_cell_count: 12,
+            debris_material: None,
+            debris_yield_rate: 0.0,
+            pressure_transmission: 0.5,
+            friction: 0.2,
+            restitution: 0.0,
+        });
+        materials
+            .set_thermal(
+                ice,
+                MaterialThermalProperties {
+                    conductivity: 2.2,
+                    specific_heat_capacity: 2.1,
+                    default_temperature: Some(263.15),
+                    cold_transition: None,
+                    hot_transition: Some(MaterialThermalTransition {
+                        threshold_temperature: 273.15,
+                        target: water,
+                        yield_rate: 1.0,
+                        latent_energy: 20.0,
+                    }),
+                },
+            )
+            .map_err(std::io::Error::other)?;
+        materials
+            .set_thermal(
+                water,
+                MaterialThermalProperties {
+                    conductivity: 0.6,
+                    specific_heat_capacity: 4.18,
+                    default_temperature: Some(293.15),
+                    cold_transition: Some(MaterialThermalTransition {
+                        threshold_temperature: 273.15,
+                        target: ice,
+                        yield_rate: 1.0,
+                        latent_energy: 20.0,
+                    }),
+                    hot_transition: Some(MaterialThermalTransition {
+                        threshold_temperature: 373.15,
+                        target: water_vapor,
+                        yield_rate: 1.0,
+                        latent_energy: 50.0,
+                    }),
+                },
+            )
+            .map_err(std::io::Error::other)?;
+        materials
+            .set_thermal(
+                water_vapor,
+                MaterialThermalProperties {
+                    conductivity: 0.025,
+                    specific_heat_capacity: 2.0,
+                    default_temperature: Some(393.15),
+                    cold_transition: Some(MaterialThermalTransition {
+                        threshold_temperature: 373.15,
+                        target: water,
+                        yield_rate: 1.0,
+                        latent_energy: 50.0,
+                    }),
+                    hot_transition: None,
+                },
+            )
+            .map_err(std::io::Error::other)?;
         let data: SceneData =
             SceneData::new_temporary(materials.compile().map_err(std::io::Error::other)?)?;
         let mut scene: Scene = Scene::load_with_generator(

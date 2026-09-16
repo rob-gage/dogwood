@@ -34,11 +34,16 @@ impl MaterialMutations {
         gas_velocity: &AcceleratorBuffer,
         gas_concentrations: &AcceleratorBuffer,
         gas_temperatures: &AcceleratorBuffer,
+        particles: &AcceleratorBuffer,
+        fluid_free_indices: &AcceleratorBuffer,
+        fluid_free_count: &AcceleratorBuffer,
         buffered_cell_count: usize,
-        _gas_count: u32,
+        gas_count: u32,
     ) -> Self {
         let device = accelerator.wgpu_device();
-        let requests = accelerator.allocate::<[u32; 4]>(buffered_cell_count);
+        // Nine words retain the old cell replacement prefix and add an exact authority locator.
+        let requests =
+            accelerator.allocate::<[u32; 9]>(buffered_cell_count * (2 + gas_count as usize));
         let request_count = accelerator.allocate::<u32>(1);
         let defaults: Vec<u32> = materials
             .iter()
@@ -100,6 +105,9 @@ impl MaterialMutations {
                 storage(13, false),
                 storage(14, false),
                 storage(15, false),
+                storage(16, false),
+                storage(17, false),
+                storage(18, false),
                 wgpu::BindGroupLayoutEntry {
                     binding: 9,
                     visibility: wgpu::ShaderStages::COMPUTE,
@@ -175,6 +183,18 @@ impl MaterialMutations {
                 wgpu::BindGroupEntry {
                     binding: 15,
                     resource: gas_temperatures.wgpu_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 16,
+                    resource: particles.wgpu_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 17,
+                    resource: fluid_free_indices.wgpu_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 18,
+                    resource: fluid_free_count.wgpu_buffer().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 9,
@@ -378,6 +398,9 @@ mod tests {
             &gas_velocity,
             &gas_concentrations,
             &accelerator.allocate::<f32>(64),
+            &accelerator.allocate::<[u32; 10]>(64),
+            &accelerator.allocate::<u32>(64),
+            &accelerator.allocate::<u32>(1),
             64,
             0,
         );
@@ -440,6 +463,9 @@ mod tests {
             &gas_velocity,
             &gas_concentrations,
             &accelerator.allocate::<f32>(64),
+            &accelerator.allocate::<[u32; 10]>(64),
+            &accelerator.allocate::<u32>(64),
+            &accelerator.allocate::<u32>(1),
             64,
             0,
         );

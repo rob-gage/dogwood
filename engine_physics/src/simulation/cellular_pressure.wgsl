@@ -77,7 +77,7 @@ struct MechanicalFluidCell {
 @group(0) @binding(19) var<storage, read> gas_concentrations: array<f32>;
 @group(0) @binding(20) var<storage, read> gas_properties: array<vec4<f32>>;
 @group(0) @binding(21) var<storage, read> fluid_coverage: array<f32>;
-struct MaterialMutationRequest { cell: u32, expected_source: u32, replacement: u32, flags: u32 }
+struct MaterialMutationRequest { cell: u32, kind: u32, locator: u32, expected_source: u32, replacement: u32, amount: u32, temperature: u32, world_x: u32, world_y: u32 }
 @group(0) @binding(37) var<storage, read_write> material_mutation_requests: array<MaterialMutationRequest>;
 @group(0) @binding(38) var<storage, read_write> material_mutation_request_count: array<atomic<u32>>;
 @group(0) @binding(22) var<storage, read> rigid_owners: array<u32>;
@@ -1134,7 +1134,7 @@ fn apply_cellular_static_pressure_damage(
     }
     let request_index: u32 = atomicAdd(&material_mutation_request_count[0], 1u);
     if request_index < parameters.buffered_cell_count {
-        material_mutation_requests[request_index] = MaterialMutationRequest(index, material, replacement, 0u);
+        material_mutation_requests[request_index] = MaterialMutationRequest(index, 0u, index, material, replacement, 0u, 0u, 0u, 0u);
     }
     cellular_integrities[index] = 0.0;
 }
