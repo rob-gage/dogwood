@@ -1,4 +1,6 @@
 use engine_compute::{Accelerator, AcceleratorBuffer};
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Applies sparse externally-authored temperature deltas directly to authoritative state.
 pub(crate) struct ThermalEdits {
@@ -11,10 +13,10 @@ pub(crate) struct ThermalEdits {
     request_pipeline: wgpu::ComputePipeline,
     fluid_pipeline: wgpu::ComputePipeline,
     rigid_pipeline: wgpu::ComputePipeline,
-    clear_pipeline: wgpu::ComputePipeline,
     capacity: u32,
     particle_capacity: u32,
     rigid_capacity: u32,
+    generation: AtomicU32,
 }
 
 impl ThermalEdits {
@@ -34,12 +36,8 @@ impl ThermalEdits {
         let device = accelerator.wgpu_device();
         let requests = accelerator.allocate::<[u32; 2]>(capacity as usize);
         let count = accelerator.allocate::<u32>(1);
-        let deltas = accelerator.allocate::<f32>(capacity as usize);
+        let deltas = accelerator.allocate::<[u32; 2]>(capacity as usize);
         let rigid_flags = accelerator.allocate::<u32>(rigid_capacity as usize);
-        let zero_cells = vec![0u8; capacity as usize * 4];
-        accelerator
-            .wgpu_queue()
-            .write_buffer(deltas.wgpu_buffer(), 0, &zero_cells);
         let zero_rigid = vec![0u8; rigid_capacity as usize * 4];
         accelerator
             .wgpu_queue()
@@ -138,10 +136,10 @@ impl ThermalEdits {
             request_pipeline: pipeline("apply_thermal_requests"),
             fluid_pipeline: pipeline("apply_thermal_fluid"),
             rigid_pipeline: pipeline("apply_thermal_rigid"),
-            clear_pipeline: pipeline("clear_thermal_edits"),
             capacity,
             particle_capacity,
             rigid_capacity,
+            generation: AtomicU32::new(0),
         }
     }
 
@@ -149,7 +147,7 @@ impl ThermalEdits {
         &self,
         accelerator: &Accelerator,
         physical_indices: &[u32],
-        delta: f32,
+        deltas: &BTreeMap<usize, f32>,
         ring_origin: [i32; 2],
         ring_tiles: [u32; 2],
         ring_offset: [u32; 2],
@@ -158,10 +156,14 @@ impl ThermalEdits {
             return;
         }
         let count = physical_indices.len().min(self.capacity as usize) as u32;
+        let generation = self
+            .generation
+            .fetch_add(1, Ordering::Relaxed)
+            .wrapping_add(1);
         let mut bytes = Vec::with_capacity(count as usize * 8);
         for &index in physical_indices.iter().take(count as usize) {
             bytes.extend_from_slice(&index.to_le_bytes());
-            bytes.extend_from_slice(&delta.to_bits().to_le_bytes());
+            bytes.extend_from_slice(&deltas[&(index as usize)].to_bits().to_le_bytes());
         }
         accelerator
             .wgpu_queue()
@@ -179,7 +181,7 @@ impl ThermalEdits {
             ring_offset[1],
             self.capacity,
             count,
-            delta.to_bits(),
+            generation,
             0,
             0,
             0,
@@ -212,14 +214,6 @@ impl ThermalEdits {
         {
             let mut pass = accelerator.begin_compute_pass(&mut encoder, "thermal rigid");
             dispatch(&mut pass, &self.rigid_pipeline, self.rigid_capacity);
-        }
-        {
-            let mut pass = accelerator.begin_compute_pass(&mut encoder, "thermal clear");
-            dispatch(
-                &mut pass,
-                &self.clear_pipeline,
-                self.capacity.max(self.rigid_capacity),
-            );
         }
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
@@ -275,7 +269,14 @@ mod tests {
             1,
             1,
         );
-        edits.apply(&accelerator, &[0], 10.0, [0, 0], [1, 1], [0, 0]);
+        edits.apply(
+            &accelerator,
+            &[0],
+            &[(0usize, 10.0f32)].into_iter().collect(),
+            [0, 0],
+            [1, 1],
+            [0, 0],
+        );
         accelerator.poll().unwrap();
         let readback = accelerator
             .wgpu_device()

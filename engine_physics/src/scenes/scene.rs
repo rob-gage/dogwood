@@ -6,10 +6,10 @@ use super::{
 };
 use crate::simulation::{
     CellularCollision, CellularDynamic, CellularPhysicsBodyProxy, CellularPressure,
-    CollisionOccupancySnapshot, Fluids, Gases, MaterialMutations, RigidCellularBody,
-    RigidCellularBodyCell, RigidCellularBodyState, ScenePhysicsWorld, SceneSimulationConfiguration,
-    ThermalConduction, ThermalEdits, ThermalInteraction, ThermalMaterialTable,
-    ThermalPhaseTransitions, ThermalScatter,
+    CollisionOccupancySnapshot, Fluids, Gases, MaterialMutations, RigidCellStateUpload,
+    RigidCellularBody, RigidCellularBodyCell, RigidCellularBodyState, ScenePhysicsWorld,
+    SceneSimulationConfiguration, ThermalConduction, ThermalEdits, ThermalInteraction,
+    ThermalMaterialTable, ThermalPhaseTransitions, ThermalScatter,
 };
 use crate::{
     actors::{Actor, ActorRegistry},
@@ -131,6 +131,7 @@ pub struct Scene {
     rigid_cell_amounts: AcceleratorBuffer,
     /// Fixed-capacity persistent temperature for authoritative rigid cells.
     rigid_cell_temperatures: AcceleratorBuffer,
+    rigid_cell_state_upload: RigidCellStateUpload,
     /// Transient rasterized possessed-pawn interaction geometry
     cellular_physics_body_proxy: CellularPhysicsBodyProxy,
     /// Authoritative body-local cellular matter paired with Rapier bodies
@@ -364,6 +365,13 @@ impl Scene {
             buffered_cell_count,
             gases.gas_count(),
         );
+        let rigid_cell_state_upload = RigidCellStateUpload::new(
+            accelerator.as_ref(),
+            &rigid_cell_integrities,
+            &rigid_cell_amounts,
+            &rigid_cell_temperatures,
+            buffered_cell_count,
+        );
         let thermal_phase_transitions = ThermalPhaseTransitions::new(
             accelerator.as_ref(),
             &cellular_material_identifiers,
@@ -498,6 +506,7 @@ impl Scene {
             rigid_cell_integrities,
             rigid_cell_amounts,
             rigid_cell_temperatures,
+            rigid_cell_state_upload,
             cellular_physics_body_proxy,
             rigid_cellular_bodies: Vec::new(),
             rigid_cell_state_generations: vec![0; buffered_cell_count],
@@ -659,6 +668,7 @@ impl Scene {
         let mut fluid_edits: HashMap<usize, u32> = HashMap::new();
         let mut gas_edits: BTreeMap<(usize, u32), f32> = BTreeMap::new();
         let mut gas_clear_cells: HashSet<usize> = HashSet::new();
+        let mut thermal_edits: BTreeMap<usize, f32> = BTreeMap::new();
         let mut rigid_destroy_indices = Vec::new();
         let mut deferred = SceneEditBatch::new();
         for edit in edits.drain() {
@@ -808,41 +818,40 @@ impl Scene {
                     cells,
                     delta_temperature,
                 } => {
-                    let mut physical_indices = Vec::new();
                     for coordinates in cells {
                         if let Some(index) = self.cell_edit_index(coordinates) {
-                            physical_indices.push(index as u32);
+                            *thermal_edits.entry(index).or_default() += delta_temperature;
                         } else {
                             deferred.thermal(vec![coordinates], delta_temperature);
                         }
                     }
-                    physical_indices.sort_unstable();
-                    physical_indices.dedup();
-                    self.thermal_edits.apply(
-                        self.accelerator.as_ref(),
-                        &physical_indices,
-                        delta_temperature,
-                        [
-                            self.origin.x - i32::from(self.simulation_buffer_size),
-                            self.origin.y - i32::from(self.simulation_buffer_size),
-                        ],
-                        [
-                            u32::from(
-                                self.simulation_width + u16::from(self.simulation_buffer_size) * 2,
-                            ),
-                            u32::from(
-                                self.simulation_height + u16::from(self.simulation_buffer_size) * 2,
-                            ),
-                        ],
-                        [
-                            u32::from(self.tiles_ring_offset_x),
-                            u32::from(self.tiles_ring_offset_y),
-                        ],
-                    );
                 }
             }
         }
         edits.append(deferred);
+        if !thermal_edits.is_empty() {
+            let physical_indices: Vec<u32> =
+                thermal_edits.keys().map(|&index| index as u32).collect();
+            // The current GPU request format has one delta per request; aggregate same-cell
+            // edits on the CPU so this flush submits exactly once.
+            self.thermal_edits.apply(
+                self.accelerator.as_ref(),
+                &physical_indices,
+                &thermal_edits,
+                [
+                    self.origin.x - i32::from(self.simulation_buffer_size),
+                    self.origin.y - i32::from(self.simulation_buffer_size),
+                ],
+                [
+                    u32::from(self.simulation_width + u16::from(self.simulation_buffer_size) * 2),
+                    u32::from(self.simulation_height + u16::from(self.simulation_buffer_size) * 2),
+                ],
+                [
+                    u32::from(self.tiles_ring_offset_x),
+                    u32::from(self.tiles_ring_offset_y),
+                ],
+            );
+        }
         if !rigid_destroy_indices.is_empty() {
             rigid_destroy_indices.sort_unstable();
             rigid_destroy_indices.dedup();
@@ -1252,7 +1261,6 @@ impl Scene {
                 self.gravity,
                 1.0 / TICK_RATE as f32,
             );
-            self.material_mutations.reset(self.accelerator.as_ref());
             self.cellular_pressure.simulate(
                 self.accelerator.as_ref(),
                 TileCoordinates {
@@ -1572,30 +1580,15 @@ impl Scene {
                 cells,
                 friction / divisor,
                 restitution / divisor,
+                Some(
+                    &integrities
+                        .iter()
+                        .copied()
+                        .zip(amounts.iter().copied().zip(temperatures.iter().copied()))
+                        .map(|(i, (a, t))| (i, a, t))
+                        .collect::<Vec<_>>(),
+                ),
             );
-            for (cell, (integrity, (amount, temperature))) in
-                self.rigid_cellular_bodies.last().unwrap().cells.iter().zip(
-                    integrities
-                        .into_iter()
-                        .zip(amounts.into_iter().zip(temperatures)),
-                )
-            {
-                self.accelerator.wgpu_queue().write_buffer(
-                    self.rigid_cell_integrities.wgpu_buffer(),
-                    cell.state_slot as u64 * 4,
-                    &integrity.to_le_bytes(),
-                );
-                self.accelerator.wgpu_queue().write_buffer(
-                    self.rigid_cell_amounts.wgpu_buffer(),
-                    cell.state_slot as u64 * 4,
-                    &amount.to_le_bytes(),
-                );
-                self.accelerator.wgpu_queue().write_buffer(
-                    self.rigid_cell_temperatures.wgpu_buffer(),
-                    cell.state_slot as u64 * 4,
-                    &temperature.to_le_bytes(),
-                );
-            }
         }
         self.rigid_detachment_snapshot = Some(snapshot.clone());
         Ok(())
@@ -1768,22 +1761,6 @@ impl Scene {
     fn release_rigid_cell_state(&mut self, slot: u32) {
         let generation = &mut self.rigid_cell_state_generations[slot as usize];
         *generation = generation.wrapping_add(1);
-        let offset = slot as u64 * 4;
-        self.accelerator.wgpu_queue().write_buffer(
-            self.rigid_cell_integrities.wgpu_buffer(),
-            offset,
-            &0.0f32.to_le_bytes(),
-        );
-        self.accelerator.wgpu_queue().write_buffer(
-            self.rigid_cell_amounts.wgpu_buffer(),
-            offset,
-            &0.0f32.to_le_bytes(),
-        );
-        self.accelerator.wgpu_queue().write_buffer(
-            self.rigid_cell_temperatures.wgpu_buffer(),
-            offset,
-            &0.0f32.to_le_bytes(),
-        );
         self.rigid_cell_state_free.push(slot);
     }
 
@@ -1859,6 +1836,7 @@ impl Scene {
             cells,
             friction,
             restitution,
+            None,
         );
     }
 
@@ -1869,8 +1847,10 @@ impl Scene {
         mut cells: Vec<RigidCellularBodyCell>,
         friction: f32,
         restitution: f32,
+        inherited_state: Option<&[(f32, f32, f32)]>,
     ) {
-        for cell in &mut cells {
+        let mut uploads = Vec::new();
+        for (index, cell) in cells.iter_mut().enumerate() {
             if cell.state_slot != u32::MAX {
                 continue;
             }
@@ -1886,23 +1866,19 @@ impl Scene {
                 }) => *default_integrity,
                 _ => 0.0,
             };
-            self.accelerator.wgpu_queue().write_buffer(
-                self.rigid_cell_integrities.wgpu_buffer(),
-                slot as u64 * 4,
-                &integrity.to_le_bytes(),
-            );
-            self.accelerator.wgpu_queue().write_buffer(
-                self.rigid_cell_amounts.wgpu_buffer(),
-                slot as u64 * 4,
-                &1.0f32.to_le_bytes(),
-            );
             let temperature = self.initial_temperature(cell.material);
-            self.accelerator.wgpu_queue().write_buffer(
-                self.rigid_cell_temperatures.wgpu_buffer(),
-                slot as u64 * 4,
-                &temperature.to_le_bytes(),
-            );
+            let (integrity, amount, temperature) = inherited_state
+                .and_then(|state| state.get(index).copied())
+                .unwrap_or((integrity, 1.0, temperature));
+            uploads.push([
+                slot,
+                integrity.to_bits(),
+                amount.to_bits(),
+                temperature.to_bits(),
+            ]);
         }
+        self.rigid_cell_state_upload
+            .apply(self.accelerator.as_ref(), &uploads);
         self.rigid_cellular_bodies
             .push(self.physics_world.insert_rigid_cellular_body(
                 position,

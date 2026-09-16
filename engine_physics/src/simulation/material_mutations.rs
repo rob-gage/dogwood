@@ -47,6 +47,9 @@ impl MaterialMutations {
         let requests =
             accelerator.allocate::<[u32; 9]>(buffered_cell_count * (2 + gas_count as usize));
         let request_count = accelerator.allocate::<u32>(1);
+        accelerator
+            .wgpu_queue()
+            .write_buffer(request_count.wgpu_buffer(), 0, &0u32.to_le_bytes());
         // Two branches (cold/hot), one dense slot per gas cell.  This is transient,
         // overwritten by phase_gases every tick, so it needs no clear pass.
         let gas_fluid_candidates =
@@ -291,16 +294,6 @@ impl MaterialMutations {
     pub(crate) const fn gas_fluid_candidates_buffer(&self) -> &AcceleratorBuffer {
         &self.gas_fluid_candidates
     }
-    pub fn reset(&self, accelerator: &Accelerator) {
-        let mut encoder =
-            accelerator
-                .wgpu_device()
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("clear material mutations"),
-                });
-        encoder.clear_buffer(self.request_count.wgpu_buffer(), 0, None);
-        accelerator.wgpu_queue().submit(Some(encoder.finish()));
-    }
     pub fn resolve(&self, accelerator: &Accelerator, buffered_cell_count: u32, gas_count: u32) {
         let mut encoder =
             accelerator
@@ -444,7 +437,6 @@ mod tests {
             64,
             0,
         );
-        mutations.reset(&accelerator);
         mutations.resolve(&accelerator, 64, 0);
         accelerator.poll().unwrap();
     }

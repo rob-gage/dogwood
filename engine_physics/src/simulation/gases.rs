@@ -296,16 +296,28 @@ impl Gases {
                         .collect::<Vec<_>>(),
                 )
             });
-            for &(cell, _, temperature) in concentrations
-                .iter()
-                .filter(|(_, value, _)| *value == species)
-            {
-                accelerator.wgpu_queue().write_buffer(
-                    self.gas_temperature.wgpu_buffer(),
-                    cell as u64 * 4,
-                    &temperature.to_bits().to_le_bytes(),
-                );
+        }
+        let mut temperatures: Vec<(usize, f32)> = concentrations
+            .iter()
+            .map(|&(cell, _, temperature)| (cell, temperature))
+            .collect();
+        temperatures.sort_unstable_by_key(|&(cell, _)| cell);
+        let mut start = 0;
+        while start < temperatures.len() {
+            let mut end = start + 1;
+            while end < temperatures.len() && temperatures[end].0 == temperatures[end - 1].0 + 1 {
+                end += 1;
             }
+            let bytes: Vec<u8> = temperatures[start..end]
+                .iter()
+                .flat_map(|&(_, temperature)| temperature.to_bits().to_le_bytes())
+                .collect();
+            accelerator.wgpu_queue().write_buffer(
+                self.gas_temperature.wgpu_buffer(),
+                temperatures[start].0 as u64 * 4,
+                &bytes,
+            );
+            start = end;
         }
     }
 
