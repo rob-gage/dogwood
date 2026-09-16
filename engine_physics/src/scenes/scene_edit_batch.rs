@@ -51,6 +51,11 @@ impl SceneEditBatch {
         self.edits.push(SceneEdit::Erase { cells });
     }
 
+    /// Destroys every material representation occupying the requested cells.
+    pub fn destroy_cells(&mut self, cells: Vec<CellCoordinates>) {
+        self.edits.push(SceneEdit::DestroyCells { cells });
+    }
+
     /// Drains the pending edits
     pub fn drain(&mut self) -> impl Iterator<Item = SceneEdit> + '_ {
         self.edits.drain(..)

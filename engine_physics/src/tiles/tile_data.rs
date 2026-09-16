@@ -79,6 +79,11 @@ impl TileData {
         self.cell_material_identifiers[y][x]
     }
 
+    /// Returns one local cell's persistent structural integrity.
+    pub(crate) const fn cell_integrity(&self, x: usize, y: usize) -> f32 {
+        self.cell_integrities[y][x]
+    }
+
     /// Returns one local cell's persistent appearance
     pub(crate) const fn cell_appearance(&self, x: usize, y: usize) -> CellularAppearance {
         self.cell_appearances[y][x]

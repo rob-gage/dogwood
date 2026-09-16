@@ -209,7 +209,7 @@ impl<G: Game> EditorApplication<G> {
                         .collect(),
                 );
             }
-            EditorTool::Eraser => edits.erase(cells.into_iter().collect()),
+            EditorTool::Eraser => edits.destroy_cells(cells.into_iter().collect()),
             EditorTool::Impulse => unreachable!(),
         }
         scene.queue_edits(edits);

@@ -30,6 +30,7 @@ impl Fixture {
             mass: 1.0,
             pressure_ignore_threshold: 1000.0,
             default_integrity: 100.0,
+            minimum_rigid_body_cell_count: 1,
             debris_material: None,
             debris_yield_rate: 0.0,
             pressure_transmission: 1.0,
@@ -187,7 +188,8 @@ impl Fixture {
             angle,
             &self.materials,
             (0..width)
-                .map(|x| ([x, 0], self.stone, CellularAppearance::NEUTRAL))
+                .map(|x| crate::simulation::RigidCellularBodyCell::test_cell(
+                    [x, 0], self.stone, CellularAppearance::NEUTRAL))
                 .collect(),
             0.5,
             0.0,

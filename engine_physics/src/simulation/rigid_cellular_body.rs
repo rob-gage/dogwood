@@ -11,22 +11,42 @@ use std::collections::HashSet;
 pub(crate) struct RigidCellularBody {
     pub(crate) handle: RigidBodyHandle,
     /// Local integer cells relative to the body's local origin
-    pub(crate) cells: Vec<([i32; 2], MaterialIdentifier, CellularAppearance)>,
+    pub(crate) cells: Vec<RigidCellularBodyCell>,
+}
+
+/// One physical rigid cell.  Its state handle is independent of body and
+/// raster descriptor ordering, so splitting a body cannot reset its state.
+#[derive(Clone, Copy)]
+pub(crate) struct RigidCellularBodyCell {
+    pub(crate) local: [i32; 2],
+    pub(crate) material: MaterialIdentifier,
+    pub(crate) appearance: CellularAppearance,
+    pub(crate) state_slot: u32,
+    pub(crate) state_generation: u32,
+}
+
+impl RigidCellularBodyCell {
+    #[cfg(test)]
+    pub(crate) const fn test_cell(
+        local: [i32; 2], material: MaterialIdentifier, appearance: CellularAppearance,
+    ) -> Self {
+        Self { local, material, appearance, state_slot: u32::MAX, state_generation: 0 }
+    }
 }
 
 impl RigidCellularBody {
     /// Calculates aggregate local mass properties from constituent cellular material
     pub(crate) fn mass_properties(
-        cells: &[([i32; 2], MaterialIdentifier, CellularAppearance)],
+        cells: &[RigidCellularBodyCell],
         materials: &MaterialRegistry,
     ) -> MassProperties {
         let (total_mass, weighted_center) = cells.iter().fold(
             (0.0, [0.0; 2]),
-            |(total, weighted), (cell, identifier, _)| {
-                let Some(Material::CellularStatic { mass, .. }) = materials.get(*identifier) else {
+            |(total, weighted), cell| {
+                let Some(Material::CellularStatic { mass, .. }) = materials.get(cell.material) else {
                     panic!("Rigid cellular body contains a non-static material");
                 };
-                let center = [(cell[0] as f32 + 0.5) / 8.0, (cell[1] as f32 + 0.5) / 8.0];
+                let center = [(cell.local[0] as f32 + 0.5) / 8.0, (cell.local[1] as f32 + 0.5) / 8.0];
                 (
                     total + mass,
                     [
@@ -43,13 +63,13 @@ impl RigidCellularBody {
         ];
         let inertia = cells
             .iter()
-            .map(|(cell, identifier, _)| {
-                let Some(Material::CellularStatic { mass, .. }) = materials.get(*identifier) else {
+            .map(|cell| {
+                let Some(Material::CellularStatic { mass, .. }) = materials.get(cell.material) else {
                     unreachable!()
                 };
                 let offset = [
-                    (cell[0] as f32 + 0.5) / 8.0 - center[0],
-                    (cell[1] as f32 + 0.5) / 8.0 - center[1],
+                    (cell.local[0] as f32 + 0.5) / 8.0 - center[0],
+                    (cell.local[1] as f32 + 0.5) / 8.0 - center[1],
                 ];
                 mass / 384.0 + mass * (offset[0] * offset[0] + offset[1] * offset[1])
             })
@@ -59,9 +79,9 @@ impl RigidCellularBody {
 
     /// Builds a greedy rectangle compound in body-local tile units
     pub(crate) fn collision_shape(
-        cells: &[([i32; 2], MaterialIdentifier, CellularAppearance)],
+        cells: &[RigidCellularBodyCell],
     ) -> SharedShape {
-        let occupied: HashSet<[i32; 2]> = cells.iter().map(|cell| cell.0).collect();
+        let occupied: HashSet<[i32; 2]> = cells.iter().map(|cell| cell.local).collect();
         let mut consumed: HashSet<[i32; 2]> = HashSet::new();
         let mut ordered: Vec<[i32; 2]> = occupied.iter().copied().collect();
         ordered.sort_unstable_by_key(|cell| (cell[1], cell[0]));
@@ -99,15 +119,10 @@ impl RigidCellularBody {
 
     /// Splits occupied local cells into deterministic 4-connected components
     pub(crate) fn connected_components(
-        cells: Vec<([i32; 2], MaterialIdentifier, CellularAppearance)>,
-    ) -> Vec<Vec<([i32; 2], MaterialIdentifier, CellularAppearance)>> {
-        let mut remaining: std::collections::HashMap<
-            [i32; 2],
-            (MaterialIdentifier, CellularAppearance),
-        > = cells
-            .into_iter()
-            .map(|(cell, material, appearance)| (cell, (material, appearance)))
-            .collect();
+        cells: Vec<RigidCellularBodyCell>,
+    ) -> Vec<Vec<RigidCellularBodyCell>> {
+        let mut remaining: std::collections::HashMap<[i32; 2], RigidCellularBodyCell> =
+            cells.into_iter().map(|cell| (cell.local, cell)).collect();
         let mut components = Vec::new();
         while let Some(start) = remaining
             .keys()
@@ -117,15 +132,15 @@ impl RigidCellularBody {
             let mut pending = vec![start];
             let mut component = Vec::new();
             while let Some(cell) = pending.pop() {
-                let Some((material, appearance)) = remaining.remove(&cell) else {
+                let Some(cell) = remaining.remove(&cell) else {
                     continue;
                 };
-                component.push((cell, material, appearance));
+                component.push(cell);
                 pending.extend([
-                    [cell[0] - 1, cell[1]],
-                    [cell[0] + 1, cell[1]],
-                    [cell[0], cell[1] - 1],
-                    [cell[0], cell[1] + 1],
+                    [cell.local[0] - 1, cell.local[1]],
+                    [cell.local[0] + 1, cell.local[1]],
+                    [cell.local[0], cell.local[1] - 1],
+                    [cell.local[0], cell.local[1] + 1],
                 ]);
             }
             components.push(component);
@@ -145,8 +160,9 @@ mod tests {
         let material = MaterialIdentifier::new(MaterialForm::CellularStatic, 0);
         let cells = [[0, 0], [1, 0], [2, 0]]
             .into_iter()
-            .map(|cell| (cell, material, CellularAppearance::NEUTRAL))
-            .filter(|cell| cell.0 != [1, 0])
+            .map(|local| RigidCellularBodyCell::test_cell(
+                local, material, CellularAppearance::NEUTRAL))
+            .filter(|cell| cell.local != [1, 0])
             .collect();
         let components = RigidCellularBody::connected_components(cells);
         assert!(components.len() == 2);

@@ -17,6 +17,8 @@ pub enum Material {
         pressure_ignore_threshold: f32,
         /// Structural integrity assigned to newly placed/generated cells
         default_integrity: f32,
+        /// Smallest connected component this material permits as a rigid body
+        minimum_rigid_body_cell_count: u32,
         /// Optional dynamic material produced when this cell fractures
         debris_material: Option<MaterialIdentifier>,
         /// Fraction of failed matter that becomes debris

@@ -64,6 +64,7 @@ impl MaterialRegistry {
         match material {
             Material::CellularStatic {
                 mass,
+                minimum_rigid_body_cell_count,
                 pressure_transmission,
                 friction,
                 restitution,
@@ -71,6 +72,7 @@ impl MaterialRegistry {
             } => {
                 mass.is_finite()
                     && *mass > 0.0
+                    && *minimum_rigid_body_cell_count > 0
                     && pressure_transmission.is_finite()
                     && (0.0..=1.0).contains(pressure_transmission)
                     && friction.is_finite()
@@ -378,6 +380,7 @@ impl MaterialRegistry {
                     let mass = f32::from_bits(Self::read_u32(reader)?);
                     let pressure_ignore_threshold = f32::from_bits(Self::read_u32(reader)?);
                     let default_integrity = f32::from_bits(Self::read_u32(reader)?);
+                    let minimum_rigid_body_cell_count = Self::read_u32(reader)?;
                     let debris_identifier = MaterialIdentifier::from_u32(Self::read_u32(reader)?);
                     let debris_material = (debris_identifier != MaterialIdentifier::NULL)
                         .then_some(debris_identifier);
@@ -391,6 +394,7 @@ impl MaterialRegistry {
                         mass,
                         pressure_ignore_threshold,
                         default_integrity,
+                        minimum_rigid_body_cell_count,
                         debris_material,
                         debris_yield_rate,
                         pressure_transmission,
@@ -477,6 +481,7 @@ impl MaterialRegistry {
                     mass,
                     pressure_ignore_threshold,
                     default_integrity,
+                    minimum_rigid_body_cell_count,
                     debris_material,
                     debris_yield_rate,
                     pressure_transmission,
@@ -487,6 +492,7 @@ impl MaterialRegistry {
                     writer.write_all(&mass.to_bits().to_le_bytes())?;
                     writer.write_all(&pressure_ignore_threshold.to_bits().to_le_bytes())?;
                     writer.write_all(&default_integrity.to_bits().to_le_bytes())?;
+                    writer.write_all(&minimum_rigid_body_cell_count.to_le_bytes())?;
                     writer.write_all(
                         &debris_material
                             .unwrap_or(MaterialIdentifier::NULL)

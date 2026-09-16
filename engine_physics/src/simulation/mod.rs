@@ -36,7 +36,7 @@ pub use cellular_pressure::CellularPressure;
 pub use collision_occupancy_snapshot::CollisionOccupancySnapshot;
 pub use fluids::Fluids;
 pub use gases::Gases;
-pub(crate) use rigid_cellular_body::RigidCellularBody;
+pub(crate) use rigid_cellular_body::{RigidCellularBody, RigidCellularBodyCell};
 pub(crate) use rigid_cellular_body_state::RigidCellularBodyState;
 pub(crate) use rigid_granular_reaction_batch::RigidGranularReactionBatch;
 pub use scene_physics_world::ScenePhysicsWorld;

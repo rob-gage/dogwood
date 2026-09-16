@@ -6,7 +6,8 @@ use super::{
 };
 use crate::simulation::{
     CellularCollision, CellularDynamic, CellularPhysicsBodyProxy, CellularPressure,
-    CollisionOccupancySnapshot, Fluids, Gases, RigidCellularBody, RigidCellularBodyState,
+    CollisionOccupancySnapshot, Fluids, Gases, RigidCellularBody, RigidCellularBodyCell,
+    RigidCellularBodyState,
     ScenePhysicsWorld, SceneSimulationConfiguration,
 };
 use crate::{
@@ -36,7 +37,6 @@ pub const CHUNK_STREAMING_QUEUE_CAPACITY: usize = 64;
 /// The fixed scene tick rate
 const TICK_RATE: u32 = 60;
 
-const RIGID_DETACHMENT_MINIMUM_CELLS: usize = 4;
 const RIGID_DETACHMENT_MAXIMUM_CELLS: usize = 1024;
 
 /// A scene that can be simulated by the engine
@@ -113,10 +113,15 @@ pub struct Scene {
     cellular_appearances: AcceleratorBuffer,
     /// The parallel buffer containing persistent static-cell integrity
     cellular_integrities: AcceleratorBuffer,
+    /// Fixed-capacity persistent integrity for authoritative rigid cells.
+    rigid_cell_integrities: AcceleratorBuffer,
     /// Transient rasterized possessed-pawn interaction geometry
     cellular_physics_body_proxy: CellularPhysicsBodyProxy,
     /// Authoritative body-local cellular matter paired with Rapier bodies
     rigid_cellular_bodies: Vec<RigidCellularBody>,
+    /// Generation protects a delayed raster result from a recycled slot.
+    rigid_cell_state_generations: Vec<u32>,
+    rigid_cell_state_free: Vec<u32>,
     /// Changes whenever rigid body-local topology changes
     rigid_cellular_topology_revision: u64,
     /// Last asynchronously confirmed cellular contact state per rigid vector index
@@ -209,6 +214,8 @@ impl Scene {
         let cellular_appearances: AcceleratorBuffer =
             accelerator.allocate::<u32>(buffered_cell_count);
         let cellular_integrities: AcceleratorBuffer =
+            accelerator.allocate::<f32>(buffered_cell_count);
+        let rigid_cell_integrities: AcceleratorBuffer =
             accelerator.allocate::<f32>(buffered_cell_count);
         let cellular_physics_body_proxy =
             CellularPhysicsBodyProxy::new(accelerator.as_ref(), buffered_cell_count);
@@ -331,8 +338,11 @@ impl Scene {
             cellular_material_identifiers,
             cellular_appearances,
             cellular_integrities,
+            rigid_cell_integrities,
             cellular_physics_body_proxy,
             rigid_cellular_bodies: Vec::new(),
+            rigid_cell_state_generations: vec![0; buffered_cell_count],
+            rigid_cell_state_free: (0..buffered_cell_count as u32).rev().collect(),
             rigid_cellular_topology_revision: 0,
             rigid_cellular_contact_active: Vec::new(),
             rigid_cellular_support: Vec::new(),
@@ -574,7 +584,7 @@ impl Scene {
                         }
                     }
                 }
-                SceneEdit::Erase { cells } => {
+                SceneEdit::Erase { cells } | SceneEdit::DestroyCells { cells } => {
                     for coordinates in cells {
                         if let Some(physical_index) = self.cell_edit_index(coordinates) {
                             cell_edits.insert(
@@ -1052,10 +1062,7 @@ impl Scene {
                         }
                     }
                 }
-                if !anchored
-                    && (RIGID_DETACHMENT_MINIMUM_CELLS..=RIGID_DETACHMENT_MAXIMUM_CELLS)
-                        .contains(&component.len())
-                {
+                if !anchored && component.len() <= RIGID_DETACHMENT_MAXIMUM_CELLS {
                     candidates.push(component);
                 }
             }
@@ -1073,6 +1080,7 @@ impl Scene {
             let minimum_x: i32 = component.iter().map(|cell| cell.x).min().unwrap();
             let minimum_y: i32 = component.iter().map(|cell| cell.y).min().unwrap();
             let mut cells = Vec::with_capacity(component.len());
+            let mut integrities = Vec::with_capacity(component.len());
             let mut friction: f32 = 0.0;
             let mut restitution: f32 = 0.0;
             for coordinates in &component {
@@ -1097,13 +1105,19 @@ impl Scene {
                 };
                 friction += *cell_friction;
                 restitution += *cell_restitution;
-                cells.push((
-                    [coordinates.x - minimum_x, coordinates.y - minimum_y],
-                    material_identifier,
-                    tile.cell_appearance(x, y),
-                ));
+                cells.push(RigidCellularBodyCell {
+                    local: [coordinates.x - minimum_x, coordinates.y - minimum_y],
+                    material: material_identifier,
+                    appearance: tile.cell_appearance(x, y),
+                    state_slot: u32::MAX,
+                    state_generation: 0,
+                });
+                integrities.push(tile.cell_integrity(x, y));
             }
             if cells.len() != component.len() {
+                continue;
+            }
+            if cells.len() < self.rigid_component_minimum(&cells) {
                 continue;
             }
             let divisor: f32 = cells.len() as f32;
@@ -1119,6 +1133,12 @@ impl Scene {
                 friction / divisor,
                 restitution / divisor,
             );
+            for (cell, integrity) in self.rigid_cellular_bodies.last().unwrap().cells.iter().zip(integrities) {
+                self.accelerator.wgpu_queue().write_buffer(
+                    self.rigid_cell_integrities.wgpu_buffer(), cell.state_slot as u64 * 4,
+                    &integrity.to_le_bytes(),
+                );
+            }
         }
         self.rigid_detachment_snapshot = Some(snapshot.clone());
         Ok(())
@@ -1144,10 +1164,13 @@ impl Scene {
         self.rigid_cellular_contact_active.clear();
         self.rigid_granular_contact_active.clear();
         self.physics_world.remove_rigid_cellular_body(&body);
+        for cell in body.cells.iter().filter(|cell| removed.contains(&cell.local)) {
+            self.release_rigid_cell_state(cell.state_slot);
+        }
         let remaining = body
             .cells
             .into_iter()
-            .filter(|cell| !removed.contains(&cell.0))
+            .filter(|cell| !removed.contains(&cell.local))
             .collect();
         for cells in RigidCellularBody::connected_components(remaining) {
             if cells.is_empty() {
@@ -1192,10 +1215,10 @@ impl Scene {
     /// Averages the existing static material response for one concrete body
     fn rigid_cellular_material_response(
         &self,
-        cells: &[([i32; 2], MaterialIdentifier, CellularAppearance)],
+        cells: &[RigidCellularBodyCell],
     ) -> (f32, f32) {
-        let (friction, restitution) = cells.iter().fold((0.0, 0.0), |sum, (_, identifier, _)| {
-            match self.data.materials().get(*identifier) {
+        let (friction, restitution) = cells.iter().fold((0.0, 0.0), |sum, cell| {
+            match self.data.materials().get(cell.material) {
                 Some(Material::CellularStatic {
                     friction,
                     restitution,
@@ -1206,6 +1229,32 @@ impl Scene {
         });
         let divisor = cells.len().max(1) as f32;
         (friction / divisor, restitution / divisor)
+    }
+
+    /// The strictest material in a mixed component controls its minimum size.
+    fn rigid_component_minimum(
+        &self,
+        cells: &[RigidCellularBodyCell],
+    ) -> usize {
+        cells
+            .iter()
+            .filter_map(
+                |cell| match self.data.materials().get(cell.material) {
+                    Some(Material::CellularStatic {
+                        minimum_rigid_body_cell_count,
+                        ..
+                    }) => Some(*minimum_rigid_body_cell_count as usize),
+                    _ => None,
+                },
+            )
+            .max()
+            .unwrap_or(1)
+    }
+
+    fn release_rigid_cell_state(&mut self, slot: u32) {
+        let generation = &mut self.rigid_cell_state_generations[slot as usize];
+        *generation = generation.wrapping_add(1);
+        self.rigid_cell_state_free.push(slot);
     }
 
     /// Validates and inserts one direct, non-canonical rigid cellular body.
@@ -1239,14 +1288,17 @@ impl Scene {
         let min_y = unique.keys().map(|(_, y)| *y).min().unwrap();
         let cells: Vec<_> = unique
             .into_values()
-            .map(|cell| {
-                (
-                    [cell.coordinates.x - min_x, cell.coordinates.y - min_y],
-                    cell.material_identifier,
-                    cell.appearance,
-                )
+            .map(|cell| RigidCellularBodyCell {
+                local: [cell.coordinates.x - min_x, cell.coordinates.y - min_y],
+                material: cell.material_identifier,
+                appearance: cell.appearance,
+                state_slot: u32::MAX,
+                state_generation: 0,
             })
             .collect();
+        if cells.len() < self.rigid_component_minimum(&cells) {
+            return;
+        }
         let (friction, restitution) = self.rigid_cellular_material_response(&cells);
         self.insert_rigid_cellular_body(
             [min_x as f32 / 8.0, min_y as f32 / 8.0],
@@ -1260,10 +1312,26 @@ impl Scene {
     fn insert_rigid_cellular_body(
         &mut self,
         position: [f32; 2],
-        cells: Vec<([i32; 2], MaterialIdentifier, CellularAppearance)>,
+        mut cells: Vec<RigidCellularBodyCell>,
         friction: f32,
         restitution: f32,
     ) {
+        for cell in &mut cells {
+            if cell.state_slot != u32::MAX {
+                continue;
+            }
+            let slot = self.rigid_cell_state_free.pop().expect("rigid cell capacity checked");
+            cell.state_slot = slot;
+            cell.state_generation = self.rigid_cell_state_generations[slot as usize];
+            let integrity = match self.data.materials().get(cell.material) {
+                Some(Material::CellularStatic { default_integrity, .. }) => *default_integrity,
+                _ => 0.0,
+            };
+            self.accelerator.wgpu_queue().write_buffer(
+                self.rigid_cell_integrities.wgpu_buffer(), slot as u64 * 4,
+                &integrity.to_le_bytes(),
+            );
+        }
         self.rigid_cellular_bodies
             .push(self.physics_world.insert_rigid_cellular_body(
                 position,
@@ -2996,6 +3064,7 @@ impl Drop for Scene {
         self.cellular_material_identifiers.free();
         self.cellular_appearances.free();
         self.cellular_integrities.free();
+        self.rigid_cell_integrities.free();
         self.fluid_sample_buffer.destroy();
     }
 }
@@ -3223,6 +3292,7 @@ mod tests {
             mass: 1.0,
             pressure_ignore_threshold: 1.0,
             default_integrity: 1.0,
+            minimum_rigid_body_cell_count: 1,
             debris_material: None,
             debris_yield_rate: 0.0,
             pressure_transmission: 0.5,
@@ -3319,6 +3389,7 @@ mod tests {
             mass: 2.0,
             pressure_ignore_threshold: 1.0,
             default_integrity: 1.0,
+            minimum_rigid_body_cell_count: 1,
             debris_material: None,
             debris_yield_rate: 0.0,
             pressure_transmission: 1.0,
@@ -3373,9 +3444,9 @@ mod tests {
         assert_eq!(scene.rigid_cellular_bodies.len(), 1);
         let body = &scene.rigid_cellular_bodies[0];
         assert_eq!(body.cells.len(), 2);
-        assert_eq!(body.cells[0].0, [0, 0]);
-        assert_eq!(body.cells[1].0, [1, 0]);
-        assert_eq!(body.cells[0].2.0, 5);
+        assert_eq!(body.cells[0].local, [0, 0]);
+        assert_eq!(body.cells[1].local, [1, 0]);
+        assert_eq!(body.cells[0].appearance.0, 5);
         assert_eq!(scene.rigid_cellular_topology_revision, 1);
     }
 }

@@ -11,4 +11,6 @@ pub enum SceneEdit {
     PlaceRigidBody { cells: Vec<SceneEditCellPlacement> },
     /// Erases material from cells
     Erase { cells: Vec<CellCoordinates> },
+    /// Destroys every representation occupying the requested world cells.
+    DestroyCells { cells: Vec<CellCoordinates> },
 }

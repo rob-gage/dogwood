@@ -221,6 +221,11 @@ impl CellularPhysicsBodyProxy {
     pub(crate) const fn rigid_owners_buffer(&self) -> &AcceleratorBuffer {
         &self.rigid_owners
     }
+    /// The winning raster source for each world cell; this is the authoritative
+    /// bridge from a transient raster cell back to a rigid cell descriptor.
+    pub(crate) const fn rigid_claims_buffer(&self) -> &AcceleratorBuffer {
+        &self.rigid_claims
+    }
     pub(crate) const fn rigid_cells_buffer(&self) -> &AcceleratorBuffer {
         &self.rigid_cells
     }
@@ -268,15 +273,15 @@ impl CellularPhysicsBodyProxy {
                     rigid_body
                         .cells
                         .iter()
-                        .map(move |(local, material, appearance)| {
+                        .map(move |cell| {
                             [
-                                local[0] as u32,
-                                local[1] as u32,
+                                cell.local[0] as u32,
+                                cell.local[1] as u32,
                                 body as u32,
-                                material.as_u32(),
-                                appearance.0,
-                                0,
-                                0,
+                                cell.material.as_u32(),
+                                cell.appearance.0,
+                                cell.state_slot,
+                                cell.state_generation,
                                 0,
                             ]
                         })
@@ -548,7 +553,8 @@ mod tests {
         let body = RigidCellularBody {
             handle: RigidBodyHandle::invalid(),
             cells: (2..6)
-                .flat_map(|y| (2..6).map(move |x| ([x, y], material, CellularAppearance::NEUTRAL)))
+                .flat_map(|y| (2..6).map(move |x| crate::simulation::RigidCellularBodyCell::test_cell(
+                    [x, y], material, CellularAppearance::NEUTRAL)))
                 .collect(),
         };
         assert!(std::mem::size_of::<[u32; 8]>() == 32);

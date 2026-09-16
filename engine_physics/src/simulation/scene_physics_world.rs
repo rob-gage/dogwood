@@ -100,11 +100,7 @@ impl ScenePhysicsWorld {
         position: [f32; 2],
         angle: f32,
         materials: &MaterialRegistry,
-        cells: Vec<(
-            [i32; 2],
-            crate::materials::MaterialIdentifier,
-            crate::tiles::CellularAppearance,
-        )>,
+        cells: Vec<super::rigid_cellular_body::RigidCellularBodyCell>,
         friction: f32,
         restitution: f32,
         linear_velocity: [f32; 2],
@@ -1022,6 +1018,7 @@ mod tests {
             mass: 1.0,
             pressure_ignore_threshold: 1.0,
             default_integrity: 1.0,
+            minimum_rigid_body_cell_count: 1,
             debris_material: None,
             debris_yield_rate: 0.0,
             pressure_transmission: 1.0,
@@ -1048,7 +1045,8 @@ mod tests {
             [1.0, 1.0],
             0.0,
             &materials,
-            vec![([0, 0], stone, CellularAppearance::NEUTRAL)],
+            vec![crate::simulation::RigidCellularBodyCell::test_cell(
+                [0, 0], stone, CellularAppearance::NEUTRAL)],
             0.5,
             0.0,
             [0.0, 0.0],
@@ -1090,6 +1088,7 @@ mod tests {
             mass: 1.0,
             pressure_ignore_threshold: 1000.0,
             default_integrity: 100.0,
+            minimum_rigid_body_cell_count: 1,
             debris_material: None,
             debris_yield_rate: 0.0,
             pressure_transmission: 1.0,
@@ -1101,7 +1100,8 @@ mod tests {
             [0.0, 0.0],
             0.0,
             &materials,
-            vec![([0, 0], stone, CellularAppearance::NEUTRAL)],
+            vec![crate::simulation::RigidCellularBodyCell::test_cell(
+                [0, 0], stone, CellularAppearance::NEUTRAL)],
             0.5,
             0.0,
             [0.0, 0.0],
@@ -1126,13 +1126,15 @@ mod tests {
             mass: 1.0,
             pressure_ignore_threshold: 1000.0,
             default_integrity: 100.0,
+            minimum_rigid_body_cell_count: 1,
             debris_material: None,
             debris_yield_rate: 0.0,
             pressure_transmission: 1.0,
             friction: 0.5,
             restitution: 0.0,
         });
-        let cell = || vec![([0, 0], stone, CellularAppearance::NEUTRAL)];
+        let cell = || vec![crate::simulation::RigidCellularBodyCell::test_cell(
+            [0, 0], stone, CellularAppearance::NEUTRAL)];
         let mut physics = ScenePhysicsWorld::new();
         let left = physics.insert_rigid_cellular_body(
             [0.0, 0.0],
@@ -1361,6 +1363,7 @@ mod tests {
             mass: 1.0,
             pressure_ignore_threshold: 1000.0,
             default_integrity: 100.0,
+            minimum_rigid_body_cell_count: 1,
             debris_material: None,
             debris_yield_rate: 0.0,
             pressure_transmission: 1.0,
@@ -1381,7 +1384,8 @@ mod tests {
             [0.5, 1.5],
             0.0,
             &materials,
-            vec![([0, 0], stone, CellularAppearance::NEUTRAL)],
+            vec![crate::simulation::RigidCellularBodyCell::test_cell(
+                [0, 0], stone, CellularAppearance::NEUTRAL)],
             0.5,
             0.0,
             [0.0; 2],
@@ -1558,6 +1562,7 @@ mod tests {
             mass: 1.0,
             pressure_ignore_threshold: 1000.0,
             default_integrity: 100.0,
+            minimum_rigid_body_cell_count: 1,
             debris_material: None,
             debris_yield_rate: 0.0,
             pressure_transmission: 1.0,
@@ -1580,7 +1585,8 @@ mod tests {
                     position,
                     0.0,
                     &materials,
-                    vec![([0, 0], stone, CellularAppearance::NEUTRAL)],
+                    vec![crate::simulation::RigidCellularBodyCell::test_cell(
+                        [0, 0], stone, CellularAppearance::NEUTRAL)],
                     0.5,
                     0.0,
                     [0.0; 2],
