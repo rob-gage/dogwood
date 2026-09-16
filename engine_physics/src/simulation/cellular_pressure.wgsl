@@ -319,7 +319,7 @@ fn queue_cellular_radial_impulse(@builtin(global_invocation_id) invocation: vec3
     let cell: vec2<i32> = cellular_pressure_world_cell_from_logical_index(logical_index);
     let index: u32 = cellular_pressure_physical_cell_index_from_world_cell(cell);
     if index == INVALID_PHYSICAL_CELL_INDEX ||
-            cellular_material_identifiers[index] == EMPTY_MATERIAL_IDENTIFIER { return; }
+            effective_pressure_material(index) == EMPTY_MATERIAL_IDENTIFIER { return; }
     let delta: vec2<f32> = vec2<f32>(cell) + vec2<f32>(0.5) - parameters.impulse_center;
     let distance: f32 = length(delta);
     if distance > parameters.impulse_radius { return; }
@@ -331,7 +331,7 @@ fn queue_cellular_radial_impulse(@builtin(global_invocation_id) invocation: vec3
     let falloff: f32 = 1.0 - distance / max(parameters.impulse_radius, 0.0001);
     let impulse: vec2<f32> = direction * parameters.impulse_strength * falloff;
     pending_pressure[index] += encode_directional_pressure(impulse);
-    let material: u32 = cellular_material_identifiers[index];
+    let material: u32 = effective_pressure_material(index);
     if material_form_from_identifier(material) == CELLULAR_DYNAMIC_MATERIAL_FORM {
         let mass: f32 = cellular_dynamic_properties[material_index_from_identifier(material)].x;
         cellular_kinematics[index].x += impulse.x / mass;
@@ -1051,9 +1051,11 @@ fn apply_retained_cellular_pressure(
     if index == INVALID_PHYSICAL_CELL_INDEX { return; }
     // Six propagation passes finish in A; the remaining in-flight pressure is retained here
     let load: vec4<f32> = retained_pressure[index] + pressure_a[index];
-    let material: u32 = cellular_material_identifiers[index];
+    let material: u32 = effective_pressure_material(index);
     let form: u32 = material_form_from_identifier(material);
-    if form == CELLULAR_STATIC_MATERIAL_FORM {
+    if rigid_owners[index] != 0u && form == CELLULAR_STATIC_MATERIAL_FORM {
+        accumulate_rigid_pressure_damage(index, material, load);
+    } else if form == CELLULAR_STATIC_MATERIAL_FORM {
         apply_cellular_static_pressure_damage(cell, index, material, load);
     }
     pressure_a[index] = vec4<f32>(0.0);
@@ -1202,7 +1204,7 @@ fn cellular_pressure_transmission_at_physical_cell_index(index: u32) -> f32 {
         return fluid_pressure_properties[material_index_from_identifier(
             mechanical_fluid_cells[index].material_identifier)].x;
     }
-    let material: u32 = cellular_material_identifiers[index];
+    let material: u32 = effective_pressure_material(index);
     let form: u32 = material_form_from_identifier(material);
     if form == CELLULAR_STATIC_MATERIAL_FORM {
         return cellular_static_properties[
