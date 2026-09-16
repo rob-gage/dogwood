@@ -125,6 +125,10 @@ pub struct Scene {
     ambient_temperature: f32,
     /// Fixed-capacity persistent integrity for authoritative rigid cells.
     rigid_cell_integrities: AcceleratorBuffer,
+    /// Fixed-capacity persistent material inventory for authoritative rigid cells.
+    rigid_cell_amounts: AcceleratorBuffer,
+    /// Fixed-capacity persistent temperature for authoritative rigid cells.
+    rigid_cell_temperatures: AcceleratorBuffer,
     /// Transient rasterized possessed-pawn interaction geometry
     cellular_physics_body_proxy: CellularPhysicsBodyProxy,
     /// Authoritative body-local cellular matter paired with Rapier bodies
@@ -230,6 +234,10 @@ impl Scene {
         let cellular_amounts = accelerator.allocate::<f32>(buffered_cell_count);
         let cellular_temperatures = accelerator.allocate::<f32>(buffered_cell_count);
         let rigid_cell_integrities: AcceleratorBuffer =
+            accelerator.allocate::<f32>(buffered_cell_count);
+        let rigid_cell_amounts: AcceleratorBuffer =
+            accelerator.allocate::<f32>(buffered_cell_count);
+        let rigid_cell_temperatures: AcceleratorBuffer =
             accelerator.allocate::<f32>(buffered_cell_count);
         let cellular_physics_body_proxy =
             CellularPhysicsBodyProxy::new(accelerator.as_ref(), buffered_cell_count);
@@ -378,6 +386,8 @@ impl Scene {
             cellular_temperatures,
             ambient_temperature: simulation.ambient_temperature,
             rigid_cell_integrities,
+            rigid_cell_amounts,
+            rigid_cell_temperatures,
             cellular_physics_body_proxy,
             rigid_cellular_bodies: Vec::new(),
             rigid_cell_state_generations: vec![0; buffered_cell_count],
@@ -1237,6 +1247,8 @@ impl Scene {
             let minimum_y: i32 = component.iter().map(|cell| cell.y).min().unwrap();
             let mut cells = Vec::with_capacity(component.len());
             let mut integrities = Vec::with_capacity(component.len());
+            let mut amounts = Vec::with_capacity(component.len());
+            let mut temperatures = Vec::with_capacity(component.len());
             let mut friction: f32 = 0.0;
             let mut restitution: f32 = 0.0;
             for coordinates in &component {
@@ -1269,6 +1281,8 @@ impl Scene {
                     state_generation: 0,
                 });
                 integrities.push(tile.cell_integrity(x, y));
+                amounts.push(tile.cell_amount(x, y));
+                temperatures.push(tile.cell_temperature(x, y));
             }
             if cells.len() != component.len() {
                 continue;
@@ -1319,18 +1333,27 @@ impl Scene {
                 friction / divisor,
                 restitution / divisor,
             );
-            for (cell, integrity) in self
-                .rigid_cellular_bodies
-                .last()
-                .unwrap()
-                .cells
-                .iter()
-                .zip(integrities)
+            for (cell, (integrity, (amount, temperature))) in
+                self.rigid_cellular_bodies.last().unwrap().cells.iter().zip(
+                    integrities
+                        .into_iter()
+                        .zip(amounts.into_iter().zip(temperatures)),
+                )
             {
                 self.accelerator.wgpu_queue().write_buffer(
                     self.rigid_cell_integrities.wgpu_buffer(),
                     cell.state_slot as u64 * 4,
                     &integrity.to_le_bytes(),
+                );
+                self.accelerator.wgpu_queue().write_buffer(
+                    self.rigid_cell_amounts.wgpu_buffer(),
+                    cell.state_slot as u64 * 4,
+                    &amount.to_le_bytes(),
+                );
+                self.accelerator.wgpu_queue().write_buffer(
+                    self.rigid_cell_temperatures.wgpu_buffer(),
+                    cell.state_slot as u64 * 4,
+                    &temperature.to_le_bytes(),
                 );
             }
         }
@@ -1505,6 +1528,22 @@ impl Scene {
     fn release_rigid_cell_state(&mut self, slot: u32) {
         let generation = &mut self.rigid_cell_state_generations[slot as usize];
         *generation = generation.wrapping_add(1);
+        let offset = slot as u64 * 4;
+        self.accelerator.wgpu_queue().write_buffer(
+            self.rigid_cell_integrities.wgpu_buffer(),
+            offset,
+            &0.0f32.to_le_bytes(),
+        );
+        self.accelerator.wgpu_queue().write_buffer(
+            self.rigid_cell_amounts.wgpu_buffer(),
+            offset,
+            &0.0f32.to_le_bytes(),
+        );
+        self.accelerator.wgpu_queue().write_buffer(
+            self.rigid_cell_temperatures.wgpu_buffer(),
+            offset,
+            &0.0f32.to_le_bytes(),
+        );
         self.rigid_cell_state_free.push(slot);
     }
 
@@ -1611,6 +1650,17 @@ impl Scene {
                 self.rigid_cell_integrities.wgpu_buffer(),
                 slot as u64 * 4,
                 &integrity.to_le_bytes(),
+            );
+            self.accelerator.wgpu_queue().write_buffer(
+                self.rigid_cell_amounts.wgpu_buffer(),
+                slot as u64 * 4,
+                &1.0f32.to_le_bytes(),
+            );
+            let temperature = self.initial_temperature(cell.material);
+            self.accelerator.wgpu_queue().write_buffer(
+                self.rigid_cell_temperatures.wgpu_buffer(),
+                slot as u64 * 4,
+                &temperature.to_le_bytes(),
             );
         }
         self.rigid_cellular_bodies
@@ -1728,6 +1778,14 @@ impl Scene {
             .thermal_properties(material_identifier)
             .and_then(|properties| properties.default_temperature)
             .unwrap_or(self.ambient_temperature)
+    }
+
+    pub(crate) const fn rigid_cell_amounts_buffer(&self) -> &AcceleratorBuffer {
+        &self.rigid_cell_amounts
+    }
+
+    pub(crate) const fn rigid_cell_temperatures_buffer(&self) -> &AcceleratorBuffer {
+        &self.rigid_cell_temperatures
     }
 
     /// Sets the automatic active-area target around a world position
@@ -3417,6 +3475,8 @@ impl Drop for Scene {
         self.cellular_appearances.free();
         self.cellular_integrities.free();
         self.rigid_cell_integrities.free();
+        self.rigid_cell_amounts.free();
+        self.rigid_cell_temperatures.free();
         self.fluid_sample_buffer.destroy();
     }
 }
