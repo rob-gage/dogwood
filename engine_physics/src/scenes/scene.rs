@@ -7,8 +7,7 @@ use super::{
 use crate::simulation::{
     CellularCollision, CellularDynamic, CellularPhysicsBodyProxy, CellularPressure,
     CollisionOccupancySnapshot, Fluids, Gases, RigidCellularBody, RigidCellularBodyCell,
-    RigidCellularBodyState,
-    ScenePhysicsWorld, SceneSimulationConfiguration,
+    RigidCellularBodyState, ScenePhysicsWorld, SceneSimulationConfiguration,
 };
 use crate::{
     actors::{Actor, ActorRegistry},
@@ -616,14 +615,25 @@ impl Scene {
                     for coordinates in cells {
                         if let Some(physical_index) = self.cell_edit_index(coordinates) {
                             rigid_destroy_indices.push(physical_index);
-                            cell_edits.insert(physical_index, (coordinates, MaterialIdentifier::NULL,
-                                CellularAppearance::NEUTRAL, 0.0));
+                            cell_edits.insert(
+                                physical_index,
+                                (
+                                    coordinates,
+                                    MaterialIdentifier::NULL,
+                                    CellularAppearance::NEUTRAL,
+                                    0.0,
+                                ),
+                            );
                             fluid_edits.insert(physical_index, Fluids::erase_edit());
                             if self.gases.gas_count() != 0 {
                                 gas_clear_cells.insert(physical_index);
-                                for species in 0..self.gases.gas_count() { gas_edits.remove(&(physical_index, species)); }
+                                for species in 0..self.gases.gas_count() {
+                                    gas_edits.remove(&(physical_index, species));
+                                }
                             }
-                        } else { deferred.destroy_cells(vec![coordinates]); }
+                        } else {
+                            deferred.destroy_cells(vec![coordinates]);
+                        }
                     }
                 }
             }
@@ -632,8 +642,8 @@ impl Scene {
         if !rigid_destroy_indices.is_empty() {
             rigid_destroy_indices.sort_unstable();
             rigid_destroy_indices.dedup();
-            self.cellular_physics_body_proxy.resolve_destruction_requests(
-                self.accelerator.as_ref(), &rigid_destroy_indices);
+            self.cellular_physics_body_proxy
+                .resolve_destruction_requests(self.accelerator.as_ref(), &rigid_destroy_indices);
         }
         let mut cell_edits: Vec<(
             usize,
@@ -805,19 +815,33 @@ impl Scene {
 
     /// Applies every compatible completed GPU reaction in submission order
     fn apply_completed_rigid_cellular_reactions(&mut self) -> Result<(), io::Error> {
-        let destroyed: HashSet<[u32; 2]> = self.cellular_physics_body_proxy
-            .take_destroyed_handles().into_iter()
-            .filter(|handle| handle[0] != u32::MAX).collect();
+        let destroyed: HashSet<[u32; 2]> = self
+            .cellular_physics_body_proxy
+            .take_destroyed_handles()
+            .into_iter()
+            .filter(|handle| handle[0] != u32::MAX)
+            .collect();
         if !destroyed.is_empty() {
-            let mut removals: Vec<(usize, HashSet<[i32; 2]>)> = self.rigid_cellular_bodies
-                .iter().enumerate().filter_map(|(body, rigid)| {
-                    let cells = rigid.cells.iter().filter(|cell| destroyed.contains(&[
-                        cell.state_slot, cell.state_generation,
-                    ])).map(|cell| cell.local).collect::<HashSet<_>>();
+            let mut removals: Vec<(usize, HashSet<[i32; 2]>)> = self
+                .rigid_cellular_bodies
+                .iter()
+                .enumerate()
+                .filter_map(|(body, rigid)| {
+                    let cells = rigid
+                        .cells
+                        .iter()
+                        .filter(|cell| {
+                            destroyed.contains(&[cell.state_slot, cell.state_generation])
+                        })
+                        .map(|cell| cell.local)
+                        .collect::<HashSet<_>>();
                     (!cells.is_empty()).then_some((body, cells))
-                }).collect();
+                })
+                .collect();
             removals.sort_unstable_by_key(|(body, _)| std::cmp::Reverse(*body));
-            for (body, cells) in removals { self.remove_rigid_cellular_body_cells(body, &cells); }
+            for (body, cells) in removals {
+                self.remove_rigid_cellular_body_cells(body, &cells);
+            }
         }
         let body_count: usize = self.rigid_cellular_bodies.len();
         let mut newest = None;
@@ -862,12 +886,19 @@ impl Scene {
             }
             let fractured: HashSet<u32> = batch.fractured_slots.iter().copied().collect();
             let mut removals: Vec<(usize, HashSet<[i32; 2]>)> = self
-                .rigid_cellular_bodies.iter().enumerate().filter_map(|(body, rigid)| {
-                    let cells: HashSet<[i32; 2]> = rigid.cells.iter()
+                .rigid_cellular_bodies
+                .iter()
+                .enumerate()
+                .filter_map(|(body, rigid)| {
+                    let cells: HashSet<[i32; 2]> = rigid
+                        .cells
+                        .iter()
                         .filter(|cell| fractured.contains(&cell.state_slot))
-                        .map(|cell| cell.local).collect();
+                        .map(|cell| cell.local)
+                        .collect();
                     (!cells.is_empty()).then_some((body, cells))
-                }).collect();
+                })
+                .collect();
             removals.sort_unstable_by_key(|(body, _)| std::cmp::Reverse(*body));
             for (body, cells) in removals {
                 self.remove_rigid_cellular_body_cells(body, &cells);
@@ -1183,9 +1214,17 @@ impl Scene {
                 friction / divisor,
                 restitution / divisor,
             );
-            for (cell, integrity) in self.rigid_cellular_bodies.last().unwrap().cells.iter().zip(integrities) {
+            for (cell, integrity) in self
+                .rigid_cellular_bodies
+                .last()
+                .unwrap()
+                .cells
+                .iter()
+                .zip(integrities)
+            {
                 self.accelerator.wgpu_queue().write_buffer(
-                    self.rigid_cell_integrities.wgpu_buffer(), cell.state_slot as u64 * 4,
+                    self.rigid_cell_integrities.wgpu_buffer(),
+                    cell.state_slot as u64 * 4,
                     &integrity.to_le_bytes(),
                 );
             }
@@ -1214,7 +1253,11 @@ impl Scene {
         self.rigid_cellular_contact_active.clear();
         self.rigid_granular_contact_active.clear();
         self.physics_world.remove_rigid_cellular_body(&body);
-        for cell in body.cells.iter().filter(|cell| removed.contains(&cell.local)) {
+        for cell in body
+            .cells
+            .iter()
+            .filter(|cell| removed.contains(&cell.local))
+        {
             self.release_rigid_cell_state(cell.state_slot);
         }
         let remaining = body
@@ -1230,23 +1273,38 @@ impl Scene {
             if cells.len() < self.rigid_component_minimum(&cells) {
                 for cell in cells {
                     let Some(Material::CellularStatic {
-                        debris_material: Some(material_identifier), debris_yield_rate, ..
-                    }) = self.data.materials().get(cell.material) else {
+                        debris_material: Some(material_identifier),
+                        debris_yield_rate,
+                        ..
+                    }) = self.data.materials().get(cell.material)
+                    else {
                         self.release_rigid_cell_state(cell.state_slot);
                         continue;
                     };
-                    let seed = cell.state_slot.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
+                    let seed = cell
+                        .state_slot
+                        .wrapping_mul(747_796_405)
+                        .wrapping_add(2_891_336_453);
                     if (seed % 10_000) as f32 >= debris_yield_rate * 10_000.0 {
                         self.release_rigid_cell_state(cell.state_slot);
                         continue;
                     }
-                    let local = [(cell.local[0] as f32 + 0.5) / 8.0, (cell.local[1] as f32 + 0.5) / 8.0];
+                    let local = [
+                        (cell.local[0] as f32 + 0.5) / 8.0,
+                        (cell.local[1] as f32 + 0.5) / 8.0,
+                    ];
                     let world = [
-                        state.translation[0] + state.angle.cos() * local[0] - state.angle.sin() * local[1],
-                        state.translation[1] + state.angle.sin() * local[0] + state.angle.cos() * local[1],
+                        state.translation[0] + state.angle.cos() * local[0]
+                            - state.angle.sin() * local[1],
+                        state.translation[1]
+                            + state.angle.sin() * local[0]
+                            + state.angle.cos() * local[1],
                     ];
                     debris.push(SceneEditCellPlacement {
-                        coordinates: CellCoordinates { x: (world[0] * 8.0).floor() as i32, y: (world[1] * 8.0).floor() as i32 },
+                        coordinates: CellCoordinates {
+                            x: (world[0] * 8.0).floor() as i32,
+                            y: (world[1] * 8.0).floor() as i32,
+                        },
                         material_identifier: *material_identifier,
                         appearance: cell.appearance,
                     });
@@ -1294,10 +1352,7 @@ impl Scene {
     }
 
     /// Averages the existing static material response for one concrete body
-    fn rigid_cellular_material_response(
-        &self,
-        cells: &[RigidCellularBodyCell],
-    ) -> (f32, f32) {
+    fn rigid_cellular_material_response(&self, cells: &[RigidCellularBodyCell]) -> (f32, f32) {
         let (friction, restitution) = cells.iter().fold((0.0, 0.0), |sum, cell| {
             match self.data.materials().get(cell.material) {
                 Some(Material::CellularStatic {
@@ -1313,21 +1368,16 @@ impl Scene {
     }
 
     /// The strictest material in a mixed component controls its minimum size.
-    fn rigid_component_minimum(
-        &self,
-        cells: &[RigidCellularBodyCell],
-    ) -> usize {
+    fn rigid_component_minimum(&self, cells: &[RigidCellularBodyCell]) -> usize {
         cells
             .iter()
-            .filter_map(
-                |cell| match self.data.materials().get(cell.material) {
-                    Some(Material::CellularStatic {
-                        minimum_rigid_body_cell_count,
-                        ..
-                    }) => Some(*minimum_rigid_body_cell_count as usize),
-                    _ => None,
-                },
-            )
+            .filter_map(|cell| match self.data.materials().get(cell.material) {
+                Some(Material::CellularStatic {
+                    minimum_rigid_body_cell_count,
+                    ..
+                }) => Some(*minimum_rigid_body_cell_count as usize),
+                _ => None,
+            })
             .max()
             .unwrap_or(1)
     }
@@ -1401,15 +1451,21 @@ impl Scene {
             if cell.state_slot != u32::MAX {
                 continue;
             }
-            let slot = self.rigid_cell_state_free.pop().expect("rigid cell capacity checked");
+            let slot = self
+                .rigid_cell_state_free
+                .pop()
+                .expect("rigid cell capacity checked");
             cell.state_slot = slot;
             cell.state_generation = self.rigid_cell_state_generations[slot as usize];
             let integrity = match self.data.materials().get(cell.material) {
-                Some(Material::CellularStatic { default_integrity, .. }) => *default_integrity,
+                Some(Material::CellularStatic {
+                    default_integrity, ..
+                }) => *default_integrity,
                 _ => 0.0,
             };
             self.accelerator.wgpu_queue().write_buffer(
-                self.rigid_cell_integrities.wgpu_buffer(), slot as u64 * 4,
+                self.rigid_cell_integrities.wgpu_buffer(),
+                slot as u64 * 4,
                 &integrity.to_le_bytes(),
             );
         }
@@ -3373,7 +3429,7 @@ mod tests {
             mass: 1.0,
             pressure_ignore_threshold: 1.0,
             default_integrity: 1.0,
-            minimum_rigid_body_cell_count: 1,
+            minimum_rigid_body_cell_count: 4,
             debris_material: None,
             debris_yield_rate: 0.0,
             pressure_transmission: 0.5,

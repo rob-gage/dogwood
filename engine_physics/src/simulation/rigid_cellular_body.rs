@@ -28,9 +28,17 @@ pub(crate) struct RigidCellularBodyCell {
 impl RigidCellularBodyCell {
     #[cfg(test)]
     pub(crate) const fn test_cell(
-        local: [i32; 2], material: MaterialIdentifier, appearance: CellularAppearance,
+        local: [i32; 2],
+        material: MaterialIdentifier,
+        appearance: CellularAppearance,
     ) -> Self {
-        Self { local, material, appearance, state_slot: u32::MAX, state_generation: 0 }
+        Self {
+            local,
+            material,
+            appearance,
+            state_slot: 0,
+            state_generation: 0,
+        }
     }
 }
 
@@ -40,22 +48,26 @@ impl RigidCellularBody {
         cells: &[RigidCellularBodyCell],
         materials: &MaterialRegistry,
     ) -> MassProperties {
-        let (total_mass, weighted_center) = cells.iter().fold(
-            (0.0, [0.0; 2]),
-            |(total, weighted), cell| {
-                let Some(Material::CellularStatic { mass, .. }) = materials.get(cell.material) else {
-                    panic!("Rigid cellular body contains a non-static material");
-                };
-                let center = [(cell.local[0] as f32 + 0.5) / 8.0, (cell.local[1] as f32 + 0.5) / 8.0];
-                (
-                    total + mass,
-                    [
-                        weighted[0] + mass * center[0],
-                        weighted[1] + mass * center[1],
-                    ],
-                )
-            },
-        );
+        let (total_mass, weighted_center) =
+            cells
+                .iter()
+                .fold((0.0, [0.0; 2]), |(total, weighted), cell| {
+                    let Some(Material::CellularStatic { mass, .. }) = materials.get(cell.material)
+                    else {
+                        panic!("Rigid cellular body contains a non-static material");
+                    };
+                    let center = [
+                        (cell.local[0] as f32 + 0.5) / 8.0,
+                        (cell.local[1] as f32 + 0.5) / 8.0,
+                    ];
+                    (
+                        total + mass,
+                        [
+                            weighted[0] + mass * center[0],
+                            weighted[1] + mass * center[1],
+                        ],
+                    )
+                });
         assert!(total_mass.is_finite() && total_mass > 0.0);
         let center = [
             weighted_center[0] / total_mass,
@@ -64,7 +76,8 @@ impl RigidCellularBody {
         let inertia = cells
             .iter()
             .map(|cell| {
-                let Some(Material::CellularStatic { mass, .. }) = materials.get(cell.material) else {
+                let Some(Material::CellularStatic { mass, .. }) = materials.get(cell.material)
+                else {
                     unreachable!()
                 };
                 let offset = [
@@ -78,9 +91,7 @@ impl RigidCellularBody {
     }
 
     /// Builds a greedy rectangle compound in body-local tile units
-    pub(crate) fn collision_shape(
-        cells: &[RigidCellularBodyCell],
-    ) -> SharedShape {
+    pub(crate) fn collision_shape(cells: &[RigidCellularBodyCell]) -> SharedShape {
         let occupied: HashSet<[i32; 2]> = cells.iter().map(|cell| cell.local).collect();
         let mut consumed: HashSet<[i32; 2]> = HashSet::new();
         let mut ordered: Vec<[i32; 2]> = occupied.iter().copied().collect();
@@ -160,8 +171,9 @@ mod tests {
         let material = MaterialIdentifier::new(MaterialForm::CellularStatic, 0);
         let cells = [[0, 0], [1, 0], [2, 0]]
             .into_iter()
-            .map(|local| RigidCellularBodyCell::test_cell(
-                local, material, CellularAppearance::NEUTRAL))
+            .map(|local| {
+                RigidCellularBodyCell::test_cell(local, material, CellularAppearance::NEUTRAL)
+            })
             .filter(|cell| cell.local != [1, 0])
             .collect();
         let components = RigidCellularBody::connected_components(cells);
