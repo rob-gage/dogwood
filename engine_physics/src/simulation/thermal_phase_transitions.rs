@@ -1,4 +1,5 @@
 use engine_compute::{Accelerator, AcceleratorBuffer};
+use std::sync::mpsc::{Receiver, sync_channel};
 
 /// Evaluates declarative phase metadata after scatter; mutation application remains shared.
 pub(crate) struct ThermalPhaseTransitions {
@@ -7,6 +8,14 @@ pub(crate) struct ThermalPhaseTransitions {
     cells: wgpu::ComputePipeline,
     particles: wgpu::ComputePipeline,
     gases: wgpu::ComputePipeline,
+    rigid: wgpu::ComputePipeline,
+    rollback: wgpu::ComputePipeline,
+    rigid_phase_candidates: AcceleratorBuffer,
+    rigid_phase_count: AcceleratorBuffer,
+    rigid_phase_readback: wgpu::Buffer,
+    rigid_phase_readback_result: Option<Receiver<Result<(), wgpu::BufferAsyncError>>>,
+    rollback_slots: AcceleratorBuffer,
+    rollback_count: AcceleratorBuffer,
     cell_count: u32,
     particle_count: u32,
     gas_count: u32,
@@ -20,7 +29,11 @@ impl ThermalPhaseTransitions {
         origin: [i32; 2],
         tiles: [u32; 2],
         ring: [u32; 2],
+        rigid_count: u32,
     ) {
+        if self.rigid_phase_readback_result.is_none() {
+            self.clear_rigid_candidates(accelerator);
+        }
         let v = [
             origin[0] as u32,
             origin[1] as u32,
@@ -32,7 +45,7 @@ impl ThermalPhaseTransitions {
             self.particle_count,
             self.gas_count,
             self.tick,
-            0,
+            rigid_count,
             0,
         ];
         accelerator.wgpu_queue().write_buffer(
@@ -49,6 +62,10 @@ impl ThermalPhaseTransitions {
         pass.dispatch_workgroups(self.particle_count.div_ceil(64), 1, 1);
         pass.set_pipeline(&self.gases);
         pass.dispatch_workgroups(self.cell_count / 64, self.gas_count, 2);
+        if self.rigid_phase_readback_result.is_none() {
+            pass.set_pipeline(&self.rigid);
+            pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+        }
     }
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
@@ -68,6 +85,11 @@ impl ThermalPhaseTransitions {
         particle_count: u32,
         gas_count: u32,
         rigid_claims: &AcceleratorBuffer,
+        rigid_cells: &AcceleratorBuffer,
+        rigid_amounts: &AcceleratorBuffer,
+        rigid_temperatures: &AcceleratorBuffer,
+        fluid_free_indices: &AcceleratorBuffer,
+        fluid_free_count: &AcceleratorBuffer,
     ) -> Self {
         let d = accelerator.wgpu_device();
         let parameters = d.create_buffer(&wgpu::BufferDescriptor {
@@ -102,6 +124,15 @@ impl ThermalPhaseTransitions {
         });
         entries.push(storage(11, true));
         entries.push(storage(12, false));
+        entries.push(storage(13, true));
+        entries.push(storage(14, true));
+        entries.push(storage(15, true));
+        entries.push(storage(16, false));
+        entries.push(storage(17, false));
+        entries.push(storage(18, false));
+        entries.push(storage(19, false));
+        entries.push(storage(20, true));
+        entries.push(storage(21, true));
         entries.push(wgpu::BindGroupLayoutEntry {
             binding: 10,
             visibility: wgpu::ShaderStages::COMPUTE,
@@ -157,6 +188,49 @@ impl ThermalPhaseTransitions {
             binding: 12,
             resource: gas_fluid_candidates.wgpu_buffer().as_entire_binding(),
         });
+        let rigid_phase_candidates = accelerator.allocate::<[u32; 10]>(cell_count as usize);
+        let rigid_phase_count = accelerator.allocate::<u32>(1);
+        let rigid_phase_readback = d.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("rigid thermal phase readback"),
+            size: 256 + cell_count as u64 * 40,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let rollback_slots = accelerator.allocate::<u32>(cell_count as usize);
+        let rollback_count = accelerator.allocate::<u32>(1);
+        accelerator.wgpu_queue().write_buffer(
+            rigid_phase_count.wgpu_buffer(),
+            0,
+            &0u32.to_le_bytes(),
+        );
+        for (binding, buffer) in [
+            (13, rigid_cells),
+            (14, rigid_amounts),
+            (15, rigid_temperatures),
+            (16, &rigid_phase_candidates),
+            (17, &rigid_phase_count),
+        ] {
+            e.push(wgpu::BindGroupEntry {
+                binding,
+                resource: buffer.wgpu_buffer().as_entire_binding(),
+            });
+        }
+        e.push(wgpu::BindGroupEntry {
+            binding: 18,
+            resource: fluid_free_indices.wgpu_buffer().as_entire_binding(),
+        });
+        e.push(wgpu::BindGroupEntry {
+            binding: 19,
+            resource: fluid_free_count.wgpu_buffer().as_entire_binding(),
+        });
+        e.push(wgpu::BindGroupEntry {
+            binding: 20,
+            resource: rollback_slots.wgpu_buffer().as_entire_binding(),
+        });
+        e.push(wgpu::BindGroupEntry {
+            binding: 21,
+            resource: rollback_count.wgpu_buffer().as_entire_binding(),
+        });
         let bind_group = d.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("thermal phase"),
             layout: &layout,
@@ -189,11 +263,128 @@ impl ThermalPhaseTransitions {
             cells: pipe("phase_cells"),
             particles: pipe("phase_particles"),
             gases: pipe("phase_gases"),
+            rigid: pipe("phase_rigid"),
+            rollback: pipe("rollback_rigid_reservations"),
+            rigid_phase_candidates,
+            rigid_phase_count,
+            rigid_phase_readback,
+            rigid_phase_readback_result: None,
+            rollback_slots,
+            rollback_count,
             cell_count,
             particle_count,
             gas_count,
             tick: 0,
         }
+    }
+    pub(crate) fn clear_rigid_candidates(&self, accelerator: &Accelerator) {
+        accelerator.wgpu_queue().write_buffer(
+            self.rigid_phase_count.wgpu_buffer(),
+            0,
+            &0u32.to_le_bytes(),
+        );
+    }
+    pub(crate) const fn rigid_phase_candidates_buffer(&self) -> &AcceleratorBuffer {
+        &self.rigid_phase_candidates
+    }
+    pub(crate) const fn rigid_phase_count_buffer(&self) -> &AcceleratorBuffer {
+        &self.rigid_phase_count
+    }
+    pub(crate) fn rigid_readback_pending(&self) -> bool {
+        self.rigid_phase_readback_result.is_some()
+    }
+    pub(crate) fn submit_rigid_readback(&mut self, accelerator: &Accelerator) {
+        if self.rigid_phase_readback_result.is_some() {
+            return;
+        }
+        let mut encoder =
+            accelerator
+                .wgpu_device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("rigid thermal phase readback"),
+                });
+        encoder.copy_buffer_to_buffer(
+            self.rigid_phase_count.wgpu_buffer(),
+            0,
+            &self.rigid_phase_readback,
+            0,
+            4,
+        );
+        encoder.copy_buffer_to_buffer(
+            self.rigid_phase_candidates.wgpu_buffer(),
+            0,
+            &self.rigid_phase_readback,
+            256,
+            self.cell_count as u64 * 40,
+        );
+        accelerator.wgpu_queue().submit(Some(encoder.finish()));
+        let (sender, receiver) = sync_channel(1);
+        self.rigid_phase_readback
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                let _ = sender.send(result);
+            });
+        self.rigid_phase_readback_result = Some(receiver);
+    }
+    pub(crate) fn take_rigid_candidates(&mut self) -> Option<Vec<[u32; 10]>> {
+        let result = self.rigid_phase_readback_result.as_ref()?.try_recv().ok()?;
+        self.rigid_phase_readback_result = None;
+        if result.is_err() {
+            self.rigid_phase_readback.unmap();
+            return Some(Vec::new());
+        }
+        let bytes = self
+            .rigid_phase_readback
+            .slice(..)
+            .get_mapped_range()
+            .ok()?;
+        let count = u32::from_le_bytes(bytes[..4].try_into().ok()?).min(self.cell_count) as usize;
+        let records = bytes[256..]
+            .chunks_exact(40)
+            .take(count)
+            .map(|b| {
+                let mut record = [0u32; 10];
+                for (word, value) in record.iter_mut().zip(b.chunks_exact(4)) {
+                    *word = u32::from_le_bytes(value.try_into().unwrap());
+                }
+                record
+            })
+            .collect();
+        drop(bytes);
+        self.rigid_phase_readback.unmap();
+        Some(records)
+    }
+    pub(crate) fn rollback_rigid_reservations(&self, accelerator: &Accelerator, slots: &[u32]) {
+        if slots.is_empty() {
+            return;
+        }
+        let count = slots.len().min(self.cell_count as usize) as u32;
+        accelerator.wgpu_queue().write_buffer(
+            self.rollback_slots.wgpu_buffer(),
+            0,
+            &slots[..count as usize]
+                .iter()
+                .flat_map(|v| v.to_le_bytes())
+                .collect::<Vec<_>>(),
+        );
+        accelerator.wgpu_queue().write_buffer(
+            self.rollback_count.wgpu_buffer(),
+            0,
+            &count.to_le_bytes(),
+        );
+        let mut encoder =
+            accelerator
+                .wgpu_device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("rollback rigid thermal reservations"),
+                });
+        let mut pass =
+            accelerator.begin_compute_pass(&mut encoder, "rollback rigid thermal reservations");
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.set_pipeline(&self.rollback);
+        pass.dispatch_workgroups(count.div_ceil(64), 1, 1);
+        drop(pass);
+        accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
     pub(crate) fn evaluate(
         &mut self,
@@ -201,7 +392,11 @@ impl ThermalPhaseTransitions {
         origin: [i32; 2],
         tiles: [u32; 2],
         ring: [u32; 2],
+        rigid_count: u32,
     ) {
+        if self.rigid_phase_readback_result.is_none() {
+            self.clear_rigid_candidates(accelerator);
+        }
         let v = [
             origin[0] as u32,
             origin[1] as u32,
@@ -213,7 +408,7 @@ impl ThermalPhaseTransitions {
             self.particle_count,
             self.gas_count,
             self.tick,
-            0,
+            rigid_count,
             0,
         ];
         accelerator.wgpu_queue().write_buffer(
@@ -236,6 +431,10 @@ impl ThermalPhaseTransitions {
         p.dispatch_workgroups(self.particle_count.div_ceil(64), 1, 1);
         p.set_pipeline(&self.gases);
         p.dispatch_workgroups(self.cell_count / 64, self.gas_count, 2);
+        if self.rigid_phase_readback_result.is_none() {
+            p.set_pipeline(&self.rigid);
+            p.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+        }
         drop(p);
         accelerator.wgpu_queue().submit(Some(e.finish()));
     }
@@ -243,6 +442,11 @@ impl ThermalPhaseTransitions {
 impl Drop for ThermalPhaseTransitions {
     fn drop(&mut self) {
         self.parameters.destroy();
+        self.rigid_phase_candidates.free();
+        self.rigid_phase_count.free();
+        self.rigid_phase_readback.destroy();
+        self.rollback_slots.free();
+        self.rollback_count.free();
     }
 }
 

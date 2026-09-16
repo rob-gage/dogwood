@@ -472,6 +472,43 @@ impl Fluids {
     pub(crate) const fn particles_buffer(&self) -> &AcceleratorBuffer {
         &self.particles
     }
+    /// Finalizes a slot reserved by an asynchronous producer.  The slot was
+    /// removed from the free stack before this call, so this cannot race a
+    /// normal spawn allocation.
+    pub(crate) fn commit_reserved_particle(
+        &self,
+        accelerator: &Accelerator,
+        slot: u32,
+        material: u32,
+        position: [f32; 2],
+        velocity: [f32; 2],
+        amount: f32,
+        temperature: f32,
+    ) {
+        if slot >= self.particle_capacity {
+            return;
+        }
+        let record = [
+            material,
+            1,
+            position[0].to_bits(),
+            position[1].to_bits(),
+            velocity[0].to_bits(),
+            velocity[1].to_bits(),
+            0,
+            0,
+            amount.to_bits(),
+            temperature.to_bits(),
+        ];
+        accelerator.wgpu_queue().write_buffer(
+            self.particles.wgpu_buffer(),
+            u64::from(slot) * 40,
+            &record
+                .iter()
+                .flat_map(|v| v.to_le_bytes())
+                .collect::<Vec<_>>(),
+        );
+    }
     pub(crate) const fn free_indices_buffer(&self) -> &AcceleratorBuffer {
         &self.free_indices
     }
