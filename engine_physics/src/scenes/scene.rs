@@ -1428,6 +1428,16 @@ impl Scene {
             })
             .collect();
         if cells.len() < self.rigid_component_minimum(&cells) {
+            let debris = cells.into_iter().filter_map(|cell| match self.data.materials().get(cell.material) {
+                Some(Material::CellularStatic { debris_material: Some(material_identifier), debris_yield_rate, .. })
+                    if (((cell.local[0].wrapping_mul(31).wrapping_add(cell.local[1])) as u32 % 10_000) as f32) <
+                        *debris_yield_rate * 10_000.0 => Some(SceneEditCellPlacement {
+                        coordinates: CellCoordinates { x: min_x + cell.local[0], y: min_y + cell.local[1] },
+                        material_identifier: *material_identifier, appearance: cell.appearance,
+                    }),
+                _ => None,
+            }).collect();
+            self.pending_runtime_edits.place_cells(debris);
             return;
         }
         let (friction, restitution) = self.rigid_cellular_material_response(&cells);
