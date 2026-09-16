@@ -127,6 +127,10 @@ struct RigidPredictedMotion {
     x: atomic<i32>, y: atomic<i32>, angular: atomic<i32>, padding: atomic<i32>,
 }
 @group(0) @binding(30) var<storage, read_write> rigid_predicted_motion: array<RigidPredictedMotion>;
+@group(0) @binding(31) var<storage, read_write> rigid_cell_integrities: array<f32>;
+@group(0) @binding(32) var<storage, read_write> rigid_damage: array<atomic<u32>>;
+@group(0) @binding(33) var<storage, read> rigid_claims: array<u32>;
+@group(0) @binding(34) var<storage, read_write> rigid_fractures: array<atomic<u32>>;
 @group(1) @binding(0) var<storage, read_write> pressure_indirect_dispatch: array<atomic<u32>>;
 
 const IMMOVABLE_CONTACT_MASS: f32 = 1000000.0;
@@ -137,6 +141,39 @@ const CELL_SIZE: f32 = 0.125;
 const CELL_HALF: f32 = 0.0625;
 const CELL_RADIUS: f32 = 0.08838835;
 var<workgroup> pressure_tile_has_source: atomic<u32>;
+
+fn effective_pressure_material(index: u32) -> u32 {
+    return select(cellular_material_identifiers[index], rigid_material_identifiers[index],
+        rigid_owners[index] != 0u);
+}
+
+fn accumulate_rigid_pressure_damage(index: u32, material: u32, load: vec4<f32>) {
+    let source: u32 = rigid_claims[index];
+    if source == 0xffffffffu { return; }
+    let slot: u32 = rigid_cells[source * 2u + 1u].x;
+    let properties = cellular_static_properties[material_index_from_identifier(material)];
+    let overload = max(0.0, load.x + load.y + load.z + load.w - properties.pressure_ignore_threshold);
+    atomicMax(&rigid_damage[slot], bitcast<u32>(overload));
+}
+
+@compute @workgroup_size(64)
+fn clear_rigid_pressure_damage(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    if invocation.x >= parameters.rigid_cell_count { return; }
+    let slot = rigid_cells[invocation.x * 2u + 1u].x;
+    atomicStore(&rigid_damage[slot], 0u);
+}
+
+@compute @workgroup_size(64)
+fn apply_rigid_pressure_damage(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    if invocation.x >= parameters.rigid_cell_count { return; }
+    let cell = rigid_cells[invocation.x * 2u];
+    let slot = rigid_cells[invocation.x * 2u + 1u].x;
+    let overload = bitcast<f32>(atomicExchange(&rigid_damage[slot], 0u));
+    rigid_cell_integrities[slot] -= overload * parameters.delta_time * parameters.damage_rate;
+    if rigid_cell_integrities[slot] <= 0.0 {
+        atomicOr(&rigid_fractures[slot / 32u], 1u << (slot % 32u));
+    }
+}
 
 @compute @workgroup_size(64)
 fn initialize_rigid_contact_state(@builtin(global_invocation_id) invocation: vec3<u32>) {
@@ -989,8 +1026,10 @@ fn finalize_cellular_pressure(
             calculate_outgoing_cellular_pressure(cell, channel, current[channel]);
         load[channel] += gather_incoming_cellular_pressure(cell, channel, false);
     }
-    let material: u32 = cellular_material_identifiers[index];
-    if material_form_from_identifier(material) == CELLULAR_STATIC_MATERIAL_FORM {
+    let material: u32 = effective_pressure_material(index);
+    if rigid_owners[index] != 0u && material_form_from_identifier(material) == CELLULAR_STATIC_MATERIAL_FORM {
+        accumulate_rigid_pressure_damage(index, material, load);
+    } else if material_form_from_identifier(material) == CELLULAR_STATIC_MATERIAL_FORM {
         apply_cellular_static_pressure_damage(cell, index, material, load);
     }
     pressure_a[index] = vec4<f32>(0.0);

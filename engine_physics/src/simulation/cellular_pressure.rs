@@ -37,6 +37,8 @@ pub struct CellularPressure {
     rigid_contact_statistics: AcceleratorBuffer,
     rigid_reactions: AcceleratorBuffer,
     rigid_predicted_motion: AcceleratorBuffer,
+    rigid_damage: AcceleratorBuffer,
+    rigid_fractures: AcceleratorBuffer,
     rigid_reaction_readback_slots: Vec<RigidGranularReadbackSlot>,
     rigid_reaction_completed: BTreeMap<u64, RigidGranularReactionBatch>,
     rigid_reaction_sequence_next: u64,
@@ -63,6 +65,8 @@ pub struct CellularPressure {
     propagate_a_pipeline: wgpu::ComputePipeline,
     propagate_b_pipeline: wgpu::ComputePipeline,
     finalize_pipeline: wgpu::ComputePipeline,
+    clear_rigid_damage_pipeline: wgpu::ComputePipeline,
+    apply_rigid_damage_pipeline: wgpu::ComputePipeline,
     buffered_cell_count: u32,
     gas_count: u32,
     tick: u32,
@@ -80,10 +84,12 @@ impl CellularPressure {
         material_ids: &AcceleratorBuffer,
         appearances: &AcceleratorBuffer,
         integrities: &AcceleratorBuffer,
+        rigid_integrities: &AcceleratorBuffer,
         kinematics: &AcceleratorBuffer,
         external_body_occupancy: &AcceleratorBuffer,
         external_body_velocity: &AcceleratorBuffer,
         rigid_owners: &AcceleratorBuffer,
+        rigid_claims: &AcceleratorBuffer,
         rigid_material_identifiers: &AcceleratorBuffer,
         rigid_transforms: &AcceleratorBuffer,
         rigid_cells: &AcceleratorBuffer,
@@ -212,6 +218,8 @@ impl CellularPressure {
             accelerator.allocate::<[i32; 20]>(rigid_body_capacity);
         let rigid_predicted_motion: AcceleratorBuffer =
             accelerator.allocate::<[i32; 4]>(rigid_body_capacity);
+        let rigid_damage: AcceleratorBuffer = accelerator.allocate::<u32>(buffered_cell_count as usize);
+        let rigid_fractures: AcceleratorBuffer = accelerator.allocate::<u32>((buffered_cell_count as usize).div_ceil(32));
         let parameters: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("cellular pressure parameters"),
             size: 80,
@@ -259,6 +267,10 @@ impl CellularPressure {
                     Self::storage_layout_entry(28, false),
                     Self::storage_layout_entry(29, true),
                     Self::storage_layout_entry(30, false),
+                    Self::storage_layout_entry(31, false),
+                    Self::storage_layout_entry(32, false),
+                    Self::storage_layout_entry(33, true),
+                    Self::storage_layout_entry(34, false),
                 ],
             });
         let indirect_bind_group_layout: wgpu::BindGroupLayout =
@@ -294,6 +306,10 @@ impl CellularPressure {
             (28, rigid_contact_statistics.wgpu_buffer().clone()),
             (29, rigid_cells.wgpu_buffer().clone()),
             (30, rigid_predicted_motion.wgpu_buffer().clone()),
+            (31, rigid_integrities.wgpu_buffer().clone()),
+            (32, rigid_damage.wgpu_buffer().clone()),
+            (33, rigid_claims.wgpu_buffer().clone()),
+            (34, rigid_fractures.wgpu_buffer().clone()),
         ];
         let bind_group: wgpu::BindGroup =
             Self::create_bind_group(device, &layout, &parameters, &bound_buffers);
@@ -351,6 +367,8 @@ impl CellularPressure {
             rigid_contact_statistics,
             rigid_reactions,
             rigid_predicted_motion,
+            rigid_damage,
+            rigid_fractures,
             rigid_reaction_readback_slots,
             rigid_reaction_completed: BTreeMap::new(),
             rigid_reaction_sequence_next: 0,
@@ -439,6 +457,8 @@ impl CellularPressure {
                 "cellular pressure finalization",
                 "finalize_cellular_pressure",
             ),
+            clear_rigid_damage_pipeline: Self::create_pipeline(device, &pipeline_layout, &shader, "clear rigid pressure damage", "clear_rigid_pressure_damage"),
+            apply_rigid_damage_pipeline: Self::create_pipeline(device, &pipeline_layout, &shader, "apply rigid pressure damage", "apply_rigid_pressure_damage"),
             buffered_cell_count,
             gas_count,
             tick: 0,
@@ -525,6 +545,13 @@ impl CellularPressure {
             encoder.clear_buffer(self.rigid_reactions.wgpu_buffer(), 0, None);
             self.rigid_topology_revision = rigid_topology_revision;
         }
+        {
+            let mut pass = accelerator.begin_compute_pass(&mut encoder, "clear rigid pressure damage");
+            pass.set_pipeline(&self.clear_rigid_damage_pipeline);
+            pass.set_bind_group(0, &self.bind_group, &[]);
+            pass.dispatch_workgroups(rigid_cell_count.max(1).div_ceil(64), 1, 1);
+        }
+        encoder.clear_buffer(self.rigid_fractures.wgpu_buffer(), 0, None);
         let tile_count: u32 = self.buffered_cell_count / 64;
         for (pipeline, label) in [
             (
@@ -546,6 +573,12 @@ impl CellularPressure {
                 tile_count.div_ceil(64)
             };
             pass.dispatch_workgroups(workgroups, 1, 1);
+        }
+        {
+            let mut pass = accelerator.begin_compute_pass(&mut encoder, "apply rigid pressure damage");
+            pass.set_pipeline(&self.apply_rigid_damage_pipeline);
+            pass.set_bind_group(0, &self.bind_group, &[]);
+            pass.dispatch_workgroups(rigid_cell_count.max(1).div_ceil(64), 1, 1);
         }
         encoder.clear_buffer(&self.indirect_dispatch, 0, None);
         {
@@ -924,6 +957,8 @@ impl CellularPressure {
         self.rigid_contact_statistics.free();
         self.rigid_reactions.free();
         self.rigid_predicted_motion.free();
+        self.rigid_damage.free();
+        self.rigid_fractures.free();
         self.rigid_body_capacity = count.next_power_of_two();
         self.rigid_contact_statistics = accelerator.allocate::<[u32; 12]>(self.rigid_body_capacity);
         self.rigid_reactions = accelerator.allocate::<[i32; 20]>(self.rigid_body_capacity);
