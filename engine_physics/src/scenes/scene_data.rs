@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-use super::dormant_rigid::DormantRigidBody;
+use super::dormant_rigid::{DormantRigidBody, owner_chunk};
 use crate::{chunks::Chunk, materials::MaterialRegistry, tiles::TileCoordinates};
 use std::{
     collections::HashSet,
@@ -139,12 +139,18 @@ impl SceneData {
         })?;
         for _ in 0..count {
             let record = DormantRigidBody::deserialize(&mut file, self.materials())?;
-            let record_owner = TileCoordinates {
+            let record_owner = owner_chunk(
+                record.position,
+                record.rotation,
+                record.cells.iter().map(|cell| cell.local),
+            )
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid rigid geometry"))?;
+            let legacy_owner = TileCoordinates {
                 x: record.position[0].floor() as i32,
                 y: record.position[1].floor() as i32,
             }
             .chunk_coordinates();
-            if record_owner != owner {
+            if record_owner != owner && legacy_owner != owner {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "dormant rigid is in the wrong owner file",

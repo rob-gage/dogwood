@@ -9,7 +9,8 @@ use std::{collections::HashSet, io};
 /// Authoritative, handle-free state for a rigid body outside simulation residency.
 ///
 /// SceneData stores each record once, in the file keyed by the chunk containing
-/// `position`.  Cells may span arbitrary chunks; they never own copies.
+/// the center of its world-space geometry. Cells may span arbitrary chunks;
+/// they never own copies.
 #[derive(Clone)]
 pub(crate) struct DormantRigidBody {
     pub(crate) id: u64,
@@ -28,6 +29,63 @@ pub(crate) struct DormantRigidCell {
     pub(crate) integrity: f32,
     pub(crate) amount: f32,
     pub(crate) temperature: f32,
+}
+
+/// Conservative world-space bounds of the occupied cell squares.
+pub(crate) fn world_aabb<I>(
+    position: [f32; 2],
+    rotation: f32,
+    locals: I,
+) -> Option<([f32; 2], [f32; 2])>
+where
+    I: IntoIterator<Item = [i32; 2]>,
+{
+    let (sin, cos) = rotation.sin_cos();
+    let mut min = [f32::INFINITY; 2];
+    let mut max = [f32::NEG_INFINITY; 2];
+    for [x, y] in locals {
+        for corner in [
+            [x as f32 / 8.0, y as f32 / 8.0],
+            [(x + 1) as f32 / 8.0, y as f32 / 8.0],
+            [x as f32 / 8.0, (y + 1) as f32 / 8.0],
+            [(x + 1) as f32 / 8.0, (y + 1) as f32 / 8.0],
+        ] {
+            let world = [
+                position[0] + cos * corner[0] - sin * corner[1],
+                position[1] + sin * corner[0] + cos * corner[1],
+            ];
+            min[0] = min[0].min(world[0]);
+            min[1] = min[1].min(world[1]);
+            max[0] = max[0].max(world[0]);
+            max[1] = max[1].max(world[1]);
+        }
+    }
+    min[0].is_finite().then_some((min, max))
+}
+
+pub(crate) fn owner_chunk(
+    position: [f32; 2],
+    rotation: f32,
+    locals: impl IntoIterator<Item = [i32; 2]>,
+) -> Option<crate::tiles::TileCoordinates> {
+    let (min, max) = world_aabb(position, rotation, locals)?;
+    Some(
+        crate::tiles::TileCoordinates {
+            x: ((min[0] + max[0]) * 0.5).floor() as i32,
+            y: ((min[1] + max[1]) * 0.5).floor() as i32,
+        }
+        .chunk_coordinates(),
+    )
+}
+
+pub(crate) fn intersects_area(bounds: ([f32; 2], [f32; 2]), area: crate::tiles::TileArea) -> bool {
+    let (min, max) = bounds;
+    let origin = area.origin();
+    let dimensions = area.dimensions();
+    max[0] >= origin.x as f32
+        && min[0] < (origin.x + i32::from(dimensions[0])) as f32
+        && max[1] >= origin.y as f32
+        && min[1] < (origin.y + i32::from(dimensions[1])) as f32
 }
 
 impl DormantRigidBody {
@@ -264,5 +322,15 @@ mod tests {
             body.validate(&materials).unwrap_err().kind(),
             io::ErrorKind::InvalidData
         );
+    }
+
+    #[test]
+    fn rotated_geometry_bounds_drive_owner() {
+        let bounds =
+            world_aabb([10.0, 10.0], std::f32::consts::FRAC_PI_4, [[0, 0], [8, 0]]).unwrap();
+        assert!(bounds.0[0] < 10.0 && bounds.1[0] > 10.0);
+        let owner =
+            owner_chunk([10.0, 10.0], std::f32::consts::FRAC_PI_4, [[0, 0], [8, 0]]).unwrap();
+        assert_eq!((owner.x, owner.y), (0, 0));
     }
 }

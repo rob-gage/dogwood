@@ -1294,13 +1294,16 @@ impl Scene {
             let Some(state) = self.physics_world.rigid_cellular_body_state(body) else {
                 continue;
             };
-            let tile = TileCoordinates {
-                x: state.translation[0].floor() as i32,
-                y: state.translation[1].floor() as i32,
+            let Some(bounds) = super::dormant_rigid::world_aabb(
+                state.translation,
+                state.angle,
+                body.cells.iter().map(|cell| cell.local),
+            ) else {
+                continue;
             };
             if !body.cells.is_empty()
-                && current_buffered.contains(tile)
-                && !future_buffered.contains(tile)
+                && super::dormant_rigid::intersects_area(bounds, current_buffered)
+                && !super::dormant_rigid::intersects_area(bounds, future_buffered)
             {
                 state_count += body.cells.len();
                 selected.push((
@@ -1542,11 +1545,20 @@ impl Scene {
             self.rigid_io_in_flight += 1;
             std::thread::spawn(move || match job {
                 RigidIoJob::Persist(request) => {
-                    let owner = TileCoordinates {
-                        x: request.record.position[0].floor() as i32,
-                        y: request.record.position[1].floor() as i32,
-                    }
-                    .chunk_coordinates();
+                    let Some(owner) = super::dormant_rigid::owner_chunk(
+                        request.record.position,
+                        request.record.rotation,
+                        request.record.cells.iter().map(|cell| cell.local),
+                    ) else {
+                        let _ = sender.send(RigidStreamingResponse::Saved {
+                            request,
+                            result: Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "invalid rigid geometry",
+                            )),
+                        });
+                        return;
+                    };
                     let result = data.read_dormant_rigids(owner).and_then(|mut records| {
                         if records.iter().any(|record| record.id == request.record.id) {
                             return Err(io::Error::new(
@@ -1611,11 +1623,14 @@ impl Scene {
                 RigidStreamingResponse::Loaded { .. } => {}
                 RigidStreamingResponse::Saved { request, result } => match result {
                     Ok(()) => {
-                        let owner = TileCoordinates {
-                            x: request.record.position[0].floor() as i32,
-                            y: request.record.position[1].floor() as i32,
-                        }
-                        .chunk_coordinates();
+                        let owner = super::dormant_rigid::owner_chunk(
+                            request.record.position,
+                            request.record.rotation,
+                            request.record.cells.iter().map(|cell| cell.local),
+                        )
+                        .ok_or_else(|| {
+                            io::Error::new(io::ErrorKind::InvalidData, "invalid rigid geometry")
+                        })?;
                         let generation = self.rigid_owner_generation.entry(owner).or_default();
                         *generation = generation.wrapping_add(1);
                         self.rigid_owner_loads.remove(&owner);
@@ -1736,10 +1751,12 @@ impl Scene {
         };
         let buffered = self.area_buffered();
         let (records, retained): (Vec<_>, Vec<_>) = original.iter().cloned().partition(|record| {
-            buffered.contains(TileCoordinates {
-                x: record.position[0].floor() as i32,
-                y: record.position[1].floor() as i32,
-            })
+            super::dormant_rigid::world_aabb(
+                record.position,
+                record.rotation,
+                record.cells.iter().map(|cell| cell.local),
+            )
+            .is_some_and(|bounds| super::dormant_rigid::intersects_area(bounds, buffered))
         });
         if records.is_empty() {
             self.rigid_owner_loads
@@ -2407,9 +2424,11 @@ impl Scene {
                 state.linear_velocity[0] - state.angular_velocity * offset[1],
                 state.linear_velocity[1] + state.angular_velocity * offset[0],
             ];
+            let (rebased_position, cells) =
+                Self::rebase_rigid_cells(cells, state.translation, state.angle);
             let (friction, restitution) = self.rigid_cellular_material_response(&cells);
             let mut child = self.physics_world.insert_rigid_cellular_body(
-                state.translation,
+                rebased_position,
                 state.angle,
                 self.data.materials(),
                 cells,
@@ -2429,6 +2448,32 @@ impl Scene {
         if !debris.is_empty() {
             self.pending_runtime_edits.place_cells(debris);
         }
+    }
+
+    /// Rebase a split component while preserving every cell's world position.
+    fn rebase_rigid_cells(
+        mut cells: Vec<RigidCellularBodyCell>,
+        position: [f32; 2],
+        angle: f32,
+    ) -> ([f32; 2], Vec<RigidCellularBodyCell>) {
+        let offset = cells
+            .iter()
+            .map(|cell| cell.local)
+            .fold([i32::MAX, i32::MAX], |[min_x, min_y], [x, y]| {
+                [min_x.min(x), min_y.min(y)]
+            });
+        for cell in &mut cells {
+            cell.local[0] -= offset[0];
+            cell.local[1] -= offset[1];
+        }
+        let (sin, cos) = angle.sin_cos();
+        (
+            [
+                position[0] + (cos * offset[0] as f32 - sin * offset[1] as f32) / 8.0,
+                position[1] + (sin * offset[0] as f32 + cos * offset[1] as f32) / 8.0,
+            ],
+            cells,
+        )
     }
 
     /// Averages the existing static material response for one concrete body
@@ -3175,7 +3220,11 @@ impl Scene {
         );
         let streaming_area: TileArea = buffered_area.chunk_area();
         self.chunks_fetch(streaming_area)?;
-        for owner in streaming_area.iterate_chunk_coordinates() {
+        for owner in streaming_area
+            .expanded(Chunk::WIDTH, Chunk::WIDTH, Chunk::WIDTH, Chunk::WIDTH)
+            .chunk_area()
+            .iterate_chunk_coordinates()
+        {
             self.rigid_owner_load(owner);
         }
         if !streaming_area
