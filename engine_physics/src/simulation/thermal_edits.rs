@@ -38,10 +38,16 @@ impl ThermalEdits {
         let count = accelerator.allocate::<u32>(1);
         let deltas = accelerator.allocate::<[u32; 2]>(capacity as usize);
         let rigid_flags = accelerator.allocate::<u32>(rigid_capacity as usize);
-        let zero_rigid = vec![0u8; rigid_capacity as usize * 4];
-        accelerator
-            .wgpu_queue()
-            .write_buffer(rigid_flags.wgpu_buffer(), 0, &zero_rigid);
+        // `u32::MAX` means no raster request selected this authoritative slot.
+        let zero_rigid = vec![u32::MAX; rigid_capacity as usize];
+        accelerator.wgpu_queue().write_buffer(
+            rigid_flags.wgpu_buffer(),
+            0,
+            &zero_rigid
+                .iter()
+                .flat_map(|value| value.to_le_bytes())
+                .collect::<Vec<_>>(),
+        );
         let parameters = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("thermal edit parameters"),
             size: 48,
@@ -302,5 +308,89 @@ mod tests {
         let mapped = readback.slice(..).get_mapped_range().unwrap();
         let value = f32::from_bits(u32::from_le_bytes(mapped[..4].try_into().unwrap()));
         assert_eq!(value, 310.0);
+    }
+
+    #[test]
+    fn dispatch_applies_one_delta_to_a_multi_claim_rigid_state() {
+        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let accelerator = engine_compute::Accelerator::new().unwrap();
+        let materials = accelerator.allocate::<u32>(2);
+        let temperatures = accelerator.allocate::<f32>(2);
+        let gas_temperatures = accelerator.allocate::<f32>(2);
+        let particles = accelerator.allocate::<[u32; 10]>(1);
+        let claims = accelerator.allocate::<u32>(2);
+        // RigidCell has state_slot at u32 word 5.
+        let rigid_cells = accelerator.allocate::<[u32; 8]>(2);
+        let rigid_temperatures = accelerator.allocate::<f32>(1);
+        accelerator.wgpu_queue().write_buffer(
+            claims.wgpu_buffer(),
+            0,
+            &0u32
+                .to_le_bytes()
+                .into_iter()
+                .chain(1u32.to_le_bytes())
+                .collect::<Vec<_>>(),
+        );
+        let cells = [[0, 0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 1, 0, 0, 0, 0]];
+        accelerator.wgpu_queue().write_buffer(
+            rigid_cells.wgpu_buffer(),
+            0,
+            &cells
+                .into_iter()
+                .flatten()
+                .flat_map(u32::to_le_bytes)
+                .collect::<Vec<_>>(),
+        );
+        accelerator.wgpu_queue().write_buffer(
+            rigid_temperatures.wgpu_buffer(),
+            0,
+            &263.15f32.to_le_bytes(),
+        );
+        let edits = ThermalEdits::new(
+            &accelerator,
+            &materials,
+            &temperatures,
+            &gas_temperatures,
+            &particles,
+            &claims,
+            &rigid_cells,
+            &rigid_temperatures,
+            2,
+            1,
+            1,
+        );
+        edits.apply(
+            &accelerator,
+            &[0, 1],
+            &[(0usize, 20.0f32), (1usize, 20.0f32)].into_iter().collect(),
+            [0, 0],
+            [2, 1],
+            [0, 0],
+        );
+        accelerator.poll().unwrap();
+        let readback = accelerator
+            .wgpu_device()
+            .create_buffer(&wgpu::BufferDescriptor {
+                label: None,
+                size: 4,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+        let mut encoder = accelerator
+            .wgpu_device()
+            .create_command_encoder(&Default::default());
+        encoder.copy_buffer_to_buffer(rigid_temperatures.wgpu_buffer(), 0, &readback, 0, 4);
+        accelerator.wgpu_queue().submit(Some(encoder.finish()));
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        readback
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |r| sender.send(r).unwrap());
+        while receiver.try_recv().is_err() {
+            accelerator.poll().unwrap();
+            std::thread::yield_now();
+        }
+        let mapped = readback.slice(..).get_mapped_range().unwrap();
+        let value = f32::from_bits(u32::from_le_bytes(mapped[..4].try_into().unwrap()));
+        assert!((value - 283.15).abs() < 0.001, "{value}");
     }
 }

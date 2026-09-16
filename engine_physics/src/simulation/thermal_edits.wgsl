@@ -15,6 +15,9 @@ struct RigidCell { local: vec2<i32>, body: u32, material_identifier: u32, appear
 @group(0) @binding(7) var<storage, read> rigid_cells: array<RigidCell>;
 @group(0) @binding(8) var<storage, read_write> rigid_temperatures: array<f32>;
 @group(0) @binding(9) var<storage, read_write> deltas: array<vec2<u32>>;
+// A brush addresses raster cells, but rigid temperature belongs to one
+// authoritative state slot.  Store the lowest raster index, so each slot gets
+// one deterministic logical edit even when it has several raster claims.
 @group(0) @binding(10) var<storage, read_write> rigid_flags: array<atomic<u32>>;
 @group(0) @binding(11) var<uniform> parameters: Parameters;
 
@@ -30,13 +33,7 @@ fn apply_thermal_requests(@builtin(global_invocation_id) id: vec3<u32>) {
     if (claim != 0xffffffffu && claim < arrayLength(&rigid_cells)) {
         let slot = rigid_cells[claim].state_slot;
         if (slot < arrayLength(&rigid_temperatures)) {
-            var old = atomicLoad(&rigid_flags[slot]);
-            loop {
-                let next = bitcast<u32>(bitcast<f32>(old) + delta);
-                let result = atomicCompareExchangeWeak(&rigid_flags[slot], old, next);
-                if (result.exchanged) { break; }
-                old = result.old_value;
-            }
+            atomicMin(&rigid_flags[slot], cell);
         }
     }
 }
@@ -51,7 +48,10 @@ fn apply_thermal_fluid(@builtin(global_invocation_id) id: vec3<u32>) {
 
 @compute @workgroup_size(64)
 fn apply_thermal_rigid(@builtin(global_invocation_id) id: vec3<u32>) {
-    if (id.x >= arrayLength(&rigid_temperatures) || atomicLoad(&rigid_flags[id.x]) == 0u) { return; }
-    rigid_temperatures[id.x] = max(0.0, rigid_temperatures[id.x] + bitcast<f32>(atomicLoad(&rigid_flags[id.x])));
-    atomicStore(&rigid_flags[id.x], 0u);
+    if (id.x >= arrayLength(&rigid_temperatures)) { return; }
+    let cell = atomicLoad(&rigid_flags[id.x]);
+    if (cell != 0xffffffffu && cell < parameters.capacity && deltas[cell].y == parameters.generation) {
+        rigid_temperatures[id.x] = max(0.0, rigid_temperatures[id.x] + bitcast<f32>(deltas[cell].x));
+    }
+    atomicStore(&rigid_flags[id.x], 0xffffffffu);
 }
