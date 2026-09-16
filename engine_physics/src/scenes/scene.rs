@@ -376,6 +376,7 @@ impl Scene {
             thermal_material_table.parameters_buffer(),
             material_mutations.requests_buffer(),
             material_mutations.request_count_buffer(),
+            material_mutations.gas_fluid_candidates_buffer(),
             buffered_cell_count as u32,
             fluids.particle_capacity(),
             gases.gas_count(),

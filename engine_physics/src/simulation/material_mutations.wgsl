@@ -24,6 +24,10 @@ struct Particle { material_identifier:u32, is_active:u32, position:vec2<f32>, ve
 @group(0) @binding(16) var<storage, read_write> particles: array<Particle>;
 @group(0) @binding(17) var<storage, read_write> fluid_free_indices: array<u32>;
 @group(0) @binding(18) var<storage, read_write> fluid_free_count: array<atomic<u32>>;
+// Gas is continuous inventory; PBF particles are discrete unit inventory.
+// Continuous→discrete conversion must aggregate a full particle quantum before spawning.
+struct GasFluidCandidate { replacement:u32, amount:f32, temperature:f32, position:vec2<f32> }
+@group(0) @binding(19) var<storage, read_write> gas_fluid_candidates: array<GasFluidCandidate>;
 @group(1) @binding(0) var<storage, read_write> indirect_dispatch: array<u32>;
 @compute @workgroup_size(1) fn prepare_material_mutation_dispatch(@builtin(global_invocation_id) invocation: vec3<u32>) {
  if (invocation.x != 0u) { return; }
@@ -52,5 +56,22 @@ fn spawn_fluid(request:Request) -> bool { let index=claim_particle(); if(index==
 fn place_cell(request:Request) -> bool { if(cellular_material_identifiers[request.cell]!=EMPTY_MATERIAL_IDENTIFIER){return false;} let form=material_form_from_identifier(request.replacement); if(form!=CELLULAR_STATIC_MATERIAL_FORM && form!=CELLULAR_DYNAMIC_MATERIAL_FORM){return false;} cellular_material_identifiers[request.cell]=request.replacement; cellular_amounts[request.cell]=bitcast<f32>(request.amount); cellular_temperatures[request.cell]=bitcast<f32>(request.temperature); cellular_kinematics[request.cell]=vec4<f32>(0.0); if(form==CELLULAR_STATIC_MATERIAL_FORM){let n=material_index_from_identifier(request.replacement);if(n>=arrayLength(&static_defaults)){cellular_material_identifiers[request.cell]=0u;return false;}cellular_integrities[request.cell]=bitcast<f32>(static_defaults[n]);}return true; }
 fn resolve_particle(request:Request) { if(request.locator>=arrayLength(&particles)){return;} let p=particles[request.locator]; if(p.is_active==0u||p.material_identifier!=request.expected_source){return;} let form=material_form_from_identifier(request.replacement); if(form==FLUID_MATERIAL_FORM){particles[request.locator].material_identifier=request.replacement;particles[request.locator].temperature=bitcast<f32>(request.temperature);return;} if(form==0u){let s=material_index_from_identifier(request.replacement);if(s>=parameters.gas_count){return;}gas_concentrations[s*parameters.buffered_cell_count+request.cell]+=p.amount;gas_temperatures[request.cell]=bitcast<f32>(request.temperature);release_particle(request.locator);return;} if(place_cell(request)){release_particle(request.locator);} }
 fn resolve_gas_nonallocating(request:Request) { let source=material_index_from_identifier(request.expected_source);if(source>=parameters.gas_count){return;}let at=source*parameters.buffered_cell_count+request.cell;let requested=bitcast<f32>(request.amount);let current=gas_concentrations[at];if(!(requested>0.000001)||current+0.00001<requested){return;}let target_species=material_form_from_identifier(request.replacement);if(target_species==FLUID_MATERIAL_FORM){return;}if(target_species==0u){let species=material_index_from_identifier(request.replacement);if(species>=parameters.gas_count){return;}gas_concentrations[at]=max(current-requested,0.0);gas_concentrations[species*parameters.buffered_cell_count+request.cell]+=requested;gas_temperatures[request.cell]=bitcast<f32>(request.temperature);return;}if(place_cell(request)){gas_concentrations[at]=max(current-requested,0.0);} }
-fn resolve_gas_allocating(request:Request) { let source=material_index_from_identifier(request.expected_source);if(source>=parameters.gas_count){return;}let at=source*parameters.buffered_cell_count+request.cell;let requested=bitcast<f32>(request.amount);let current=gas_concentrations[at];if(!(requested>0.000001)||current+0.00001<requested){return;}if(material_form_from_identifier(request.replacement)!=FLUID_MATERIAL_FORM){return;}if(spawn_fluid(request)){gas_concentrations[at]=max(current-requested,0.0);} }
-@compute @workgroup_size(64) fn resolve_material_mutations_allocating(@builtin(global_invocation_id) invocation: vec3<u32>) { let i=invocation.x;if(i>=atomicLoad(&request_count[0])||i>=arrayLength(&requests)){return;}let request=requests[i];if(request.kind==2u){resolve_gas_allocating(request);} }
+var<workgroup> condensation_amount: array<f32,64>;
+var<workgroup> condensation_temperature: array<f32,64>;
+var<workgroup> condensation_position: array<vec2<f32>,64>;
+var<workgroup> condensation_index: u32;
+@compute @workgroup_size(64) fn resolve_gas_fluid_condensation(
+ @builtin(local_invocation_id) local: vec3<u32>, @builtin(workgroup_id) group: vec3<u32>) {
+ let lane=local.x; let cell=group.x*64u+lane;
+ let candidate_index=(group.z*parameters.gas_count+group.y)*parameters.buffered_cell_count+cell;
+ let candidate=gas_fluid_candidates[candidate_index];
+ let valid=candidate.replacement!=EMPTY_MATERIAL_IDENTIFIER && candidate.amount>0.0;
+ condensation_amount[lane]=select(0.0,candidate.amount,valid);
+ condensation_temperature[lane]=select(0.0,candidate.amount*candidate.temperature,valid);
+ condensation_position[lane]=select(vec2<f32>(0.0),candidate.amount*candidate.position,valid);
+ workgroupBarrier();
+ var stride=32u; loop { if(lane<stride){condensation_amount[lane]+=condensation_amount[lane+stride];condensation_temperature[lane]+=condensation_temperature[lane+stride];condensation_position[lane]+=condensation_position[lane+stride];} workgroupBarrier(); if(stride==1u){break;} stride/=2u; }
+ if(lane==0u) { condensation_index=0xffffffffu; if(condensation_amount[0]>=1.0) { var i=0u; loop { if(i>=64u){break;} let c=gas_fluid_candidates[(group.z*parameters.gas_count+group.y)*parameters.buffered_cell_count+group.x*64u+i]; if(c.replacement!=EMPTY_MATERIAL_IDENTIFIER&&c.amount>0.0){let index=claim_particle(); if(index!=0xffffffffu){particles[index]=Particle(c.replacement,1u,condensation_position[0]/condensation_amount[0],vec2<f32>(0.0),vec2<f32>(0.0),1.0,condensation_temperature[0]/condensation_amount[0]);condensation_index=index;}break;} i+=1u; } } }
+ workgroupBarrier();
+ if(condensation_index!=0xffffffffu && valid) { let at=group.y*parameters.buffered_cell_count+cell; gas_concentrations[at]=max(gas_concentrations[at]-candidate.amount/condensation_amount[0],0.0); }
+}

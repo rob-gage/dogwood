@@ -43,14 +43,12 @@ impl ThermalPhaseTransitions {
         self.tick = self.tick.wrapping_add(1);
         let mut pass = accelerator.begin_compute_pass(encoder, "thermal phase transitions");
         pass.set_bind_group(0, &self.bind_group, &[]);
-        for (pipeline, count) in [
-            (&self.cells, self.cell_count),
-            (&self.particles, self.particle_count),
-            (&self.gases, self.cell_count * self.gas_count),
-        ] {
-            pass.set_pipeline(pipeline);
-            pass.dispatch_workgroups(count.div_ceil(64), 1, 1);
-        }
+        pass.set_pipeline(&self.cells);
+        pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+        pass.set_pipeline(&self.particles);
+        pass.dispatch_workgroups(self.particle_count.div_ceil(64), 1, 1);
+        pass.set_pipeline(&self.gases);
+        pass.dispatch_workgroups(self.cell_count / 64, self.gas_count, 2);
     }
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
@@ -65,6 +63,7 @@ impl ThermalPhaseTransitions {
         thermal: &wgpu::Buffer,
         requests: &AcceleratorBuffer,
         request_count: &AcceleratorBuffer,
+        gas_fluid_candidates: &AcceleratorBuffer,
         cell_count: u32,
         particle_count: u32,
         gas_count: u32,
@@ -102,6 +101,7 @@ impl ThermalPhaseTransitions {
             count: None,
         });
         entries.push(storage(11, true));
+        entries.push(storage(12, false));
         entries.push(wgpu::BindGroupLayoutEntry {
             binding: 10,
             visibility: wgpu::ShaderStages::COMPUTE,
@@ -152,6 +152,10 @@ impl ThermalPhaseTransitions {
         e.push(wgpu::BindGroupEntry {
             binding: 11,
             resource: rigid_claims.wgpu_buffer().as_entire_binding(),
+        });
+        e.push(wgpu::BindGroupEntry {
+            binding: 12,
+            resource: gas_fluid_candidates.wgpu_buffer().as_entire_binding(),
         });
         let bind_group = d.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("thermal phase"),
@@ -231,7 +235,7 @@ impl ThermalPhaseTransitions {
         p.set_pipeline(&self.particles);
         p.dispatch_workgroups(self.particle_count.div_ceil(64), 1, 1);
         p.set_pipeline(&self.gases);
-        p.dispatch_workgroups((self.cell_count * self.gas_count).div_ceil(64), 1, 1);
+        p.dispatch_workgroups(self.cell_count / 64, self.gas_count, 2);
         drop(p);
         accelerator.wgpu_queue().submit(Some(e.finish()));
     }

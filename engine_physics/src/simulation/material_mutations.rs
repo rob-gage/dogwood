@@ -8,6 +8,7 @@ use engine_compute::{Accelerator, AcceleratorBuffer};
 pub struct MaterialMutations {
     requests: AcceleratorBuffer,
     request_count: AcceleratorBuffer,
+    gas_fluid_candidates: AcceleratorBuffer,
     _static_defaults: AcceleratorBuffer,
     parameters: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
@@ -46,6 +47,10 @@ impl MaterialMutations {
         let requests =
             accelerator.allocate::<[u32; 9]>(buffered_cell_count * (2 + gas_count as usize));
         let request_count = accelerator.allocate::<u32>(1);
+        // Two branches (cold/hot), one dense slot per gas cell.  This is transient,
+        // overwritten by phase_gases every tick, so it needs no clear pass.
+        let gas_fluid_candidates =
+            accelerator.allocate::<[u32; 6]>((buffered_cell_count * gas_count as usize * 2).max(1));
         let defaults: Vec<u32> = materials
             .iter()
             .filter_map(|(_, m)| match m {
@@ -109,6 +114,7 @@ impl MaterialMutations {
                 storage(16, false),
                 storage(17, false),
                 storage(18, false),
+                storage(19, false),
                 wgpu::BindGroupLayoutEntry {
                     binding: 9,
                     visibility: wgpu::ShaderStages::COMPUTE,
@@ -198,6 +204,10 @@ impl MaterialMutations {
                     resource: fluid_free_count.wgpu_buffer().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
+                    binding: 19,
+                    resource: gas_fluid_candidates.wgpu_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
                     binding: 9,
                     resource: parameters.as_entire_binding(),
                 },
@@ -242,10 +252,10 @@ impl MaterialMutations {
             cache: None,
         });
         let allocate_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("allocate material mutations"),
+            label: Some("aggregate gas fluid condensation"),
             layout: Some(&pipeline_layout),
             module: &shader,
-            entry_point: Some("resolve_material_mutations_allocating"),
+            entry_point: Some("resolve_gas_fluid_condensation"),
             compilation_options: Default::default(),
             cache: None,
         });
@@ -261,6 +271,7 @@ impl MaterialMutations {
         Self {
             requests,
             request_count,
+            gas_fluid_candidates,
             _static_defaults: static_defaults,
             parameters,
             bind_group,
@@ -276,6 +287,9 @@ impl MaterialMutations {
     }
     pub(crate) const fn requests_buffer(&self) -> &AcceleratorBuffer {
         &self.requests
+    }
+    pub(crate) const fn gas_fluid_candidates_buffer(&self) -> &AcceleratorBuffer {
+        &self.gas_fluid_candidates
     }
     pub fn reset(&self, accelerator: &Accelerator) {
         let mut encoder =
@@ -332,10 +346,10 @@ impl MaterialMutations {
         }
         {
             let mut pass =
-                accelerator.begin_compute_pass(&mut encoder, "allocate material mutations");
+                accelerator.begin_compute_pass(&mut encoder, "aggregate gas fluid condensation");
             pass.set_pipeline(&self.allocate_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.dispatch_workgroups_indirect(&self.indirect, 0);
+            pass.dispatch_workgroups(buffered_cell_count.div_ceil(64), gas_count, 2);
         }
         encoder.clear_buffer(self.request_count.wgpu_buffer(), 0, None);
     }
@@ -576,5 +590,108 @@ mod tests {
             read_u32(&accelerator, &temperatures, 2),
             vec![777.0f32.to_bits(), 0]
         );
+    }
+
+    #[test]
+    fn gas_condensation_aggregates_a_tile_into_unit_particles() {
+        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let accelerator = Accelerator::new().unwrap();
+        let cells = accelerator.allocate::<u32>(64);
+        let appearances = accelerator.allocate::<u32>(64);
+        let integrities = accelerator.allocate::<f32>(64);
+        let kinematics = accelerator.allocate::<[f32; 4]>(64);
+        let amounts = accelerator.allocate::<f32>(64);
+        let temperatures = accelerator.allocate::<f32>(64);
+        let fluid_edits = accelerator.allocate::<u32>(64);
+        let fluid_edit_amounts = accelerator.allocate::<f32>(64);
+        let fluid_edit_temperatures = accelerator.allocate::<f32>(64);
+        let gas_concentrations = accelerator.allocate::<f32>(64);
+        let particles = accelerator.allocate::<[u32; 10]>(4);
+        let free_indices = accelerator.allocate::<u32>(4);
+        let free_count = accelerator.allocate::<u32>(1);
+        let mutations = MaterialMutations::new(
+            &accelerator,
+            &MaterialRegistry::new(),
+            &cells,
+            &appearances,
+            &integrities,
+            &kinematics,
+            &amounts,
+            &temperatures,
+            &fluid_edits,
+            &fluid_edit_amounts,
+            &fluid_edit_temperatures,
+            &accelerator.allocate::<u32>(1),
+            &accelerator.allocate::<[f32; 2]>(64),
+            &gas_concentrations,
+            &accelerator.allocate::<f32>(64),
+            &particles,
+            &free_indices,
+            &free_count,
+            64,
+            1,
+        );
+        accelerator.wgpu_queue().write_buffer(
+            gas_concentrations.wgpu_buffer(),
+            0,
+            &vec![0.0625f32.to_bits().to_le_bytes(); 64].concat(),
+        );
+        accelerator.wgpu_queue().write_buffer(
+            free_indices.wgpu_buffer(),
+            0,
+            &[0u32, 1, 2, 3]
+                .iter()
+                .flat_map(|value| value.to_le_bytes())
+                .collect::<Vec<_>>(),
+        );
+        accelerator
+            .wgpu_queue()
+            .write_buffer(free_count.wgpu_buffer(), 0, &4u32.to_le_bytes());
+        let fluid = MaterialIdentifier::new(crate::materials::MaterialForm::Fluid, 0).as_u32();
+        for tick in 1..=4 {
+            let gas = read_u32(&accelerator, &gas_concentrations, 64);
+            let candidates: Vec<[u32; 6]> = gas
+                .iter()
+                .enumerate()
+                .map(|(cell, amount)| {
+                    [
+                        fluid,
+                        *amount,
+                        300.0f32.to_bits(),
+                        0,
+                        (cell as f32).to_bits(),
+                        0.5f32.to_bits(),
+                    ]
+                })
+                .collect();
+            accelerator.wgpu_queue().write_buffer(
+                mutations.gas_fluid_candidates_buffer().wgpu_buffer(),
+                0,
+                &candidates
+                    .iter()
+                    .flat_map(|candidate| candidate.iter().flat_map(|word| word.to_le_bytes()))
+                    .collect::<Vec<_>>(),
+            );
+            mutations.resolve(&accelerator, 64, 1);
+            let particle_words = read_u32(&accelerator, &particles, 40);
+            assert_eq!(
+                particle_words
+                    .chunks_exact(10)
+                    .filter(|particle| particle[1] != 0)
+                    .count(),
+                tick
+            );
+            assert!(
+                particle_words
+                    .chunks_exact(10)
+                    .filter(|particle| particle[1] != 0)
+                    .all(|particle| particle[8] == 1.0f32.to_bits())
+            );
+            let remaining: f32 = read_u32(&accelerator, &gas_concentrations, 64)
+                .into_iter()
+                .map(f32::from_bits)
+                .sum();
+            assert!((remaining - (4 - tick) as f32).abs() < 0.001);
+        }
     }
 }
