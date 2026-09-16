@@ -8,6 +8,7 @@ use crate::simulation::{
     CellularCollision, CellularDynamic, CellularPhysicsBodyProxy, CellularPressure,
     CollisionOccupancySnapshot, Fluids, Gases, MaterialMutations, RigidCellularBody,
     RigidCellularBodyCell, RigidCellularBodyState, ScenePhysicsWorld, SceneSimulationConfiguration,
+    ThermalEdits,
 };
 use crate::{
     actors::{Actor, ActorRegistry},
@@ -152,6 +153,7 @@ pub struct Scene {
     gases: Gases,
     /// GPU-resident cross-form material replacement requests.
     material_mutations: MaterialMutations,
+    thermal_edits: ThermalEdits,
     /// GPU simulation of dynamic cells in the canonical cellular buffers
     cellular_dynamic: CellularDynamic,
     /// GPU impulse, pressure, integrity, and fracture subsystem
@@ -298,6 +300,19 @@ impl Scene {
             buffered_cell_count,
             gases.gas_count(),
         );
+        let thermal_edits = ThermalEdits::new(
+            accelerator.as_ref(),
+            &cellular_material_identifiers,
+            &cellular_temperatures,
+            gases.temperature_buffer(),
+            fluids.particles_buffer(),
+            cellular_physics_body_proxy.rigid_claims_buffer(),
+            cellular_physics_body_proxy.rigid_cells_buffer(),
+            &rigid_cell_temperatures,
+            buffered_cell_count as u32,
+            fluids.particle_capacity(),
+            buffered_cell_count as u32,
+        );
         let cellular_pressure: CellularPressure = CellularPressure::new(
             accelerator.as_ref(),
             data.materials(),
@@ -414,6 +429,7 @@ impl Scene {
             fluids,
             gases,
             material_mutations,
+            thermal_edits,
             cellular_dynamic,
             cellular_pressure,
             cellular_collision,
@@ -702,26 +718,37 @@ impl Scene {
                     cells,
                     delta_temperature,
                 } => {
+                    let mut physical_indices = Vec::new();
                     for coordinates in cells {
                         if let Some(index) = self.cell_edit_index(coordinates) {
-                            let offset = index as u64 * 4;
-                            // Canonical cellular temperature is authoritative for cellular forms.
-                            let value = delta_temperature.to_bits().to_le_bytes();
-                            self.accelerator.wgpu_queue().write_buffer(
-                                self.cellular_temperatures.wgpu_buffer(),
-                                offset,
-                                &value,
-                            );
-                            // Gas mixture temperature is authoritative for gaseous cells.
-                            self.accelerator.wgpu_queue().write_buffer(
-                                self.gases.temperature_buffer().wgpu_buffer(),
-                                offset,
-                                &value,
-                            );
+                            physical_indices.push(index as u32);
                         } else {
                             deferred.thermal(vec![coordinates], delta_temperature);
                         }
                     }
+                    physical_indices.sort_unstable();
+                    physical_indices.dedup();
+                    self.thermal_edits.apply(
+                        self.accelerator.as_ref(),
+                        &physical_indices,
+                        delta_temperature,
+                        [
+                            self.origin.x - i32::from(self.simulation_buffer_size),
+                            self.origin.y - i32::from(self.simulation_buffer_size),
+                        ],
+                        [
+                            u32::from(
+                                self.simulation_width + u16::from(self.simulation_buffer_size) * 2,
+                            ),
+                            u32::from(
+                                self.simulation_height + u16::from(self.simulation_buffer_size) * 2,
+                            ),
+                        ],
+                        [
+                            u32::from(self.tiles_ring_offset_x),
+                            u32::from(self.tiles_ring_offset_y),
+                        ],
+                    );
                 }
             }
         }

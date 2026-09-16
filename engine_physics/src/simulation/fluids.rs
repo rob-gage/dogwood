@@ -444,6 +444,10 @@ impl Fluids {
         &self.mechanical_cells
     }
 
+    pub(crate) const fn particles_buffer(&self) -> &AcceleratorBuffer {
+        &self.particles
+    }
+
     pub(crate) const fn edit_cells_buffer(&self) -> &AcceleratorBuffer {
         &self.edit_cells
     }
