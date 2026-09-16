@@ -1,6 +1,9 @@
 // Copyright Rob Gage 2026
 
-use super::{Material, MaterialForm, MaterialIdentifier, MaterialThermalProperties};
+use super::{
+    Material, MaterialForm, MaterialIdentifier, MaterialThermalProperties,
+    MaterialThermalTransition,
+};
 use engine_compute::Accelerator;
 use engine_graphics::{Color, MaterialAppearance, MaterialGraphics};
 use std::{collections::BTreeMap, io, ops::Index};
@@ -445,6 +448,7 @@ impl MaterialRegistry {
         };
         registry.thermal =
             vec![MaterialThermalProperties::default(); registry.material_count() as usize];
+        registry.deserialize_metadata(reader)?;
         Ok(registry)
     }
 
@@ -454,7 +458,143 @@ impl MaterialRegistry {
         Self::serialize_form(writer, &self.cellular_statics)?;
         Self::serialize_form(writer, &self.cellular_dynamics)?;
         Self::serialize_form(writer, &self.fluids)?;
-        Self::serialize_form(writer, &self.gases)
+        Self::serialize_form(writer, &self.gases)?;
+        writer.write_all(b"dwmtmeta")?;
+        writer.write_all(&1u32.to_le_bytes())?;
+        writer.write_all(&self.material_count().to_le_bytes())?;
+        for value in &self.thermal {
+            writer.write_all(&value.conductivity.to_bits().to_le_bytes())?;
+            writer.write_all(&value.specific_heat_capacity.to_bits().to_le_bytes())?;
+            writer.write_all(
+                &value
+                    .default_temperature
+                    .map(f32::to_bits)
+                    .unwrap_or(u32::MAX)
+                    .to_le_bytes(),
+            )?;
+            for transition in [&value.cold_transition, &value.hot_transition] {
+                writer.write_all(
+                    &transition
+                        .as_ref()
+                        .map(|t| t.threshold_temperature.to_bits())
+                        .unwrap_or(u32::MAX)
+                        .to_le_bytes(),
+                )?;
+                writer.write_all(
+                    &transition
+                        .as_ref()
+                        .map(|t| t.target.as_u32())
+                        .unwrap_or(0)
+                        .to_le_bytes(),
+                )?;
+                writer.write_all(
+                    &transition
+                        .as_ref()
+                        .map(|t| t.yield_rate.to_bits())
+                        .unwrap_or(0)
+                        .to_le_bytes(),
+                )?;
+                writer.write_all(
+                    &transition
+                        .as_ref()
+                        .map(|t| t.latent_energy.to_bits())
+                        .unwrap_or(0)
+                        .to_le_bytes(),
+                )?;
+            }
+        }
+        writer.write_all(&(self.tags.len() as u32).to_le_bytes())?;
+        for (name, members) in &self.tags {
+            writer.write_all(&(name.len() as u32).to_le_bytes())?;
+            writer.write_all(name.as_bytes())?;
+            writer.write_all(&(members.len() as u32).to_le_bytes())?;
+            for member in members {
+                writer.write_all(&member.as_u32().to_le_bytes())?;
+            }
+        }
+        Ok(())
+    }
+
+    fn deserialize_metadata<R: io::Read>(&mut self, reader: &mut R) -> Result<(), io::Error> {
+        let mut magic = [0; 8];
+        let read = reader.read(&mut magic)?;
+        if read == 0 {
+            return Ok(());
+        }
+        if read != 8 || &magic != b"dwmtmeta" || Self::read_u32(reader)? != 1 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Invalid material metadata extension",
+            ));
+        }
+        if Self::read_u32(reader)? != self.material_count() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Material metadata count mismatch",
+            ));
+        }
+        let mut metadata = BTreeMap::new();
+        for index in 0..self.material_count() {
+            let conductivity = f32::from_bits(Self::read_u32(reader)?);
+            let specific_heat_capacity = f32::from_bits(Self::read_u32(reader)?);
+            let default = Self::read_u32(reader)?;
+            let transition =
+                |reader: &mut R| -> Result<Option<MaterialThermalTransition>, io::Error> {
+                    let threshold = Self::read_u32(reader)?;
+                    let target = MaterialIdentifier::from_u32(Self::read_u32(reader)?);
+                    let yield_rate = f32::from_bits(Self::read_u32(reader)?);
+                    let latent_energy = f32::from_bits(Self::read_u32(reader)?);
+                    Ok(
+                        (threshold != u32::MAX).then_some(MaterialThermalTransition {
+                            threshold_temperature: f32::from_bits(threshold),
+                            target,
+                            yield_rate,
+                            latent_energy,
+                        }),
+                    )
+                };
+            metadata.insert(
+                self.identifier_from_dense_index(index).unwrap(),
+                MaterialThermalProperties {
+                    conductivity,
+                    specific_heat_capacity,
+                    default_temperature: (default != u32::MAX).then_some(f32::from_bits(default)),
+                    cold_transition: transition(reader)?,
+                    hot_transition: transition(reader)?,
+                },
+            );
+        }
+        let count = Self::read_u32(reader)?;
+        if count > 1_000_000 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Too many tags"));
+        }
+        let mut tags = BTreeMap::new();
+        for _ in 0..count {
+            let len = Self::read_u32(reader)? as usize;
+            if len > 4096 {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "Tag too long"));
+            }
+            let mut bytes = vec![0; len];
+            reader.read_exact(&mut bytes)?;
+            let name = String::from_utf8(bytes)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            let members = Self::read_u32(reader)?;
+            if members > self.material_count() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Too many tag members",
+                ));
+            }
+            let mut values = Vec::with_capacity(members as usize);
+            for _ in 0..members {
+                values.push(MaterialIdentifier::from_u32(Self::read_u32(reader)?));
+            }
+            if tags.insert(name, values).is_some() {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "Duplicate tag"));
+            }
+        }
+        self.set_compiled_metadata(metadata, tags)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
 
     /// Reads an optional trailing material form, preserving three-form registries
@@ -765,7 +905,12 @@ mod tests {
         let empty_registry: MaterialRegistry = MaterialRegistry::new();
         let mut old_bytes: Vec<u8> = Vec::new();
         empty_registry.serialize(&mut old_bytes).unwrap();
-        old_bytes.truncate(old_bytes.len() - 4);
+        old_bytes.truncate(
+            old_bytes
+                .windows(8)
+                .position(|bytes| bytes == b"dwmtmeta")
+                .unwrap(),
+        );
         let mut old_reader: &[u8] = &old_bytes;
         let old_loaded: MaterialRegistry = MaterialRegistry::deserialize(&mut old_reader).unwrap();
         assert!(old_loaded.gases.is_empty());
@@ -892,5 +1037,29 @@ mod tests {
                 .target,
             dynamic_id
         );
+        let mut bytes = Vec::new();
+        registry.serialize(&mut bytes).unwrap();
+        let loaded = MaterialRegistry::deserialize(&mut bytes.as_slice()).unwrap();
+        assert_eq!(
+            loaded.tag_members("mixed").unwrap(),
+            &[gas_id, static_id, fluid_id]
+        );
+        assert_eq!(
+            loaded.thermal_properties(static_id),
+            registry.thermal_properties(static_id)
+        );
+    }
+
+    #[test]
+    fn malformed_metadata_extension_is_rejected() {
+        let registry = MaterialRegistry::new();
+        let mut bytes = Vec::new();
+        registry.serialize(&mut bytes).unwrap();
+        let extension = bytes
+            .windows(8)
+            .position(|value| value == b"dwmtmeta")
+            .unwrap();
+        bytes[extension + 8] = 2;
+        assert!(MaterialRegistry::deserialize(&mut bytes.as_slice()).is_err());
     }
 }
