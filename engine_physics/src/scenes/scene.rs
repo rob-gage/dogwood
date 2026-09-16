@@ -36,6 +36,7 @@ use std::{
 /// this completes, so a recycled slot cannot be mistaken for an old cell.
 struct RigidDormancyDownload {
     id: u64,
+    topology_revision: u64,
     slots: Vec<(u32, u32)>,
     readback: wgpu::Buffer,
     result: Receiver<Result<(), wgpu::BufferAsyncError>>,
@@ -1114,6 +1115,7 @@ impl Scene {
                 self.remove_rigid_cellular_body_cells(body, &cells, RigidCellRemovalCause::Erase);
             }
         }
+        self.debug_assert_rigid_resident_invariants();
         let body_count: usize = self.rigid_cellular_bodies.len();
         let mut newest = None;
         for batch in self.cellular_pressure.collect_rigid_reactions()? {
@@ -1270,6 +1272,7 @@ impl Scene {
                 });
             self.rigid_dormancy_downloads.push(RigidDormancyDownload {
                 id,
+                topology_revision: self.rigid_cellular_topology_revision,
                 slots,
                 readback,
                 result,
@@ -1301,6 +1304,10 @@ impl Scene {
                 unreachable!();
             }
             let download = self.rigid_dormancy_downloads.swap_remove(index);
+            if download.topology_revision != self.rigid_cellular_topology_revision {
+                download.readback.unmap();
+                continue;
+            }
             let Some(body_index) = self
                 .rigid_cellular_bodies
                 .iter()
@@ -1381,8 +1388,11 @@ impl Scene {
             }
             self.rigid_cellular_topology_revision =
                 self.rigid_cellular_topology_revision.wrapping_add(1);
-            self.rigid_cellular_contact_active.clear();
-            self.rigid_granular_contact_active.clear();
+            self.rigid_cellular_contact_active
+                .resize(self.rigid_cellular_bodies.len(), false);
+            self.rigid_granular_contact_active
+                .resize(self.rigid_cellular_bodies.len(), false);
+            self.debug_assert_rigid_resident_invariants();
         }
         Ok(())
     }
@@ -1487,6 +1497,7 @@ impl Scene {
             .resize(self.rigid_cellular_bodies.len(), false);
         self.rigid_granular_contact_active
             .resize(self.rigid_cellular_bodies.len(), false);
+        self.debug_assert_rigid_resident_invariants();
         Ok(())
     }
 
@@ -2066,6 +2077,7 @@ impl Scene {
             .resize(self.rigid_cellular_bodies.len(), false);
         self.rigid_granular_contact_active
             .resize(self.rigid_cellular_bodies.len(), false);
+        self.debug_assert_rigid_resident_invariants();
         if !debris.is_empty() {
             self.pending_runtime_edits.place_cells(debris);
         }
@@ -2107,6 +2119,48 @@ impl Scene {
         *generation = generation.wrapping_add(1);
         self.rigid_cell_state_free.push(slot);
     }
+
+    #[cfg(debug_assertions)]
+    fn debug_assert_rigid_resident_invariants(&self) {
+        debug_assert_eq!(
+            self.rigid_cellular_contact_active.len(),
+            self.rigid_cellular_bodies.len(),
+            "rigid contact sidecar must stay positional with resident bodies"
+        );
+        debug_assert_eq!(
+            self.rigid_granular_contact_active.len(),
+            self.rigid_cellular_bodies.len(),
+            "rigid granular sidecar must stay positional with resident bodies"
+        );
+        let mut ids = HashSet::with_capacity(self.rigid_cellular_bodies.len());
+        let mut slots = HashSet::new();
+        for body in &self.rigid_cellular_bodies {
+            debug_assert!(
+                body.id != 0,
+                "resident rigid body has no persistent identity"
+            );
+            debug_assert!(
+                ids.insert(body.id),
+                "resident rigid identities must be unique"
+            );
+            for cell in &body.cells {
+                debug_assert!((cell.state_slot as usize) < self.rigid_cell_state_generations.len());
+                debug_assert_eq!(
+                    self.rigid_cell_state_generations[cell.state_slot as usize],
+                    cell.state_generation,
+                    "resident rigid cell owns a stale state generation"
+                );
+                debug_assert!(
+                    slots.insert(cell.state_slot),
+                    "rigid state slot is owned twice"
+                );
+            }
+        }
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[inline(always)]
+    fn debug_assert_rigid_resident_invariants(&self) {}
 
     /// Validates and inserts one direct, non-canonical rigid cellular body.
     fn insert_authored_rigid_cellular_body(&mut self, placements: Vec<SceneEditCellPlacement>) {
@@ -2243,6 +2297,7 @@ impl Scene {
             .resize(self.rigid_cellular_bodies.len(), false);
         self.rigid_granular_contact_active
             .resize(self.rigid_cellular_bodies.len(), false);
+        self.debug_assert_rigid_resident_invariants();
     }
 
     fn next_rigid_cellular_body_id(&mut self) -> u64 {
