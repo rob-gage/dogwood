@@ -167,8 +167,12 @@ impl<G: Game> EditorApplication<G> {
         };
         let anchors: Vec<CellCoordinates> = match self.stroke_anchor {
             None => vec![anchor],
-            Some(previous) if previous == anchor && !matches!(self.tool, EditorTool::Thermal) => {
-                return;
+            Some(previous) if previous == anchor => {
+                if matches!(self.tool, EditorTool::Thermal) {
+                    vec![anchor]
+                } else {
+                    return;
+                }
             }
             Some(previous) => EditorBrush::stroke_anchors(previous, anchor)
                 .into_iter()

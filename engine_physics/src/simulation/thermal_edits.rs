@@ -6,7 +6,6 @@ pub(crate) struct ThermalEdits {
     count: AcceleratorBuffer,
     deltas: AcceleratorBuffer,
     rigid_flags: AcceleratorBuffer,
-    rigid_deltas: AcceleratorBuffer,
     parameters: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     request_pipeline: wgpu::ComputePipeline,
@@ -37,10 +36,17 @@ impl ThermalEdits {
         let count = accelerator.allocate::<u32>(1);
         let deltas = accelerator.allocate::<f32>(capacity as usize);
         let rigid_flags = accelerator.allocate::<u32>(rigid_capacity as usize);
-        let rigid_deltas = accelerator.allocate::<f32>(rigid_capacity as usize);
+        let zero_cells = vec![0u8; capacity as usize * 4];
+        accelerator
+            .wgpu_queue()
+            .write_buffer(deltas.wgpu_buffer(), 0, &zero_cells);
+        let zero_rigid = vec![0u8; rigid_capacity as usize * 4];
+        accelerator
+            .wgpu_queue()
+            .write_buffer(rigid_flags.wgpu_buffer(), 0, &zero_rigid);
         let parameters = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("thermal edit parameters"),
-            size: 32,
+            size: 48,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -54,11 +60,11 @@ impl ThermalEdits {
             },
             count: None,
         };
-        let mut layout_entries: Vec<_> = (0..12)
+        let mut layout_entries: Vec<_> = (0..11)
             .map(|b| storage(b, matches!(b, 0 | 1 | 6 | 7)))
             .collect();
         layout_entries.push(wgpu::BindGroupLayoutEntry {
-            binding: 12,
+            binding: 11,
             visibility: wgpu::ShaderStages::COMPUTE,
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
@@ -83,7 +89,6 @@ impl ThermalEdits {
             rigid_temperatures,
             &deltas,
             &rigid_flags,
-            &rigid_deltas,
         ];
         let mut entries: Vec<_> = buffers
             .iter()
@@ -94,7 +99,7 @@ impl ThermalEdits {
             })
             .collect();
         entries.push(wgpu::BindGroupEntry {
-            binding: 12,
+            binding: 11,
             resource: parameters.as_entire_binding(),
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -128,7 +133,6 @@ impl ThermalEdits {
             count,
             deltas,
             rigid_flags,
-            rigid_deltas,
             parameters,
             bind_group,
             request_pipeline: pipeline("apply_thermal_requests"),
@@ -175,6 +179,10 @@ impl ThermalEdits {
             ring_offset[1],
             self.capacity,
             count,
+            delta.to_bits(),
+            0,
+            0,
+            0,
         ] {
             params.extend_from_slice(&v.to_le_bytes());
         }
@@ -223,7 +231,6 @@ impl Drop for ThermalEdits {
         self.count.free();
         self.deltas.free();
         self.rigid_flags.free();
-        self.rigid_deltas.free();
         self.parameters.destroy();
     }
 }
