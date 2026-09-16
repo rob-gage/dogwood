@@ -91,6 +91,12 @@ impl GasDownload {
                     "Downloaded gas velocity is not finite",
                 ));
             }
+            if !temperature.is_finite() || temperature < 0.0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Downloaded gas temperature is invalid",
+                ));
+            }
             let mut species: Vec<(MaterialIdentifier, f32)> = Vec::new();
             for (species_index, identifier) in gas_identifiers.iter().enumerate() {
                 let concentration: f32 =
@@ -119,5 +125,23 @@ impl GasDownload {
 
     fn u32_at(bytes: &[u8], offset: usize) -> u32 {
         u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::materials::MaterialForm;
+    use crate::tiles::TileCoordinates;
+
+    #[test]
+    fn rejects_invalid_temperature_before_constructing_gas_cells() {
+        let area = TileArea::new(TileCoordinates { x: 0, y: 0 }, 1, 1);
+        let identifier = MaterialIdentifier::new(MaterialForm::Gas, 0);
+        let stride = 5 + 1;
+        let mut bytes = vec![0u8; 64 * 64 * stride * 4];
+        bytes[16..20].copy_from_slice(&f32::NAN.to_bits().to_le_bytes());
+        bytes[20..24].copy_from_slice(&1.0f32.to_bits().to_le_bytes());
+        assert!(GasDownload::deserialize(&bytes, area, &[identifier]).is_err());
     }
 }

@@ -74,6 +74,18 @@ impl DemoGame {
             friction: 0.8,
             restitution: 0.02,
         });
+        materials
+            .set_thermal(
+                stone,
+                MaterialThermalProperties {
+                    conductivity: 1.4,
+                    specific_heat_capacity: 0.88,
+                    default_temperature: Some(293.15),
+                    cold_transition: None,
+                    hot_transition: None,
+                },
+            )
+            .map_err(std::io::Error::other)?;
         let water = materials.register(Material::Fluid {
             name: "Water".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(45, 125, 210)),

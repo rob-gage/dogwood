@@ -535,10 +535,13 @@ impl Scene {
             physics_world: ScenePhysicsWorld::new(),
         };
         for coordinates in scene.area_streaming().iterate_chunk_coordinates() {
-            let chunk: Chunk = match scene.data.read_chunk(coordinates)? {
+            let mut chunk: Chunk = match scene.data.read_chunk(coordinates)? {
                 Some(chunk) => chunk,
                 None => scene.generator.generate_chunk(coordinates),
             };
+            chunk.resolve_uninitialized_temperatures(|identifier| {
+                scene.initial_temperature(identifier)
+            });
             scene.chunks.insert(
                 coordinates,
                 ChunkEntry::Active {
@@ -2260,10 +2263,14 @@ impl Scene {
                     match result {
                         // missing chunk begins a separate generation operation
                         Ok(Some(chunk)) => {
+                            let mut chunk = *chunk;
+                            chunk.resolve_uninitialized_temperatures(|identifier| {
+                                self.initial_temperature(identifier)
+                            });
                             self.chunks.insert(
                                 coordinates,
                                 ChunkEntry::Active {
-                                    chunk: *chunk,
+                                    chunk,
                                     is_dirty: false,
                                 },
                             );
@@ -2291,10 +2298,14 @@ impl Scene {
                     match result {
                         // retain the successfully generated chunk
                         Ok(chunk) => {
+                            let mut chunk = *chunk;
+                            chunk.resolve_uninitialized_temperatures(|identifier| {
+                                self.initial_temperature(identifier)
+                            });
                             self.chunks.insert(
                                 coordinates,
                                 ChunkEntry::Active {
-                                    chunk: *chunk,
+                                    chunk,
                                     is_dirty: false,
                                 },
                             );

@@ -681,7 +681,14 @@ mod tests {
                     .flat_map(|candidate| candidate.iter().flat_map(|word| word.to_le_bytes()))
                     .collect::<Vec<_>>(),
             );
-            mutations.resolve_thermal_condensation(&accelerator, 64, 1);
+            let mut encoder =
+                accelerator
+                    .wgpu_device()
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("test thermal condensation"),
+                    });
+            mutations.encode_thermal_condensation(&accelerator, &mut encoder, 64, 1);
+            accelerator.wgpu_queue().submit(Some(encoder.finish()));
             let particle_words = read_u32(&accelerator, &particles, 40);
             assert_eq!(
                 particle_words

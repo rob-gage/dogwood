@@ -38,6 +38,16 @@ impl Chunk {
         }
     }
 
+    /// Resolves authored and legacy occupied cells before this chunk becomes active.
+    pub(crate) fn resolve_uninitialized_temperatures(
+        &mut self,
+        initial_temperature: impl Fn(MaterialIdentifier) -> f32,
+    ) {
+        for tile in &mut self.tiles {
+            tile.resolve_uninitialized_temperatures(&initial_temperature);
+        }
+    }
+
     /// Deserializes binary data into a `Chunk`
     pub fn deserialize<R: io::Read>(reader: &mut R) -> Result<Chunk, io::Error> {
         let mut magic: [u8; 8] = [0; 8];
@@ -407,5 +417,23 @@ mod tests {
         assert!(loaded.cell_temperature(0, 0).is_nan());
         assert_eq!(loaded.cell_amount(1, 0), 0.0);
         assert_eq!(loaded.cell_temperature(1, 0), 0.0);
+    }
+
+    #[test]
+    fn occupied_cells_normalize_before_persistence() {
+        let coordinates = TileCoordinates { x: 0, y: 0 };
+        let material = MaterialIdentifier::new(MaterialForm::CellularStatic, 0);
+        let mut chunk = Chunk::new_empty(coordinates);
+        let mut tile = TileData::EMPTY;
+        tile.set_cell(1, 2, material, CellularAppearance::NEUTRAL);
+        chunk.set_tile_unchecked(coordinates, tile);
+
+        chunk.resolve_uninitialized_temperatures(|_| 301.5);
+        let mut bytes = Vec::new();
+        chunk.serialize(&mut bytes).unwrap();
+        let loaded = Chunk::deserialize(&mut bytes.as_slice()).unwrap();
+        let tile = loaded.get_tile_unchecked(coordinates);
+        assert_eq!(tile.cell_amount(1, 2), 1.0);
+        assert_eq!(tile.cell_temperature(1, 2), 301.5);
     }
 }
