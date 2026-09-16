@@ -1,5 +1,6 @@
 // Copyright Rob Gage 2026
 
+use crate::materials::MaterialIdentifier;
 use crate::tiles::{TileCoordinates, TileData};
 use std::{io, task::Waker};
 
@@ -13,6 +14,10 @@ pub struct TileUpload {
     pub appearances: Vec<u8>,
     /// Persistent integrities in matching GPU cell order
     pub integrities: Vec<u8>,
+    /// Persistent normalized material inventories in matching GPU cell order
+    pub amounts: Vec<u8>,
+    /// Persistent material temperatures in matching GPU cell order
+    pub temperatures: Vec<u8>,
     /// Whether the upload has completed
     pub is_complete: bool,
     /// The completed upload result
@@ -37,14 +42,53 @@ impl TileUpload {
         tile_data
             .serialize_integrities(&mut integrities)
             .expect("Writing to a Vec cannot fail");
+        let mut amounts: Vec<u8> = Vec::with_capacity(TileData::CELL_FIELD_SERIALIZED_SIZE);
+        tile_data
+            .serialize_amounts(&mut amounts)
+            .expect("Writing to a Vec cannot fail");
+        let mut temperatures: Vec<u8> = Vec::with_capacity(TileData::CELL_FIELD_SERIALIZED_SIZE);
+        tile_data
+            .serialize_temperatures(&mut temperatures)
+            .expect("Writing to a Vec cannot fail");
         Self {
             coordinates,
             material_identifiers,
             appearances,
             integrities,
+            amounts,
+            temperatures,
             result: None,
             is_complete: false,
             waker: None,
+        }
+    }
+
+    /// Resolves legacy dormant temperatures immediately before GPU upload.
+    pub fn resolve_uninitialized_state(
+        &mut self,
+        initial_temperature: impl Fn(MaterialIdentifier) -> f32,
+    ) {
+        for index in 0..64 {
+            let offset = index * 4;
+            let identifier = MaterialIdentifier::from_u32(u32::from_le_bytes(
+                self.material_identifiers[offset..offset + 4]
+                    .try_into()
+                    .unwrap(),
+            ));
+            if identifier == MaterialIdentifier::NULL {
+                self.amounts[offset..offset + 4].copy_from_slice(&0.0f32.to_bits().to_le_bytes());
+                self.temperatures[offset..offset + 4]
+                    .copy_from_slice(&0.0f32.to_bits().to_le_bytes());
+                continue;
+            }
+            let temperature = f32::from_bits(u32::from_le_bytes(
+                self.temperatures[offset..offset + 4].try_into().unwrap(),
+            ));
+            if !temperature.is_finite() {
+                self.amounts[offset..offset + 4].copy_from_slice(&1.0f32.to_bits().to_le_bytes());
+                self.temperatures[offset..offset + 4]
+                    .copy_from_slice(&initial_temperature(identifier).to_bits().to_le_bytes());
+            }
         }
     }
 }

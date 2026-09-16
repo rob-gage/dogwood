@@ -424,6 +424,24 @@ mod tests {
             ]
             .concat(),
         );
+        accelerator.wgpu_queue().write_buffer(
+            amounts.wgpu_buffer(),
+            0,
+            &[
+                0.37f32.to_bits().to_le_bytes(),
+                0.8f32.to_bits().to_le_bytes(),
+            ]
+            .concat(),
+        );
+        accelerator.wgpu_queue().write_buffer(
+            temperatures.wgpu_buffer(),
+            0,
+            &[
+                777.0f32.to_bits().to_le_bytes(),
+                555.0f32.to_bits().to_le_bytes(),
+            ]
+            .concat(),
+        );
         let requests = [
             [0u32, static_material.as_u32(), dynamic_material.as_u32(), 0],
             [
@@ -454,6 +472,14 @@ mod tests {
         assert_eq!(
             read_u32(&accelerator, &fluid_edits, 2),
             vec![Fluids::erase_edit(), Fluids::erase_edit()]
+        );
+        assert_eq!(
+            read_u32(&accelerator, &amounts, 2),
+            vec![0.37f32.to_bits(), 0]
+        );
+        assert_eq!(
+            read_u32(&accelerator, &temperatures, 2),
+            vec![777.0f32.to_bits(), 0]
         );
     }
 }

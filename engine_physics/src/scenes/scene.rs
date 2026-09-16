@@ -121,6 +121,8 @@ pub struct Scene {
     cellular_integrities: AcceleratorBuffer,
     cellular_amounts: AcceleratorBuffer,
     cellular_temperatures: AcceleratorBuffer,
+    /// Ambient fallback for authored matter without a material temperature default.
+    ambient_temperature: f32,
     /// Fixed-capacity persistent integrity for authoritative rigid cells.
     rigid_cell_integrities: AcceleratorBuffer,
     /// Transient rasterized possessed-pawn interaction geometry
@@ -374,6 +376,7 @@ impl Scene {
             cellular_integrities,
             cellular_amounts,
             cellular_temperatures,
+            ambient_temperature: simulation.ambient_temperature,
             rigid_cell_integrities,
             cellular_physics_body_proxy,
             rigid_cellular_bodies: Vec::new(),
@@ -1665,10 +1668,19 @@ impl Scene {
             let mut material_identifiers: Vec<u8> = Vec::with_capacity((end - start) * 4);
             let mut appearances: Vec<u8> = Vec::with_capacity((end - start) * 4);
             let mut integrities: Vec<u8> = Vec::with_capacity((end - start) * 4);
+            let mut amounts: Vec<u8> = Vec::with_capacity((end - start) * 4);
+            let mut temperatures: Vec<u8> = Vec::with_capacity((end - start) * 4);
             for edit in &edits[start..end] {
                 material_identifiers.extend_from_slice(&edit.2.as_u32().to_le_bytes());
                 appearances.extend_from_slice(&edit.3.0.to_le_bytes());
                 integrities.extend_from_slice(&edit.4.to_bits().to_le_bytes());
+                let (amount, temperature): (f32, f32) = if edit.2 == MaterialIdentifier::NULL {
+                    (0.0, 0.0)
+                } else {
+                    (1.0, self.initial_temperature(edit.2))
+                };
+                amounts.extend_from_slice(&amount.to_bits().to_le_bytes());
+                temperatures.extend_from_slice(&temperature.to_bits().to_le_bytes());
             }
             let offset: u64 = edits[start].0 as u64 * 4;
             self.accelerator.wgpu_queue().write_buffer(
@@ -1686,6 +1698,16 @@ impl Scene {
                 offset,
                 &integrities,
             );
+            self.accelerator.wgpu_queue().write_buffer(
+                self.cellular_amounts.wgpu_buffer(),
+                offset,
+                &amounts,
+            );
+            self.accelerator.wgpu_queue().write_buffer(
+                self.cellular_temperatures.wgpu_buffer(),
+                offset,
+                &temperatures,
+            );
             self.cellular_dynamic.clear_cellular_dynamic_kinematics(
                 self.accelerator.as_ref(),
                 edits[start].0,
@@ -1698,6 +1720,14 @@ impl Scene {
             );
             start = end;
         }
+    }
+
+    fn initial_temperature(&self, material_identifier: MaterialIdentifier) -> f32 {
+        self.data
+            .materials()
+            .thermal_properties(material_identifier)
+            .and_then(|properties| properties.default_temperature)
+            .unwrap_or(self.ambient_temperature)
     }
 
     /// Sets the automatic active-area target around a world position
@@ -2996,21 +3026,33 @@ impl Scene {
 
     /// Queues tile uploads to the `Accelerator`
     pub fn tiles_upload(
-        &self,
+        &mut self,
         area: TileArea,
     ) -> impl Future<Output = Result<(), io::Error>> + 'static {
         let mut error: Option<io::Error> = None;
         let mut uploads: Vec<Arc<Mutex<TileUpload>>> = Vec::new();
+        let materials = self.data.materials();
+        let ambient_temperature = self.ambient_temperature;
         for coordinates in area.iterate_tile_coordinates() {
             if self.tile_at(coordinates).is_none() {
                 continue;
             }
-            match self.chunks.get(&coordinates.chunk_coordinates()) {
-                Some(ChunkEntry::Active { chunk, .. }) => match chunk.get_tile(coordinates) {
-                    Ok(tile_data) => uploads.push(Arc::new(Mutex::new(TileUpload::new(
-                        coordinates,
-                        tile_data,
-                    )))),
+            match self.chunks.get_mut(&coordinates.chunk_coordinates()) {
+                Some(ChunkEntry::Active { chunk, .. }) => match chunk.get_tile_mut(coordinates) {
+                    Ok(tile_data) => {
+                        let tile_data = tile_data;
+                        tile_data.resolve_uninitialized_temperatures(|identifier| {
+                            materials
+                                .thermal_properties(identifier)
+                                .and_then(|properties| properties.default_temperature)
+                                .unwrap_or(ambient_temperature)
+                        });
+                        let mut upload = TileUpload::new(coordinates, tile_data);
+                        upload.resolve_uninitialized_state(|identifier| {
+                            self.initial_temperature(identifier)
+                        });
+                        uploads.push(Arc::new(Mutex::new(upload)));
+                    }
                     Err(()) => {
                         error = Some(io::Error::new(
                             io::ErrorKind::InvalidInput,
@@ -3206,6 +3248,20 @@ impl Scene {
                     TileData::CELL_FIELD_SERIALIZED_SIZE as u64 * 2,
                     TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
                 );
+                command_encoder.copy_buffer_to_buffer(
+                    self.cellular_amounts.wgpu_buffer(),
+                    tile.0 as u64 * TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
+                    &state.buffer,
+                    TileData::CELL_FIELD_SERIALIZED_SIZE as u64 * 3,
+                    TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
+                );
+                command_encoder.copy_buffer_to_buffer(
+                    self.cellular_temperatures.wgpu_buffer(),
+                    tile.0 as u64 * TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
+                    &state.buffer,
+                    TileData::CELL_FIELD_SERIALIZED_SIZE as u64 * 4,
+                    TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
+                );
                 state.is_started = true;
                 downloads_started.push((download.clone(), state.buffer.clone()));
             }
@@ -3228,13 +3284,21 @@ impl Scene {
                                     let mut appearance_data: &[u8] = &mapped_data
                                         [TileData::CELL_FIELD_SERIALIZED_SIZE
                                             ..TileData::CELL_FIELD_SERIALIZED_SIZE * 2];
-                                    let mut integrity_data: &[u8] =
-                                        &mapped_data[TileData::CELL_FIELD_SERIALIZED_SIZE * 2..];
+                                    let mut integrity_data: &[u8] = &mapped_data
+                                        [TileData::CELL_FIELD_SERIALIZED_SIZE * 2
+                                            ..TileData::CELL_FIELD_SERIALIZED_SIZE * 3];
+                                    let mut amount_data: &[u8] = &mapped_data
+                                        [TileData::CELL_FIELD_SERIALIZED_SIZE * 3
+                                            ..TileData::CELL_FIELD_SERIALIZED_SIZE * 4];
+                                    let mut temperature_data: &[u8] =
+                                        &mapped_data[TileData::CELL_FIELD_SERIALIZED_SIZE * 4..];
                                     let tile_data: Result<TileData, io::Error> =
                                         TileData::deserialize_fields(
                                             &mut material_data,
                                             &mut appearance_data,
                                             &mut integrity_data,
+                                            &mut amount_data,
+                                            &mut temperature_data,
                                         );
                                     drop(mapped_data);
                                     mapped_buffer.unmap();
@@ -3307,6 +3371,16 @@ impl Scene {
                 self.cellular_integrities.wgpu_buffer(),
                 tile.0 as u64 * TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
                 &state.integrities,
+            );
+            self.accelerator.wgpu_queue().write_buffer(
+                self.cellular_amounts.wgpu_buffer(),
+                tile.0 as u64 * TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
+                &state.amounts,
+            );
+            self.accelerator.wgpu_queue().write_buffer(
+                self.cellular_temperatures.wgpu_buffer(),
+                tile.0 as u64 * TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
+                &state.temperatures,
             );
             self.cellular_dynamic.clear_cellular_dynamic_kinematics(
                 self.accelerator.as_ref(),
