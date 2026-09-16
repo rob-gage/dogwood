@@ -1046,7 +1046,10 @@ mod tests {
             0.0,
             &materials,
             vec![crate::simulation::RigidCellularBodyCell::test_cell(
-                [0, 0], stone, CellularAppearance::NEUTRAL)],
+                [0, 0],
+                stone,
+                CellularAppearance::NEUTRAL,
+            )],
             0.5,
             0.0,
             [0.0, 0.0],
@@ -1101,7 +1104,10 @@ mod tests {
             0.0,
             &materials,
             vec![crate::simulation::RigidCellularBodyCell::test_cell(
-                [0, 0], stone, CellularAppearance::NEUTRAL)],
+                [0, 0],
+                stone,
+                CellularAppearance::NEUTRAL,
+            )],
             0.5,
             0.0,
             [0.0, 0.0],
@@ -1133,8 +1139,13 @@ mod tests {
             friction: 0.5,
             restitution: 0.0,
         });
-        let cell = || vec![crate::simulation::RigidCellularBodyCell::test_cell(
-            [0, 0], stone, CellularAppearance::NEUTRAL)];
+        let cell = || {
+            vec![crate::simulation::RigidCellularBodyCell::test_cell(
+                [0, 0],
+                stone,
+                CellularAppearance::NEUTRAL,
+            )]
+        };
         let mut physics = ScenePhysicsWorld::new();
         let left = physics.insert_rigid_cellular_body(
             [0.0, 0.0],
@@ -1385,7 +1396,10 @@ mod tests {
             0.0,
             &materials,
             vec![crate::simulation::RigidCellularBodyCell::test_cell(
-                [0, 0], stone, CellularAppearance::NEUTRAL)],
+                [0, 0],
+                stone,
+                CellularAppearance::NEUTRAL,
+            )],
             0.5,
             0.0,
             [0.0; 2],
@@ -1586,7 +1600,10 @@ mod tests {
                     0.0,
                     &materials,
                     vec![crate::simulation::RigidCellularBodyCell::test_cell(
-                        [0, 0], stone, CellularAppearance::NEUTRAL)],
+                        [0, 0],
+                        stone,
+                        CellularAppearance::NEUTRAL,
+                    )],
                     0.5,
                     0.0,
                     [0.0; 2],

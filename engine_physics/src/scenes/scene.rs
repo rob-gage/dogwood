@@ -884,24 +884,26 @@ impl Scene {
                 self.rigid_granular_contact_active[index] =
                     batch.granular_contact_counts[index] != 0;
             }
-            let fractured: HashSet<u32> = batch.fractured_slots.iter().copied().collect();
-            let mut removals: Vec<(usize, HashSet<[i32; 2]>)> = self
-                .rigid_cellular_bodies
-                .iter()
-                .enumerate()
-                .filter_map(|(body, rigid)| {
-                    let cells: HashSet<[i32; 2]> = rigid
-                        .cells
-                        .iter()
-                        .filter(|cell| fractured.contains(&cell.state_slot))
-                        .map(|cell| cell.local)
-                        .collect();
-                    (!cells.is_empty()).then_some((body, cells))
-                })
-                .collect();
-            removals.sort_unstable_by_key(|(body, _)| std::cmp::Reverse(*body));
-            for (body, cells) in removals {
-                self.remove_rigid_cellular_body_cells(body, &cells);
+            if !batch.fractured_slots.is_empty() {
+                let fractured: HashSet<u32> = batch.fractured_slots.iter().copied().collect();
+                let mut removals: Vec<(usize, HashSet<[i32; 2]>)> = self
+                    .rigid_cellular_bodies
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(body, rigid)| {
+                        let cells: HashSet<[i32; 2]> = rigid
+                            .cells
+                            .iter()
+                            .filter(|cell| fractured.contains(&cell.state_slot))
+                            .map(|cell| cell.local)
+                            .collect();
+                        (!cells.is_empty()).then_some((body, cells))
+                    })
+                    .collect();
+                removals.sort_unstable_by_key(|(body, _)| std::cmp::Reverse(*body));
+                for (body, cells) in removals {
+                    self.remove_rigid_cellular_body_cells(body, &cells);
+                }
             }
         }
         Ok(())
@@ -1199,20 +1201,36 @@ impl Scene {
                 continue;
             }
             if cells.len() < self.rigid_component_minimum(&cells) {
-                let debris = cells.iter().filter_map(|cell| match self.data.materials().get(cell.material) {
-                    Some(Material::CellularStatic { debris_material: Some(material_identifier), debris_yield_rate, .. })
-                        if (((cell.local[0].wrapping_mul(31).wrapping_add(cell.local[1])) as u32 % 10_000) as f32) <
-                            *debris_yield_rate * 10_000.0 => Some(SceneEditCellPlacement {
-                            coordinates: CellCoordinates { x: minimum_x + cell.local[0], y: minimum_y + cell.local[1] },
-                            material_identifier: *material_identifier, appearance: cell.appearance,
-                        }),
-                    _ => None,
-                }).collect();
+                let debris = cells
+                    .iter()
+                    .filter_map(|cell| match self.data.materials().get(cell.material) {
+                        Some(Material::CellularStatic {
+                            debris_material: Some(material_identifier),
+                            debris_yield_rate,
+                            ..
+                        }) if (((cell.local[0].wrapping_mul(31).wrapping_add(cell.local[1])) as u32
+                            % 10_000) as f32)
+                            < *debris_yield_rate * 10_000.0 =>
+                        {
+                            Some(SceneEditCellPlacement {
+                                coordinates: CellCoordinates {
+                                    x: minimum_x + cell.local[0],
+                                    y: minimum_y + cell.local[1],
+                                },
+                                material_identifier: *material_identifier,
+                                appearance: cell.appearance,
+                            })
+                        }
+                        _ => None,
+                    })
+                    .collect();
                 let mut edits = SceneEditBatch::new();
                 edits.erase(component.clone());
                 edits.place_cells(debris);
                 self.apply_edits_immediate(&mut edits)?;
-                for coordinates in &component { snapshot.clear_static_cell(coordinates.x, coordinates.y); }
+                for coordinates in &component {
+                    snapshot.clear_static_cell(coordinates.x, coordinates.y);
+                }
                 continue;
             }
             let divisor: f32 = cells.len() as f32;
@@ -1442,15 +1460,29 @@ impl Scene {
             })
             .collect();
         if cells.len() < self.rigid_component_minimum(&cells) {
-            let debris = cells.into_iter().filter_map(|cell| match self.data.materials().get(cell.material) {
-                Some(Material::CellularStatic { debris_material: Some(material_identifier), debris_yield_rate, .. })
-                    if (((cell.local[0].wrapping_mul(31).wrapping_add(cell.local[1])) as u32 % 10_000) as f32) <
-                        *debris_yield_rate * 10_000.0 => Some(SceneEditCellPlacement {
-                        coordinates: CellCoordinates { x: min_x + cell.local[0], y: min_y + cell.local[1] },
-                        material_identifier: *material_identifier, appearance: cell.appearance,
-                    }),
-                _ => None,
-            }).collect();
+            let debris = cells
+                .into_iter()
+                .filter_map(|cell| match self.data.materials().get(cell.material) {
+                    Some(Material::CellularStatic {
+                        debris_material: Some(material_identifier),
+                        debris_yield_rate,
+                        ..
+                    }) if (((cell.local[0].wrapping_mul(31).wrapping_add(cell.local[1])) as u32
+                        % 10_000) as f32)
+                        < *debris_yield_rate * 10_000.0 =>
+                    {
+                        Some(SceneEditCellPlacement {
+                            coordinates: CellCoordinates {
+                                x: min_x + cell.local[0],
+                                y: min_y + cell.local[1],
+                            },
+                            material_identifier: *material_identifier,
+                            appearance: cell.appearance,
+                        })
+                    }
+                    _ => None,
+                })
+                .collect();
             self.pending_runtime_edits.place_cells(debris);
             return;
         }

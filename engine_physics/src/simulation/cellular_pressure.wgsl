@@ -36,6 +36,8 @@ struct Parameters {
     gravity: vec2<f32>,
     rigid_cell_count: u32,
     padding: u32,
+    impulse_min: vec2<i32>,
+    impulse_size: vec2<u32>,
 }
 
 struct StaticProperties {
@@ -131,7 +133,9 @@ struct RigidPredictedMotion {
 @group(0) @binding(32) var<storage, read_write> rigid_damage: array<atomic<u32>>;
 @group(0) @binding(33) var<storage, read> rigid_claims: array<u32>;
 @group(0) @binding(34) var<storage, read_write> rigid_fractures: array<atomic<u32>>;
+@group(0) @binding(36) var<storage, read_write> rigid_fracture_count: atomic<u32>;
 @group(1) @binding(0) var<storage, read_write> pressure_indirect_dispatch: array<atomic<u32>>;
+@group(1) @binding(1) var<storage, read_write> rigid_damage_dispatch: array<atomic<u32>>;
 
 const IMMOVABLE_CONTACT_MASS: f32 = 1000000.0;
 const CONTACT_PRESSURE_TRANSFER: f32 = 0.02;
@@ -154,24 +158,25 @@ fn accumulate_rigid_pressure_damage(index: u32, material: u32, load: vec4<f32>) 
     let properties = cellular_static_properties[material_index_from_identifier(material)];
     let overload = max(0.0, load.x + load.y + load.z + load.w - properties.pressure_ignore_threshold);
     atomicMax(&rigid_damage[slot], bitcast<u32>(overload));
-}
-
-@compute @workgroup_size(64)
-fn clear_rigid_pressure_damage(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    if invocation.x >= parameters.rigid_cell_count { return; }
-    let slot = rigid_cells[invocation.x * 2u + 1u].x;
-    atomicStore(&rigid_damage[slot], 0u);
+    if overload > 0.0 {
+        atomicStore(&rigid_damage_dispatch[0], (parameters.rigid_cell_count + 63u) / 64u);
+        atomicStore(&rigid_damage_dispatch[1], 1u);
+        atomicStore(&rigid_damage_dispatch[2], 1u);
+    }
 }
 
 @compute @workgroup_size(64)
 fn apply_rigid_pressure_damage(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if invocation.x >= parameters.rigid_cell_count { return; }
-    let cell = rigid_cells[invocation.x * 2u];
     let slot = rigid_cells[invocation.x * 2u + 1u].x;
     let overload = bitcast<f32>(atomicExchange(&rigid_damage[slot], 0u));
+    if overload == 0.0 { return; }
     rigid_cell_integrities[slot] -= overload * parameters.delta_time * parameters.damage_rate;
     if rigid_cell_integrities[slot] <= 0.0 {
-        atomicOr(&rigid_fractures[slot / 32u], 1u << (slot % 32u));
+        let mask = 1u << (slot % 32u);
+        if (atomicOr(&rigid_fractures[slot / 32u], mask) & mask) == 0u {
+            atomicAdd(&rigid_fracture_count, 1u);
+        }
     }
 }
 
@@ -295,6 +300,44 @@ fn mark_active_cellular_pressure_tiles(
     }
 }
 
+// Pressure propagation is deliberately narrower than interaction discovery: an idle
+// rigid boundary still needs contact work, but is not a pressure source by itself.
+@compute @workgroup_size(64)
+fn mark_pressure_active_cellular_pressure_tiles(
+    @builtin(workgroup_id) workgroup: vec3<u32>,
+    @builtin(local_invocation_index) lane: u32,
+) {
+    let logical_tile_index: u32 = workgroup.x;
+    let tile_count: u32 = parameters.buffered_tile_size.x * parameters.buffered_tile_size.y;
+    if logical_tile_index >= tile_count { return; }
+    if lane == 0u { atomicStore(&pressure_tile_has_source, 0u); }
+    workgroupBarrier();
+    let logical_tile: vec2<u32> = vec2<u32>(
+        logical_tile_index % parameters.buffered_tile_size.x,
+        logical_tile_index / parameters.buffered_tile_size.x,
+    );
+    let physical_tile: vec2<u32> = physical_tile_from_logical_tile(
+        logical_tile, parameters.buffered_tile_size, parameters.ring_offset,
+    );
+    let index: u32 = (physical_tile.y * parameters.buffered_tile_size.x + physical_tile.x) *
+        CELL_COUNT_PER_TILE + lane;
+    if any(pending_pressure[index] != vec4<f32>(0.0)) ||
+            external_body_occupancy[index] == 1u || external_body_occupancy[index] == 2u {
+        atomicStore(&pressure_tile_has_source, 1u);
+    }
+    workgroupBarrier();
+    if lane != 0u || atomicLoad(&pressure_tile_has_source) == 0u { return; }
+    for (var offset_y: i32 = -1; offset_y <= 1; offset_y++) {
+        for (var offset_x: i32 = -1; offset_x <= 1; offset_x++) {
+            let active_tile: vec2<i32> = vec2<i32>(logical_tile) + vec2<i32>(offset_x, offset_y);
+            if any(active_tile < vec2<i32>(0)) || active_tile.x >= i32(parameters.buffered_tile_size.x) ||
+                    active_tile.y >= i32(parameters.buffered_tile_size.y) { continue; }
+            atomicStore(&active_pressure_tiles[u32(active_tile.y) * parameters.buffered_tile_size.x +
+                u32(active_tile.x)], 1u);
+        }
+    }
+}
+
 // Converts the coarse pressure mask into one indirect workgroup per active tile
 @compute @workgroup_size(64)
 fn compact_active_cellular_pressure_tiles(@builtin(global_invocation_id) invocation: vec3<u32>) {
@@ -313,9 +356,9 @@ fn compact_active_cellular_pressure_tiles(@builtin(global_invocation_id) invocat
 // Queues editor impulse pressure without bypassing material transmission or mass response
 @compute @workgroup_size(64)
 fn queue_cellular_radial_impulse(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    let logical_index: u32 = invocation.x;
-    if logical_index >= parameters.buffered_cell_count { return; }
-    let cell: vec2<i32> = cellular_pressure_world_cell_from_logical_index(logical_index);
+    if invocation.x >= parameters.impulse_size.x * parameters.impulse_size.y { return; }
+    let cell: vec2<i32> = parameters.impulse_min + vec2<i32>(
+        i32(invocation.x % parameters.impulse_size.x), i32(invocation.x / parameters.impulse_size.x));
     let index: u32 = cellular_pressure_physical_cell_index_from_world_cell(cell);
     if index == INVALID_PHYSICAL_CELL_INDEX ||
             effective_pressure_material(index) == EMPTY_MATERIAL_IDENTIFIER { return; }

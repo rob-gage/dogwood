@@ -190,8 +190,13 @@ impl Fixture {
             angle,
             &self.materials,
             (0..width)
-                .map(|x| crate::simulation::RigidCellularBodyCell::test_cell(
-                    [x, 0], self.stone, CellularAppearance::NEUTRAL))
+                .map(|x| {
+                    crate::simulation::RigidCellularBodyCell::test_cell(
+                        [x, 0],
+                        self.stone,
+                        CellularAppearance::NEUTRAL,
+                    )
+                })
                 .collect(),
             0.5,
             0.0,

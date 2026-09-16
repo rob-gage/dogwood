@@ -4,9 +4,8 @@ use super::ScenePhysicsWorld;
 use crate::{
     actors::{
         ActorCollisionShape, ActorControlState, ActorPawn, ActorPawnMovement,
-        ActorPawnNoclipConfiguration, ActorPawnSwimmingConfiguration,
-        ActorPawnSwimmingState, ActorPawnWalkingConfiguration, ActorPawnWalkingState,
-        ActorPreviousPosition,
+        ActorPawnNoclipConfiguration, ActorPawnSwimmingConfiguration, ActorPawnSwimmingState,
+        ActorPawnWalkingConfiguration, ActorPawnWalkingState, ActorPreviousPosition,
     },
     scenes::{Scene, ScenePosition, SceneVelocity},
 };
@@ -570,8 +569,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        actors::ActorCellularProxyState,
-        simulation::CollisionOccupancySnapshot,
+        actors::ActorCellularProxyState, simulation::CollisionOccupancySnapshot,
         tiles::TileCoordinates,
     };
 
