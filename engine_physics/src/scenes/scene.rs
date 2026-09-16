@@ -1186,8 +1186,36 @@ impl Scene {
             .into_iter()
             .filter(|cell| !removed.contains(&cell.local))
             .collect();
+        let mut debris = Vec::new();
         for cells in RigidCellularBody::connected_components(remaining) {
             if cells.is_empty() {
+                continue;
+            }
+            if cells.len() < self.rigid_component_minimum(&cells) {
+                for cell in cells {
+                    let Some(Material::CellularStatic {
+                        debris_material: Some(material_identifier), debris_yield_rate, ..
+                    }) = self.data.materials().get(cell.material) else {
+                        self.release_rigid_cell_state(cell.state_slot);
+                        continue;
+                    };
+                    let seed = cell.state_slot.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
+                    if (seed % 10_000) as f32 >= debris_yield_rate * 10_000.0 {
+                        self.release_rigid_cell_state(cell.state_slot);
+                        continue;
+                    }
+                    let local = [(cell.local[0] as f32 + 0.5) / 8.0, (cell.local[1] as f32 + 0.5) / 8.0];
+                    let world = [
+                        state.translation[0] + state.angle.cos() * local[0] - state.angle.sin() * local[1],
+                        state.translation[1] + state.angle.sin() * local[0] + state.angle.cos() * local[1],
+                    ];
+                    debris.push(SceneEditCellPlacement {
+                        coordinates: CellCoordinates { x: (world[0] * 8.0).floor() as i32, y: (world[1] * 8.0).floor() as i32 },
+                        material_identifier: *material_identifier,
+                        appearance: cell.appearance,
+                    });
+                    self.release_rigid_cell_state(cell.state_slot);
+                }
                 continue;
             }
             let local_center =
@@ -1224,6 +1252,9 @@ impl Scene {
             .resize(self.rigid_cellular_bodies.len(), false);
         self.rigid_granular_contact_active
             .resize(self.rigid_cellular_bodies.len(), false);
+        if !debris.is_empty() {
+            self.pending_runtime_edits.place_cells(debris);
+        }
     }
 
     /// Averages the existing static material response for one concrete body
