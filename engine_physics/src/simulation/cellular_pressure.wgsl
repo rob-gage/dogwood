@@ -245,14 +245,13 @@ fn mark_active_cellular_pressure_tiles(
     );
     var has_source: bool = any(pending_pressure[index] != vec4<f32>(0.0)) ||
         external_body_occupancy[index] == 1u || external_body_occupancy[index] == 2u;
-    let material: u32 = cellular_material_identifiers[index];
+    let material: u32 = effective_pressure_material(index);
     let form: u32 = material_form_from_identifier(material);
     for (var channel: u32 = 0u; channel < 4u && !has_source; channel++) {
         let neighbor: u32 = cellular_pressure_physical_cell_index_from_world_cell(
             cell + world_cell_direction_from_pressure_channel(channel));
         if neighbor == INVALID_PHYSICAL_CELL_INDEX { continue; }
-        let neighbor_form: u32 = material_form_from_identifier(
-            cellular_material_identifiers[neighbor]);
+        let neighbor_form: u32 = material_form_from_identifier(effective_pressure_material(neighbor));
         let rigid_interface: bool = (rigid_owners[index] != 0u) !=
             (rigid_owners[neighbor] != 0u);
         let fluid_interface: bool = (mechanical_fluid_cells[index].mass > 0.0) !=
