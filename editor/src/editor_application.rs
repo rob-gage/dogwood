@@ -48,6 +48,9 @@ pub struct EditorApplication<G: Game> {
     brush: EditorBrush,
     /// The preceding anchor of the current primary Scene interaction
     stroke_anchor: Option<CellCoordinates>,
+    thermal_rate: f32,
+    thermal_heat: bool,
+    last_thermal_edit: Option<Instant>,
     /// A single rigid placement click waiting for the normal editor update
     rigid_body_placement_requested: Option<CellCoordinates>,
     /// Time of the last rigid placement submitted to the Scene queue
@@ -85,6 +88,9 @@ impl<G: Game> EditorApplication<G> {
             is_primary_scene_interaction_held: false,
             brush: EditorBrush::new(),
             stroke_anchor: None,
+            thermal_rate: 100.0,
+            thermal_heat: true,
+            last_thermal_edit: None,
             rigid_body_placement_requested: None,
             last_rigid_body_placement: None,
             rigid_body_placement_enabled: false,
@@ -175,10 +181,26 @@ impl<G: Game> EditorApplication<G> {
             EditorTool::Eraser => EditorTool::Eraser,
             EditorTool::Impulse => EditorTool::Impulse,
             EditorTool::Material(material_identifier) => EditorTool::Material(material_identifier),
+            EditorTool::Thermal => EditorTool::Thermal,
         };
         let Some(scene) = self.application.game_mutable().scene_mutable() else {
             return;
         };
+        if matches!(tool, EditorTool::Thermal) {
+            let now = Instant::now();
+            let dt = self
+                .last_thermal_edit
+                .map_or(0.0, |last| now.duration_since(last).as_secs_f32().min(0.25));
+            self.last_thermal_edit = Some(now);
+            if dt > 0.0 {
+                let delta = self.thermal_rate * dt * if self.thermal_heat { 1.0 } else { -1.0 };
+                let mut edit = SceneEditBatch::new();
+                edit.thermal(cells.into_iter().collect(), delta);
+                scene.queue_edits(edit);
+            }
+            self.stroke_anchor = Some(anchor);
+            return;
+        }
         if matches!(tool, EditorTool::Impulse) {
             let radius_cells: f32 = (self.brush.size() as f32 * 0.5).max(0.75);
             let strength: f32 = self.brush.size() as f32 * 1.25;
@@ -211,6 +233,7 @@ impl<G: Game> EditorApplication<G> {
             }
             EditorTool::Eraser => edits.destroy_cells(cells.into_iter().collect()),
             EditorTool::Impulse => unreachable!(),
+            EditorTool::Thermal => unreachable!(),
         }
         scene.queue_edits(edits);
         self.stroke_anchor = Some(anchor);
@@ -445,6 +468,8 @@ impl<G: Game> EditorApplication<G> {
         let circle_requested: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         let eraser_requested: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         let impulse_requested: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+        let thermal_heat_requested: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+        let thermal_cool_requested: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         let rigid_body_placement_requested: Rc<Cell<Option<bool>>> = Rc::new(Cell::new(None));
         let material_requested: Rc<Cell<Option<MaterialIdentifier>>> = Rc::new(Cell::new(None));
         let free_fly_action: Rc<Cell<bool>> = free_fly_requested.clone();
@@ -490,6 +515,10 @@ impl<G: Game> EditorApplication<G> {
             },
             eraser_selected: matches!(self.tool, EditorTool::Eraser),
             impulse_selected: matches!(self.tool, EditorTool::Impulse),
+            thermal_selected: matches!(self.tool, EditorTool::Thermal) && self.thermal_heat,
+            thermal_rate: self.thermal_rate,
+            thermal_heat_requested: thermal_heat_requested.clone(),
+            thermal_cool_requested: thermal_cool_requested.clone(),
             rigid_body_placement_enabled: self.rigid_body_placement_enabled,
             view_mode: self.view_mode,
             show_tile_borders: self.show_tile_borders,
@@ -522,6 +551,16 @@ impl<G: Game> EditorApplication<G> {
             self.tool = EditorTool::Impulse;
             self.stroke_anchor = None;
             self.rigid_body_placement_requested = None;
+        }
+        if thermal_heat_requested.get() {
+            self.tool = EditorTool::Thermal;
+            self.thermal_heat = true;
+            self.stroke_anchor = None;
+        }
+        if thermal_cool_requested.get() {
+            self.tool = EditorTool::Thermal;
+            self.thermal_heat = false;
+            self.stroke_anchor = None;
         }
         if let Some(material_identifier) = material_requested.get() {
             self.tool = EditorTool::Material(material_identifier);

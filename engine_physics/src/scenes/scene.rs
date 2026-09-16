@@ -698,6 +698,31 @@ impl Scene {
                         }
                     }
                 }
+                SceneEdit::Thermal {
+                    cells,
+                    delta_temperature,
+                } => {
+                    for coordinates in cells {
+                        if let Some(index) = self.cell_edit_index(coordinates) {
+                            let offset = index as u64 * 4;
+                            // Canonical cellular temperature is authoritative for cellular forms.
+                            let value = delta_temperature.to_bits().to_le_bytes();
+                            self.accelerator.wgpu_queue().write_buffer(
+                                self.cellular_temperatures.wgpu_buffer(),
+                                offset,
+                                &value,
+                            );
+                            // Gas mixture temperature is authoritative for gaseous cells.
+                            self.accelerator.wgpu_queue().write_buffer(
+                                self.gases.temperature_buffer().wgpu_buffer(),
+                                offset,
+                                &value,
+                            );
+                        } else {
+                            deferred.thermal(vec![coordinates], delta_temperature);
+                        }
+                    }
+                }
             }
         }
         edits.append(deferred);

@@ -18,6 +18,10 @@ pub struct EditorInterface {
     pub selected_tool: Option<MaterialIdentifier>,
     pub eraser_selected: bool,
     pub impulse_selected: bool,
+    pub thermal_selected: bool,
+    pub thermal_rate: f32,
+    pub thermal_heat_requested: Rc<Cell<bool>>,
+    pub thermal_cool_requested: Rc<Cell<bool>>,
     pub rigid_body_placement_enabled: bool,
     pub view_mode: EditorViewMode,
     pub show_tile_borders: bool,
@@ -93,7 +97,7 @@ impl Widget for EditorInterface {
                             (EditorViewMode::Normal, "Normal"),
                             (EditorViewMode::MaterialForm, "Material form"),
                             (EditorViewMode::Pressure, "Pressure"),
-                            (EditorViewMode::Temperature, "Temperature"),
+                            (EditorViewMode::Temperature, "Thermal"),
                             (EditorViewMode::Gas, "Gas"),
                         ] {
                             if ui.radio(self.view_mode == mode, label).clicked() {
@@ -200,7 +204,29 @@ impl Widget for EditorInterface {
                         self.impulse_requested.set(true);
                     }
                 });
-                egui::CollapsingHeader::new("Temperature").show(ui, |_| {});
+                egui::CollapsingHeader::new("Thermal").show(ui, |ui| {
+                    ui.add(egui::Slider::new(&mut self.thermal_rate, 1.0..=1000.0).text("K/s"));
+                    if ui
+                        .add(egui::Button::new("Heat").fill(if self.thermal_selected {
+                            egui::Color32::from_rgb(180, 80, 25)
+                        } else {
+                            egui::Color32::DARK_GRAY
+                        }))
+                        .clicked()
+                    {
+                        self.thermal_heat_requested.set(true);
+                    }
+                    if ui
+                        .add(egui::Button::new("Cool").fill(if !self.thermal_selected {
+                            egui::Color32::from_rgb(35, 90, 180)
+                        } else {
+                            egui::Color32::DARK_GRAY
+                        }))
+                        .clicked()
+                    {
+                        self.thermal_cool_requested.set(true);
+                    }
+                });
             });
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)

@@ -11,4 +11,6 @@ pub(crate) enum EditorTool {
     Material(MaterialIdentifier),
     /// Applies a radial mechanical impulse
     Impulse,
+    /// Adds or removes temperature from all matter under the brush.
+    Thermal,
 }

@@ -55,6 +55,12 @@ impl SceneEditBatch {
     pub fn destroy_cells(&mut self, cells: Vec<CellCoordinates>) {
         self.edits.push(SceneEdit::DestroyCells { cells });
     }
+    pub fn thermal(&mut self, cells: Vec<CellCoordinates>, delta_temperature: f32) {
+        self.edits.push(SceneEdit::Thermal {
+            cells,
+            delta_temperature,
+        });
+    }
 
     /// Drains the pending edits
     pub fn drain(&mut self) -> impl Iterator<Item = SceneEdit> + '_ {

@@ -13,4 +13,9 @@ pub enum SceneEdit {
     Erase { cells: Vec<CellCoordinates> },
     /// Destroys every representation occupying the requested world cells.
     DestroyCells { cells: Vec<CellCoordinates> },
+    /// Adds a signed temperature delta to all representations at these cells.
+    Thermal {
+        cells: Vec<CellCoordinates>,
+        delta_temperature: f32,
+    },
 }
