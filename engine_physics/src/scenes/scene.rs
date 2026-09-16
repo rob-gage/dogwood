@@ -295,6 +295,7 @@ impl Scene {
             thermal_material_table.parameters_buffer(),
             cellular_physics_body_proxy.occupancy_buffer(),
             buffered_cell_count as u32,
+            buffered_cell_count as u32,
             gases.gas_count(),
             simulation.ambient_temperature,
             simulation.empty_space_thermal_conductivity,
