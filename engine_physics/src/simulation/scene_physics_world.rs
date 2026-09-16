@@ -126,7 +126,11 @@ impl ScenePhysicsWorld {
                 .solver_groups(Self::rigid_solver_groups()),
             Some(handle),
         );
-        RigidCellularBody { handle, cells }
+        RigidCellularBody {
+            id: 0,
+            handle,
+            cells,
+        }
     }
 
     /// Returns transform and velocities needed to derive a body's world-cell proxy

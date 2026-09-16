@@ -1,5 +1,6 @@
 // Copyright Rob Gage 2026
 
+mod dormant_rigid;
 mod fluid_download;
 mod fluid_upload;
 mod gas_download;

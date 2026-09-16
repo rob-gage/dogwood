@@ -9,6 +9,8 @@ use std::collections::HashSet;
 
 /// Authoritative body-local static cellular matter owned by one Rapier body
 pub(crate) struct RigidCellularBody {
+    /// Scene-stable identity; runtime handles and state slots are never persisted.
+    pub(crate) id: u64,
     pub(crate) handle: RigidBodyHandle,
     /// Local integer cells relative to the body's local origin
     pub(crate) cells: Vec<RigidCellularBodyCell>,

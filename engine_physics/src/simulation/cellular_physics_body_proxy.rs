@@ -662,6 +662,7 @@ mod tests {
         let accelerator = Accelerator::new().unwrap();
         let material = MaterialIdentifier::new(MaterialForm::CellularStatic, 3);
         let body = RigidCellularBody {
+            id: 0,
             handle: RigidBodyHandle::invalid(),
             cells: (2..6)
                 .flat_map(|y| {
