@@ -8,7 +8,7 @@ use crate::simulation::{
     CellularCollision, CellularDynamic, CellularPhysicsBodyProxy, CellularPressure,
     CollisionOccupancySnapshot, Fluids, Gases, MaterialMutations, RigidCellularBody,
     RigidCellularBodyCell, RigidCellularBodyState, ScenePhysicsWorld, SceneSimulationConfiguration,
-    ThermalEdits, ThermalInteraction, ThermalMaterialTable,
+    ThermalConduction, ThermalEdits, ThermalInteraction, ThermalMaterialTable,
 };
 use crate::{
     actors::{Actor, ActorRegistry},
@@ -156,6 +156,7 @@ pub struct Scene {
     thermal_edits: ThermalEdits,
     thermal_material_table: ThermalMaterialTable,
     thermal_interaction: ThermalInteraction,
+    thermal_conduction: ThermalConduction,
     /// GPU simulation of dynamic cells in the canonical cellular buffers
     cellular_dynamic: CellularDynamic,
     /// GPU impulse, pressure, integrity, and fracture subsystem
@@ -300,6 +301,11 @@ impl Scene {
             simulation.ambient_temperature,
             simulation.empty_space_thermal_conductivity,
             simulation.empty_space_heat_capacity,
+        );
+        let thermal_conduction = ThermalConduction::new(
+            accelerator.as_ref(),
+            thermal_interaction.interaction_buffer(),
+            buffered_cell_count as u32,
         );
         let cellular_dynamic: CellularDynamic = CellularDynamic::new(
             accelerator.as_ref(),
@@ -462,6 +468,7 @@ impl Scene {
             thermal_edits,
             thermal_material_table,
             thermal_interaction,
+            thermal_conduction,
             cellular_dynamic,
             cellular_pressure,
             cellular_collision,
@@ -1255,6 +1262,22 @@ impl Scene {
                     u32::from(self.tiles_ring_offset_x),
                     u32::from(self.tiles_ring_offset_y),
                 ],
+            );
+            self.thermal_conduction.conduct(
+                self.accelerator.as_ref(),
+                [
+                    self.origin.x - i32::from(self.simulation_buffer_size),
+                    self.origin.y - i32::from(self.simulation_buffer_size),
+                ],
+                [
+                    u32::from(self.simulation_width + u16::from(self.simulation_buffer_size) * 2),
+                    u32::from(self.simulation_height + u16::from(self.simulation_buffer_size) * 2),
+                ],
+                [
+                    u32::from(self.tiles_ring_offset_x),
+                    u32::from(self.tiles_ring_offset_y),
+                ],
+                1.0 / TICK_RATE as f32,
             );
             self.fluid_sample_submit()?;
             self.cellular_collision_dirty = true;

@@ -237,6 +237,7 @@ impl ThermalInteraction {
 impl Drop for ThermalInteraction {
     fn drop(&mut self) {
         self.interaction.free();
+        self.rigid_raster_claim_counts.free();
         self.parameters.destroy();
     }
 }

@@ -60,7 +60,7 @@ fn gather_thermal_interaction(@builtin(global_invocation_id) id: vec3<u32>) {
         if (dense != 0xffffffffu && dense < arrayLength(&thermal_properties) && rigid.state_slot < arrayLength(&rigid_amounts)) {
             let amount = max(rigid_amounts[rigid.state_slot], 0.0); let share = 1.0 / f32(max(atomicLoad(&rigid_raster_claim_counts[rigid.state_slot]), 1u));
             let record = thermal_properties[dense]; let c = amount * thermal_material_specific_heat_capacity(record) * share;
-            capacity += c; energy += c * rigid_temperatures[rigid.state_slot] * share; if (amount > 0.000001) { conductivity += thermal_material_conductivity(record); }
+            capacity += c; energy += c * rigid_temperatures[rigid.state_slot]; if (amount > 0.000001) { conductivity += thermal_material_conductivity(record); }
         }
     }
     let fluid = fluid_thermal[index]; capacity += fluid.x; energy += fluid.y; conductivity += fluid.z;
