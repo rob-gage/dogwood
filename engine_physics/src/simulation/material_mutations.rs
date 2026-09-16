@@ -28,6 +28,8 @@ impl MaterialMutations {
         amounts: &AcceleratorBuffer,
         temperatures: &AcceleratorBuffer,
         fluid_edits: &AcceleratorBuffer,
+        fluid_edit_amounts: &AcceleratorBuffer,
+        fluid_edit_temperatures: &AcceleratorBuffer,
         fluid_edits_pending: &AcceleratorBuffer,
         gas_velocity: &AcceleratorBuffer,
         gas_concentrations: &AcceleratorBuffer,
@@ -94,6 +96,8 @@ impl MaterialMutations {
                 storage(10, false),
                 storage(11, false),
                 storage(12, false),
+                storage(13, false),
+                storage(14, false),
                 wgpu::BindGroupLayoutEntry {
                     binding: 9,
                     visibility: wgpu::ShaderStages::COMPUTE,
@@ -157,6 +161,14 @@ impl MaterialMutations {
                 wgpu::BindGroupEntry {
                     binding: 12,
                     resource: temperatures.wgpu_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 13,
+                    resource: fluid_edit_amounts.wgpu_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: fluid_edit_temperatures.wgpu_buffer().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 9,
@@ -340,6 +352,8 @@ mod tests {
         let amounts = accelerator.allocate::<f32>(64);
         let temperatures = accelerator.allocate::<f32>(64);
         let fluid_edits = accelerator.allocate::<u32>(64);
+        let fluid_edit_amounts = accelerator.allocate::<f32>(64);
+        let fluid_edit_temperatures = accelerator.allocate::<f32>(64);
         let gas_velocity = accelerator.allocate::<[f32; 2]>(64);
         let gas_concentrations = accelerator.allocate::<f32>(64);
         let mutations = MaterialMutations::new(
@@ -352,6 +366,8 @@ mod tests {
             &amounts,
             &temperatures,
             &fluid_edits,
+            &fluid_edit_amounts,
+            &fluid_edit_temperatures,
             &accelerator.allocate::<u32>(1),
             &gas_velocity,
             &gas_concentrations,
@@ -396,6 +412,8 @@ mod tests {
         let amounts = accelerator.allocate::<f32>(64);
         let temperatures = accelerator.allocate::<f32>(64);
         let fluid_edits = accelerator.allocate::<u32>(64);
+        let fluid_edit_amounts = accelerator.allocate::<f32>(64);
+        let fluid_edit_temperatures = accelerator.allocate::<f32>(64);
         let fluid_pending = accelerator.allocate::<u32>(1);
         let gas_velocity = accelerator.allocate::<[f32; 2]>(64);
         let gas_concentrations = accelerator.allocate::<f32>(64);
@@ -409,6 +427,8 @@ mod tests {
             &amounts,
             &temperatures,
             &fluid_edits,
+            &fluid_edit_amounts,
+            &fluid_edit_temperatures,
             &fluid_pending,
             &gas_velocity,
             &gas_concentrations,

@@ -23,7 +23,8 @@ impl Chunk {
     /// The width and height of a `Chunk` in tiles
     pub const WIDTH: u16 = 64;
     const LEGACY_MAGIC: [u8; 8] = *b"dogwood_";
-    const CURRENT_MAGIC: [u8; 8] = *b"dogwd002";
+    const CURRENT_MAGIC: [u8; 8] = *b"dogwd003";
+    const V2_MAGIC: [u8; 8] = *b"dogwd002";
 
     /// Creates a new empty `Chunk`
     pub fn new_empty(tile_coordinates: TileCoordinates) -> Self {
@@ -42,7 +43,8 @@ impl Chunk {
         let mut magic: [u8; 8] = [0; 8];
         reader.read_exact(&mut magic)?;
         let legacy = magic == Self::LEGACY_MAGIC;
-        if !legacy && magic != Self::CURRENT_MAGIC {
+        let v2 = magic == Self::V2_MAGIC;
+        if !legacy && !v2 && magic != Self::CURRENT_MAGIC {
             return Err(io::ErrorKind::InvalidData.into());
         }
         let mut coordinate_data: [u8; 8] = [0; 8];
@@ -85,7 +87,11 @@ impl Chunk {
                 )
             })?;
         for _ in 0..count {
-            let particle: ChunkFluidParticle = ChunkFluidParticle::deserialize(reader)?;
+            let particle: ChunkFluidParticle = if legacy || v2 {
+                ChunkFluidParticle::deserialize_legacy(reader)?
+            } else {
+                ChunkFluidParticle::deserialize(reader)?
+            };
             if particle.tile_coordinates().chunk_coordinates() != tile_coordinates {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -325,6 +331,8 @@ mod tests {
             material_identifier: MaterialIdentifier::new(MaterialForm::Fluid, 7),
             position: [-0.25, -63.5],
             velocity: [1.25, -2.5],
+            amount: 0.37,
+            temperature: 777.0,
         };
         chunk.insert_dormant_fluid_particle(particle).unwrap();
         let gas_cell: ChunkGasCell = ChunkGasCell {
@@ -353,7 +361,8 @@ mod tests {
         assert!(loaded_gas[0].velocity == gas_cell.velocity);
         assert!(loaded_gas[0].species == gas_cell.species);
 
-        let gas_section_offset: usize = 16 + 4096 * TileData::SERIALIZED_SIZE + 8 + 4 + 20;
+        let gas_section_offset: usize =
+            16 + 4096 * TileData::SERIALIZED_SIZE + 8 + 4 + ChunkFluidParticle::SERIALIZED_SIZE;
         let mut fluid_only_bytes: Vec<u8> = bytes.clone();
         fluid_only_bytes.truncate(gas_section_offset);
         let mut fluid_only_reader: &[u8] = &fluid_only_bytes;

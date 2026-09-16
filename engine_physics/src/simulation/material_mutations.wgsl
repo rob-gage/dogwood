@@ -17,6 +17,8 @@ struct Parameters { buffered_cell_count: u32, gas_count: u32, padding: vec2<u32>
 @group(0) @binding(10) var<storage, read_write> fluid_edits_pending: array<atomic<u32>>;
 @group(0) @binding(11) var<storage, read_write> cellular_amounts: array<f32>;
 @group(0) @binding(12) var<storage, read_write> cellular_temperatures: array<f32>;
+@group(0) @binding(13) var<storage, read_write> fluid_edit_amounts: array<f32>;
+@group(0) @binding(14) var<storage, read_write> fluid_edit_temperatures: array<f32>;
 @group(1) @binding(0) var<storage, read_write> indirect_dispatch: array<u32>;
 @compute @workgroup_size(1) fn prepare_material_mutation_dispatch(@builtin(global_invocation_id) invocation: vec3<u32>) {
  if (invocation.x != 0u) { return; }
@@ -33,5 +35,5 @@ struct Parameters { buffered_cell_count: u32, gas_count: u32, padding: vec2<u32>
  if (form == CELLULAR_STATIC_MATERIAL_FORM) { let index=material_index_from_identifier(request.replacement); if(index >= arrayLength(&static_defaults)){return;} cellular_material_identifiers[request.cell]=request.replacement; cellular_integrities[request.cell]=bitcast<f32>(static_defaults[index]); fluid_edits[request.cell]=FLUID_EDIT_ERASE; atomicStore(&fluid_edits_pending[0],1u); for(var s=0u;s<parameters.gas_count;s++){gas_concentrations[s*parameters.buffered_cell_count+request.cell]=0.0;} return; }
  if (form == CELLULAR_DYNAMIC_MATERIAL_FORM) { cellular_material_identifiers[request.cell]=request.replacement; cellular_integrities[request.cell]=0.0; fluid_edits[request.cell]=FLUID_EDIT_ERASE; atomicStore(&fluid_edits_pending[0],1u); for(var s=0u;s<parameters.gas_count;s++){gas_concentrations[s*parameters.buffered_cell_count+request.cell]=0.0;} return; }
  cellular_material_identifiers[request.cell]=0u; cellular_appearances[request.cell]=0u; cellular_integrities[request.cell]=0.0;
- if (form == FLUID_MATERIAL_FORM) { fluid_edits[request.cell]=request.replacement; atomicStore(&fluid_edits_pending[0],1u); for(var s=0u;s<parameters.gas_count;s++){gas_concentrations[s*parameters.buffered_cell_count+request.cell]=0.0;} return; }
+ if (form == FLUID_MATERIAL_FORM) { fluid_edits[request.cell]=request.replacement; fluid_edit_amounts[request.cell]=cellular_amounts[request.cell]; fluid_edit_temperatures[request.cell]=cellular_temperatures[request.cell]; atomicStore(&fluid_edits_pending[0],1u); for(var s=0u;s<parameters.gas_count;s++){gas_concentrations[s*parameters.buffered_cell_count+request.cell]=0.0;} return; }
  let species=material_index_from_identifier(request.replacement); if(species >= parameters.gas_count){return;} fluid_edits[request.cell]=FLUID_EDIT_ERASE; atomicStore(&fluid_edits_pending[0],1u); for(var s=0u;s<parameters.gas_count;s++){gas_concentrations[s*parameters.buffered_cell_count+request.cell]=select(0.0,1.0,s==species);} }

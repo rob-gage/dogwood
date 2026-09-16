@@ -26,6 +26,8 @@ pub struct Fluids {
     free_count: AcceleratorBuffer,
     /// Ring-aligned transient fluid spawn or erase value for each cell
     edit_cells: AcceleratorBuffer,
+    edit_amounts: AcceleratorBuffer,
+    edit_temperatures: AcceleratorBuffer,
     /// Set by GPU producers when `edit_cells` contains one or more edits.
     gpu_edits_pending: AcceleratorBuffer,
     /// Atomic head of each support-radius-sized spatial bucket
@@ -132,12 +134,14 @@ impl Fluids {
         ];
         let bucket_count: u32 = bucket_dimensions[0] * bucket_dimensions[1];
         let particles: AcceleratorBuffer =
-            accelerator.allocate::<[u32; 8]>(particle_capacity as usize);
+            accelerator.allocate::<[u32; 10]>(particle_capacity as usize);
         let free_indices: AcceleratorBuffer =
             accelerator.allocate::<u32>(particle_capacity as usize);
         let free_count: AcceleratorBuffer = accelerator.allocate::<u32>(1);
         let edit_cells: AcceleratorBuffer =
             accelerator.allocate::<u32>(buffered_cell_count as usize);
+        let edit_amounts = accelerator.allocate::<f32>(buffered_cell_count as usize);
+        let edit_temperatures = accelerator.allocate::<f32>(buffered_cell_count as usize);
         let gpu_edits_pending: AcceleratorBuffer = accelerator.allocate::<u32>(1);
         let gpu_edit_dispatch = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("GPU fluid edit indirect dispatch"),
@@ -164,7 +168,7 @@ impl Fluids {
         let mechanical_original_velocity: AcceleratorBuffer =
             accelerator.allocate::<[f32; 2]>(buffered_cell_count as usize);
         let streaming_particles: AcceleratorBuffer =
-            accelerator.allocate::<[u32; 8]>(particle_capacity as usize);
+            accelerator.allocate::<[u32; 10]>(particle_capacity as usize);
         let streaming_count: AcceleratorBuffer = accelerator.allocate::<u32>(1);
         let streaming_results: AcceleratorBuffer =
             accelerator.allocate::<u32>(particle_capacity as usize);
@@ -232,6 +236,8 @@ impl Fluids {
                     storage(21, false),
                     storage(22, false),
                     storage(23, false),
+                    storage(24, false),
+                    storage(25, false),
                 ],
             });
         let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -265,6 +271,8 @@ impl Fluids {
                 Self::binding(21, &mechanical_cells),
                 Self::binding(22, &mechanical_original_velocity),
                 Self::binding(23, &gpu_edits_pending),
+                Self::binding(24, &edit_amounts),
+                Self::binding(25, &edit_temperatures),
             ],
         });
         let shader: wgpu::ShaderModule = super::create_simulation_shader_module(
@@ -322,6 +330,8 @@ impl Fluids {
             free_indices,
             free_count,
             edit_cells,
+            edit_amounts,
+            edit_temperatures,
             gpu_edits_pending,
             bucket_heads,
             next_particle,
@@ -437,6 +447,12 @@ impl Fluids {
     pub(crate) const fn edit_cells_buffer(&self) -> &AcceleratorBuffer {
         &self.edit_cells
     }
+    pub(crate) const fn edit_amounts_buffer(&self) -> &AcceleratorBuffer {
+        &self.edit_amounts
+    }
+    pub(crate) const fn edit_temperatures_buffer(&self) -> &AcceleratorBuffer {
+        &self.edit_temperatures
+    }
 
     pub(crate) const fn gpu_edits_pending_buffer(&self) -> &AcceleratorBuffer {
         &self.gpu_edits_pending
@@ -512,7 +528,7 @@ impl Fluids {
     pub fn apply_edits(
         &self,
         accelerator: &Accelerator,
-        edits: &[(usize, u32)],
+        edits: &[(usize, u32, f32, f32)],
         active_origin: TileCoordinates,
         active_width: u16,
         active_height: u16,
@@ -528,13 +544,35 @@ impl Fluids {
             crate::materials::MaterialIdentifier::NULL.as_u32();
             self.buffered_cell_count as usize
         ];
-        for (index, material_identifier) in edits {
+        for (index, material_identifier, _, _) in edits {
             cells[*index] = *material_identifier;
         }
         let bytes: Vec<u8> = cells.into_iter().flat_map(u32::to_le_bytes).collect();
         accelerator
             .wgpu_queue()
             .write_buffer(self.edit_cells.wgpu_buffer(), 0, &bytes);
+        let mut amounts = vec![0.0f32.to_bits(); self.buffered_cell_count as usize];
+        let mut temperatures = vec![0.0f32.to_bits(); self.buffered_cell_count as usize];
+        for (index, _, amount, temperature) in edits {
+            amounts[*index] = amount.to_bits();
+            temperatures[*index] = temperature.to_bits();
+        }
+        accelerator.wgpu_queue().write_buffer(
+            &self.edit_amounts.wgpu_buffer(),
+            0,
+            &amounts
+                .into_iter()
+                .flat_map(u32::to_le_bytes)
+                .collect::<Vec<_>>(),
+        );
+        accelerator.wgpu_queue().write_buffer(
+            &self.edit_temperatures.wgpu_buffer(),
+            0,
+            &temperatures
+                .into_iter()
+                .flat_map(u32::to_le_bytes)
+                .collect::<Vec<_>>(),
+        );
         self.write_parameters(
             accelerator,
             active_origin,
@@ -1152,6 +1190,8 @@ impl Drop for Fluids {
         self.free_indices.free();
         self.free_count.free();
         self.edit_cells.free();
+        self.edit_amounts.free();
+        self.edit_temperatures.free();
         self.gpu_edits_pending.free();
         self.bucket_heads.free();
         self.next_particle.free();

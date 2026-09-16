@@ -27,6 +27,8 @@ struct Particle {
     position: vec2<f32>,
     velocity: vec2<f32>,
     prediction_collision_displacement: vec2<f32>,
+    amount: f32,
+    temperature: f32,
 }
 
 struct Parameters {
@@ -100,6 +102,8 @@ struct DerivedFluidActorSample {
 @group(0) @binding(21) var<storage, read_write> mechanical_cells: array<MechanicalFluidCell>;
 @group(0) @binding(22) var<storage, read_write> mechanical_original_velocity: array<vec2<f32>>;
 @group(0) @binding(23) var<storage, read_write> gpu_edits_pending: array<atomic<u32>>;
+@group(0) @binding(24) var<storage, read_write> edit_amounts: array<f32>;
+@group(0) @binding(25) var<storage, read_write> edit_temperatures: array<f32>;
 @group(1) @binding(0) var<storage, read_write> gpu_edit_dispatch: array<u32>;
 
 const INVALID_FLUID_PARTICLE_INDEX: u32 = 0xffffffffu;
@@ -152,6 +156,8 @@ fn spawn_edited_fluid_particles(@builtin(global_invocation_id) invocation: vec3<
         (vec2<f32>(cell) + vec2<f32>(0.5)) / CELLS_PER_TILE_FLOAT,
         vec2<f32>(0.0),
         vec2<f32>(0.0),
+        edit_amounts[cell_index],
+        edit_temperatures[cell_index],
     );
 }
 
@@ -160,6 +166,8 @@ fn spawn_edited_fluid_particles(@builtin(global_invocation_id) invocation: vec3<
 fn clear_fluid_edits(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if invocation.x < parameters.buffered_cell_count {
         edit_cells[invocation.x] = EMPTY_MATERIAL_IDENTIFIER;
+        edit_amounts[invocation.x] = 0.0;
+        edit_temperatures[invocation.x] = 0.0;
     }
 }
 

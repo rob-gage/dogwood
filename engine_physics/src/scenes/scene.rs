@@ -279,6 +279,8 @@ impl Scene {
             &cellular_amounts,
             &cellular_temperatures,
             fluids.edit_cells_buffer(),
+            fluids.edit_amounts_buffer(),
+            fluids.edit_temperatures_buffer(),
             fluids.gpu_edits_pending_buffer(),
             gases.velocity_buffer(),
             gases.concentrations_buffer(),
@@ -740,8 +742,19 @@ impl Scene {
             self.write_cell_edits(&cell_edits);
         }
         if !fluid_edits.is_empty() {
-            let mut fluid_edits: Vec<(usize, u32)> = fluid_edits.into_iter().collect();
-            fluid_edits.sort_unstable_by_key(|(physical_index, _)| *physical_index);
+            let mut fluid_edits: Vec<(usize, u32, f32, f32)> = fluid_edits
+                .into_iter()
+                .map(|(index, material)| {
+                    let identifier = MaterialIdentifier::from_u32(material);
+                    let temperature = if identifier == MaterialIdentifier::NULL {
+                        0.0
+                    } else {
+                        self.initial_temperature(identifier)
+                    };
+                    (index, material, 1.0, temperature)
+                })
+                .collect();
+            fluid_edits.sort_unstable_by_key(|(physical_index, ..)| *physical_index);
             let buffer_size: i32 = i32::from(self.simulation_buffer_size);
             let dimensions: u16 = u16::from(self.simulation_buffer_size) * 2;
             let fluid_active_area: TileArea = self.area_fluid_active();
@@ -2696,6 +2709,11 @@ impl Scene {
             return Err(io::Error::other(
                 "Incoming dormant fluid exceeds the GPU particle pool capacity",
             ));
+        }
+        for particle in &mut particles {
+            if !particle.temperature.is_finite() {
+                particle.temperature = self.initial_temperature(particle.material_identifier);
+            }
         }
         if !particles.iter().all(|particle| {
             matches!(

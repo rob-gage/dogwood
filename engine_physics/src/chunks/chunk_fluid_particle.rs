@@ -15,11 +15,14 @@ pub struct ChunkFluidParticle {
     pub position: [f32; 2],
     /// Continuous velocity in tiles per second
     pub velocity: [f32; 2],
+    pub amount: f32,
+    pub temperature: f32,
 }
 
 impl ChunkFluidParticle {
     /// The aligned size of the matching GPU particle record
-    pub const GPU_SIZE: usize = 32;
+    pub const GPU_SIZE: usize = 40;
+    pub const SERIALIZED_SIZE: usize = 28;
 
     /// Returns the world tile containing this particle
     pub fn tile_coordinates(self) -> TileCoordinates {
@@ -43,8 +46,40 @@ impl ChunkFluidParticle {
                 f32::from_bits(Self::read_u32(reader)?),
                 f32::from_bits(Self::read_u32(reader)?),
             ],
+            amount: f32::from_bits(Self::read_u32(reader)?),
+            temperature: f32::from_bits(Self::read_u32(reader)?),
         };
         particle.validate()?;
+        Ok(particle)
+    }
+
+    pub fn deserialize_legacy<R: io::Read>(reader: &mut R) -> Result<Self, io::Error> {
+        let material_identifier = MaterialIdentifier::from_u32(Self::read_u32(reader)?);
+        let particle = Self {
+            material_identifier,
+            position: [
+                f32::from_bits(Self::read_u32(reader)?),
+                f32::from_bits(Self::read_u32(reader)?),
+            ],
+            velocity: [
+                f32::from_bits(Self::read_u32(reader)?),
+                f32::from_bits(Self::read_u32(reader)?),
+            ],
+            amount: 1.0,
+            temperature: f32::NAN,
+        };
+        if particle.material_identifier.form_checked() != Some(MaterialForm::Fluid)
+            || !particle
+                .position
+                .into_iter()
+                .chain(particle.velocity)
+                .all(f32::is_finite)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Invalid dormant fluid particle",
+            ));
+        }
         Ok(particle)
     }
 
@@ -66,6 +101,8 @@ impl ChunkFluidParticle {
                 f32::from_bits(Self::u32_at(bytes, 16)),
                 f32::from_bits(Self::u32_at(bytes, 20)),
             ],
+            amount: f32::from_bits(Self::u32_at(bytes, 32)),
+            temperature: f32::from_bits(Self::u32_at(bytes, 36)),
         };
         particle.validate()?;
         Ok(particle)
@@ -77,6 +114,8 @@ impl ChunkFluidParticle {
         for value in self.position.into_iter().chain(self.velocity) {
             writer.write_all(&value.to_bits().to_le_bytes())?;
         }
+        writer.write_all(&self.amount.to_bits().to_le_bytes())?;
+        writer.write_all(&self.temperature.to_bits().to_le_bytes())?;
         Ok(())
     }
 
@@ -87,7 +126,8 @@ impl ChunkFluidParticle {
         for value in self.position.into_iter().chain(self.velocity) {
             bytes.extend_from_slice(&value.to_bits().to_le_bytes());
         }
-        bytes.extend_from_slice(&[0; 8]);
+        bytes.extend_from_slice(&self.amount.to_bits().to_le_bytes());
+        bytes.extend_from_slice(&self.temperature.to_bits().to_le_bytes());
     }
 
     fn read_u32<R: io::Read>(reader: &mut R) -> Result<u32, io::Error> {
@@ -107,6 +147,10 @@ impl ChunkFluidParticle {
                 .into_iter()
                 .chain(self.velocity)
                 .all(f32::is_finite)
+            || !self.amount.is_finite()
+            || self.amount <= 0.0
+            || !self.temperature.is_finite()
+            || self.temperature < 0.0
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
