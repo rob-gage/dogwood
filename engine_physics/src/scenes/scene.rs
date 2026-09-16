@@ -106,6 +106,10 @@ const RIGID_DETACHMENT_MAXIMUM_CELLS: usize = 1024;
 enum RigidCellRemovalCause {
     Erase,
     Fracture,
+    /// A cell was converted into a different material form.  In particular this
+    /// must never take the fracture debris path: its inventory belongs to the
+    /// phase-transition product.
+    PhaseTransition,
 }
 
 /// A scene that can be simulated by the engine
