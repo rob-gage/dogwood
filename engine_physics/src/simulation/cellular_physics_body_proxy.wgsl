@@ -20,7 +20,7 @@ struct ActorProxy {
 
 struct RigidCell {
     local: vec2<i32>, body: u32, material_identifier: u32,
-    appearance: u32, padding_0: u32, padding_1: u32, padding_2: u32,
+    appearance: u32, state_slot: u32, state_generation: u32, padding: u32,
 }
 
 @group(0) @binding(0) var<storage, read_write> occupancy: array<u32>;
@@ -35,6 +35,20 @@ struct RigidCell {
 @group(0) @binding(9) var<storage, read_write> rigid_owners: array<u32>;
 @group(0) @binding(10) var<storage, read> actor_proxies: array<ActorProxy>;
 @group(0) @binding(11) var<storage, read_write> actor_claims: array<atomic<u32>>;
+@group(0) @binding(12) var<storage, read> destroy_requests: array<u32>;
+@group(0) @binding(13) var<storage, read_write> destroy_results: array<vec2<u32>>;
+
+@compute @workgroup_size(64)
+fn resolve_rigid_destruction(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let request = invocation.x;
+    if request >= destroy_requests[0] { return; }
+    let index = destroy_requests[request + 1u];
+    if index >= parameters.buffered_cell_count { destroy_results[request] = vec2<u32>(0xffffffffu); return; }
+    let source = atomicLoad(&rigid_claims[index]);
+    if source == 0xffffffffu { destroy_results[request] = vec2<u32>(source); return; }
+    let cell = rigid_cells[source];
+    destroy_results[request] = vec2<u32>(cell.state_slot, cell.state_generation);
+}
 
 @compute @workgroup_size(64)
 fn clear_cellular_physics_body_proxy(@builtin(global_invocation_id) invocation: vec3<u32>) {

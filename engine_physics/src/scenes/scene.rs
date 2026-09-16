@@ -495,6 +495,7 @@ impl Scene {
         let mut fluid_edits: HashMap<usize, u32> = HashMap::new();
         let mut gas_edits: HashSet<(usize, u32)> = HashSet::new();
         let mut gas_clear_cells: HashSet<usize> = HashSet::new();
+        let mut rigid_destroy_indices = Vec::new();
         let mut deferred = SceneEditBatch::new();
         for edit in edits.drain() {
             match edit {
@@ -586,9 +587,10 @@ impl Scene {
                         }
                     }
                 }
-                SceneEdit::Erase { cells } | SceneEdit::DestroyCells { cells } => {
+                SceneEdit::Erase { cells } => {
                     for coordinates in cells {
                         if let Some(physical_index) = self.cell_edit_index(coordinates) {
+                            rigid_destroy_indices.push(physical_index);
                             cell_edits.insert(
                                 physical_index,
                                 (
@@ -610,9 +612,29 @@ impl Scene {
                         }
                     }
                 }
+                SceneEdit::DestroyCells { cells } => {
+                    for coordinates in cells {
+                        if let Some(physical_index) = self.cell_edit_index(coordinates) {
+                            rigid_destroy_indices.push(physical_index);
+                            cell_edits.insert(physical_index, (coordinates, MaterialIdentifier::NULL,
+                                CellularAppearance::NEUTRAL, 0.0));
+                            fluid_edits.insert(physical_index, Fluids::erase_edit());
+                            if self.gases.gas_count() != 0 {
+                                gas_clear_cells.insert(physical_index);
+                                for species in 0..self.gases.gas_count() { gas_edits.remove(&(physical_index, species)); }
+                            }
+                        } else { deferred.destroy_cells(vec![coordinates]); }
+                    }
+                }
             }
         }
         edits.append(deferred);
+        if !rigid_destroy_indices.is_empty() {
+            rigid_destroy_indices.sort_unstable();
+            rigid_destroy_indices.dedup();
+            self.cellular_physics_body_proxy.resolve_destruction_requests(
+                self.accelerator.as_ref(), &rigid_destroy_indices);
+        }
         let mut cell_edits: Vec<(
             usize,
             CellCoordinates,
@@ -783,6 +805,20 @@ impl Scene {
 
     /// Applies every compatible completed GPU reaction in submission order
     fn apply_completed_rigid_cellular_reactions(&mut self) -> Result<(), io::Error> {
+        let destroyed: HashSet<[u32; 2]> = self.cellular_physics_body_proxy
+            .take_destroyed_handles().into_iter()
+            .filter(|handle| handle[0] != u32::MAX).collect();
+        if !destroyed.is_empty() {
+            let mut removals: Vec<(usize, HashSet<[i32; 2]>)> = self.rigid_cellular_bodies
+                .iter().enumerate().filter_map(|(body, rigid)| {
+                    let cells = rigid.cells.iter().filter(|cell| destroyed.contains(&[
+                        cell.state_slot, cell.state_generation,
+                    ])).map(|cell| cell.local).collect::<HashSet<_>>();
+                    (!cells.is_empty()).then_some((body, cells))
+                }).collect();
+            removals.sort_unstable_by_key(|(body, _)| std::cmp::Reverse(*body));
+            for (body, cells) in removals { self.remove_rigid_cellular_body_cells(body, &cells); }
+        }
         let body_count: usize = self.rigid_cellular_bodies.len();
         let mut newest = None;
         for batch in self.cellular_pressure.collect_rigid_reactions()? {

@@ -4,6 +4,7 @@ use super::{RigidCellularBody, RigidCellularBodyState};
 use crate::actors::ActorCellularProxyState;
 use crate::tiles::TileCoordinates;
 use engine_compute::{Accelerator, AcceleratorBuffer};
+use std::sync::{Arc, Mutex};
 
 /// Rasterizes physical bodies into transient cellular interaction geometry
 pub struct CellularPhysicsBodyProxy {
@@ -18,6 +19,9 @@ pub struct CellularPhysicsBodyProxy {
     rigid_owners: AcceleratorBuffer,
     rigid_cells: AcceleratorBuffer,
     rigid_transforms: AcceleratorBuffer,
+    destroy_requests: AcceleratorBuffer,
+    destroy_results: AcceleratorBuffer,
+    destroy_completed: Arc<Mutex<Vec<[u32; 2]>>>,
     parameters: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     bind_group_layout: wgpu::BindGroupLayout,
@@ -28,6 +32,7 @@ pub struct CellularPhysicsBodyProxy {
     actor_resolve_pipeline: wgpu::ComputePipeline,
     rigid_claim_pipeline: wgpu::ComputePipeline,
     rigid_resolve_pipeline: wgpu::ComputePipeline,
+    destroy_resolve_pipeline: wgpu::ComputePipeline,
     buffered_cell_count: u32,
     topology_revision: u64,
     actor_capacity: usize,
@@ -49,6 +54,9 @@ impl CellularPhysicsBodyProxy {
         let rigid_owners = accelerator.allocate::<u32>(buffered_cell_count as usize);
         let rigid_cells = accelerator.allocate::<[u32; 8]>(buffered_cell_count as usize);
         let rigid_transforms = accelerator.allocate::<[f32; 12]>(buffered_cell_count as usize);
+        let destroy_requests = accelerator.allocate::<u32>(buffered_cell_count as usize + 1);
+        let destroy_results = accelerator.allocate::<[u32; 2]>(buffered_cell_count as usize);
+        let destroy_completed = Arc::new(Mutex::new(Vec::new()));
         let parameters = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("cellular physics body proxy parameters"),
             size: 96,
@@ -89,6 +97,8 @@ impl CellularPhysicsBodyProxy {
                 storage(9, false),
                 storage(10, true),
                 storage(11, false),
+                storage(12, true),
+                storage(13, false),
             ],
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -143,6 +153,8 @@ impl CellularPhysicsBodyProxy {
                     binding: 11,
                     resource: actor_claims.wgpu_buffer().as_entire_binding(),
                 },
+                wgpu::BindGroupEntry { binding: 12, resource: destroy_requests.wgpu_buffer().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 13, resource: destroy_results.wgpu_buffer().as_entire_binding() },
             ],
         });
         let shader = super::create_simulation_shader_module(
@@ -178,6 +190,9 @@ impl CellularPhysicsBodyProxy {
             rigid_owners,
             rigid_cells,
             rigid_transforms,
+            destroy_requests,
+            destroy_results,
+            destroy_completed,
             parameters,
             bind_group,
             bind_group_layout: layout,
@@ -200,6 +215,7 @@ impl CellularPhysicsBodyProxy {
                 "resolve_rigid_cell_proxy",
                 "rigid cellular proxy resolve pipeline",
             ),
+            destroy_resolve_pipeline: pipeline("resolve_rigid_destruction", "resolve rigid destruction"),
             buffered_cell_count,
             topology_revision: u64::MAX,
             actor_capacity,
@@ -243,6 +259,38 @@ impl CellularPhysicsBodyProxy {
 
     pub(crate) const fn rigid_cell_capacity(&self) -> usize {
         self.buffered_cell_count as usize
+    }
+
+    /// Resolves world physical cells through the current raster without a CPU body scan.
+    pub(crate) fn resolve_destruction_requests(&mut self, accelerator: &Accelerator, indices: &[usize]) {
+        if indices.is_empty() { return; }
+        let count = indices.len().min(self.buffered_cell_count as usize);
+        let mut requests = Vec::with_capacity(count + 1);
+        requests.push(count as u32);
+        requests.extend(indices[..count].iter().map(|&index| index as u32));
+        accelerator.wgpu_queue().write_buffer(self.destroy_requests.wgpu_buffer(), 0,
+            &requests.into_iter().flat_map(u32::to_le_bytes).collect::<Vec<_>>());
+        let readback = accelerator.wgpu_device().create_buffer(&wgpu::BufferDescriptor {
+            label: Some("rigid destruction readback"), size: (count * 8) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false,
+        });
+        let mut encoder = accelerator.wgpu_device().create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("resolve rigid destruction") });
+        { let mut pass = accelerator.begin_compute_pass(&mut encoder, "resolve rigid destruction");
+            pass.set_pipeline(&self.destroy_resolve_pipeline); pass.set_bind_group(0, &self.bind_group, &[]);
+            pass.dispatch_workgroups((count as u32).div_ceil(64), 1, 1); }
+        encoder.copy_buffer_to_buffer(self.destroy_results.wgpu_buffer(), 0, &readback, 0, (count * 8) as u64);
+        accelerator.wgpu_queue().submit(Some(encoder.finish()));
+        let completed = self.destroy_completed.clone();
+        readback.clone().slice(..).map_async(wgpu::MapMode::Read, move |result| {
+            if result.is_ok() { let mapped = readback.slice(..).get_mapped_range();
+                if let Ok(mapped) = mapped { if let Ok(mut completed) = completed.lock() {
+                    completed.extend(mapped.chunks_exact(8).map(|bytes| [u32::from_le_bytes(bytes[..4].try_into().unwrap()), u32::from_le_bytes(bytes[4..].try_into().unwrap())])); }
+                } readback.unmap(); }
+        });
+    }
+
+    pub(crate) fn take_destroyed_handles(&self) -> Vec<[u32; 2]> {
+        self.destroy_completed.lock().map(|mut handles| std::mem::take(&mut *handles)).unwrap_or_default()
     }
 
     pub(crate) fn rasterize(
@@ -508,6 +556,8 @@ impl CellularPhysicsBodyProxy {
                         binding: 11,
                         resource: self.actor_claims.wgpu_buffer().as_entire_binding(),
                     },
+                    wgpu::BindGroupEntry { binding: 12, resource: self.destroy_requests.wgpu_buffer().as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 13, resource: self.destroy_results.wgpu_buffer().as_entire_binding() },
                 ],
             });
     }
@@ -526,6 +576,8 @@ impl Drop for CellularPhysicsBodyProxy {
         self.rigid_owners.free();
         self.rigid_cells.free();
         self.rigid_transforms.free();
+        self.destroy_requests.free();
+        self.destroy_results.free();
         self.parameters.destroy();
     }
 }
