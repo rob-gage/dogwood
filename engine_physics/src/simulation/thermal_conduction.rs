@@ -223,3 +223,69 @@ impl Drop for ThermalConduction {
         self.parameters.destroy();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        sync::mpsc::sync_channel,
+        time::{Duration, Instant},
+    };
+
+    #[test]
+    fn hot_rigid_field_cell_conducts_into_cold_canonical_neighbor() {
+        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let accelerator = Accelerator::new().unwrap();
+        let interaction = accelerator.allocate::<[f32; 4]>(64);
+        let mut values: Vec<[f32; 4]> = vec![[0.0; 4]; 64];
+        // The interaction snapshot is the shared rigid/canonical thermal field:
+        // cell 0 is the hot rigid contribution and cell 1 the colder canonical one.
+        values[0] = [1.0, 100.0, 1.0, 100.0];
+        values[1] = [1.0, 0.0, 1.0, 0.0];
+        accelerator.wgpu_queue().write_buffer(
+            interaction.wgpu_buffer(),
+            0,
+            &values
+                .iter()
+                .flat_map(|v| v.iter().flat_map(|x| x.to_le_bytes()))
+                .collect::<Vec<_>>(),
+        );
+        let conduction = ThermalConduction::new(&accelerator, &interaction, 64);
+        conduction.conduct(&accelerator, [0, 0], [1, 1], [0, 0], 1.0);
+        let readback = accelerator
+            .wgpu_device()
+            .create_buffer(&wgpu::BufferDescriptor {
+                label: None,
+                size: 32,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+        let mut encoder = accelerator
+            .wgpu_device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        encoder.copy_buffer_to_buffer(
+            conduction.solved_buffer().wgpu_buffer(),
+            0,
+            &readback,
+            0,
+            32,
+        );
+        accelerator.wgpu_queue().submit(Some(encoder.finish()));
+        let (sender, receiver) = sync_channel(1);
+        readback
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                sender.send(result).unwrap();
+            });
+        let start = Instant::now();
+        while receiver.try_recv().is_err() {
+            accelerator.poll().unwrap();
+            assert!(start.elapsed() < Duration::from_secs(10));
+            std::thread::yield_now();
+        }
+        let bytes = readback.slice(..).get_mapped_range().unwrap();
+        let hot = f32::from_bits(u32::from_le_bytes(bytes[12..16].try_into().unwrap()));
+        let cold = f32::from_bits(u32::from_le_bytes(bytes[28..32].try_into().unwrap()));
+        assert!(hot < 100.0 && cold > 0.0);
+    }
+}

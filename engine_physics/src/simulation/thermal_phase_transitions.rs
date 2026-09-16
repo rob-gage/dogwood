@@ -1,6 +1,13 @@
 use engine_compute::{Accelerator, AcceleratorBuffer};
 use std::sync::mpsc::{Receiver, sync_channel};
 
+const RIGID_PHASE_CANDIDATE_SIZE: u64 = 40;
+const RIGID_PHASE_CANDIDATES_OFFSET: u64 = 256;
+
+fn rigid_phase_readback_len(rigid_count: u32) -> u64 {
+    RIGID_PHASE_CANDIDATES_OFFSET + u64::from(rigid_count) * RIGID_PHASE_CANDIDATE_SIZE
+}
+
 /// Evaluates declarative phase metadata after scatter; mutation application remains shared.
 pub(crate) struct ThermalPhaseTransitions {
     parameters: wgpu::Buffer,
@@ -13,6 +20,8 @@ pub(crate) struct ThermalPhaseTransitions {
     rigid_phase_candidates: AcceleratorBuffer,
     rigid_phase_count: AcceleratorBuffer,
     rigid_phase_readback: wgpu::Buffer,
+    rigid_phase_readback_len: u64,
+    rigid_phase_readback_capacity: u32,
     rigid_phase_readback_result: Option<Receiver<Result<(), wgpu::BufferAsyncError>>>,
     rollback_slots: AcceleratorBuffer,
     rollback_count: AcceleratorBuffer,
@@ -64,7 +73,9 @@ impl ThermalPhaseTransitions {
         pass.dispatch_workgroups(self.cell_count / 64, self.gas_count, 2);
         if self.rigid_phase_readback_result.is_none() {
             pass.set_pipeline(&self.rigid);
-            pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+            if rigid_count > 0 {
+                pass.dispatch_workgroups(rigid_count.div_ceil(64), 1, 1);
+            }
         }
     }
     #[allow(clippy::too_many_arguments)]
@@ -268,6 +279,8 @@ impl ThermalPhaseTransitions {
             rigid_phase_candidates,
             rigid_phase_count,
             rigid_phase_readback,
+            rigid_phase_readback_len: 0,
+            rigid_phase_readback_capacity: 0,
             rigid_phase_readback_result: None,
             rollback_slots,
             rollback_count,
@@ -293,7 +306,7 @@ impl ThermalPhaseTransitions {
     pub(crate) fn rigid_readback_pending(&self) -> bool {
         self.rigid_phase_readback_result.is_some()
     }
-    pub(crate) fn submit_rigid_readback(&mut self, accelerator: &Accelerator) {
+    pub(crate) fn submit_rigid_readback(&mut self, accelerator: &Accelerator, rigid_count: u32) {
         if self.rigid_phase_readback_result.is_some() {
             return;
         }
@@ -310,20 +323,27 @@ impl ThermalPhaseTransitions {
             0,
             4,
         );
-        encoder.copy_buffer_to_buffer(
-            self.rigid_phase_candidates.wgpu_buffer(),
-            0,
-            &self.rigid_phase_readback,
-            256,
-            self.cell_count as u64 * 40,
-        );
+        self.rigid_phase_readback_capacity = rigid_count.min(self.cell_count);
+        let rigid_count = self.rigid_phase_readback_capacity;
+        let readback_len = rigid_phase_readback_len(rigid_count);
+        if rigid_count > 0 {
+            encoder.copy_buffer_to_buffer(
+                self.rigid_phase_candidates.wgpu_buffer(),
+                0,
+                &self.rigid_phase_readback,
+                RIGID_PHASE_CANDIDATES_OFFSET,
+                u64::from(rigid_count) * RIGID_PHASE_CANDIDATE_SIZE,
+            );
+        }
+        self.rigid_phase_readback_len = readback_len;
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
         let (sender, receiver) = sync_channel(1);
-        self.rigid_phase_readback
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, move |result| {
+        self.rigid_phase_readback.slice(0..readback_len).map_async(
+            wgpu::MapMode::Read,
+            move |result| {
                 let _ = sender.send(result);
-            });
+            },
+        );
         self.rigid_phase_readback_result = Some(receiver);
     }
     pub(crate) fn take_rigid_candidates(&mut self) -> Option<Vec<[u32; 10]>> {
@@ -335,11 +355,17 @@ impl ThermalPhaseTransitions {
         }
         let bytes = self
             .rigid_phase_readback
-            .slice(..)
+            .slice(0..self.rigid_phase_readback_len)
             .get_mapped_range()
             .ok()?;
-        let count = u32::from_le_bytes(bytes[..4].try_into().ok()?).min(self.cell_count) as usize;
-        let records = bytes[256..]
+        let count = u32::from_le_bytes(bytes[..4].try_into().ok()?)
+            .min(self.rigid_phase_readback_capacity) as usize;
+        if count == 0 {
+            drop(bytes);
+            self.rigid_phase_readback.unmap();
+            return Some(Vec::new());
+        }
+        let records = bytes[usize::try_from(RIGID_PHASE_CANDIDATES_OFFSET).unwrap()..]
             .chunks_exact(40)
             .take(count)
             .map(|b| {
@@ -433,7 +459,9 @@ impl ThermalPhaseTransitions {
         p.dispatch_workgroups(self.cell_count / 64, self.gas_count, 2);
         if self.rigid_phase_readback_result.is_none() {
             p.set_pipeline(&self.rigid);
-            p.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+            if rigid_count > 0 {
+                p.dispatch_workgroups(rigid_count.div_ceil(64), 1, 1);
+            }
         }
         drop(p);
         accelerator.wgpu_queue().submit(Some(e.finish()));
@@ -480,7 +508,14 @@ fn transitioned_temperature(
 
 #[cfg(test)]
 mod tests {
-    use super::transitioned_temperature;
+    use super::{rigid_phase_readback_len, transitioned_temperature};
+
+    #[test]
+    fn rigid_readback_size_scales_with_submitted_rigid_count() {
+        assert_eq!(rigid_phase_readback_len(0), 256);
+        assert_eq!(rigid_phase_readback_len(128), 256 + 128 * 40);
+        assert!(rigid_phase_readback_len(128) < rigid_phase_readback_len(100_000));
+    }
     #[test]
     fn latent_arithmetic_is_symmetric() {
         assert_eq!(

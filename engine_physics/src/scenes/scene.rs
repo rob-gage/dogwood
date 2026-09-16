@@ -2168,8 +2168,11 @@ impl Scene {
             self.accelerator
                 .wgpu_queue()
                 .submit(Some(thermal_encoder.finish()));
-            self.thermal_phase_transitions
-                .submit_rigid_readback(self.accelerator.as_ref());
+            self.thermal_phase_transitions.submit_rigid_readback(
+                self.accelerator.as_ref(),
+                self.cellular_physics_body_proxy
+                    .rigid_cell_count(&self.rigid_cellular_bodies) as u32,
+            );
             self.fluid_sample_submit()?;
             self.cellular_collision_dirty = true;
         }
