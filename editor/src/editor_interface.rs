@@ -51,7 +51,7 @@ pub struct EditorInterface {
 impl EditorInterface {
     fn tool_button(ui: &mut egui::Ui, selected: bool, text: &str) -> bool {
         ui.add_sized(
-            [ui.available_width(), 28.0],
+            [(ui.available_width() - 22.0).max(0.0), 28.0],
             egui::Button::new(text).selected(selected),
         )
         .clicked()
@@ -206,7 +206,8 @@ impl Widget for EditorInterface {
                         }
                     });
                 egui::CollapsingHeader::new("Pressure").show(ui, |ui| {
-                    let response = ui.add(
+                    let response = ui.add_sized(
+                        [(ui.available_width() - 22.0).max(0.0), 24.0],
                         egui::Slider::new(&mut self.impulse_rate, 1.0..=1000.0).text("Pressure/s"),
                     );
                     if response.changed() {
@@ -217,8 +218,10 @@ impl Widget for EditorInterface {
                     }
                 });
                 egui::CollapsingHeader::new("Thermal").show(ui, |ui| {
-                    let response =
-                        ui.add(egui::Slider::new(&mut self.thermal_rate, 1.0..=1000.0).text("K/s"));
+                    let response = ui.add_sized(
+                        [(ui.available_width() - 22.0).max(0.0), 24.0],
+                        egui::Slider::new(&mut self.thermal_rate, 1.0..=1000.0).text("K/s"),
+                    );
                     if response.changed() {
                         self.thermal_rate_requested.set(Some(self.thermal_rate));
                     }
