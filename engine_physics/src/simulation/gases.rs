@@ -238,6 +238,7 @@ impl Gases {
     pub const fn concentrations_buffer(&self) -> &AcceleratorBuffer {
         &self.concentrations
     }
+
     pub(crate) const fn temperature_buffer(&self) -> &AcceleratorBuffer {
         &self.gas_temperature
     }

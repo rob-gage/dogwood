@@ -8,7 +8,7 @@ use crate::simulation::{
     CellularCollision, CellularDynamic, CellularPhysicsBodyProxy, CellularPressure,
     CollisionOccupancySnapshot, Fluids, Gases, MaterialMutations, RigidCellularBody,
     RigidCellularBodyCell, RigidCellularBodyState, ScenePhysicsWorld, SceneSimulationConfiguration,
-    ThermalEdits, ThermalMaterialTable,
+    ThermalEdits, ThermalInteraction, ThermalMaterialTable,
 };
 use crate::{
     actors::{Actor, ActorRegistry},
@@ -155,6 +155,7 @@ pub struct Scene {
     material_mutations: MaterialMutations,
     thermal_edits: ThermalEdits,
     thermal_material_table: ThermalMaterialTable,
+    thermal_interaction: ThermalInteraction,
     /// GPU simulation of dynamic cells in the canonical cellular buffers
     cellular_dynamic: CellularDynamic,
     /// GPU impulse, pressure, integrity, and fracture subsystem
@@ -275,6 +276,29 @@ impl Scene {
             gases.temperature_buffer().wgpu_buffer(),
             0,
             &ambient_gas_temperature,
+        );
+        let thermal_interaction = ThermalInteraction::new(
+            accelerator.as_ref(),
+            data.materials(),
+            &cellular_material_identifiers,
+            &cellular_amounts,
+            &cellular_temperatures,
+            cellular_physics_body_proxy.rigid_claims_buffer(),
+            cellular_physics_body_proxy.rigid_cells_buffer(),
+            &rigid_cell_amounts,
+            &rigid_cell_temperatures,
+            fluids.derived_thermal_buffer(),
+            fluids.coverage_buffer(),
+            gases.concentrations_buffer(),
+            gases.temperature_buffer(),
+            thermal_material_table.properties_buffer(),
+            thermal_material_table.parameters_buffer(),
+            cellular_physics_body_proxy.occupancy_buffer(),
+            buffered_cell_count as u32,
+            gases.gas_count(),
+            simulation.ambient_temperature,
+            simulation.empty_space_thermal_conductivity,
+            simulation.empty_space_heat_capacity,
         );
         let cellular_dynamic: CellularDynamic = CellularDynamic::new(
             accelerator.as_ref(),
@@ -436,6 +460,7 @@ impl Scene {
             material_mutations,
             thermal_edits,
             thermal_material_table,
+            thermal_interaction,
             cellular_dynamic,
             cellular_pressure,
             cellular_collision,
@@ -1215,6 +1240,21 @@ impl Scene {
             self.fluids
                 .scatter_mechanical_response(self.accelerator.as_ref());
             self.gases.simulate_post_coupling(self.accelerator.as_ref());
+            self.thermal_interaction.gather(
+                self.accelerator.as_ref(),
+                [
+                    self.origin.x - i32::from(self.simulation_buffer_size),
+                    self.origin.y - i32::from(self.simulation_buffer_size),
+                ],
+                [
+                    u32::from(self.simulation_width + u16::from(self.simulation_buffer_size) * 2),
+                    u32::from(self.simulation_height + u16::from(self.simulation_buffer_size) * 2),
+                ],
+                [
+                    u32::from(self.tiles_ring_offset_x),
+                    u32::from(self.tiles_ring_offset_y),
+                ],
+            );
             self.fluid_sample_submit()?;
             self.cellular_collision_dirty = true;
         }
