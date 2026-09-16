@@ -50,7 +50,9 @@ pub struct EditorApplication<G: Game> {
     stroke_anchor: Option<CellCoordinates>,
     thermal_rate: f32,
     thermal_heat: bool,
+    impulse_rate: f32,
     last_thermal_edit: Option<Instant>,
+    last_impulse_edit: Option<Instant>,
     /// A single rigid placement click waiting for the normal editor update
     rigid_body_placement_requested: Option<CellCoordinates>,
     /// Time of the last rigid placement submitted to the Scene queue
@@ -90,7 +92,9 @@ impl<G: Game> EditorApplication<G> {
             stroke_anchor: None,
             thermal_rate: 100.0,
             thermal_heat: true,
+            impulse_rate: 100.0,
             last_thermal_edit: None,
+            last_impulse_edit: None,
             rigid_body_placement_requested: None,
             last_rigid_body_placement: None,
             rigid_body_placement_enabled: false,
@@ -127,10 +131,11 @@ impl<G: Game> EditorApplication<G> {
                     })
                 })
             })
-            .unwrap_or(if matches!(self.tool, EditorTool::Impulse) {
-                Color::new_rgba(255, 190, 60, 0)
-            } else {
-                Color::new_rgba(255, 80, 80, 96)
+            .unwrap_or(match self.tool {
+                EditorTool::Impulse => Color::new_rgba(255, 190, 60, 0),
+                EditorTool::Thermal if self.thermal_heat => Color::new_rgba(255, 130, 30, 96),
+                EditorTool::Thermal => Color::new_rgba(45, 110, 230, 96),
+                _ => Color::new_rgba(255, 80, 80, 96),
             });
         let cells: Vec<[f32; 4]> = self
             .brush
@@ -168,7 +173,7 @@ impl<G: Game> EditorApplication<G> {
         let anchors: Vec<CellCoordinates> = match self.stroke_anchor {
             None => vec![anchor],
             Some(previous) if previous == anchor => {
-                if matches!(self.tool, EditorTool::Thermal) {
+                if matches!(self.tool, EditorTool::Thermal | EditorTool::Impulse) {
                     vec![anchor]
                 } else {
                     return;
@@ -208,8 +213,13 @@ impl<G: Game> EditorApplication<G> {
             return;
         }
         if matches!(tool, EditorTool::Impulse) {
+            let now = Instant::now();
+            let dt = self.last_impulse_edit.map_or(1.0 / 60.0, |last| {
+                now.duration_since(last).as_secs_f32().min(0.25)
+            });
+            self.last_impulse_edit = Some(now);
             let radius_cells: f32 = (self.brush.size() as f32 * 0.5).max(0.75);
-            let strength: f32 = self.brush.size() as f32 * 1.25;
+            let strength: f32 = self.impulse_rate * dt;
             for impulse_anchor in &anchors {
                 scene.apply_cellular_radial_impulse(*impulse_anchor, radius_cells, strength);
             }
@@ -306,6 +316,7 @@ impl<G: Game> EditorApplication<G> {
                 self.cursor_position = None;
                 self.stroke_anchor = None;
                 self.last_thermal_edit = None;
+                self.last_impulse_edit = None;
                 self.rigid_body_placement_requested = None;
             }
             MouseInput {
@@ -321,6 +332,7 @@ impl<G: Game> EditorApplication<G> {
                     if self.is_primary_scene_interaction_held {
                         self.stroke_anchor = None;
                         self.last_thermal_edit = None;
+                        self.last_impulse_edit = None;
                         let static_material = match self.tool {
                             EditorTool::Material(material_identifier) => self
                                 .application
@@ -349,6 +361,7 @@ impl<G: Game> EditorApplication<G> {
                 self.is_primary_scene_interaction_held = false;
                 self.stroke_anchor = None;
                 self.last_thermal_edit = None;
+                self.last_impulse_edit = None;
             }
             MouseWheel { delta, .. } => {
                 if ui_consumed && self.hovered_cell().is_none() {
@@ -376,6 +389,7 @@ impl<G: Game> EditorApplication<G> {
                 self.is_primary_scene_interaction_held = false;
                 self.stroke_anchor = None;
                 self.last_thermal_edit = None;
+                self.last_impulse_edit = None;
                 self.rigid_body_placement_requested = None;
             }
             _ => {}
@@ -481,6 +495,7 @@ impl<G: Game> EditorApplication<G> {
         let thermal_heat_requested: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         let thermal_cool_requested: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         let thermal_rate_requested: Rc<Cell<Option<f32>>> = Rc::new(Cell::new(None));
+        let impulse_rate_requested: Rc<Cell<Option<f32>>> = Rc::new(Cell::new(None));
         let rigid_body_placement_requested: Rc<Cell<Option<bool>>> = Rc::new(Cell::new(None));
         let material_requested: Rc<Cell<Option<MaterialIdentifier>>> = Rc::new(Cell::new(None));
         let free_fly_action: Rc<Cell<bool>> = free_fly_requested.clone();
@@ -529,6 +544,7 @@ impl<G: Game> EditorApplication<G> {
             thermal_tool_active: matches!(self.tool, EditorTool::Thermal),
             thermal_heat_mode: self.thermal_heat,
             thermal_rate: self.thermal_rate,
+            impulse_rate: self.impulse_rate,
             thermal_rate_requested: thermal_rate_requested.clone(),
             thermal_heat_requested: thermal_heat_requested.clone(),
             thermal_cool_requested: thermal_cool_requested.clone(),
@@ -547,6 +563,7 @@ impl<G: Game> EditorApplication<G> {
             circle_requested: circle_action,
             eraser_requested: eraser_action,
             impulse_requested: impulse_requested.clone(),
+            impulse_rate_requested: impulse_rate_requested.clone(),
             rigid_body_placement_requested: rigid_body_placement_requested.clone(),
             material_requested: material_requested.clone(),
             view_mode_requested: view_mode_requested.clone(),
@@ -557,17 +574,22 @@ impl<G: Game> EditorApplication<G> {
         if let Some(rate) = thermal_rate_requested.get() {
             self.thermal_rate = rate.clamp(1.0, 1000.0);
         }
+        if let Some(rate) = impulse_rate_requested.get() {
+            self.impulse_rate = rate.clamp(1.0, 1000.0);
+        }
         self.application
             .set_scene_viewport_bounds(viewport_bounds.get());
         if eraser_requested.get() {
             self.tool = EditorTool::Eraser;
             self.stroke_anchor = None;
             self.last_thermal_edit = None;
+            self.last_impulse_edit = None;
         }
         if impulse_requested.get() {
             self.tool = EditorTool::Impulse;
             self.stroke_anchor = None;
             self.last_thermal_edit = None;
+            self.last_impulse_edit = None;
             self.rigid_body_placement_requested = None;
         }
         if thermal_heat_requested.get() {
@@ -575,17 +597,20 @@ impl<G: Game> EditorApplication<G> {
             self.thermal_heat = true;
             self.stroke_anchor = None;
             self.last_thermal_edit = None;
+            self.last_impulse_edit = None;
         }
         if thermal_cool_requested.get() {
             self.tool = EditorTool::Thermal;
             self.thermal_heat = false;
             self.stroke_anchor = None;
             self.last_thermal_edit = None;
+            self.last_impulse_edit = None;
         }
         if let Some(material_identifier) = material_requested.get() {
             self.tool = EditorTool::Material(material_identifier);
             self.stroke_anchor = None;
             self.last_thermal_edit = None;
+            self.last_impulse_edit = None;
             self.rigid_body_placement_requested = None;
         }
         if let Some(enabled) = rigid_body_placement_requested.get() {

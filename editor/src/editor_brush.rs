@@ -15,9 +15,9 @@ impl EditorBrush {
     /// The maximum brush size used by this editor implementation
     const SIZE_MAXIMUM: u16 = 64;
 
-    /// Creates a one-cell square brush
+    /// Creates a one-cell circle brush
     pub const fn new() -> Self {
-        Self::Square { size: 1 }
+        Self::Circle { size: 1 }
     }
 
     /// Returns whether this brush is square

@@ -18,6 +18,7 @@ pub struct EditorInterface {
     pub selected_tool: Option<MaterialIdentifier>,
     pub eraser_selected: bool,
     pub impulse_selected: bool,
+    pub impulse_rate: f32,
     pub thermal_tool_active: bool,
     pub thermal_heat_mode: bool,
     pub thermal_rate: f32,
@@ -39,6 +40,7 @@ pub struct EditorInterface {
     pub circle_requested: Rc<Cell<bool>>,
     pub eraser_requested: Rc<Cell<bool>>,
     pub impulse_requested: Rc<Cell<bool>>,
+    pub impulse_rate_requested: Rc<Cell<Option<f32>>>,
     pub rigid_body_placement_requested: Rc<Cell<Option<bool>>>,
     pub material_requested: Rc<Cell<Option<MaterialIdentifier>>>,
     pub view_mode_requested: Rc<Cell<EditorViewMode>>,
@@ -127,19 +129,21 @@ impl Widget for EditorInterface {
                     {
                         self.return_requested.set(true);
                     }
-                    if ui
-                        .selectable_label(self.brush_is_square, "Square")
-                        .clicked()
-                    {
-                        self.square_requested.set(true);
-                    }
+                    ui.separator();
                     if ui
                         .selectable_label(!self.brush_is_square, "Circle")
                         .clicked()
                     {
                         self.circle_requested.set(true);
                     }
+                    if ui
+                        .selectable_label(self.brush_is_square, "Square")
+                        .clicked()
+                    {
+                        self.square_requested.set(true);
+                    }
                     ui.label(format!("Brush {}", self.brush_size));
+                    ui.separator();
                 });
             });
         egui::Panel::bottom("editor_status_bar")
@@ -202,6 +206,12 @@ impl Widget for EditorInterface {
                         }
                     });
                 egui::CollapsingHeader::new("Pressure").show(ui, |ui| {
+                    let response = ui.add(
+                        egui::Slider::new(&mut self.impulse_rate, 1.0..=1000.0).text("Pressure/s"),
+                    );
+                    if response.changed() {
+                        self.impulse_rate_requested.set(Some(self.impulse_rate));
+                    }
                     if Self::tool_button(ui, self.impulse_selected, "Impulse") {
                         self.impulse_requested.set(true);
                     }
@@ -212,28 +222,18 @@ impl Widget for EditorInterface {
                     if response.changed() {
                         self.thermal_rate_requested.set(Some(self.thermal_rate));
                     }
-                    if ui
-                        .add(egui::Button::new("Heat").fill(
-                            if self.thermal_tool_active && self.thermal_heat_mode {
-                                egui::Color32::from_rgb(180, 80, 25)
-                            } else {
-                                egui::Color32::DARK_GRAY
-                            },
-                        ))
-                        .clicked()
-                    {
+                    if Self::tool_button(
+                        ui,
+                        self.thermal_tool_active && self.thermal_heat_mode,
+                        "Heat",
+                    ) {
                         self.thermal_heat_requested.set(true);
                     }
-                    if ui
-                        .add(egui::Button::new("Cool").fill(
-                            if self.thermal_tool_active && !self.thermal_heat_mode {
-                                egui::Color32::from_rgb(35, 90, 180)
-                            } else {
-                                egui::Color32::DARK_GRAY
-                            },
-                        ))
-                        .clicked()
-                    {
+                    if Self::tool_button(
+                        ui,
+                        self.thermal_tool_active && !self.thermal_heat_mode,
+                        "Cool",
+                    ) {
                         self.thermal_cool_requested.set(true);
                     }
                 });
