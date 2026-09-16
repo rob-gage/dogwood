@@ -13,6 +13,7 @@ pub struct MaterialMutations {
     bind_group: wgpu::BindGroup,
     prepare_indirect_bind_group: wgpu::BindGroup,
     resolve_pipeline: wgpu::ComputePipeline,
+    allocate_pipeline: wgpu::ComputePipeline,
     prepare_pipeline: wgpu::ComputePipeline,
     indirect: wgpu::Buffer,
 }
@@ -236,7 +237,15 @@ impl MaterialMutations {
             label: Some("resolve material mutations"),
             layout: Some(&pipeline_layout),
             module: &shader,
-            entry_point: Some("resolve_material_mutations"),
+            entry_point: Some("resolve_material_mutations_nonallocating"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let allocate_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("allocate material mutations"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: Some("resolve_material_mutations_allocating"),
             compilation_options: Default::default(),
             cache: None,
         });
@@ -257,6 +266,7 @@ impl MaterialMutations {
             bind_group,
             prepare_indirect_bind_group,
             resolve_pipeline,
+            allocate_pipeline,
             prepare_pipeline,
             indirect,
         }
@@ -278,6 +288,22 @@ impl MaterialMutations {
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
     pub fn resolve(&self, accelerator: &Accelerator, buffered_cell_count: u32, gas_count: u32) {
+        let mut encoder =
+            accelerator
+                .wgpu_device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("material mutations"),
+                });
+        self.encode_resolve(accelerator, &mut encoder, buffered_cell_count, gas_count);
+        accelerator.wgpu_queue().submit(Some(encoder.finish()));
+    }
+    pub(crate) fn encode_resolve(
+        &self,
+        accelerator: &Accelerator,
+        mut encoder: &mut wgpu::CommandEncoder,
+        buffered_cell_count: u32,
+        gas_count: u32,
+    ) {
         accelerator.wgpu_queue().write_buffer(
             &self.parameters,
             0,
@@ -289,12 +315,6 @@ impl MaterialMutations {
             ]
             .concat(),
         );
-        let mut encoder =
-            accelerator
-                .wgpu_device()
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("material mutations"),
-                });
         {
             let mut pass =
                 accelerator.begin_compute_pass(&mut encoder, "prepare material mutation dispatch");
@@ -310,8 +330,14 @@ impl MaterialMutations {
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.dispatch_workgroups_indirect(&self.indirect, 0);
         }
+        {
+            let mut pass =
+                accelerator.begin_compute_pass(&mut encoder, "allocate material mutations");
+            pass.set_pipeline(&self.allocate_pipeline);
+            pass.set_bind_group(0, &self.bind_group, &[]);
+            pass.dispatch_workgroups_indirect(&self.indirect, 0);
+        }
         encoder.clear_buffer(self.request_count.wgpu_buffer(), 0, None);
-        accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
 }
 
@@ -497,11 +523,26 @@ mod tests {
             .concat(),
         );
         let requests = [
-            [0u32, static_material.as_u32(), dynamic_material.as_u32(), 0],
+            [
+                0u32,
+                0,
+                0,
+                static_material.as_u32(),
+                dynamic_material.as_u32(),
+                0,
+                0,
+                0,
+                0,
+            ],
             [
                 1u32,
+                0,
+                1,
                 static_material.as_u32(),
                 MaterialIdentifier::NULL.as_u32(),
+                0,
+                0,
+                0,
                 0,
             ],
         ];

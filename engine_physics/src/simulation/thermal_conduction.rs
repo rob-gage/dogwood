@@ -15,6 +15,45 @@ pub(crate) struct ThermalConduction {
 }
 
 impl ThermalConduction {
+    pub(crate) fn encode(
+        &self,
+        accelerator: &Accelerator,
+        encoder: &mut wgpu::CommandEncoder,
+        origin: [i32; 2],
+        tiles: [u32; 2],
+        ring: [u32; 2],
+        dt: f32,
+    ) {
+        let values = [
+            dt.to_bits(),
+            self.cell_count,
+            origin[0] as u32,
+            origin[1] as u32,
+            tiles[0],
+            tiles[1],
+            ring[0],
+            ring[1],
+        ];
+        accelerator.wgpu_queue().write_buffer(
+            &self.parameters,
+            0,
+            &values
+                .iter()
+                .flat_map(|v| v.to_le_bytes())
+                .collect::<Vec<_>>(),
+        );
+        let mut pass = accelerator.begin_compute_pass(encoder, "thermal conduction");
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        for pipeline in [
+            &self.flux_pipeline,
+            &self.sum_pipeline,
+            &self.actual_flux_pipeline,
+            &self.resolve_pipeline,
+        ] {
+            pass.set_pipeline(pipeline);
+            pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+        }
+    }
     pub(crate) fn new(
         accelerator: &Accelerator,
         interaction: &AcceleratorBuffer,

@@ -15,6 +15,48 @@ pub(crate) struct ThermalScatter {
 }
 
 impl ThermalScatter {
+    pub(crate) fn encode(
+        &self,
+        accelerator: &Accelerator,
+        encoder: &mut wgpu::CommandEncoder,
+        origin: [i32; 2],
+        tiles: [u32; 2],
+        ring: [u32; 2],
+        has_rigid: bool,
+    ) {
+        let vals = [
+            origin[0] as u32,
+            origin[1] as u32,
+            tiles[0],
+            tiles[1],
+            ring[0],
+            ring[1],
+        ];
+        accelerator.wgpu_queue().write_buffer(
+            &self.parameters,
+            0,
+            &vals
+                .iter()
+                .flat_map(|v| v.to_le_bytes())
+                .collect::<Vec<_>>(),
+        );
+        let mut pass = accelerator.begin_compute_pass(encoder, "thermal scatter");
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        if has_rigid {
+            pass.set_pipeline(&self.clear_rigid_pipeline);
+            pass.dispatch_workgroups(self.rigid_capacity.div_ceil(64), 1, 1);
+        }
+        pass.set_pipeline(&self.cellular_pipeline);
+        pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+        pass.set_pipeline(&self.fluid_pipeline);
+        pass.dispatch_workgroups(self.particle_capacity.div_ceil(64), 1, 1);
+        if has_rigid {
+            pass.set_pipeline(&self.accumulate_rigid_pipeline);
+            pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+            pass.set_pipeline(&self.apply_rigid_pipeline);
+            pass.dispatch_workgroups(self.rigid_capacity.div_ceil(64), 1, 1);
+        }
+    }
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         accelerator: &Accelerator,
@@ -176,6 +218,7 @@ impl ThermalScatter {
         origin: [i32; 2],
         tiles: [u32; 2],
         ring: [u32; 2],
+        has_rigid: bool,
     ) {
         let vals = [
             origin[0] as u32,
@@ -201,16 +244,20 @@ impl ThermalScatter {
                 });
         let mut pass = accelerator.begin_compute_pass(&mut encoder, "thermal scatter");
         pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.set_pipeline(&self.clear_rigid_pipeline);
-        pass.dispatch_workgroups(self.rigid_capacity.div_ceil(64), 1, 1);
+        if has_rigid {
+            pass.set_pipeline(&self.clear_rigid_pipeline);
+            pass.dispatch_workgroups(self.rigid_capacity.div_ceil(64), 1, 1);
+        }
         pass.set_pipeline(&self.cellular_pipeline);
         pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
         pass.set_pipeline(&self.fluid_pipeline);
         pass.dispatch_workgroups(self.particle_capacity.div_ceil(64), 1, 1);
-        pass.set_pipeline(&self.accumulate_rigid_pipeline);
-        pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
-        pass.set_pipeline(&self.apply_rigid_pipeline);
-        pass.dispatch_workgroups(self.rigid_capacity.div_ceil(64), 1, 1);
+        if has_rigid {
+            pass.set_pipeline(&self.accumulate_rigid_pipeline);
+            pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+            pass.set_pipeline(&self.apply_rigid_pipeline);
+            pass.dispatch_workgroups(self.rigid_capacity.div_ceil(64), 1, 1);
+        }
         drop(pass);
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }

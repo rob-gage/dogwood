@@ -15,6 +15,42 @@ pub(crate) struct ThermalInteraction {
 }
 
 impl ThermalInteraction {
+    pub(crate) fn encode(
+        &self,
+        accelerator: &Accelerator,
+        encoder: &mut wgpu::CommandEncoder,
+        buffered_origin: [i32; 2],
+        buffered_tiles: [u32; 2],
+        ring_offset: [u32; 2],
+        has_rigid: bool,
+    ) {
+        let values = [
+            buffered_origin[0] as u32,
+            buffered_origin[1] as u32,
+            buffered_tiles[0],
+            buffered_tiles[1],
+            ring_offset[0],
+            ring_offset[1],
+        ];
+        accelerator.wgpu_queue().write_buffer(
+            &self.parameters,
+            32,
+            &values
+                .iter()
+                .flat_map(|v| v.to_le_bytes())
+                .collect::<Vec<_>>(),
+        );
+        let mut pass = accelerator.begin_compute_pass(encoder, "thermal interaction");
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        if has_rigid {
+            pass.set_pipeline(&self.clear_pipeline);
+            pass.dispatch_workgroups(self.rigid_capacity.div_ceil(64), 1, 1);
+            pass.set_pipeline(&self.count_pipeline);
+            pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+        }
+        pass.set_pipeline(&self.gather_pipeline);
+        pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+    }
     pub(crate) fn new(
         accelerator: &Accelerator,
         materials: &MaterialRegistry,
@@ -185,33 +221,24 @@ impl ThermalInteraction {
         buffered_origin: [i32; 2],
         buffered_tiles: [u32; 2],
         ring_offset: [u32; 2],
+        has_rigid: bool,
     ) {
+        let values = [
+            buffered_origin[0] as u32,
+            buffered_origin[1] as u32,
+            buffered_tiles[0],
+            buffered_tiles[1],
+            ring_offset[0],
+            ring_offset[1],
+        ];
         accelerator.wgpu_queue().write_buffer(
             &self.parameters,
             32,
-            &buffered_origin[0].to_le_bytes(),
+            &values
+                .iter()
+                .flat_map(|value| value.to_le_bytes())
+                .collect::<Vec<_>>(),
         );
-        accelerator.wgpu_queue().write_buffer(
-            &self.parameters,
-            36,
-            &buffered_origin[1].to_le_bytes(),
-        );
-        accelerator.wgpu_queue().write_buffer(
-            &self.parameters,
-            40,
-            &buffered_tiles[0].to_le_bytes(),
-        );
-        accelerator.wgpu_queue().write_buffer(
-            &self.parameters,
-            44,
-            &buffered_tiles[1].to_le_bytes(),
-        );
-        accelerator
-            .wgpu_queue()
-            .write_buffer(&self.parameters, 48, &ring_offset[0].to_le_bytes());
-        accelerator
-            .wgpu_queue()
-            .write_buffer(&self.parameters, 52, &ring_offset[1].to_le_bytes());
         let mut encoder =
             accelerator
                 .wgpu_device()
@@ -219,11 +246,13 @@ impl ThermalInteraction {
                     label: Some("thermal interaction"),
                 });
         let mut pass = accelerator.begin_compute_pass(&mut encoder, "gather thermal interaction");
-        pass.set_pipeline(&self.clear_pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.dispatch_workgroups(self.rigid_capacity.div_ceil(64), 1, 1);
-        pass.set_pipeline(&self.count_pipeline);
-        pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+        if has_rigid {
+            pass.set_pipeline(&self.clear_pipeline);
+            pass.dispatch_workgroups(self.rigid_capacity.div_ceil(64), 1, 1);
+            pass.set_pipeline(&self.count_pipeline);
+            pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+        }
         pass.set_pipeline(&self.gather_pipeline);
         pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
         drop(pass);

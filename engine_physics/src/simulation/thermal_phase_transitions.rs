@@ -13,6 +13,45 @@ pub(crate) struct ThermalPhaseTransitions {
     tick: u32,
 }
 impl ThermalPhaseTransitions {
+    pub(crate) fn encode(
+        &mut self,
+        accelerator: &Accelerator,
+        encoder: &mut wgpu::CommandEncoder,
+        origin: [i32; 2],
+        tiles: [u32; 2],
+        ring: [u32; 2],
+    ) {
+        let v = [
+            origin[0] as u32,
+            origin[1] as u32,
+            tiles[0],
+            tiles[1],
+            ring[0],
+            ring[1],
+            self.cell_count,
+            self.particle_count,
+            self.gas_count,
+            self.tick,
+            0,
+            0,
+        ];
+        accelerator.wgpu_queue().write_buffer(
+            &self.parameters,
+            0,
+            &v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<_>>(),
+        );
+        self.tick = self.tick.wrapping_add(1);
+        let mut pass = accelerator.begin_compute_pass(encoder, "thermal phase transitions");
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        for (pipeline, count) in [
+            (&self.cells, self.cell_count),
+            (&self.particles, self.particle_count),
+            (&self.gases, self.cell_count * self.gas_count),
+        ] {
+            pass.set_pipeline(pipeline);
+            pass.dispatch_workgroups(count.div_ceil(64), 1, 1);
+        }
+    }
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         accelerator: &Accelerator,

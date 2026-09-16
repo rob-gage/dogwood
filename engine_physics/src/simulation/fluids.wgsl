@@ -436,6 +436,7 @@ fn export_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>) 
     if any(relative < vec2<i32>(0)) || relative.x >= i32(parameters.streaming_tile_size.x) ||
             relative.y >= i32(parameters.streaming_tile_size.y) { return; }
     let output_index: u32 = atomicAdd(&streaming_count[0], 1u);
+    if output_index >= arrayLength(&streaming_particles) { return; }
     streaming_particles[output_index] = particles[particle_index];
     release_fluid_particle_index(particle_index);
 }
@@ -862,9 +863,13 @@ fn project_fluid_particle_out_of_cellular_collision(initial_position: vec2<f32>)
 fn claim_free_fluid_particle_index() -> u32 {
     var available: u32 = atomicLoad(&free_count[0]);
     loop {
-        if available == 0u { return INVALID_FLUID_PARTICLE_INDEX; }
+        if available == 0u || available > arrayLength(&free_indices) { return INVALID_FLUID_PARTICLE_INDEX; }
         let result = atomicCompareExchangeWeak(&free_count[0], available, available - 1u);
-        if result.exchanged { return free_indices[available - 1u]; }
+        if result.exchanged {
+            let particle_index = free_indices[available - 1u];
+            if particle_index >= arrayLength(&particles) { return INVALID_FLUID_PARTICLE_INDEX; }
+            return particle_index;
+        }
         available = result.old_value;
     }
     return INVALID_FLUID_PARTICLE_INDEX;
@@ -872,9 +877,18 @@ fn claim_free_fluid_particle_index() -> u32 {
 
 // Atomically returns one authoritative fluid-particle slot to the free stack
 fn release_fluid_particle_index(particle_index: u32) {
-    particles[particle_index].material_identifier = EMPTY_MATERIAL_IDENTIFIER;
-    let free_index: u32 = atomicAdd(&free_count[0], 1u);
-    free_indices[free_index] = particle_index;
+    if particle_index >= arrayLength(&particles) { return; }
+    var available: u32 = atomicLoad(&free_count[0]);
+    loop {
+        if available >= arrayLength(&free_indices) { return; }
+        let result = atomicCompareExchangeWeak(&free_count[0], available, available + 1u);
+        if result.exchanged {
+            particles[particle_index].material_identifier = EMPTY_MATERIAL_IDENTIFIER;
+            free_indices[available] = particle_index;
+            return;
+        }
+        available = result.old_value;
+    }
 }
 
 // Tests continuous tile-space position against buffered residency

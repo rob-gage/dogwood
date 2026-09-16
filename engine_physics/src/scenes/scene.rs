@@ -1310,74 +1310,68 @@ impl Scene {
             self.fluids
                 .scatter_mechanical_response(self.accelerator.as_ref());
             self.gases.simulate_post_coupling(self.accelerator.as_ref());
-            self.thermal_interaction.gather(
-                self.accelerator.as_ref(),
-                [
-                    self.origin.x - i32::from(self.simulation_buffer_size),
-                    self.origin.y - i32::from(self.simulation_buffer_size),
-                ],
-                [
-                    u32::from(self.simulation_width + u16::from(self.simulation_buffer_size) * 2),
-                    u32::from(self.simulation_height + u16::from(self.simulation_buffer_size) * 2),
-                ],
-                [
-                    u32::from(self.tiles_ring_offset_x),
-                    u32::from(self.tiles_ring_offset_y),
-                ],
+            let thermal_origin = [
+                self.origin.x - i32::from(self.simulation_buffer_size),
+                self.origin.y - i32::from(self.simulation_buffer_size),
+            ];
+            let thermal_tiles = [
+                u32::from(self.simulation_width + u16::from(self.simulation_buffer_size) * 2),
+                u32::from(self.simulation_height + u16::from(self.simulation_buffer_size) * 2),
+            ];
+            let thermal_ring = [
+                u32::from(self.tiles_ring_offset_x),
+                u32::from(self.tiles_ring_offset_y),
+            ];
+            let mut thermal_encoder = self.accelerator.wgpu_device().create_command_encoder(
+                &wgpu::CommandEncoderDescriptor {
+                    label: Some("thermal pipeline"),
+                },
             );
-            self.thermal_conduction.conduct(
+            self.thermal_interaction.encode(
                 self.accelerator.as_ref(),
-                [
-                    self.origin.x - i32::from(self.simulation_buffer_size),
-                    self.origin.y - i32::from(self.simulation_buffer_size),
-                ],
-                [
-                    u32::from(self.simulation_width + u16::from(self.simulation_buffer_size) * 2),
-                    u32::from(self.simulation_height + u16::from(self.simulation_buffer_size) * 2),
-                ],
-                [
-                    u32::from(self.tiles_ring_offset_x),
-                    u32::from(self.tiles_ring_offset_y),
-                ],
+                &mut thermal_encoder,
+                thermal_origin,
+                thermal_tiles,
+                thermal_ring,
+                !self.rigid_cellular_bodies.is_empty(),
+            );
+            self.thermal_conduction.encode(
+                self.accelerator.as_ref(),
+                &mut thermal_encoder,
+                thermal_origin,
+                thermal_tiles,
+                thermal_ring,
                 1.0 / TICK_RATE as f32,
             );
-            self.thermal_scatter.scatter(
+            self.thermal_scatter.encode(
                 self.accelerator.as_ref(),
-                [
-                    self.origin.x - i32::from(self.simulation_buffer_size),
-                    self.origin.y - i32::from(self.simulation_buffer_size),
-                ],
-                [
-                    u32::from(self.simulation_width + u16::from(self.simulation_buffer_size) * 2),
-                    u32::from(self.simulation_height + u16::from(self.simulation_buffer_size) * 2),
-                ],
-                [
-                    u32::from(self.tiles_ring_offset_x),
-                    u32::from(self.tiles_ring_offset_y),
-                ],
+                &mut thermal_encoder,
+                thermal_origin,
+                thermal_tiles,
+                thermal_ring,
+                !self.rigid_cellular_bodies.is_empty(),
             );
-            self.thermal_phase_transitions.evaluate(
+            self.thermal_phase_transitions.encode(
                 self.accelerator.as_ref(),
-                [
-                    self.origin.x - i32::from(self.simulation_buffer_size),
-                    self.origin.y - i32::from(self.simulation_buffer_size),
-                ],
+                &mut thermal_encoder,
+                thermal_origin,
                 [
                     u32::from(self.simulation_width + dimensions),
                     u32::from(self.simulation_height + dimensions),
                 ],
-                [
-                    u32::from(self.tiles_ring_offset_x),
-                    u32::from(self.tiles_ring_offset_y),
-                ],
+                thermal_ring,
             );
-            self.material_mutations.resolve(
+            self.material_mutations.encode_resolve(
                 self.accelerator.as_ref(),
+                &mut thermal_encoder,
                 u32::from(self.simulation_width + dimensions)
                     * u32::from(self.simulation_height + dimensions)
                     * 64,
                 self.gases.gas_count(),
             );
+            self.accelerator
+                .wgpu_queue()
+                .submit(Some(thermal_encoder.finish()));
             self.fluid_sample_submit()?;
             self.cellular_collision_dirty = true;
         }
