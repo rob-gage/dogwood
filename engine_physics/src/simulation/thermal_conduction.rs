@@ -3,9 +3,13 @@ use engine_compute::{Accelerator, AcceleratorBuffer};
 pub(crate) struct ThermalConduction {
     solved: AcceleratorBuffer,
     face_flux: AcceleratorBuffer,
+    face_conductance: AcceleratorBuffer,
+    conductance_sum: AcceleratorBuffer,
     parameters: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     flux_pipeline: wgpu::ComputePipeline,
+    sum_pipeline: wgpu::ComputePipeline,
+    actual_flux_pipeline: wgpu::ComputePipeline,
     resolve_pipeline: wgpu::ComputePipeline,
     cell_count: u32,
 }
@@ -19,6 +23,8 @@ impl ThermalConduction {
         let device = accelerator.wgpu_device();
         let solved = accelerator.allocate::<[f32; 4]>(cell_count as usize);
         let face_flux = accelerator.allocate::<[f32; 2]>(cell_count as usize);
+        let face_conductance = accelerator.allocate::<[f32; 2]>(cell_count as usize);
+        let conductance_sum = accelerator.allocate::<f32>(cell_count as usize);
         let parameters = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("thermal conduction parameters"),
             size: 64,
@@ -41,8 +47,10 @@ impl ThermalConduction {
                 storage(0, true),
                 storage(1, false),
                 storage(2, false),
+                storage(3, false),
+                storage(4, false),
                 wgpu::BindGroupLayoutEntry {
-                    binding: 3,
+                    binding: 5,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
@@ -67,10 +75,18 @@ impl ThermalConduction {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: solved.wgpu_buffer().as_entire_binding(),
+                    resource: face_conductance.wgpu_buffer().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
+                    resource: conductance_sum.wgpu_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: solved.wgpu_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
                     resource: parameters.as_entire_binding(),
                 },
             ],
@@ -99,9 +115,13 @@ impl ThermalConduction {
         Self {
             solved,
             face_flux,
+            face_conductance,
+            conductance_sum,
             parameters,
             bind_group,
             flux_pipeline: pipeline("calculate_thermal_face_flux"),
+            sum_pipeline: pipeline("calculate_thermal_conductance_sum"),
+            actual_flux_pipeline: pipeline("calculate_thermal_actual_flux"),
             resolve_pipeline: pipeline("resolve_thermal_conduction"),
             cell_count,
         }
@@ -142,6 +162,10 @@ impl ThermalConduction {
         pass.set_pipeline(&self.flux_pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+        pass.set_pipeline(&self.sum_pipeline);
+        pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+        pass.set_pipeline(&self.actual_flux_pipeline);
+        pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
         pass.set_pipeline(&self.resolve_pipeline);
         pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
         drop(pass);
@@ -155,6 +179,8 @@ impl Drop for ThermalConduction {
     fn drop(&mut self) {
         self.solved.free();
         self.face_flux.free();
+        self.face_conductance.free();
+        self.conductance_sum.free();
         self.parameters.destroy();
     }
 }
