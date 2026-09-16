@@ -32,6 +32,51 @@ use std::{
     time::Duration,
 };
 
+// One serialized owner-file worker avoids lost updates when several bodies
+// share an owner; its latency is outside the frame loop.
+const RIGID_IO_MAX_IN_FLIGHT: usize = 1;
+const RIGID_IO_QUEUE_CAPACITY: usize = 64;
+
+struct RigidPersistenceRequest {
+    record: super::dormant_rigid::DormantRigidBody,
+    slots: Vec<u32>,
+}
+
+enum RigidIoJob {
+    Persist(RigidPersistenceRequest),
+    Claim {
+        owner: TileCoordinates,
+        retained: Vec<super::dormant_rigid::DormantRigidBody>,
+        original: Vec<super::dormant_rigid::DormantRigidBody>,
+        restored_ids: Vec<u64>,
+    },
+}
+
+enum RigidStreamingResponse {
+    Loaded {
+        owner: TileCoordinates,
+        generation: u64,
+        result: Result<Vec<super::dormant_rigid::DormantRigidBody>, io::Error>,
+    },
+    Saved {
+        request: RigidPersistenceRequest,
+        result: Result<(), io::Error>,
+    },
+    Claimed {
+        owner: TileCoordinates,
+        retained: Vec<super::dormant_rigid::DormantRigidBody>,
+        original: Vec<super::dormant_rigid::DormantRigidBody>,
+        restored_ids: Vec<u64>,
+        result: Result<(), io::Error>,
+    },
+}
+
+enum RigidOwnerLoad {
+    Loading,
+    Ready(Vec<super::dormant_rigid::DormantRigidBody>),
+    Claiming,
+}
+
 /// A transition-only GPU readback.  Slots remain owned by the live body until
 /// this completes, so a recycled slot cannot be mistaken for an old cell.
 struct RigidDormancyDownload {
@@ -153,8 +198,17 @@ pub struct Scene {
     rigid_cell_state_free: Vec<u32>,
     /// Bodies awaiting their one-time authoritative GPU state capture.
     rigid_dormancy_downloads: Vec<RigidDormancyDownload>,
-    /// Owner files discovered during prefetch; revisited only after an area shift.
-    dormant_rigid_owners: HashSet<TileCoordinates>,
+    /// Background rigid owner-file work is deliberately bounded independently
+    /// from chunk streaming so filesystem latency cannot stall simulation.
+    rigid_streaming_response_sender: SyncSender<RigidStreamingResponse>,
+    rigid_streaming_responses: Receiver<RigidStreamingResponse>,
+    rigid_owner_loads: HashMap<TileCoordinates, RigidOwnerLoad>,
+    rigid_owner_load_queue: VecDeque<TileCoordinates>,
+    rigid_owner_generation: HashMap<TileCoordinates, u64>,
+    rigid_persistence_queue: VecDeque<RigidIoJob>,
+    rigid_io_in_flight: usize,
+    /// Restored bodies wait for a collision snapshot of the current ring.
+    rigid_activation_pending: HashSet<u64>,
     /// Changes whenever rigid body-local topology changes
     rigid_cellular_topology_revision: u64,
     /// Last asynchronously confirmed cellular contact state per rigid vector index
@@ -480,6 +534,8 @@ impl Scene {
         let tiles: Box<[Tile]> = (0..tile_count).map(Tile).collect();
         let (chunk_streaming_response_sender, chunk_streaming_responses) =
             sync_channel(CHUNK_STREAMING_QUEUE_CAPACITY);
+        let (rigid_streaming_response_sender, rigid_streaming_responses) =
+            sync_channel(CHUNK_STREAMING_QUEUE_CAPACITY);
         let mut scene: Self = Self {
             accelerator,
             data,
@@ -530,7 +586,14 @@ impl Scene {
             rigid_cell_state_generations: vec![0; buffered_cell_count],
             rigid_cell_state_free: (0..buffered_cell_count as u32).rev().collect(),
             rigid_dormancy_downloads: Vec::new(),
-            dormant_rigid_owners: HashSet::new(),
+            rigid_streaming_response_sender,
+            rigid_streaming_responses,
+            rigid_owner_loads: HashMap::new(),
+            rigid_owner_load_queue: VecDeque::new(),
+            rigid_owner_generation: HashMap::new(),
+            rigid_persistence_queue: VecDeque::new(),
+            rigid_io_in_flight: 0,
+            rigid_activation_pending: HashSet::new(),
             rigid_cellular_topology_revision: 0,
             rigid_cellular_contact_active: Vec::new(),
             rigid_cellular_support: Vec::new(),
@@ -570,10 +633,8 @@ impl Scene {
                 },
             );
         }
-        let initial_rigid_owners: Vec<_> =
-            scene.area_streaming().iterate_chunk_coordinates().collect();
-        for owner in initial_rigid_owners {
-            scene.restore_dormant_rigids(owner)?;
+        for owner in scene.area_streaming().iterate_chunk_coordinates() {
+            scene.rigid_owner_load(owner);
         }
         drop(scene.tiles_upload(scene.area_buffered()));
         scene.fluid_uploads_queue(scene.area_buffered())?;
@@ -1031,12 +1092,14 @@ impl Scene {
                 self.follow_position(position);
             }
         }
+        self.rigid_streaming_apply_completed()?;
         self.chunks_refresh()?;
         self.tile_downloads_submit()?;
         self.tile_uploads_submit()?;
         self.fluid_downloads_submit()?;
         self.fluid_uploads_submit()?;
         self.gas_downloads_submit()?;
+        self.restore_ready_rigids()?;
         if !self.pending_runtime_edits.is_empty() {
             let mut edits = SceneEditBatch::new();
             std::mem::swap(&mut edits, &mut self.pending_runtime_edits);
@@ -1367,53 +1430,281 @@ impl Scene {
                     .collect(),
             };
             record.validate(self.data.materials())?;
-            let owner = TileCoordinates {
-                x: record.position[0].floor() as i32,
-                y: record.position[1].floor() as i32,
+            if self.rigid_persistence_queue.len() + self.rigid_io_in_flight
+                >= RIGID_IO_QUEUE_CAPACITY
+            {
+                // Backpressure leaves this live body authoritative; the next
+                // transition pass submits a fresh capture when capacity opens.
+                continue;
             }
-            .chunk_coordinates();
-            let mut records = self.data.read_dormant_rigids(owner)?;
-            if records.iter().any(|other| other.id == record.id) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "duplicate dormant rigid identity",
-                ));
-            }
-            records.push(record);
-            self.data.write_dormant_rigids(owner, &records)?;
             let body = self.rigid_cellular_bodies.swap_remove(body_index);
+            self.rigid_activation_pending.remove(&body.id);
             self.physics_world.remove_rigid_cellular_body(&body);
-            for cell in body.cells {
-                self.release_rigid_cell_state(cell.state_slot);
-            }
+            let slots = body.cells.iter().map(|cell| cell.state_slot).collect();
             self.rigid_cellular_topology_revision =
                 self.rigid_cellular_topology_revision.wrapping_add(1);
             self.rigid_cellular_contact_active
                 .resize(self.rigid_cellular_bodies.len(), false);
             self.rigid_granular_contact_active
                 .resize(self.rigid_cellular_bodies.len(), false);
+            self.rigid_persistence_queue
+                .push_back(RigidIoJob::Persist(RigidPersistenceRequest {
+                    record,
+                    slots,
+                }));
+            self.rigid_io_submit();
             self.debug_assert_rigid_resident_invariants();
         }
         Ok(())
     }
 
-    /// Claims a canonical owner file only after all slots and the Rapier body
-    /// can be created.  Capacity failure intentionally leaves the file alone.
-    fn restore_dormant_rigids(&mut self, owner: TileCoordinates) -> Result<(), io::Error> {
-        let records = self.data.read_dormant_rigids(owner)?;
-        if records.is_empty() {
-            self.dormant_rigid_owners.remove(&owner);
-            return Ok(());
+    fn rigid_owner_load(&mut self, owner: TileCoordinates) {
+        if self.rigid_owner_loads.contains_key(&owner)
+            || self.rigid_owner_load_queue.contains(&owner)
+        {
+            return;
         }
+        self.rigid_owner_load_queue.push_back(owner);
+        self.rigid_io_submit();
+    }
+
+    /// Starts at most two owner-file operations.  This is deliberately a
+    /// bounded worker frontier: disk latency delays an area shift, never a frame.
+    fn rigid_io_submit(&mut self) {
+        while self.rigid_io_in_flight < RIGID_IO_MAX_IN_FLIGHT {
+            let job = if let Some(owner) = self.rigid_owner_load_queue.pop_front() {
+                self.rigid_owner_loads
+                    .insert(owner, RigidOwnerLoad::Loading);
+                let generation = *self.rigid_owner_generation.entry(owner).or_default();
+                let data = self.data.clone();
+                let sender = self.rigid_streaming_response_sender.clone();
+                self.rigid_io_in_flight += 1;
+                std::thread::spawn(move || {
+                    let _ = sender.send(RigidStreamingResponse::Loaded {
+                        owner,
+                        generation,
+                        result: data.read_dormant_rigids(owner),
+                    });
+                });
+                continue;
+            } else if let Some(job) = self.rigid_persistence_queue.pop_front() {
+                job
+            } else {
+                break;
+            };
+            let data = self.data.clone();
+            let sender = self.rigid_streaming_response_sender.clone();
+            self.rigid_io_in_flight += 1;
+            std::thread::spawn(move || match job {
+                RigidIoJob::Persist(request) => {
+                    let owner = TileCoordinates {
+                        x: request.record.position[0].floor() as i32,
+                        y: request.record.position[1].floor() as i32,
+                    }
+                    .chunk_coordinates();
+                    let result = data.read_dormant_rigids(owner).and_then(|mut records| {
+                        if records.iter().any(|record| record.id == request.record.id) {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "duplicate dormant rigid identity",
+                            ));
+                        }
+                        records.push(request.record.clone());
+                        data.write_dormant_rigids(owner, &records)
+                    });
+                    let _ = sender.send(RigidStreamingResponse::Saved { request, result });
+                }
+                RigidIoJob::Claim {
+                    owner,
+                    retained,
+                    original,
+                    restored_ids,
+                } => {
+                    let result = data.write_dormant_rigids(owner, &retained);
+                    let _ = sender.send(RigidStreamingResponse::Claimed {
+                        owner,
+                        retained,
+                        original,
+                        restored_ids,
+                        result,
+                    });
+                }
+            });
+        }
+    }
+
+    fn rigid_streaming_apply_completed(&mut self) -> Result<(), io::Error> {
+        while let Ok(response) = self.rigid_streaming_responses.try_recv() {
+            self.rigid_io_in_flight = self.rigid_io_in_flight.saturating_sub(1);
+            match response {
+                RigidStreamingResponse::Loaded {
+                    owner,
+                    generation,
+                    result,
+                } if self
+                    .rigid_owner_generation
+                    .get(&owner)
+                    .copied()
+                    .unwrap_or_default()
+                    == generation =>
+                {
+                    match result {
+                        Ok(records) => {
+                            self.rigid_owner_loads
+                                .insert(owner, RigidOwnerLoad::Ready(records));
+                        }
+                        Err(error) => {
+                            self.rigid_owner_loads.remove(&owner);
+                            tracing::warn!(
+                                owner_x = owner.x,
+                                owner_y = owner.y,
+                                "dormant rigid load failed: {error}"
+                            );
+                        }
+                    }
+                }
+                RigidStreamingResponse::Loaded { .. } => {}
+                RigidStreamingResponse::Saved { request, result } => match result {
+                    Ok(()) => {
+                        let owner = TileCoordinates {
+                            x: request.record.position[0].floor() as i32,
+                            y: request.record.position[1].floor() as i32,
+                        }
+                        .chunk_coordinates();
+                        let generation = self.rigid_owner_generation.entry(owner).or_default();
+                        *generation = generation.wrapping_add(1);
+                        self.rigid_owner_loads.remove(&owner);
+                        for slot in request.slots {
+                            self.release_rigid_cell_state(slot);
+                        }
+                    }
+                    Err(error) => {
+                        self.restore_failed_rigid_persistence(request)?;
+                        return Err(error);
+                    }
+                },
+                RigidStreamingResponse::Claimed {
+                    owner,
+                    retained,
+                    original,
+                    restored_ids,
+                    result,
+                } => match result {
+                    Ok(()) => {
+                        self.rigid_owner_loads
+                            .insert(owner, RigidOwnerLoad::Ready(retained));
+                    }
+                    Err(error) => {
+                        self.rollback_rigid_restore(&restored_ids);
+                        self.rigid_owner_loads
+                            .insert(owner, RigidOwnerLoad::Ready(original));
+                        return Err(error);
+                    }
+                },
+            }
+        }
+        self.rigid_io_submit();
+        Ok(())
+    }
+
+    fn restore_failed_rigid_persistence(
+        &mut self,
+        request: RigidPersistenceRequest,
+    ) -> Result<(), io::Error> {
+        let mut cells = Vec::with_capacity(request.record.cells.len());
+        for (cell, slot) in request.record.cells.iter().zip(request.slots) {
+            cells.push(RigidCellularBodyCell {
+                local: cell.local,
+                material: cell.material,
+                appearance: cell.appearance,
+                state_slot: slot,
+                state_generation: self.rigid_cell_state_generations[slot as usize],
+            });
+        }
+        let (friction, restitution) = self.rigid_cellular_material_response(&cells);
+        let mut body = self.physics_world.insert_rigid_cellular_body(
+            request.record.position,
+            request.record.rotation,
+            self.data.materials(),
+            cells,
+            friction,
+            restitution,
+            request.record.linear_velocity,
+            request.record.angular_velocity,
+        );
+        body.id = request.record.id;
+        self.rigid_cellular_bodies.push(body);
+        self.rigid_cellular_topology_revision =
+            self.rigid_cellular_topology_revision.wrapping_add(1);
+        self.rigid_cellular_contact_active
+            .resize(self.rigid_cellular_bodies.len(), false);
+        self.rigid_granular_contact_active
+            .resize(self.rigid_cellular_bodies.len(), false);
+        self.debug_assert_rigid_resident_invariants();
+        Ok(())
+    }
+
+    fn rollback_rigid_restore(&mut self, ids: &[u64]) {
+        for id in ids {
+            if let Some(index) = self
+                .rigid_cellular_bodies
+                .iter()
+                .position(|body| body.id == *id)
+            {
+                let body = self.rigid_cellular_bodies.swap_remove(index);
+                self.rigid_activation_pending.remove(&body.id);
+                self.physics_world.remove_rigid_cellular_body(&body);
+                for cell in body.cells {
+                    self.release_rigid_cell_state(cell.state_slot);
+                }
+            }
+        }
+        self.rigid_cellular_topology_revision =
+            self.rigid_cellular_topology_revision.wrapping_add(1);
+        self.rigid_cellular_contact_active
+            .resize(self.rigid_cellular_bodies.len(), false);
+        self.rigid_granular_contact_active
+            .resize(self.rigid_cellular_bodies.len(), false);
+    }
+
+    /// Runs after incoming cellular/fluid/gas uploads have been submitted and
+    /// before `update` can enter a fixed simulation tick.
+    fn restore_ready_rigids(&mut self) -> Result<(), io::Error> {
+        let owners: Vec<_> = self
+            .rigid_owner_loads
+            .iter()
+            .filter_map(|(owner, state)| {
+                matches!(state, RigidOwnerLoad::Ready(_)).then_some(*owner)
+            })
+            .collect();
+        for owner in owners {
+            self.restore_dormant_rigids(owner)?;
+        }
+        Ok(())
+    }
+
+    /// Claims loaded records only after terrain uploads were submitted.  The
+    /// owner file remains authoritative until the background claim completes.
+    fn restore_dormant_rigids(&mut self, owner: TileCoordinates) -> Result<(), io::Error> {
+        let Some(RigidOwnerLoad::Ready(original)) = self.rigid_owner_loads.remove(&owner) else {
+            return Ok(());
+        };
         let buffered = self.area_buffered();
-        let (records, retained): (Vec<_>, Vec<_>) = records.into_iter().partition(|record| {
+        let (records, retained): (Vec<_>, Vec<_>) = original.iter().cloned().partition(|record| {
             buffered.contains(TileCoordinates {
                 x: record.position[0].floor() as i32,
                 y: record.position[1].floor() as i32,
             })
         });
         if records.is_empty() {
-            self.dormant_rigid_owners.insert(owner);
+            self.rigid_owner_loads
+                .insert(owner, RigidOwnerLoad::Ready(original));
+            return Ok(());
+        }
+        let required: usize = records.iter().map(|record| record.cells.len()).sum();
+        if required > self.rigid_cell_state_free.len() {
+            self.rigid_owner_loads
+                .insert(owner, RigidOwnerLoad::Ready(original));
             return Ok(());
         }
         for record in &records {
@@ -1423,18 +1714,16 @@ impl Scene {
                 .iter()
                 .any(|body| body.id == record.id)
             {
+                self.rigid_owner_loads
+                    .insert(owner, RigidOwnerLoad::Ready(original));
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "duplicate resident rigid identity",
                 ));
             }
         }
-        let required: usize = records.iter().map(|record| record.cells.len()).sum();
-        if required > self.rigid_cell_state_free.len() {
-            return Ok(());
-        }
         let mut uploaded = Vec::with_capacity(required);
-        let original_free_len = self.rigid_cell_state_free.len();
+        let mut ids = Vec::with_capacity(records.len());
         for record in &records {
             let mut cells = Vec::with_capacity(record.cells.len());
             for cell in &record.cells {
@@ -1466,6 +1755,10 @@ impl Scene {
                 record.angular_velocity,
             );
             body.id = record.id;
+            self.physics_world
+                .set_rigid_cellular_body_enabled(&body, false);
+            self.rigid_activation_pending.insert(body.id);
+            ids.push(body.id);
             self.rigid_cellular_body_id_next =
                 self.rigid_cellular_body_id_next
                     .max(record.id.checked_add(1).ok_or_else(|| {
@@ -1473,30 +1766,23 @@ impl Scene {
                     })?);
             self.rigid_cellular_bodies.push(body);
         }
-        // The batch upload is deliberately retained; no per-cell queue writes.
         self.rigid_cell_state_upload
             .apply(self.accelerator.as_ref(), &uploaded);
-        if let Err(error) = self.data.write_dormant_rigids(owner, &retained) {
-            while self.rigid_cell_state_free.len() < original_free_len {
-                let body = self.rigid_cellular_bodies.pop().unwrap();
-                self.physics_world.remove_rigid_cellular_body(&body);
-                for cell in body.cells {
-                    self.rigid_cell_state_free.push(cell.state_slot);
-                }
-            }
-            return Err(error);
-        }
-        if retained.is_empty() {
-            self.dormant_rigid_owners.remove(&owner);
-        } else {
-            self.dormant_rigid_owners.insert(owner);
-        }
         self.rigid_cellular_topology_revision =
             self.rigid_cellular_topology_revision.wrapping_add(1);
         self.rigid_cellular_contact_active
             .resize(self.rigid_cellular_bodies.len(), false);
         self.rigid_granular_contact_active
             .resize(self.rigid_cellular_bodies.len(), false);
+        self.rigid_owner_loads
+            .insert(owner, RigidOwnerLoad::Claiming);
+        self.rigid_persistence_queue.push_back(RigidIoJob::Claim {
+            owner,
+            retained,
+            original,
+            restored_ids: ids,
+        });
+        self.rigid_io_submit();
         self.debug_assert_rigid_resident_invariants();
         Ok(())
     }
@@ -1507,7 +1793,16 @@ impl Scene {
             let age = self.cellular_collision.snapshot_age(snapshot.sequence);
             self.physics_world.set_collision_snapshot_age(age);
             self.detach_unanchored_static_components(&mut snapshot)?;
+            let collision_matches_current_ring = snapshot.origin == self.area_buffered().origin();
             self.physics_world.update_cellular_snapshot(snapshot);
+            if collision_matches_current_ring {
+                for body in &self.rigid_cellular_bodies {
+                    if self.rigid_activation_pending.remove(&body.id) {
+                        self.physics_world
+                            .set_rigid_cellular_body_enabled(body, true);
+                    }
+                }
+            }
         }
         let delta_time: f32 = 1.0 / TICK_RATE as f32;
         let actor_proxies = self.actor_registry.cellular_proxy_states();
@@ -2004,6 +2299,7 @@ impl Scene {
             return;
         };
         let body = self.rigid_cellular_bodies.swap_remove(body_index);
+        self.rigid_activation_pending.remove(&body.id);
         self.rigid_cellular_topology_revision =
             self.rigid_cellular_topology_revision.wrapping_add(1);
         self.rigid_cellular_support.clear();
@@ -2772,7 +3068,7 @@ impl Scene {
         self.chunks_save()?;
         // queue upload only newly available chunks
         for coordinates in chunks_available {
-            self.restore_dormant_rigids(coordinates)?;
+            self.rigid_owner_load(coordinates);
             let _ = self.tiles_upload(TileArea::new(coordinates, Chunk::WIDTH, Chunk::WIDTH));
         }
         self.rigid_dormancy_queue();
@@ -2828,6 +3124,9 @@ impl Scene {
         );
         let streaming_area: TileArea = buffered_area.chunk_area();
         self.chunks_fetch(streaming_area)?;
+        for owner in streaming_area.iterate_chunk_coordinates() {
+            self.rigid_owner_load(owner);
+        }
         if !streaming_area
             .iterate_chunk_coordinates()
             .all(|coordinates| {
@@ -2837,6 +3136,14 @@ impl Scene {
                 )
             })
         {
+            return Ok(());
+        }
+        if !streaming_area.iterate_chunk_coordinates().all(|owner| {
+            matches!(
+                self.rigid_owner_loads.get(&owner),
+                Some(RigidOwnerLoad::Ready(_))
+            )
+        }) {
             return Ok(());
         }
         let batch_size: u16 = u16::from(self.tile_streaming_batch_size);
@@ -2936,10 +3243,6 @@ impl Scene {
             self.tiles_ring_offset_y = (self.tiles_ring_offset_y + height - batch_size) % height;
         }
         self.origin = new_origin;
-        let incoming_rigid_owners: Vec<_> = self.dormant_rigid_owners.iter().copied().collect();
-        for owner in incoming_rigid_owners {
-            self.restore_dormant_rigids(owner)?;
-        }
         self.cellular_collision_dirty = true;
         self.fluids.refresh(
             self.accelerator.as_ref(),

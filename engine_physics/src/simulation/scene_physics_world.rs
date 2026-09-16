@@ -164,6 +164,17 @@ impl ScenePhysicsWorld {
         self.rapier.remove_body(body.handle);
     }
 
+    /// Holds a streamed body outside integration until its cellular support is ready.
+    pub(crate) fn set_rigid_cellular_body_enabled(
+        &mut self,
+        body: &RigidCellularBody,
+        enabled: bool,
+    ) {
+        if let Some(rigid_body) = self.rapier.bodies.get_mut(body.handle) {
+            rigid_body.set_enabled(enabled);
+        }
+    }
+
     /// Replaces the latest CPU-readable cellular collision snapshot
     pub fn update_cellular_snapshot(&mut self, snapshot: CollisionOccupancySnapshot) {
         self.cellular_terrain_snapshot = Some(snapshot);
