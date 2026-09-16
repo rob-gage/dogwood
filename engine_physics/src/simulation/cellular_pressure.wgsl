@@ -77,6 +77,9 @@ struct MechanicalFluidCell {
 @group(0) @binding(19) var<storage, read> gas_concentrations: array<f32>;
 @group(0) @binding(20) var<storage, read> gas_properties: array<vec4<f32>>;
 @group(0) @binding(21) var<storage, read> fluid_coverage: array<f32>;
+struct MaterialMutationRequest { cell: u32, expected_source: u32, replacement: u32, flags: u32 }
+@group(0) @binding(37) var<storage, read_write> material_mutation_requests: array<MaterialMutationRequest>;
+@group(0) @binding(38) var<storage, read_write> material_mutation_request_count: array<atomic<u32>>;
 @group(0) @binding(22) var<storage, read> rigid_owners: array<u32>;
 @group(0) @binding(23) var<storage, read> rigid_material_identifiers: array<u32>;
 @group(0) @binding(24) var<storage, read> rigid_transforms: array<vec4<f32>>;
@@ -1123,15 +1126,15 @@ fn apply_cellular_static_pressure_damage(
     if overload <= 0.0 { return; }
     cellular_integrities[index] -= overload * parameters.delta_time * parameters.damage_rate;
     if cellular_integrities[index] > 0.0 { return; }
+    var replacement: u32 = EMPTY_MATERIAL_IDENTIFIER;
     if properties.debris != EMPTY_MATERIAL_IDENTIFIER &&
             cellular_fracture_yield_random_from_world_cell(cell, parameters.tick) <
                 properties.debris_yield_rate {
-        cellular_material_identifiers[index] = properties.debris;
-        cellular_kinematics[index] = vec4<f32>(0.0);
-    } else {
-        cellular_material_identifiers[index] = EMPTY_MATERIAL_IDENTIFIER;
-        cellular_appearances[index] = EMPTY_MATERIAL_IDENTIFIER;
-        cellular_kinematics[index] = vec4<f32>(0.0);
+        replacement = properties.debris;
+    }
+    let request_index: u32 = atomicAdd(&material_mutation_request_count[0], 1u);
+    if request_index < parameters.buffered_cell_count {
+        material_mutation_requests[request_index] = MaterialMutationRequest(index, material, replacement, 0u);
     }
     cellular_integrities[index] = 0.0;
 }

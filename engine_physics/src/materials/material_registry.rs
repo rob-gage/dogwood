@@ -286,15 +286,21 @@ impl MaterialRegistry {
                 ..
             } = material
             {
-                if identifier.form_checked() != Some(MaterialForm::CellularDynamic)
-                    || !matches!(
-                        cellular_dynamics.get(identifier.index() as usize),
-                        Some(Material::CellularDynamic { .. })
-                    )
-                {
+                let valid = match identifier.form_checked() {
+                    Some(MaterialForm::CellularStatic) => {
+                        cellular_statics.get(identifier.index() as usize).is_some()
+                    }
+                    Some(MaterialForm::CellularDynamic) => {
+                        cellular_dynamics.get(identifier.index() as usize).is_some()
+                    }
+                    Some(MaterialForm::Fluid) => fluids.get(identifier.index() as usize).is_some(),
+                    Some(MaterialForm::Gas) => gases.get(identifier.index() as usize).is_some(),
+                    None => false,
+                };
+                if !valid {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
-                        "Static material debris identifier is not a dynamic material",
+                        "Static material debris identifier is not registered",
                     ));
                 }
             }
@@ -627,5 +633,42 @@ mod tests {
         let mut old_reader: &[u8] = &old_bytes;
         let old_loaded: MaterialRegistry = MaterialRegistry::deserialize(&mut old_reader).unwrap();
         assert!(old_loaded.gases.is_empty());
+    }
+
+    #[test]
+    fn static_fracture_product_round_trips_for_any_registered_form() {
+        let mut registry = MaterialRegistry::new();
+        let fluid = registry.register(Material::Fluid {
+            name: "Water".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(1, 2, 3)),
+            pressure_transmission: 0.5,
+            friction: 0.5,
+            restitution: 0.0,
+            rest_density: 1.0,
+            artificial_pressure: 0.0,
+            xsph_smoothing: 0.0,
+            body_push_speed: 1.0,
+            density: 1.0,
+            viscosity: 0.0,
+        });
+        let stone = registry.register(Material::CellularStatic {
+            name: "Stone".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(4, 5, 6)),
+            mass: 1.0,
+            pressure_ignore_threshold: 1.0,
+            default_integrity: 2.0,
+            minimum_rigid_body_cell_count: 1,
+            debris_material: Some(fluid),
+            debris_yield_rate: 1.0,
+            pressure_transmission: 0.5,
+            friction: 0.5,
+            restitution: 0.0,
+        });
+        let mut bytes = Vec::new();
+        registry.serialize(&mut bytes).unwrap();
+        assert!(
+            matches!(MaterialRegistry::deserialize(&mut bytes.as_slice()).unwrap().get(stone),
+            Some(Material::CellularStatic { debris_material: Some(identifier), .. }) if *identifier == fluid)
+        );
     }
 }

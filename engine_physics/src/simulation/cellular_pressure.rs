@@ -104,6 +104,8 @@ impl CellularPressure {
         gas_concentrations: &AcceleratorBuffer,
         gas_properties: &AcceleratorBuffer,
         fluid_coverage: &AcceleratorBuffer,
+        mutation_requests: &AcceleratorBuffer,
+        mutation_request_count: &AcceleratorBuffer,
         gas_count: u32,
         buffered_cell_count: usize,
     ) -> Self {
@@ -297,6 +299,8 @@ impl CellularPressure {
                     Self::storage_layout_entry(33, true),
                     Self::storage_layout_entry(34, false),
                     Self::storage_layout_entry(36, false),
+                    Self::storage_layout_entry(37, false),
+                    Self::storage_layout_entry(38, false),
                 ],
             });
         let indirect_bind_group_layout: wgpu::BindGroupLayout =
@@ -342,6 +346,8 @@ impl CellularPressure {
             (33, rigid_claims.wgpu_buffer().clone()),
             (34, rigid_fractures.wgpu_buffer().clone()),
             (36, rigid_fracture_count.clone()),
+            (37, mutation_requests.wgpu_buffer().clone()),
+            (38, mutation_request_count.wgpu_buffer().clone()),
         ];
         let bind_group: wgpu::BindGroup =
             Self::create_bind_group(device, &layout, &parameters, &bound_buffers);
@@ -1331,6 +1337,8 @@ mod tests {
             &accelerator.allocate::<f32>(64),
             &accelerator.allocate::<[f32; 4]>(2),
             &accelerator.allocate::<f32>(64),
+            &accelerator.allocate::<[u32; 4]>(64),
+            &accelerator.allocate::<u32>(1),
             0,
             64,
         );
@@ -1399,6 +1407,8 @@ mod tests {
             &gas_concentrations,
             &gas_properties,
             &fluid_coverage,
+            &accelerator.allocate::<[u32; 4]>(64),
+            &accelerator.allocate::<u32>(1),
             0,
             64,
         );
@@ -1524,6 +1534,8 @@ mod tests {
             &gas_concentrations,
             &gas_properties,
             &fluid_coverage,
+            &accelerator.allocate::<[u32; 4]>(64),
+            &accelerator.allocate::<u32>(1),
             0,
             64,
         );

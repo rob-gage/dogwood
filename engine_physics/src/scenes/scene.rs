@@ -6,8 +6,8 @@ use super::{
 };
 use crate::simulation::{
     CellularCollision, CellularDynamic, CellularPhysicsBodyProxy, CellularPressure,
-    CollisionOccupancySnapshot, Fluids, Gases, RigidCellularBody, RigidCellularBodyCell,
-    RigidCellularBodyState, ScenePhysicsWorld, SceneSimulationConfiguration,
+    CollisionOccupancySnapshot, Fluids, Gases, MaterialMutations, RigidCellularBody,
+    RigidCellularBodyCell, RigidCellularBodyState, ScenePhysicsWorld, SceneSimulationConfiguration,
 };
 use crate::{
     actors::{Actor, ActorRegistry},
@@ -142,6 +142,8 @@ pub struct Scene {
     fluids: Fluids,
     /// GPU-authoritative shared gas velocity and per-species concentrations
     gases: Gases,
+    /// GPU-resident cross-form material replacement requests.
+    material_mutations: MaterialMutations,
     /// GPU simulation of dynamic cells in the canonical cellular buffers
     cellular_dynamic: CellularDynamic,
     /// GPU impulse, pressure, integrity, and fracture subsystem
@@ -251,6 +253,19 @@ impl Scene {
             simulation.width + buffer_size,
             simulation.height + buffer_size,
         );
+        let material_mutations = MaterialMutations::new(
+            accelerator.as_ref(),
+            data.materials(),
+            &cellular_material_identifiers,
+            &cellular_appearances,
+            &cellular_integrities,
+            cellular_dynamic.kinematics_buffer(),
+            fluids.edit_cells_buffer(),
+            gases.velocity_buffer(),
+            gases.concentrations_buffer(),
+            buffered_cell_count,
+            gases.gas_count(),
+        );
         let cellular_pressure: CellularPressure = CellularPressure::new(
             accelerator.as_ref(),
             data.materials(),
@@ -271,6 +286,8 @@ impl Scene {
             gases.concentrations_buffer(),
             &material_graphics.gas_properties,
             fluids.coverage_buffer(),
+            material_mutations.requests_buffer(),
+            material_mutations.request_count_buffer(),
             gases.gas_count(),
             buffered_cell_count,
         );
@@ -359,6 +376,7 @@ impl Scene {
             rigid_detachment_snapshot: None,
             fluids,
             gases,
+            material_mutations,
             cellular_dynamic,
             cellular_pressure,
             cellular_collision,
@@ -1032,6 +1050,7 @@ impl Scene {
                 self.gravity,
                 1.0 / TICK_RATE as f32,
             );
+            self.material_mutations.reset(self.accelerator.as_ref());
             self.cellular_pressure.simulate(
                 self.accelerator.as_ref(),
                 TileCoordinates {
@@ -1049,6 +1068,27 @@ impl Scene {
                     .rigid_cell_count(&self.rigid_cellular_bodies),
                 self.rigid_cellular_topology_revision,
             )?;
+            self.material_mutations.resolve(
+                self.accelerator.as_ref(),
+                u32::from(self.simulation_width + dimensions)
+                    * u32::from(self.simulation_height + dimensions)
+                    * 64,
+                self.gases.gas_count(),
+            );
+            self.fluids.consume_gpu_edits(
+                self.accelerator.as_ref(),
+                fluid_active_area.origin(),
+                fluid_active_dimensions[0],
+                fluid_active_dimensions[1],
+                TileCoordinates {
+                    x: self.origin.x - buffer_size,
+                    y: self.origin.y - buffer_size,
+                },
+                self.simulation_width + dimensions,
+                self.simulation_height + dimensions,
+                self.tiles_ring_offset_x,
+                self.tiles_ring_offset_y,
+            );
             self.cellular_dynamic.simulate_cellular_dynamic_tick(
                 self.accelerator.as_ref(),
                 &self.cellular_material_identifiers,

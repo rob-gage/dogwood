@@ -388,6 +388,69 @@ impl Fluids {
         &self.mechanical_cells
     }
 
+    pub(crate) const fn edit_cells_buffer(&self) -> &AcceleratorBuffer {
+        &self.edit_cells
+    }
+
+    /// Consumes edits written by another GPU subsystem using the same authoritative pool.
+    pub(crate) fn consume_gpu_edits(
+        &self,
+        accelerator: &Accelerator,
+        active_origin: TileCoordinates,
+        active_width: u16,
+        active_height: u16,
+        buffered_origin: TileCoordinates,
+        buffered_width: u16,
+        buffered_height: u16,
+        ring_offset_x: u16,
+        ring_offset_y: u16,
+    ) {
+        self.write_parameters(
+            accelerator,
+            active_origin,
+            active_width,
+            active_height,
+            buffered_origin,
+            buffered_width,
+            buffered_height,
+            ring_offset_x,
+            ring_offset_y,
+            None,
+            [0.0; 2],
+            0.0,
+            None,
+        );
+        let mut encoder =
+            accelerator
+                .wgpu_device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("GPU fluid edits"),
+                });
+        self.dispatch(
+            accelerator,
+            &mut encoder,
+            &self.edit_remove_pipeline,
+            self.particle_capacity,
+            "remove GPU edited fluid particles",
+        );
+        self.dispatch(
+            accelerator,
+            &mut encoder,
+            &self.edit_spawn_pipeline,
+            self.buffered_cell_count,
+            "spawn GPU edited fluid particles",
+        );
+        self.dispatch(
+            accelerator,
+            &mut encoder,
+            &self.edit_clear_pipeline,
+            self.buffered_cell_count,
+            "clear GPU fluid edits",
+        );
+        self.encode_rebuild(accelerator, &mut encoder);
+        accelerator.wgpu_queue().submit(Some(encoder.finish()));
+    }
+
     /// Consumes ring-aligned spawn/erase edits and immediately refreshes derived cells
     pub fn apply_edits(
         &self,

@@ -82,6 +82,8 @@ impl Fixture {
             &accelerator.allocate::<f32>(64),
             &accelerator.allocate::<[f32; 4]>(2),
             &accelerator.allocate::<f32>(64),
+            &accelerator.allocate::<[u32; 4]>(64),
+            &accelerator.allocate::<u32>(1),
             0,
             64,
         );
