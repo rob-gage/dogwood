@@ -3,7 +3,7 @@
 use super::MaterialForm;
 
 /// Identifies a `Material`
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct MaterialIdentifier(u32);
 
 impl MaterialIdentifier {

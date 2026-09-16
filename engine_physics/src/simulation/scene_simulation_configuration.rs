@@ -7,6 +7,12 @@ use std::io;
 pub struct SceneSimulationConfiguration {
     /// Scene gravity acceleration in tiles per second squared
     pub gravity: [f32; 2],
+    /// Ambient temperature in kelvin used by later thermal state initialization.
+    pub ambient_temperature: f32,
+    /// Conductivity of implicit empty space.
+    pub empty_space_thermal_conductivity: f32,
+    /// Largest supported explicit gas compression ratio.
+    pub maximum_gas_concentration: f32,
     /// The width of the active simulation area in tiles
     pub width: u16,
     /// The height of the active simulation area in tiles
@@ -24,6 +30,18 @@ impl SceneSimulationConfiguration {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "Simulation gravity must be finite",
+            ));
+        }
+        if !self.ambient_temperature.is_finite()
+            || self.ambient_temperature < 0.0
+            || !self.empty_space_thermal_conductivity.is_finite()
+            || self.empty_space_thermal_conductivity < 0.0
+            || !self.maximum_gas_concentration.is_finite()
+            || self.maximum_gas_concentration < 1.0
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Invalid thermal or gas configuration",
             ));
         }
         if self.width == 0 || self.height == 0 {

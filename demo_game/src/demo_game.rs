@@ -10,7 +10,7 @@ use engine::{
             ActorCollisionShape, ActorPawn, ActorPawnMovement, ActorPawnSwimmingConfiguration,
             ActorPawnWalkingConfiguration,
         },
-        materials::{Material, MaterialIdentifier, MaterialRegistry},
+        materials::{Material, MaterialIdentifier, MaterialRegistryBuilder},
         scenes::{Scene, SceneData, SceneEditBatch, ScenePosition, SceneVelocity},
         simulation::SceneSimulationConfiguration,
         tiles::{CellCoordinates, CellularAppearance, TileCoordinates},
@@ -29,7 +29,7 @@ pub struct DemoGame {
 impl DemoGame {
     /// Creates a `DemoGame` with a GPU-backed scene
     pub fn new(accelerator: &Arc<Accelerator>) -> Result<Self, Box<dyn Error>> {
-        let mut materials: MaterialRegistry = MaterialRegistry::new();
+        let mut materials = MaterialRegistryBuilder::new();
         let stone_debris_graphics: MaterialAppearance =
             MaterialAppearance::from_color(Color::new_rgb(148, 148, 148))
                 .with_variation([0.5, 0.5, 0.5, 0.0])
@@ -102,11 +102,15 @@ impl DemoGame {
             dissipation: 0.0001,
             compressibility: 0.1,
         });
-        let data: SceneData = SceneData::new_temporary(materials)?;
+        let data: SceneData =
+            SceneData::new_temporary(materials.compile().map_err(std::io::Error::other)?)?;
         let mut scene: Scene = Scene::load_with_generator(
             accelerator,
             SceneSimulationConfiguration {
                 gravity: [0.0, -18.0],
+                ambient_temperature: 293.15,
+                empty_space_thermal_conductivity: 0.0,
+                maximum_gas_concentration: 4.0,
                 width: 48,
                 height: 27,
                 buffer_size: 12,

@@ -1,9 +1,9 @@
 // Copyright Rob Gage 2026
 
-use super::{Material, MaterialForm, MaterialIdentifier};
+use super::{Material, MaterialForm, MaterialIdentifier, MaterialThermalProperties};
 use engine_compute::Accelerator;
 use engine_graphics::{Color, MaterialAppearance, MaterialGraphics};
-use std::{io, ops::Index};
+use std::{collections::BTreeMap, io, ops::Index};
 
 /// Registers `Material`s to `MaterialIdentifier`s
 pub struct MaterialRegistry {
@@ -15,6 +15,8 @@ pub struct MaterialRegistry {
     fluids: Vec<Material>,
     /// The `Material::Gas`s in this `MaterialRegistry`
     gases: Vec<Material>,
+    thermal: Vec<MaterialThermalProperties>,
+    tags: BTreeMap<String, Vec<MaterialIdentifier>>,
 }
 
 impl MaterialRegistry {
@@ -25,13 +27,15 @@ impl MaterialRegistry {
             cellular_dynamics: Vec::new(),
             fluids: Vec::new(),
             gases: Vec::new(),
+            thermal: Vec::new(),
+            tags: BTreeMap::new(),
         }
     }
 
     /// Registers a `Material` and returns its `MaterialIdentifier`
     pub fn register(&mut self, material: Material) -> MaterialIdentifier {
         assert!(Self::material_is_valid(&material));
-        match material {
+        let identifier = match material {
             material @ Material::CellularStatic { .. } => {
                 let index: u32 = self.cellular_statics.len() as u32;
                 self.cellular_statics.push(material);
@@ -56,7 +60,133 @@ impl MaterialRegistry {
                 self.gases.push(material);
                 MaterialIdentifier::new(MaterialForm::Gas, index)
             }
+        };
+        self.thermal = vec![MaterialThermalProperties::default(); self.material_count() as usize];
+        identifier
+    }
+
+    /// Number of registered materials in stable form-major order.
+    pub fn material_count(&self) -> u32 {
+        (self.cellular_statics.len()
+            + self.cellular_dynamics.len()
+            + self.fluids.len()
+            + self.gases.len()) as u32
+    }
+    /// Stable form-major index used by compiled reaction metadata.
+    pub fn dense_index(&self, identifier: MaterialIdentifier) -> Option<u32> {
+        self.get(identifier)?;
+        let offset = match identifier.form_checked()? {
+            MaterialForm::CellularStatic => 0,
+            MaterialForm::CellularDynamic => self.cellular_statics.len(),
+            MaterialForm::Fluid => self.cellular_statics.len() + self.cellular_dynamics.len(),
+            MaterialForm::Gas => {
+                self.cellular_statics.len() + self.cellular_dynamics.len() + self.fluids.len()
+            }
+        };
+        Some((offset + identifier.index() as usize) as u32)
+    }
+    pub fn identifier_from_dense_index(&self, index: u32) -> Option<MaterialIdentifier> {
+        let index = index as usize;
+        let s = self.cellular_statics.len();
+        let d = s + self.cellular_dynamics.len();
+        let f = d + self.fluids.len();
+        if index < s {
+            Some(MaterialIdentifier::new(
+                MaterialForm::CellularStatic,
+                index as u32,
+            ))
+        } else if index < d {
+            Some(MaterialIdentifier::new(
+                MaterialForm::CellularDynamic,
+                (index - s) as u32,
+            ))
+        } else if index < f {
+            Some(MaterialIdentifier::new(
+                MaterialForm::Fluid,
+                (index - d) as u32,
+            ))
+        } else if index < self.material_count() as usize {
+            Some(MaterialIdentifier::new(
+                MaterialForm::Gas,
+                (index - f) as u32,
+            ))
+        } else {
+            None
         }
+    }
+    pub fn thermal_properties(
+        &self,
+        identifier: MaterialIdentifier,
+    ) -> Option<&MaterialThermalProperties> {
+        self.dense_index(identifier)
+            .and_then(|index| self.thermal.get(index as usize))
+    }
+    pub fn tag_members(&self, tag: &str) -> Option<&[MaterialIdentifier]> {
+        self.tags.get(tag).map(Vec::as_slice)
+    }
+    pub(crate) fn set_compiled_metadata(
+        &mut self,
+        metadata: BTreeMap<MaterialIdentifier, MaterialThermalProperties>,
+        mut tags: BTreeMap<String, Vec<MaterialIdentifier>>,
+    ) -> Result<(), String> {
+        let mut thermal =
+            vec![MaterialThermalProperties::default(); self.material_count() as usize];
+        for (identifier, properties) in metadata {
+            let index = self
+                .dense_index(identifier)
+                .ok_or("Thermal metadata references an unregistered material")?
+                as usize;
+            Self::validate_thermal(identifier, &properties, self)?;
+            thermal[index] = properties;
+        }
+        for members in tags.values_mut() {
+            members.sort_unstable();
+            members.dedup();
+            if members.iter().any(|id| self.get(*id).is_none()) {
+                return Err("Tag references an unregistered material".into());
+            }
+        }
+        self.thermal = thermal;
+        self.tags = tags;
+        Ok(())
+    }
+    fn validate_thermal(
+        identifier: MaterialIdentifier,
+        properties: &MaterialThermalProperties,
+        registry: &Self,
+    ) -> Result<(), String> {
+        if !properties.conductivity.is_finite()
+            || properties.conductivity < 0.0
+            || !properties.specific_heat_capacity.is_finite()
+            || properties.specific_heat_capacity <= 0.0
+            || properties
+                .default_temperature
+                .is_some_and(|value| !value.is_finite() || value < 0.0)
+        {
+            return Err("Invalid thermal properties".into());
+        }
+        for transition in [&properties.cold_transition, &properties.hot_transition]
+            .into_iter()
+            .flatten()
+        {
+            if !transition.threshold_temperature.is_finite()
+                || transition.threshold_temperature < 0.0
+                || !transition.latent_energy.is_finite()
+                || transition.latent_energy < 0.0
+                || !transition.yield_rate.is_finite()
+                || !(0.0..=1.0).contains(&transition.yield_rate)
+                || transition.target == identifier
+                || registry.get(transition.target).is_none()
+            {
+                return Err("Invalid thermal transition".into());
+            }
+        }
+        if let (Some(cold), Some(hot)) = (&properties.cold_transition, &properties.hot_transition) {
+            if cold.threshold_temperature >= hot.threshold_temperature {
+                return Err("Cold transition must precede hot transition".into());
+            }
+        }
+        Ok(())
     }
 
     /// Returns whether all simulation properties of a material are valid
@@ -305,12 +435,17 @@ impl MaterialRegistry {
                 }
             }
         }
-        Ok(Self {
+        let mut registry = Self {
             cellular_statics,
             cellular_dynamics,
             fluids,
             gases,
-        })
+            thermal: Vec::new(),
+            tags: BTreeMap::new(),
+        };
+        registry.thermal =
+            vec![MaterialThermalProperties::default(); registry.material_count() as usize];
+        Ok(registry)
     }
 
     /// Writes this `MaterialRegistry` in identifier-index order
@@ -604,6 +739,7 @@ impl Index<MaterialIdentifier> for MaterialRegistry {
 mod tests {
 
     use super::*;
+    use crate::materials::{MaterialRegistryBuilder, MaterialThermalTransition};
 
     #[test]
     fn gas_round_trips_and_three_form_registry_remains_readable() {
@@ -669,6 +805,92 @@ mod tests {
         assert!(
             matches!(MaterialRegistry::deserialize(&mut bytes.as_slice()).unwrap().get(stone),
             Some(Material::CellularStatic { debris_material: Some(identifier), .. }) if *identifier == fluid)
+        );
+    }
+
+    #[test]
+    fn builder_compiles_dense_indices_tags_and_thermal_metadata() {
+        let mut builder = MaterialRegistryBuilder::new();
+        let static_id = builder.register(Material::CellularStatic {
+            name: "s".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(1, 1, 1)),
+            mass: 1.0,
+            pressure_ignore_threshold: 1.0,
+            default_integrity: 1.0,
+            minimum_rigid_body_cell_count: 1,
+            debris_material: None,
+            debris_yield_rate: 0.0,
+            pressure_transmission: 0.5,
+            friction: 0.5,
+            restitution: 0.0,
+        });
+        let dynamic_id = builder.register(Material::CellularDynamic {
+            name: "d".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(1, 1, 1)),
+            mass: 1.0,
+            pressure_transmission: 0.5,
+            friction: 0.5,
+            restitution: 0.0,
+        });
+        let fluid_id = builder.register(Material::Fluid {
+            name: "f".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(1, 1, 1)),
+            pressure_transmission: 0.5,
+            friction: 0.5,
+            restitution: 0.0,
+            rest_density: 1.0,
+            artificial_pressure: 0.0,
+            xsph_smoothing: 0.0,
+            body_push_speed: 0.0,
+            density: 1.0,
+            viscosity: 0.0,
+        });
+        let gas_id = builder.register(Material::Gas {
+            name: "g".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(1, 1, 1)),
+            density: 1.0,
+            diffusivity: 0.0,
+            extinction: 0.0,
+            dissipation: 0.0,
+            compressibility: 0.0,
+        });
+        builder.tag(static_id, "mixed").unwrap();
+        builder.tag(fluid_id, "mixed").unwrap();
+        builder.tag(gas_id, "mixed").unwrap();
+        builder
+            .set_thermal(
+                static_id,
+                MaterialThermalProperties {
+                    hot_transition: Some(MaterialThermalTransition {
+                        threshold_temperature: 400.0,
+                        target: dynamic_id,
+                        yield_rate: 1.0,
+                        latent_energy: 1.0,
+                    }),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let registry = builder.compile().unwrap();
+        for identifier in [static_id, dynamic_id, fluid_id, gas_id] {
+            assert_eq!(
+                registry.identifier_from_dense_index(registry.dense_index(identifier).unwrap()),
+                Some(identifier)
+            );
+        }
+        assert_eq!(
+            registry.tag_members("mixed").unwrap(),
+            &[gas_id, static_id, fluid_id]
+        );
+        assert_eq!(
+            registry
+                .thermal_properties(static_id)
+                .unwrap()
+                .hot_transition
+                .as_ref()
+                .unwrap()
+                .target,
+            dynamic_id
         );
     }
 }

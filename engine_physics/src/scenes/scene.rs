@@ -3361,6 +3361,9 @@ mod tests {
             materials,
             SceneSimulationConfiguration {
                 gravity: [0.0, -18.0],
+                ambient_temperature: 293.15,
+                empty_space_thermal_conductivity: 0.0,
+                maximum_gas_concentration: 4.0,
                 width: 4,
                 height: 4,
                 buffer_size: 2,
@@ -3451,6 +3454,9 @@ mod tests {
             materials,
             SceneSimulationConfiguration {
                 gravity: [0.0, -18.0],
+                ambient_temperature: 293.15,
+                empty_space_thermal_conductivity: 0.0,
+                maximum_gas_concentration: 4.0,
                 width: 4,
                 height: 4,
                 buffer_size: 2,
@@ -3499,6 +3505,9 @@ mod tests {
             &accelerator,
             SceneSimulationConfiguration {
                 gravity: [0.0, -18.0],
+                ambient_temperature: 293.15,
+                empty_space_thermal_conductivity: 0.0,
+                maximum_gas_concentration: 4.0,
                 width: 8,
                 height: 8,
                 buffer_size: 2,
@@ -3570,6 +3579,9 @@ mod tests {
             materials,
             SceneSimulationConfiguration {
                 gravity: [0.0, -8.0],
+                ambient_temperature: 293.15,
+                empty_space_thermal_conductivity: 0.0,
+                maximum_gas_concentration: 4.0,
                 width: 1,
                 height: 1,
                 buffer_size: 2,
@@ -3675,6 +3687,9 @@ mod tests {
             materials,
             SceneSimulationConfiguration {
                 gravity: [0.0, -8.0],
+                ambient_temperature: 293.15,
+                empty_space_thermal_conductivity: 0.0,
+                maximum_gas_concentration: 4.0,
                 width: 4,
                 height: 4,
                 buffer_size: 2,
