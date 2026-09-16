@@ -232,6 +232,9 @@ impl ThermalInteraction {
     pub(crate) const fn interaction_buffer(&self) -> &AcceleratorBuffer {
         &self.interaction
     }
+    pub(crate) const fn rigid_raster_claim_counts_buffer(&self) -> &AcceleratorBuffer {
+        &self.rigid_raster_claim_counts
+    }
 }
 
 impl Drop for ThermalInteraction {
