@@ -47,7 +47,6 @@ enum RigidIoJob {
     Persist(RigidPersistenceRequest),
     Claim {
         owner: TileCoordinates,
-        retained: Vec<super::dormant_rigid::DormantRigidBody>,
         original: Vec<super::dormant_rigid::DormantRigidBody>,
         restored_ids: Vec<u64>,
     },
@@ -65,10 +64,9 @@ enum RigidStreamingResponse {
     },
     Claimed {
         owner: TileCoordinates,
-        retained: Vec<super::dormant_rigid::DormantRigidBody>,
         original: Vec<super::dormant_rigid::DormantRigidBody>,
         restored_ids: Vec<u64>,
-        result: Result<(), io::Error>,
+        result: Result<Vec<super::dormant_rigid::DormantRigidBody>, io::Error>,
     },
 }
 
@@ -215,6 +213,7 @@ pub struct Scene {
     rigid_owner_loads: HashMap<TileCoordinates, RigidOwnerLoad>,
     rigid_owner_load_queue: VecDeque<TileCoordinates>,
     rigid_owner_generation: HashMap<TileCoordinates, u64>,
+    rigid_desired_owners: HashSet<TileCoordinates>,
     rigid_persistence_queue: VecDeque<RigidIoJob>,
     rigid_io_in_flight: usize,
     /// Restored bodies wait for a collision snapshot of the current ring.
@@ -625,6 +624,7 @@ impl Scene {
             rigid_owner_loads: HashMap::new(),
             rigid_owner_load_queue: VecDeque::new(),
             rigid_owner_generation: HashMap::new(),
+            rigid_desired_owners: HashSet::new(),
             rigid_persistence_queue: VecDeque::new(),
             rigid_io_in_flight: 0,
             rigid_activation_pending: HashSet::new(),
@@ -668,7 +668,13 @@ impl Scene {
                 },
             );
         }
-        for owner in scene.area_streaming().iterate_chunk_coordinates() {
+        for owner in scene
+            .area_buffered()
+            .expanded(Chunk::WIDTH, Chunk::WIDTH, Chunk::WIDTH, Chunk::WIDTH)
+            .chunk_area()
+            .iterate_chunk_coordinates()
+        {
+            scene.rigid_desired_owners.insert(owner);
             scene.rigid_owner_load(owner);
         }
         drop(scene.tiles_upload(scene.area_buffered()));
@@ -1425,6 +1431,14 @@ impl Scene {
                     ]
                 })
                 .collect();
+            debug_assert_eq!(
+                states.len(),
+                batch
+                    .bodies
+                    .iter()
+                    .map(|body| body.cells.len())
+                    .sum::<usize>()
+            );
             drop(bytes);
             self.rigid_dormancy_readbacks[batch.readback_slot].unmap();
             self.rigid_dormancy_readback_free.push(batch.readback_slot);
@@ -1474,6 +1488,7 @@ impl Scene {
                     },
                 ));
             }
+            debug_assert_eq!(cursor, states.len());
             self.rigid_io_submit();
         }
         Ok(())
@@ -1560,27 +1575,23 @@ impl Scene {
                         return;
                     };
                     let result = data.read_dormant_rigids(owner).and_then(|mut records| {
-                        if records.iter().any(|record| record.id == request.record.id) {
-                            return Err(io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                "duplicate dormant rigid identity",
-                            ));
-                        }
-                        records.push(request.record.clone());
+                        super::dormant_rigid::append_record(&mut records, request.record.clone())?;
                         data.write_dormant_rigids(owner, &records)
                     });
                     let _ = sender.send(RigidStreamingResponse::Saved { request, result });
                 }
                 RigidIoJob::Claim {
                     owner,
-                    retained,
                     original,
                     restored_ids,
                 } => {
-                    let result = data.write_dormant_rigids(owner, &retained);
+                    let result = data.read_dormant_rigids(owner).and_then(|mut records| {
+                        super::dormant_rigid::remove_ids(&mut records, &restored_ids);
+                        data.write_dormant_rigids(owner, &records)?;
+                        Ok(records)
+                    });
                     let _ = sender.send(RigidStreamingResponse::Claimed {
                         owner,
-                        retained,
                         original,
                         restored_ids,
                         result,
@@ -1620,7 +1631,20 @@ impl Scene {
                         }
                     }
                 }
-                RigidStreamingResponse::Loaded { .. } => {}
+                RigidStreamingResponse::Loaded { owner, .. } => {
+                    // A newer generation may already be loading. If not,
+                    // stale completion must repair the desired-owner state.
+                    if self.rigid_desired_owners.contains(&owner)
+                        && !matches!(
+                            self.rigid_owner_loads.get(&owner),
+                            Some(RigidOwnerLoad::Loading)
+                                | Some(RigidOwnerLoad::Ready(_))
+                                | Some(RigidOwnerLoad::Claiming)
+                        )
+                    {
+                        self.rigid_owner_load(owner);
+                    }
+                }
                 RigidStreamingResponse::Saved { request, result } => match result {
                     Ok(()) => {
                         let owner = super::dormant_rigid::owner_chunk(
@@ -1633,9 +1657,18 @@ impl Scene {
                         })?;
                         let generation = self.rigid_owner_generation.entry(owner).or_default();
                         *generation = generation.wrapping_add(1);
-                        self.rigid_owner_loads.remove(&owner);
+                        let claiming = matches!(
+                            self.rigid_owner_loads.get(&owner),
+                            Some(RigidOwnerLoad::Claiming)
+                        );
+                        if !claiming {
+                            self.rigid_owner_loads.remove(&owner);
+                        }
                         for slot in request.slots {
                             self.release_rigid_cell_state(slot);
+                        }
+                        if !claiming && self.rigid_desired_owners.contains(&owner) {
+                            self.rigid_owner_load(owner);
                         }
                     }
                     Err(error) => {
@@ -1645,19 +1678,25 @@ impl Scene {
                 },
                 RigidStreamingResponse::Claimed {
                     owner,
-                    retained,
                     original,
                     restored_ids,
                     result,
                 } => match result {
-                    Ok(()) => {
+                    Ok(records) => {
                         self.rigid_owner_loads
-                            .insert(owner, RigidOwnerLoad::Ready(retained));
+                            .insert(owner, RigidOwnerLoad::Ready(records));
                     }
                     Err(error) => {
                         self.rollback_rigid_restore(&restored_ids);
                         self.rigid_owner_loads
                             .insert(owner, RigidOwnerLoad::Ready(original));
+                        if self.rigid_desired_owners.contains(&owner) {
+                            self.rigid_owner_loads.remove(&owner);
+                            self.rigid_owner_generation
+                                .entry(owner)
+                                .and_modify(|generation| *generation = generation.wrapping_add(1));
+                            self.rigid_owner_load(owner);
+                        }
                         return Err(error);
                     }
                 },
@@ -1750,7 +1789,7 @@ impl Scene {
             return Ok(());
         };
         let buffered = self.area_buffered();
-        let (records, retained): (Vec<_>, Vec<_>) = original.iter().cloned().partition(|record| {
+        let (records, _retained): (Vec<_>, Vec<_>) = original.iter().cloned().partition(|record| {
             super::dormant_rigid::world_aabb(
                 record.position,
                 record.rotation,
@@ -1840,7 +1879,6 @@ impl Scene {
             .insert(owner, RigidOwnerLoad::Claiming);
         self.rigid_persistence_queue.push_back(RigidIoJob::Claim {
             owner,
-            retained,
             original,
             restored_ids: ids,
         });
@@ -3219,6 +3257,11 @@ impl Scene {
             height,
         );
         let streaming_area: TileArea = buffered_area.chunk_area();
+        self.rigid_desired_owners = streaming_area
+            .expanded(Chunk::WIDTH, Chunk::WIDTH, Chunk::WIDTH, Chunk::WIDTH)
+            .chunk_area()
+            .iterate_chunk_coordinates()
+            .collect();
         self.chunks_fetch(streaming_area)?;
         for owner in streaming_area
             .expanded(Chunk::WIDTH, Chunk::WIDTH, Chunk::WIDTH, Chunk::WIDTH)

@@ -31,6 +31,39 @@ pub(crate) struct DormantRigidCell {
     pub(crate) temperature: f32,
 }
 
+pub(crate) fn append_record(
+    records: &mut Vec<DormantRigidBody>,
+    record: DormantRigidBody,
+) -> Result<(), io::Error> {
+    let mut before: HashSet<u64> = records.iter().map(|record| record.id).collect();
+    if !before.insert(record.id) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "duplicate dormant rigid identity",
+        ));
+    }
+    records.push(record);
+    debug_assert_eq!(
+        records
+            .iter()
+            .map(|record| record.id)
+            .collect::<HashSet<_>>(),
+        before
+    );
+    Ok(())
+}
+
+pub(crate) fn remove_ids(records: &mut Vec<DormantRigidBody>, ids: &[u64]) {
+    let before: HashSet<u64> = records.iter().map(|record| record.id).collect();
+    let claimed: HashSet<u64> = ids.iter().copied().collect();
+    records.retain(|record| !claimed.contains(&record.id));
+    let after: HashSet<u64> = records.iter().map(|record| record.id).collect();
+    debug_assert_eq!(
+        after,
+        before.difference(&claimed).copied().collect::<HashSet<_>>()
+    );
+}
+
 /// Conservative world-space bounds of the occupied cell squares.
 pub(crate) fn world_aabb<I>(
     position: [f32; 2],
@@ -332,5 +365,40 @@ mod tests {
         let owner =
             owner_chunk([10.0, 10.0], std::f32::consts::FRAC_PI_4, [[0, 0], [8, 0]]).unwrap();
         assert_eq!((owner.x, owner.y), (0, 0));
+    }
+
+    #[test]
+    fn owner_mutations_preserve_current_records() {
+        let (materials, material) = materials();
+        let record = |id| DormantRigidBody {
+            id,
+            position: [0.0, 0.0],
+            rotation: 0.0,
+            linear_velocity: [0.0; 2],
+            angular_velocity: 0.0,
+            cells: vec![DormantRigidCell {
+                local: [0, 0],
+                material,
+                appearance: CellularAppearance::NEUTRAL,
+                integrity: 1.0,
+                amount: 1.0,
+                temperature: 1.0,
+            }],
+        };
+        let mut records = vec![record(1), record(2)];
+        append_record(&mut records, record(3)).unwrap();
+        remove_ids(&mut records, &[1]);
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| record.id)
+                .collect::<HashSet<_>>(),
+            [2, 3].into_iter().collect()
+        );
+        assert!(append_record(&mut records, record(3)).is_err());
+        records
+            .iter()
+            .try_for_each(|record| record.validate(&materials))
+            .unwrap();
     }
 }
