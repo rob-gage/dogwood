@@ -222,10 +222,19 @@ mod tests {
         body.serialize(&mut bytes, &materials).unwrap();
         let loaded = DormantRigidBody::deserialize(&mut bytes.as_slice(), &materials).unwrap();
         assert_eq!(loaded.id, body.id);
-        assert_eq!(loaded.position, body.position);
-        assert_eq!(loaded.rotation, body.rotation);
-        assert_eq!(loaded.linear_velocity, body.linear_velocity);
-        assert_eq!(loaded.angular_velocity, body.angular_velocity);
+        assert_eq!(
+            loaded.position.map(f32::to_bits),
+            body.position.map(f32::to_bits)
+        );
+        assert_eq!(loaded.rotation.to_bits(), body.rotation.to_bits());
+        assert_eq!(
+            loaded.linear_velocity.map(f32::to_bits),
+            body.linear_velocity.map(f32::to_bits)
+        );
+        assert_eq!(
+            loaded.angular_velocity.to_bits(),
+            body.angular_velocity.to_bits()
+        );
         assert_eq!(loaded.cells[0].local, body.cells[0].local);
         assert_eq!(loaded.cells[0].appearance.0, body.cells[0].appearance.0);
         assert_eq!(loaded.cells[0].integrity, body.cells[0].integrity);
