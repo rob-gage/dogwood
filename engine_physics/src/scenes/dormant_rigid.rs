@@ -18,6 +18,7 @@ pub(crate) struct DormantRigidBody {
     pub(crate) rotation: f32,
     pub(crate) linear_velocity: [f32; 2],
     pub(crate) angular_velocity: f32,
+    pub(crate) sleeping: bool,
     pub(crate) cells: Vec<DormantRigidCell>,
 }
 
@@ -180,6 +181,7 @@ impl DormantRigidBody {
         {
             writer.write_all(&value.to_bits().to_le_bytes())?;
         }
+        writer.write_all(&(self.sleeping as u32).to_le_bytes())?;
         writer.write_all(
             &(u32::try_from(self.cells.len()).map_err(|_| {
                 io::Error::new(io::ErrorKind::InvalidData, "too many dormant rigid cells")
@@ -202,6 +204,21 @@ impl DormantRigidBody {
         reader: &mut R,
         materials: &MaterialRegistry,
     ) -> Result<Self, io::Error> {
+        Self::deserialize_versioned(reader, materials, true)
+    }
+
+    pub(crate) fn deserialize_legacy<R: io::Read>(
+        reader: &mut R,
+        materials: &MaterialRegistry,
+    ) -> Result<Self, io::Error> {
+        Self::deserialize_versioned(reader, materials, false)
+    }
+
+    fn deserialize_versioned<R: io::Read>(
+        reader: &mut R,
+        materials: &MaterialRegistry,
+        has_sleeping: bool,
+    ) -> Result<Self, io::Error> {
         let u32 = |reader: &mut R| -> Result<u32, io::Error> {
             let mut b = [0; 4];
             reader.read_exact(&mut b)?;
@@ -213,6 +230,20 @@ impl DormantRigidBody {
         let rotation = f32::from_bits(u32(reader)?);
         let linear_velocity = [f32::from_bits(u32(reader)?), f32::from_bits(u32(reader)?)];
         let angular_velocity = f32::from_bits(u32(reader)?);
+        let sleeping = if has_sleeping {
+            match u32(reader)? {
+                0 => false,
+                1 => true,
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "invalid sleeping state",
+                    ));
+                }
+            }
+        } else {
+            false
+        };
         let count = usize::try_from(u32(reader)?).map_err(|_| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -251,6 +282,7 @@ impl DormantRigidBody {
             rotation,
             linear_velocity,
             angular_velocity,
+            sleeping,
             cells,
         };
         body.validate(materials)?;
@@ -290,6 +322,7 @@ mod tests {
             rotation: 0.75,
             linear_velocity: [3.0, -4.0],
             angular_velocity: 5.0,
+            sleeping: true,
             cells: vec![
                 DormantRigidCell {
                     local: [-2, 3],
@@ -326,6 +359,7 @@ mod tests {
             loaded.angular_velocity.to_bits(),
             body.angular_velocity.to_bits()
         );
+        assert_eq!(loaded.sleeping, body.sleeping);
         assert_eq!(loaded.cells[0].local, body.cells[0].local);
         assert_eq!(loaded.cells[0].appearance.0, body.cells[0].appearance.0);
         assert_eq!(loaded.cells[0].integrity, body.cells[0].integrity);
@@ -342,6 +376,7 @@ mod tests {
             rotation: 0.0,
             linear_velocity: [0.0; 2],
             angular_velocity: 0.0,
+            sleeping: false,
             cells: vec![DormantRigidCell {
                 local: [0, 0],
                 material,
@@ -376,6 +411,7 @@ mod tests {
             rotation: 0.0,
             linear_velocity: [0.0; 2],
             angular_velocity: 0.0,
+            sleeping: false,
             cells: vec![DormantRigidCell {
                 local: [0, 0],
                 material,

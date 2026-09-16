@@ -112,12 +112,16 @@ impl SceneData {
         };
         let mut magic = [0; 8];
         file.read_exact(&mut magic)?;
-        if &magic != b"dwrigid1" {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "invalid dormant rigid file",
-            ));
-        }
+        let legacy = match &magic {
+            b"dwrigid1" => true,
+            b"dwrigid2" => false,
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid dormant rigid file",
+                ));
+            }
+        };
         let mut count = [0; 4];
         file.read_exact(&mut count)?;
         let count = usize::try_from(u32::from_le_bytes(count)).map_err(|_| {
@@ -138,7 +142,11 @@ impl SceneData {
             )
         })?;
         for _ in 0..count {
-            let record = DormantRigidBody::deserialize(&mut file, self.materials())?;
+            let record = if legacy {
+                DormantRigidBody::deserialize_legacy(&mut file, self.materials())?
+            } else {
+                DormantRigidBody::deserialize(&mut file, self.materials())?
+            };
             let record_owner = owner_chunk(
                 record.position,
                 record.rotation,
@@ -186,7 +194,7 @@ impl SceneData {
         let temporary = path.with_extension("rigid.tmp");
         {
             let mut file = File::create(&temporary)?;
-            file.write_all(b"dwrigid1")?;
+            file.write_all(b"dwrigid2")?;
             let count = u32::try_from(records.len()).map_err(|_| {
                 io::Error::new(io::ErrorKind::InvalidData, "too many dormant rigid bodies")
             })?;
@@ -216,12 +224,16 @@ impl SceneData {
             let mut file = File::open(path)?;
             let mut magic = [0; 8];
             file.read_exact(&mut magic)?;
-            if &magic != b"dwrigid1" {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "invalid dormant rigid file",
-                ));
-            }
+            let legacy = match &magic {
+                b"dwrigid1" => true,
+                b"dwrigid2" => false,
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "invalid dormant rigid file",
+                    ));
+                }
+            };
             let mut count = [0; 4];
             file.read_exact(&mut count)?;
             let count = u32::from_le_bytes(count);
@@ -232,7 +244,11 @@ impl SceneData {
                 ));
             }
             for _ in 0..count {
-                let record = DormantRigidBody::deserialize(&mut file, self.materials())?;
+                let record = if legacy {
+                    DormantRigidBody::deserialize_legacy(&mut file, self.materials())?
+                } else {
+                    DormantRigidBody::deserialize(&mut file, self.materials())?
+                };
                 next = next.max(record.id.checked_add(1).ok_or_else(|| {
                     io::Error::new(io::ErrorKind::InvalidData, "rigid identity overflow")
                 })?);

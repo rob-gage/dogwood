@@ -82,6 +82,7 @@ struct PendingRigidDormancy {
     rotation: f32,
     linear_velocity: [f32; 2],
     angular_velocity: f32,
+    sleeping: bool,
     cells: Vec<RigidCellularBodyCell>,
 }
 
@@ -218,6 +219,7 @@ pub struct Scene {
     rigid_io_in_flight: usize,
     /// Restored bodies wait for a collision snapshot of the current ring.
     rigid_activation_pending: HashSet<u64>,
+    rigid_sleeping_pending: HashSet<u64>,
     /// Current-origin terrain has been applied to Rapier after this snapshot.
     rigid_activation_collision_origin: Option<TileCoordinates>,
     /// Changes whenever rigid body-local topology changes
@@ -628,6 +630,7 @@ impl Scene {
             rigid_persistence_queue: VecDeque::new(),
             rigid_io_in_flight: 0,
             rigid_activation_pending: HashSet::new(),
+            rigid_sleeping_pending: HashSet::new(),
             rigid_activation_collision_origin: None,
             rigid_cellular_topology_revision: 0,
             rigid_cellular_contact_active: Vec::new(),
@@ -1320,6 +1323,7 @@ impl Scene {
                         rotation: state.angle,
                         linear_velocity: state.linear_velocity,
                         angular_velocity: state.angular_velocity,
+                        sleeping: state.sleeping,
                         cells: body.cells.clone(),
                     },
                 ));
@@ -1357,6 +1361,7 @@ impl Scene {
             .map(|(index, pending)| {
                 let body = self.rigid_cellular_bodies.swap_remove(index);
                 self.rigid_activation_pending.remove(&body.id);
+                self.rigid_sleeping_pending.remove(&body.id);
                 self.physics_world.remove_rigid_cellular_body(&body);
                 pending
             })
@@ -1453,6 +1458,7 @@ impl Scene {
                     rotation: body.rotation,
                     linear_velocity: body.linear_velocity,
                     angular_velocity: body.angular_velocity,
+                    sleeping: body.sleeping,
                     cells: body
                         .cells
                         .iter()
@@ -1510,6 +1516,9 @@ impl Scene {
                 pending.angular_velocity,
             );
             body.id = pending.id;
+            if pending.sleeping {
+                self.physics_world.sleep_rigid_cellular_body(&body);
+            }
             self.rigid_cellular_bodies.push(body);
         }
         self.rigid_cellular_topology_revision =
@@ -1732,6 +1741,9 @@ impl Scene {
             request.record.angular_velocity,
         );
         body.id = request.record.id;
+        if request.record.sleeping {
+            self.physics_world.sleep_rigid_cellular_body(&body);
+        }
         self.rigid_cellular_bodies.push(body);
         self.rigid_cellular_topology_revision =
             self.rigid_cellular_topology_revision.wrapping_add(1);
@@ -1752,6 +1764,7 @@ impl Scene {
             {
                 let body = self.rigid_cellular_bodies.swap_remove(index);
                 self.rigid_activation_pending.remove(&body.id);
+                self.rigid_sleeping_pending.remove(&body.id);
                 self.physics_world.remove_rigid_cellular_body(&body);
                 for cell in body.cells {
                     self.release_rigid_cell_state(cell.state_slot);
@@ -1856,6 +1869,9 @@ impl Scene {
                 record.angular_velocity,
             );
             body.id = record.id;
+            if record.sleeping {
+                self.rigid_sleeping_pending.insert(body.id);
+            }
             self.physics_world
                 .set_rigid_cellular_body_enabled(&body, false);
             self.rigid_activation_pending.insert(body.id);
@@ -1924,6 +1940,9 @@ impl Scene {
                     if self.rigid_activation_pending.remove(&body.id) {
                         self.physics_world
                             .set_rigid_cellular_body_enabled(body, true);
+                        if self.rigid_sleeping_pending.remove(&body.id) {
+                            self.physics_world.sleep_rigid_cellular_body(body);
+                        }
                     }
                 }
             }
@@ -2407,6 +2426,7 @@ impl Scene {
         };
         let body = self.rigid_cellular_bodies.swap_remove(body_index);
         self.rigid_activation_pending.remove(&body.id);
+        self.rigid_sleeping_pending.remove(&body.id);
         self.rigid_cellular_topology_revision =
             self.rigid_cellular_topology_revision.wrapping_add(1);
         self.rigid_cellular_support.clear();

@@ -152,6 +152,7 @@ impl ScenePhysicsWorld {
             angle: position.rotation.angle(),
             linear_velocity: [rigid_body.linvel().x, rigid_body.linvel().y],
             angular_velocity: rigid_body.angvel(),
+            sleeping: rigid_body.is_sleeping(),
             center_of_mass: [center.x, center.y],
             inverse_mass: rigid_body.mass_properties().local_mprops.inv_mass,
             inverse_angular_inertia: rigid_body.mass_properties().effective_world_inv_inertia,
@@ -172,6 +173,12 @@ impl ScenePhysicsWorld {
     ) {
         if let Some(rigid_body) = self.rapier.bodies.get_mut(body.handle) {
             rigid_body.set_enabled(enabled);
+        }
+    }
+
+    pub(crate) fn sleep_rigid_cellular_body(&mut self, body: &RigidCellularBody) {
+        if let Some(rigid_body) = self.rapier.bodies.get_mut(body.handle) {
+            rigid_body.sleep();
         }
     }
 

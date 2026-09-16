@@ -686,6 +686,7 @@ mod tests {
             angle: 0.0,
             linear_velocity: [0.0; 2],
             angular_velocity: 0.0,
+            sleeping: false,
             center_of_mass: [0.5; 2],
             inverse_mass: 1.0,
             inverse_angular_inertia: 1.0,
