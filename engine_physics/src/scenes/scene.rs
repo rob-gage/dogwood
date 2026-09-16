@@ -119,6 +119,8 @@ pub struct Scene {
     cellular_appearances: AcceleratorBuffer,
     /// The parallel buffer containing persistent static-cell integrity
     cellular_integrities: AcceleratorBuffer,
+    cellular_amounts: AcceleratorBuffer,
+    cellular_temperatures: AcceleratorBuffer,
     /// Fixed-capacity persistent integrity for authoritative rigid cells.
     rigid_cell_integrities: AcceleratorBuffer,
     /// Transient rasterized possessed-pawn interaction geometry
@@ -223,6 +225,8 @@ impl Scene {
             accelerator.allocate::<u32>(buffered_cell_count);
         let cellular_integrities: AcceleratorBuffer =
             accelerator.allocate::<f32>(buffered_cell_count);
+        let cellular_amounts = accelerator.allocate::<f32>(buffered_cell_count);
+        let cellular_temperatures = accelerator.allocate::<f32>(buffered_cell_count);
         let rigid_cell_integrities: AcceleratorBuffer =
             accelerator.allocate::<f32>(buffered_cell_count);
         let cellular_physics_body_proxy =
@@ -249,6 +253,8 @@ impl Scene {
             accelerator.as_ref(),
             &cellular_material_identifiers,
             &cellular_appearances,
+            &cellular_amounts,
+            &cellular_temperatures,
             cellular_physics_body_proxy.occupancy_buffer(),
             simulation.width + buffer_size,
             simulation.height + buffer_size,
@@ -260,6 +266,8 @@ impl Scene {
             &cellular_appearances,
             &cellular_integrities,
             cellular_dynamic.kinematics_buffer(),
+            &cellular_amounts,
+            &cellular_temperatures,
             fluids.edit_cells_buffer(),
             fluids.gpu_edits_pending_buffer(),
             gases.velocity_buffer(),
@@ -364,6 +372,8 @@ impl Scene {
             cellular_material_identifiers,
             cellular_appearances,
             cellular_integrities,
+            cellular_amounts,
+            cellular_temperatures,
             rigid_cell_integrities,
             cellular_physics_body_proxy,
             rigid_cellular_bodies: Vec::new(),
@@ -1094,6 +1104,8 @@ impl Scene {
                 self.accelerator.as_ref(),
                 &self.cellular_material_identifiers,
                 &self.cellular_appearances,
+                &self.cellular_amounts,
+                &self.cellular_temperatures,
                 TileCoordinates {
                     x: self.origin.x - buffer_size,
                     y: self.origin.y - buffer_size,

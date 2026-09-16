@@ -52,6 +52,10 @@ const INVALID_CELLULAR_DYNAMIC_CLAIM_INDEX: u32 = 0xffffffffu;
 @group(0) @binding(6) var<storage, read_write> proposals: array<Proposal>;
 @group(0) @binding(7) var<uniform> parameters: Parameters;
 @group(0) @binding(8) var<storage, read> external_body_occupancy: array<u32>;
+@group(0) @binding(9) var<storage, read> cellular_amounts: array<f32>;
+@group(0) @binding(10) var<storage, read> cellular_temperatures: array<f32>;
+@group(0) @binding(11) var<storage, read_write> amounts_output: array<f32>;
+@group(0) @binding(12) var<storage, read_write> temperatures_output: array<f32>;
 
 // Reset transient atomic contention state
 @compute @workgroup_size(64)
@@ -164,6 +168,8 @@ fn resolve_cellular_dynamic_movement_proposals(@builtin(global_invocation_id) in
             cellular_dynamic_source_physical_cell_index_from_claim_ticket(claim, cell);
         material_identifiers_output[index] = cellular_material_identifiers[source_index];
         appearances_output[index] = cellular_appearances[source_index];
+        amounts_output[index] = cellular_amounts[source_index];
+        temperatures_output[index] = cellular_temperatures[source_index];
         cellular_kinematics[index] = proposals[source_index].kinematics;
         return;
     }
@@ -183,17 +189,23 @@ fn resolve_cellular_dynamic_movement_proposals(@builtin(global_invocation_id) in
                     ) {
             material_identifiers_output[index] = EMPTY_MATERIAL_IDENTIFIER;
             appearances_output[index] = 0u;
+            amounts_output[index] = 0.0;
+            temperatures_output[index] = 0.0;
             cellular_kinematics[index] = vec4<f32>(0.0);
             return;
         }
         material_identifiers_output[index] = material_identifier;
         appearances_output[index] = cellular_appearances[index];
+        amounts_output[index] = cellular_amounts[index];
+        temperatures_output[index] = cellular_temperatures[index];
         cellular_kinematics[index] = proposal.kinematics;
         return;
     }
     // preserve static, empty, and inactive-buffered cells unchanged
     material_identifiers_output[index] = material_identifier;
     appearances_output[index] = cellular_appearances[index];
+    amounts_output[index] = cellular_amounts[index];
+    temperatures_output[index] = cellular_temperatures[index];
 }
 
 // Choose one immutable-empty gravity-relative slide destination

@@ -14,6 +14,8 @@ pub struct CellularDynamic {
     material_identifiers_output: AcceleratorBuffer,
     /// Resolved persistent appearances before they are committed to canonical storage
     appearances_output: AcceleratorBuffer,
+    amounts_output: AcceleratorBuffer,
+    temperatures_output: AcceleratorBuffer,
     /// One atomic deterministic-priority claim per possible destination
     destination_claims: AcceleratorBuffer,
     /// One proposed destination and integrated kinematic state per source cell
@@ -44,6 +46,8 @@ impl CellularDynamic {
         accelerator: &Accelerator,
         cellular_material_identifiers: &AcceleratorBuffer,
         cellular_appearances: &AcceleratorBuffer,
+        cellular_amounts: &AcceleratorBuffer,
+        cellular_temperatures: &AcceleratorBuffer,
         external_body_occupancy: &AcceleratorBuffer,
         buffered_width: u16,
         buffered_height: u16,
@@ -62,6 +66,8 @@ impl CellularDynamic {
             accelerator.allocate::<u32>(buffered_cell_count as usize);
         let appearances_output: AcceleratorBuffer =
             accelerator.allocate::<u32>(buffered_cell_count as usize);
+        let amounts_output = accelerator.allocate::<f32>(buffered_cell_count as usize);
+        let temperatures_output = accelerator.allocate::<f32>(buffered_cell_count as usize);
         let destination_claims: AcceleratorBuffer =
             accelerator.allocate::<u32>(buffered_cell_count as usize);
         let proposals: AcceleratorBuffer =
@@ -95,6 +101,10 @@ impl CellularDynamic {
                         count: None,
                     },
                     Self::cellular_dynamic_storage_layout_entry(8, true),
+                    Self::cellular_dynamic_storage_layout_entry(9, true),
+                    Self::cellular_dynamic_storage_layout_entry(10, true),
+                    Self::cellular_dynamic_storage_layout_entry(11, false),
+                    Self::cellular_dynamic_storage_layout_entry(12, false),
                 ],
             });
         // bind immutable canonical inputs separately from resolved outputs and transient state
@@ -107,6 +117,22 @@ impl CellularDynamic {
                     resource: cellular_material_identifiers
                         .wgpu_buffer()
                         .as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: cellular_amounts.wgpu_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: cellular_temperatures.wgpu_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: amounts_output.wgpu_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 12,
+                    resource: temperatures_output.wgpu_buffer().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 8,
@@ -185,6 +211,8 @@ impl CellularDynamic {
             kinematics,
             material_identifiers_output,
             appearances_output,
+            amounts_output,
+            temperatures_output,
             destination_claims,
             proposals,
             parameters,
@@ -203,6 +231,8 @@ impl CellularDynamic {
         accelerator: &Accelerator,
         cellular_material_identifiers: &AcceleratorBuffer,
         cellular_appearances: &AcceleratorBuffer,
+        cellular_amounts: &AcceleratorBuffer,
+        cellular_temperatures: &AcceleratorBuffer,
         buffered_origin: TileCoordinates,
         buffered_width: u16,
         buffered_height: u16,
@@ -253,6 +283,20 @@ impl CellularDynamic {
             self.material_identifiers_output.wgpu_buffer(),
             0,
             cellular_material_identifiers.wgpu_buffer(),
+            0,
+            cell_field_size,
+        );
+        encoder.copy_buffer_to_buffer(
+            self.amounts_output.wgpu_buffer(),
+            0,
+            cellular_amounts.wgpu_buffer(),
+            0,
+            cell_field_size,
+        );
+        encoder.copy_buffer_to_buffer(
+            self.temperatures_output.wgpu_buffer(),
+            0,
+            cellular_temperatures.wgpu_buffer(),
             0,
             cell_field_size,
         );
