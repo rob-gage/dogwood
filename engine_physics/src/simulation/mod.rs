@@ -20,6 +20,7 @@ mod scene_physics_world;
 mod scene_simulation;
 mod scene_simulation_configuration;
 mod thermal_edits;
+mod thermal_material_table;
 
 fn create_simulation_shader_module(
     device: &wgpu::Device,
@@ -46,3 +47,4 @@ pub use scene_physics_world::ScenePhysicsWorld;
 pub use scene_simulation::SceneSimulation;
 pub use scene_simulation_configuration::SceneSimulationConfiguration;
 pub(crate) use thermal_edits::ThermalEdits;
+pub(crate) use thermal_material_table::ThermalMaterialTable;

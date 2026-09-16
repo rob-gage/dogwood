@@ -8,7 +8,7 @@ use crate::simulation::{
     CellularCollision, CellularDynamic, CellularPhysicsBodyProxy, CellularPressure,
     CollisionOccupancySnapshot, Fluids, Gases, MaterialMutations, RigidCellularBody,
     RigidCellularBodyCell, RigidCellularBodyState, ScenePhysicsWorld, SceneSimulationConfiguration,
-    ThermalEdits,
+    ThermalEdits, ThermalMaterialTable,
 };
 use crate::{
     actors::{Actor, ActorRegistry},
@@ -154,6 +154,7 @@ pub struct Scene {
     /// GPU-resident cross-form material replacement requests.
     material_mutations: MaterialMutations,
     thermal_edits: ThermalEdits,
+    thermal_material_table: ThermalMaterialTable,
     /// GPU simulation of dynamic cells in the canonical cellular buffers
     cellular_dynamic: CellularDynamic,
     /// GPU impulse, pressure, integrity, and fracture subsystem
@@ -313,6 +314,8 @@ impl Scene {
             fluids.particle_capacity(),
             buffered_cell_count as u32,
         );
+        let thermal_material_table =
+            ThermalMaterialTable::new(accelerator.as_ref(), data.materials());
         let cellular_pressure: CellularPressure = CellularPressure::new(
             accelerator.as_ref(),
             data.materials(),
@@ -430,6 +433,7 @@ impl Scene {
             gases,
             material_mutations,
             thermal_edits,
+            thermal_material_table,
             cellular_dynamic,
             cellular_pressure,
             cellular_collision,
