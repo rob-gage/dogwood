@@ -11,6 +11,8 @@ pub struct SceneSimulationConfiguration {
     pub ambient_temperature: f32,
     /// Conductivity of implicit empty space.
     pub empty_space_thermal_conductivity: f32,
+    /// Thermal capacity of one empty ambient cell.
+    pub empty_space_heat_capacity: f32,
     /// Largest supported explicit gas compression ratio.
     pub maximum_gas_concentration: f32,
     /// The width of the active simulation area in tiles
@@ -36,6 +38,8 @@ impl SceneSimulationConfiguration {
             || self.ambient_temperature < 0.0
             || !self.empty_space_thermal_conductivity.is_finite()
             || self.empty_space_thermal_conductivity < 0.0
+            || !self.empty_space_heat_capacity.is_finite()
+            || self.empty_space_heat_capacity <= 0.0
             || !self.maximum_gas_concentration.is_finite()
             || self.maximum_gas_concentration < 1.0
         {

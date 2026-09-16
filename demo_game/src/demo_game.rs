@@ -110,6 +110,7 @@ impl DemoGame {
                 gravity: [0.0, -18.0],
                 ambient_temperature: 293.15,
                 empty_space_thermal_conductivity: 0.0,
+                empty_space_heat_capacity: 1.0,
                 maximum_gas_concentration: 4.0,
                 width: 48,
                 height: 27,

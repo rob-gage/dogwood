@@ -1006,6 +1006,15 @@ mod tests {
             .set_thermal(
                 static_id,
                 MaterialThermalProperties {
+                    conductivity: 3.5,
+                    specific_heat_capacity: 2.25,
+                    default_temperature: Some(315.0),
+                    cold_transition: Some(MaterialThermalTransition {
+                        threshold_temperature: 250.0,
+                        target: fluid_id,
+                        yield_rate: 0.75,
+                        latent_energy: 4.0,
+                    }),
                     hot_transition: Some(MaterialThermalTransition {
                         threshold_temperature: 400.0,
                         target: dynamic_id,
@@ -1060,6 +1069,51 @@ mod tests {
             .position(|value| value == b"dwmtmeta")
             .unwrap();
         bytes[extension + 8] = 2;
+        assert!(MaterialRegistry::deserialize(&mut bytes.as_slice()).is_err());
+    }
+
+    #[test]
+    fn invalid_transition_target_in_metadata_is_rejected() {
+        let mut builder = MaterialRegistryBuilder::new();
+        let source = builder.register(Material::CellularDynamic {
+            name: "source".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(1, 1, 1)),
+            mass: 1.0,
+            pressure_transmission: 0.5,
+            friction: 0.5,
+            restitution: 0.0,
+        });
+        let target = builder.register(Material::CellularDynamic {
+            name: "target".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(2, 2, 2)),
+            mass: 1.0,
+            pressure_transmission: 0.5,
+            friction: 0.5,
+            restitution: 0.0,
+        });
+        builder
+            .set_thermal(
+                source,
+                MaterialThermalProperties {
+                    hot_transition: Some(MaterialThermalTransition {
+                        threshold_temperature: 400.0,
+                        target,
+                        yield_rate: 1.0,
+                        latent_energy: 1.0,
+                    }),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let registry = builder.compile().unwrap();
+        let mut bytes = Vec::new();
+        registry.serialize(&mut bytes).unwrap();
+        let extension = bytes
+            .windows(8)
+            .position(|value| value == b"dwmtmeta")
+            .unwrap();
+        bytes[extension + 16 + 32..extension + 16 + 36]
+            .copy_from_slice(&0x3fff_ffffu32.to_le_bytes());
         assert!(MaterialRegistry::deserialize(&mut bytes.as_slice()).is_err());
     }
 }
