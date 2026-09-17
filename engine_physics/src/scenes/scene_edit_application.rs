@@ -24,6 +24,7 @@ impl Scene {
         let mut rigid_destroy_indices = Vec::new();
         let mut deferred = SceneEditBatch::new();
         for edit in edits.drain() {
+            let destroy_cells = matches!(&edit, SceneEdit::DestroyCells { .. });
             match edit {
                 SceneEdit::PlaceRigidBody { cells } => {
                     if cells.is_empty() {
@@ -116,7 +117,7 @@ impl Scene {
                         }
                     }
                 }
-                SceneEdit::Erase { cells } => {
+                SceneEdit::Erase { cells } | SceneEdit::DestroyCells { cells } => {
                     for coordinates in cells {
                         if let Some(physical_index) = self.cell_edit_index(coordinates) {
                             self.queue_resident_cell_clear(
@@ -129,24 +130,11 @@ impl Scene {
                                 &mut gas_edits,
                             );
                         } else {
-                            deferred.erase(vec![coordinates]);
-                        }
-                    }
-                }
-                SceneEdit::DestroyCells { cells } => {
-                    for coordinates in cells {
-                        if let Some(physical_index) = self.cell_edit_index(coordinates) {
-                            self.queue_resident_cell_clear(
-                                coordinates,
-                                physical_index,
-                                &mut rigid_destroy_indices,
-                                &mut cell_edits,
-                                &mut fluid_edits,
-                                &mut gas_clear_cells,
-                                &mut gas_edits,
-                            );
-                        } else {
-                            deferred.destroy_cells(vec![coordinates]);
+                            if destroy_cells {
+                                deferred.destroy_cells(vec![coordinates]);
+                            } else {
+                                deferred.erase(vec![coordinates]);
+                            }
                         }
                     }
                 }
