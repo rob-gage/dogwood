@@ -1,9 +1,7 @@
 // Copyright Rob Gage 2026
 
-use crate::{
-    materials::{Material, MaterialIdentifier, MaterialRegistry},
-    tiles::CellularAppearance,
-};
+use super::RigidCellularBodyCell;
+use crate::materials::{Material, MaterialRegistry};
 use rapier2d::prelude::{MassProperties, Pose, RigidBodyHandle, SharedShape, Vector};
 use std::collections::HashSet;
 
@@ -14,34 +12,6 @@ pub(crate) struct RigidCellularBody {
     pub(crate) handle: RigidBodyHandle,
     /// Local integer cells relative to the body's local origin
     pub(crate) cells: Vec<RigidCellularBodyCell>,
-}
-
-/// One physical rigid cell.  Its state handle is independent of body and
-/// raster descriptor ordering, so splitting a body cannot reset its state.
-#[derive(Clone, Copy)]
-pub(crate) struct RigidCellularBodyCell {
-    pub(crate) local: [i32; 2],
-    pub(crate) material: MaterialIdentifier,
-    pub(crate) appearance: CellularAppearance,
-    pub(crate) state_slot: u32,
-    pub(crate) state_generation: u32,
-}
-
-impl RigidCellularBodyCell {
-    #[cfg(test)]
-    pub(crate) const fn test_cell(
-        local: [i32; 2],
-        material: MaterialIdentifier,
-        appearance: CellularAppearance,
-    ) -> Self {
-        Self {
-            local,
-            material,
-            appearance,
-            state_slot: 0,
-            state_generation: 0,
-        }
-    }
 }
 
 impl RigidCellularBody {
