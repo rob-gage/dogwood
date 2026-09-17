@@ -1,5 +1,6 @@
 // Copyright Rob Gage 2026
 
+pub(crate) mod simulation_constants;
 #[cfg(test)]
 pub(crate) mod tests;
 
@@ -18,7 +19,11 @@ pub(crate) fn create_simulation_shader_module(
     )
 }
 
-const PHYSICS_SHADER_UTILITIES: [engine_compute::ComposableShaderUtility; 7] = [
+const PHYSICS_SHADER_UTILITIES: [engine_compute::ComposableShaderUtility; 8] = [
+    engine_compute::ComposableShaderUtility {
+        source: include_str!("simulation_constants.wgsl"),
+        file_path: "engine_physics/src/simulation/simulation_constants.wgsl",
+    },
     engine_compute::ComposableShaderUtility {
         source: include_str!("../simulation_utility/actor_collision_shape.wgsl"),
         file_path: "engine_physics/src/simulation_utility/actor_collision_shape.wgsl",

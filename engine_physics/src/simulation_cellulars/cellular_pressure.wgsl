@@ -2,19 +2,16 @@
 
 #define_import_path compute::cellular_pressure
 
+#import utility::simulation_constants::{CELLS_PER_TILE, CELLS_PER_TILE_FLOAT, CELL_COUNT_PER_TILE, EMPTY_MATERIAL_IDENTIFIER, GAS_MATERIAL_FORM, CELLULAR_STATIC_MATERIAL_FORM, CELLULAR_DYNAMIC_MATERIAL_FORM, FLUID_MATERIAL_FORM, MATERIAL_IDENTIFIER_INDEX_MASK, INVALID_MATERIAL_DENSE_INDEX, FLUID_EDIT_ERASE, INVALID_PHYSICAL_CELL_INDEX, INVALID_CELLULAR_DYNAMIC_CLAIM_INDEX, INVALID_FLUID_PARTICLE_INDEX, INVALID_FLUID_BUCKET_INDEX, ACTOR_SHAPE_CIRCLE, ACTOR_SHAPE_CAPSULE, ACTOR_SHAPE_RECTANGLE, PI, PBF_SUBSTEP_COUNT, PBF_CONSTRAINT_ITERATION_COUNT, CONSTRAINT_EPSILON, ARTIFICIAL_PRESSURE_DELTA_Q_RATIO, MAXIMUM_CORRECTION_CELLS, HARD_EXTERNAL_BODY_OCCUPANCY, SWIMMER_EXTERNAL_BODY_OCCUPANCY, RIGID_EXTERNAL_BODY_OCCUPANCY, IMMOVABLE_CONTACT_MASS, CONTACT_PRESSURE_TRANSFER, LINEAR_FIXED_SCALE, ANGULAR_FIXED_SCALE, CELL_SIZE, CELL_HALF, CELL_RADIUS, INCOMPRESSIBILITY_MIXING, RESERVATION_SCALE, RESERVATION_SCALE_U32}
+
 #import utility::cell_coordinates::{
-    CELL_COUNT_PER_TILE,
     world_cell_from_logical_tile_major_index,
 }
 #import utility::material_identifier::{
-    CELLULAR_DYNAMIC_MATERIAL_FORM,
-    CELLULAR_STATIC_MATERIAL_FORM,
-    EMPTY_MATERIAL_IDENTIFIER,
     material_form_from_identifier,
     material_index_from_identifier,
 }
 #import utility::tile_ring::{
-    INVALID_PHYSICAL_CELL_INDEX,
     physical_cell_index_from_world_cell,
     physical_tile_from_logical_tile,
     world_cell_from_physical_tile_ring_index,
@@ -140,13 +137,6 @@ struct RigidPredictedMotion {
 @group(1) @binding(0) var<storage, read_write> pressure_indirect_dispatch: array<atomic<u32>>;
 @group(1) @binding(1) var<storage, read_write> rigid_damage_dispatch: array<atomic<u32>>;
 
-const IMMOVABLE_CONTACT_MASS: f32 = 1000000.0;
-const CONTACT_PRESSURE_TRANSFER: f32 = 0.02;
-const LINEAR_FIXED_SCALE: f32 = 256.0;
-const ANGULAR_FIXED_SCALE: f32 = 64.0;
-const CELL_SIZE: f32 = 0.125;
-const CELL_HALF: f32 = 0.0625;
-const CELL_RADIUS: f32 = 0.08838835;
 var<workgroup> pressure_tile_has_source: atomic<u32>;
 
 fn effective_pressure_material(index: u32) -> u32 {

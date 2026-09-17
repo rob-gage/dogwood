@@ -2,14 +2,13 @@
 
 use super::{CollisionReadbackSlot, CollisionReadbackStatus};
 use crate::simulation::CollisionOccupancySnapshot;
+use crate::simulation::simulation_constants::*;
 use crate::tiles::TileCoordinates;
 use engine_compute::{Accelerator, AcceleratorBuffer};
 use std::{
     io,
     sync::{Arc, Mutex},
 };
-
-const READBACK_SLOT_COUNT: usize = 3;
 
 /// Derives compact collision occupancy from the authoritative GPU cellular state
 pub struct CellularCollision {

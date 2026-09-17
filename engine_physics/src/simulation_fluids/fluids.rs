@@ -1,6 +1,7 @@
 // Copyright Rob Gage 2026
 
 use crate::scenes::{FluidDownload, FluidUpload};
+use crate::simulation::simulation_constants::*;
 use crate::{
     actors::ActorCollisionShape,
     chunks::ChunkFluidParticle,
@@ -8,14 +9,6 @@ use crate::{
 };
 use engine_compute::{Accelerator, AcceleratorBuffer};
 use std::io;
-
-const SUPPORT_RADIUS_CELLS: f32 = 2.5;
-const PARTICLE_RADIUS_CELLS: f32 = 0.45;
-const MAXIMUM_MOVEMENT_CELLS: u32 = 4;
-const MAXIMUM_CORRECTION_CELLS: f32 = 0.25;
-const FLUID_EDIT_ERASE: u32 = 1;
-const PBF_SUBSTEP_COUNT: u32 = 2;
-const PBF_CONSTRAINT_ITERATION_COUNT: u32 = 4;
 
 /// Owns authoritative fluid particles and their transient spatial/cellular representations.
 pub struct Fluids {

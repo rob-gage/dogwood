@@ -2,6 +2,8 @@
 
 #define_import_path compute::fluids
 
+#import utility::simulation_constants::{CELLS_PER_TILE, CELLS_PER_TILE_FLOAT, CELL_COUNT_PER_TILE, EMPTY_MATERIAL_IDENTIFIER, GAS_MATERIAL_FORM, CELLULAR_STATIC_MATERIAL_FORM, CELLULAR_DYNAMIC_MATERIAL_FORM, FLUID_MATERIAL_FORM, MATERIAL_IDENTIFIER_INDEX_MASK, INVALID_MATERIAL_DENSE_INDEX, FLUID_EDIT_ERASE, INVALID_PHYSICAL_CELL_INDEX, INVALID_CELLULAR_DYNAMIC_CLAIM_INDEX, INVALID_FLUID_PARTICLE_INDEX, INVALID_FLUID_BUCKET_INDEX, ACTOR_SHAPE_CIRCLE, ACTOR_SHAPE_CAPSULE, ACTOR_SHAPE_RECTANGLE, PI, PBF_SUBSTEP_COUNT, PBF_CONSTRAINT_ITERATION_COUNT, CONSTRAINT_EPSILON, ARTIFICIAL_PRESSURE_DELTA_Q_RATIO, MAXIMUM_CORRECTION_CELLS, HARD_EXTERNAL_BODY_OCCUPANCY, SWIMMER_EXTERNAL_BODY_OCCUPANCY, RIGID_EXTERNAL_BODY_OCCUPANCY, IMMOVABLE_CONTACT_MASS, CONTACT_PRESSURE_TRANSFER, LINEAR_FIXED_SCALE, ANGULAR_FIXED_SCALE, CELL_SIZE, CELL_HALF, CELL_RADIUS, INCOMPRESSIBILITY_MIXING, RESERVATION_SCALE, RESERVATION_SCALE_U32}
+
 #import utility::actor_collision_shape::{
     ActorShape,
     actor_shape_from_parameters,
@@ -9,19 +11,15 @@
     world_position_is_inside_actor_shape,
 }
 #import utility::cell_coordinates::{
-    CELLS_PER_TILE_FLOAT,
     world_cell_from_logical_tile_major_index,
 }
 #import utility::material_identifier::{
-    EMPTY_MATERIAL_IDENTIFIER,
-    FLUID_MATERIAL_FORM,
     material_form_from_identifier,
     material_index_from_identifier,
 }
-#import utility::fluid_edit::FLUID_EDIT_ERASE
 #import utility::material_identifier::material_dense_index
 #import utility::thermal_material::{ThermalMaterialRecord, ThermalMaterialParameters, thermal_material_conductivity, thermal_material_specific_heat_capacity}
-#import utility::tile_ring::{INVALID_PHYSICAL_CELL_INDEX, physical_cell_index_from_world_cell}
+#import utility::tile_ring::physical_cell_index_from_world_cell
 #import utility::fluid_spatial::{fluid_bucket_coordinates_from_position, fluid_bucket_index_from_coordinates, fluid_particle_belongs_to_cell}
 
 struct Particle {
@@ -113,17 +111,6 @@ struct DerivedFluidActorSample {
 @group(0) @binding(28) var<storage, read_write> derived_thermal: array<vec4<f32>>;
 @group(1) @binding(0) var<storage, read_write> gpu_edit_dispatch: array<u32>;
 
-const INVALID_FLUID_PARTICLE_INDEX: u32 = 0xffffffffu;
-const INVALID_FLUID_BUCKET_INDEX: u32 = 0xffffffffu;
-const PI: f32 = 3.141592653589793;
-const PBF_SUBSTEP_COUNT: f32 = 2.0;
-const PBF_CONSTRAINT_ITERATION_COUNT: f32 = 4.0;
-const CONSTRAINT_EPSILON: f32 = 0.01;
-const ARTIFICIAL_PRESSURE_DELTA_Q_RATIO: f32 = 0.3;
-const MAXIMUM_CORRECTION_CELLS: f32 = 0.25;
-const HARD_EXTERNAL_BODY_OCCUPANCY: u32 = 1u;
-const SWIMMER_EXTERNAL_BODY_OCCUPANCY: u32 = 2u;
-const RIGID_EXTERNAL_BODY_OCCUPANCY: u32 = 3u;
 
 fn is_hard_external_body(occupancy: u32) -> bool {
     return occupancy == HARD_EXTERNAL_BODY_OCCUPANCY ||

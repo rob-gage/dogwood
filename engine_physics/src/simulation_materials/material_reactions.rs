@@ -5,13 +5,11 @@
 //! ordering contract explicit and independently testable.
 
 use crate::materials::CompiledMaterialReaction;
+use crate::simulation::simulation_constants::*;
 use crate::{simulation::ReactionMaterialTable, simulation_fluids::FluidAuthorityView};
 use engine_compute::{Accelerator, AcceleratorBuffer};
 use std::collections::BTreeSet;
 use std::sync::mpsc::{Receiver, sync_channel};
-
-const RIGID_REMOVAL_EVENT_SIZE: u64 = 32;
-const RIGID_REMOVAL_EVENTS_OFFSET: u64 = 256;
 
 /// Immutable-snapshot GPU reaction discovery. Application is intentionally a
 /// separate stage so no product becomes an input until the next chemistry tick.

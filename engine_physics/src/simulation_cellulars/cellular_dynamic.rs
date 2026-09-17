@@ -1,10 +1,7 @@
 // Copyright Rob Gage 2026
 
-use crate::tiles::TileCoordinates;
+use crate::{simulation::simulation_constants::*, tiles::TileCoordinates};
 use engine_compute::{Accelerator, AcceleratorBuffer};
-
-/// The maximum number of grid steps one particle may travel during a fixed tick
-const MAXIMUM_MOVEMENT_CELLS: u32 = 4;
 
 /// Simulates dynamic cellular material in the canonical cellular buffers
 pub struct CellularDynamic {

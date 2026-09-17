@@ -2,6 +2,7 @@
 
 use crate::actors::{Actor, ActorCellularProxyState, ActorCollisionShape};
 use crate::materials::MaterialRegistry;
+use crate::simulation::simulation_constants::*;
 use crate::simulation::{CollisionOccupancySnapshot, RigidCellularBody, RigidCellularBodyState};
 use rapier2d::parry::query::ShapeCastOptions;
 use rapier2d::prelude::{
@@ -12,10 +13,6 @@ use std::collections::{HashMap, HashSet};
 #[cfg(debug_assertions)]
 use std::time::Instant;
 
-const TERRAIN_COLLISION_PATCH_TILES: i32 = 4;
-const TERRAIN_COLLISION_PATCH_CELLS: i32 = TERRAIN_COLLISION_PATCH_TILES * 8;
-const TERRAIN_PATCH_RETENTION_TICKS: u64 = 120;
-const DYNAMIC_TILE_RETENTION_TICKS: u64 = 30;
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct TerrainPatchKey {
     x: i32,
@@ -1033,7 +1030,7 @@ impl ScenePhysicsWorld {
 
 #[cfg(test)]
 mod tests {
-    use super::ScenePhysicsWorld;
+    use crate::simulation_rigid_bodies::ScenePhysicsWorld;
     use crate::{
         actors::{ActorCellularProxyState, ActorCollisionShape},
         simulation::CollisionOccupancySnapshot,

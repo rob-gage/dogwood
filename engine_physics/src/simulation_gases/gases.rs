@@ -1,19 +1,12 @@
 // Copyright Rob Gage 2026
 
+use crate::simulation::simulation_constants::*;
 use crate::{
     materials::{Material, MaterialRegistry},
     scenes::{GasDownload, GasUpload},
     tiles::{TileArea, TileCoordinates},
 };
 use engine_compute::{Accelerator, AcceleratorBuffer};
-
-const PRESSURE_ITERATION_COUNT: u32 = 12;
-const VORTICITY_CONFINEMENT: f32 = 0.2;
-const BUOYANCY_COEFFICIENT: f32 = 0.05;
-const MAXIMUM_SPEED_CELLS_PER_SECOND: f32 = 8.0;
-const FLUID_OBSTACLE_COVERAGE: f32 = 0.85;
-const AMBIENT_DENSITY: f32 = 1.0;
-const AUTHORED_CONCENTRATION: f32 = 1.0;
 
 /// Owns the shared Eulerian gas velocity and per-species concentration fields
 pub struct Gases {

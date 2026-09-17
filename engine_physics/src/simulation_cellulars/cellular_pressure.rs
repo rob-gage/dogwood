@@ -1,5 +1,6 @@
 // Copyright Rob Gage 2026
 
+use crate::simulation::simulation_constants::*;
 use crate::simulation::{
     RigidGranularReactionBatch, RigidGranularReadbackSlot, RigidGranularReadbackStatus,
 };
@@ -13,10 +14,6 @@ use std::{
     io,
     sync::{Arc, Mutex},
 };
-
-const PRESSURE_DAMAGE_RATE: f32 = 10.0;
-const RIGID_REACTION_READBACK_SLOT_COUNT: usize = 3;
-const INITIAL_RIGID_BODY_CAPACITY: usize = 16;
 
 /// Applies transient directional cellular pressure and static integrity damage
 pub struct CellularPressure {
@@ -1285,10 +1282,6 @@ impl Drop for CellularPressure {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "../simulation/rigid_contact_tests.rs"]
-mod rigid_contact_tests;
 
 #[cfg(test)]
 mod tests {
