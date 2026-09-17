@@ -16,25 +16,45 @@ use engine::{
 pub struct TemplateMaterials {
     /// Registered materials and their compiled derived properties.
     pub registry: MaterialRegistry,
+    /// Material identifier for stone debris.
     pub stone_debris: MaterialIdentifier,
+    /// Material identifier for sand.
     pub sand: MaterialIdentifier,
+    /// Material identifier for stone.
     pub stone: MaterialIdentifier,
+    /// Material identifier for water.
     pub water: MaterialIdentifier,
+    /// Material identifier for water vapor.
     pub water_vapor: MaterialIdentifier,
+    /// Material identifier for smoke.
     pub smoke: MaterialIdentifier,
+    /// Material identifier for fire.
     pub fire: MaterialIdentifier,
+    /// Material identifier for slush.
     pub slush: MaterialIdentifier,
+    /// Material identifier for ice.
     pub ice: MaterialIdentifier,
+    /// Material identifier for lava.
     pub lava: MaterialIdentifier,
+    /// Material identifier for molten glass.
     pub molten_glass: MaterialIdentifier,
+    /// Material identifier for broken glass.
     pub broken_glass: MaterialIdentifier,
+    /// Material identifier for glass.
     pub glass: MaterialIdentifier,
+    /// Material identifier for coal.
     pub coal: MaterialIdentifier,
+    /// Material identifier for oil.
     pub oil: MaterialIdentifier,
+    /// Material identifier for natural gas.
     pub natural_gas: MaterialIdentifier,
+    /// Material identifier for blasting powder.
     pub blasting_powder: MaterialIdentifier,
+    /// Material identifier for acid.
     pub acid: MaterialIdentifier,
+    /// Material identifier for acid gas.
     pub acid_gas: MaterialIdentifier,
+    /// Material identifier for acid sludge.
     pub acid_sludge: MaterialIdentifier,
     /// Per-channel variation applied when rendering stone.
     pub stone_variation: [f32; 4],
