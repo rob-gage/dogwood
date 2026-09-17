@@ -76,6 +76,8 @@ pub struct CellularPressure {
 
 #[path = "cellular_pressure_construction.rs"]
 mod cellular_pressure_construction;
+#[path = "cellular_pressure_operations.rs"]
+mod cellular_pressure_operations;
 #[path = "cellular_pressure_runtime.rs"]
 mod cellular_pressure_runtime;
 #[path = "cellular_pressure_simulation.rs"]
