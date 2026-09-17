@@ -58,6 +58,7 @@ pub fn create_physics_shader_module(
     create_simulation_shader_module(device, label, source, file_path)
 }
 
+pub use crate::scene_simulation::{SceneSimulation, SceneSimulationConfiguration};
 pub(crate) use crate::simulation_cellulars::CellularStaticStateGather;
 pub use crate::simulation_cellulars::{
     CellParticle, CellularCollision, CellularDynamic, CellularPhysicsBodyProxy, CellularPressure,
@@ -73,7 +74,6 @@ pub(crate) use crate::simulation_rigid_bodies::{
     RigidCellularBodyState, RigidGranularReactionBatch, RigidGranularReadbackSlot,
     RigidGranularReadbackStatus,
 };
-pub use crate::simulation_scene::{SceneSimulation, SceneSimulationConfiguration};
 #[cfg(test)]
 pub(crate) use crate::simulation_thermal::test_rigid_phase_readback_len;
 pub(crate) use crate::simulation_thermal::{
