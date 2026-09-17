@@ -1,8 +1,7 @@
 // Copyright Rob Gage 2026
 
 use super::{
-    actor_cellular_proxy_state::ActorCellularProxyState,
-    actor_collision_shape::ActorCollisionShape,
+    actor_cellular_proxy_state::ActorCellularProxyState, actor_collision_shape::ActorCollisionShape,
 };
 use crate::{
     actors::{

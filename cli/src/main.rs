@@ -3,9 +3,7 @@
 use std::{
     error::Error,
     fs,
-    io::{
-        self,
-        Write},
+    io::{self, Write},
     path::{Path, PathBuf},
 };
 

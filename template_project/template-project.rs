@@ -1,8 +1,8 @@
 // Copyright Rob Gage 2026
 
 use dogwood_engine::{Game, compute::Accelerator};
-use std::sync::Arc;
 use dogwood_template_project::TemplateProject;
+use std::sync::Arc;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _tracing_guard = dogwood_engine::diagnostics::initialize();
