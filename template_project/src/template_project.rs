@@ -130,18 +130,20 @@ impl Game for TemplateProject {
 mod tests {
     use super::*;
 
-    fn material_id(scene: &Scene, name: &str) -> MaterialIdentifier {
+    fn material_identifier(scene: &Scene, name: &str) -> MaterialIdentifier {
         scene
             .materials()
             .iter()
-            .find_map(|(id, material)| (material.name() == name).then_some(id))
+            .find_map(|(material_identifier, material)| {
+                (material.name() == name).then_some(material_identifier)
+            })
             .unwrap_or_else(|| panic!("missing demo material {name}"))
     }
 
     fn transition_target(scene: &Scene, source: &str, hot: bool) -> Option<String> {
         let properties = scene
             .materials()
-            .thermal_properties(material_id(scene, source))
+            .thermal_properties(material_identifier(scene, source))
             .unwrap();
         let transition = if hot {
             properties.hot_transition.as_ref()
@@ -190,7 +192,11 @@ mod tests {
             assert_eq!(transition_target(scene, source, true), None);
         }
         for (source, minimum) in [("Stone", 12), ("Ice", 32), ("Glass", 24)] {
-            match scene.materials().get(material_id(scene, source)).unwrap() {
+            match scene
+                .materials()
+                .get(material_identifier(scene, source))
+                .unwrap()
+            {
                 Material::CellularStatic {
                     minimum_rigid_body_cell_count,
                     ..
@@ -205,11 +211,16 @@ mod tests {
             ("Ice", "Slush"),
             ("Glass", "Broken Glass"),
         ] {
-            match scene.materials().get(material_id(scene, source)).unwrap() {
+            match scene
+                .materials()
+                .get(material_identifier(scene, source))
+                .unwrap()
+            {
                 Material::CellularStatic {
                     debris_material, ..
                 } => {
-                    let debris = debris_material.and_then(|id| scene.materials().get(id));
+                    let debris = debris_material
+                        .and_then(|material_identifier| scene.materials().get(material_identifier));
                     assert_eq!(debris.map(Material::name), Some(target));
                 }
                 _ => panic!("{source} is not static"),

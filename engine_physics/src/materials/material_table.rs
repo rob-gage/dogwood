@@ -20,8 +20,11 @@ impl MaterialTable {
         // hot transition, and padding) keep the WGSL record naturally 16-byte aligned.
         let records: Vec<[u32; 16]> = registry
             .iter()
-            .map(|(id, _)| {
-                let properties = registry.thermal_properties(id).cloned().unwrap_or_default();
+            .map(|(material_identifier, _)| {
+                let properties = registry
+                    .thermal_properties(material_identifier)
+                    .cloned()
+                    .unwrap_or_default();
                 let transition = |value: Option<&MaterialThermalTransition>| {
                     value.map_or([0, 0, 0, 0], |t| {
                         [
@@ -66,19 +69,23 @@ impl MaterialTable {
         }
         let static_count = registry
             .iter()
-            .filter(|(id, _)| id.form() == MaterialForm::CellularStatic)
+            .filter(|(material_identifier, _)| {
+                material_identifier.form() == MaterialForm::CellularStatic
+            })
             .count() as u32;
         let dynamic_count = registry
             .iter()
-            .filter(|(id, _)| id.form() == MaterialForm::CellularDynamic)
+            .filter(|(material_identifier, _)| {
+                material_identifier.form() == MaterialForm::CellularDynamic
+            })
             .count() as u32;
         let fluid_count = registry
             .iter()
-            .filter(|(id, _)| id.form() == MaterialForm::Fluid)
+            .filter(|(material_identifier, _)| material_identifier.form() == MaterialForm::Fluid)
             .count() as u32;
         let gas_count = registry
             .iter()
-            .filter(|(id, _)| id.form() == MaterialForm::Gas)
+            .filter(|(material_identifier, _)| material_identifier.form() == MaterialForm::Gas)
             .count() as u32;
         let offsets = [
             static_count + dynamic_count + fluid_count,
@@ -232,7 +239,7 @@ impl MaterialTable {
         let members: Vec<u32> = materials
             .reaction_selector_members()
             .iter()
-            .map(|id| id.as_u32())
+            .map(|material_identifier| material_identifier.as_u32())
             .collect();
         if !members.is_empty() {
             accelerator.wgpu_queue().write_buffer(
