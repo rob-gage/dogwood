@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-use super::dormant_rigid::{DormantRigidBody, owner_chunk};
+use super::scene_data_dormant_rigid::{DormantRigidBody, owner_chunk};
 use crate::{chunks::Chunk, materials::MaterialRegistry, tiles::TileCoordinates};
 use std::{
     collections::HashSet,
