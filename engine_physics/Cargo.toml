@@ -1,16 +1,17 @@
 # Copyright Rob Gage 2026
 
 [package]
-name = "engine_physics"
-version = "0.0.0"
-edition = "2024"
+name = "dogwood_engine_physics"
+version.workspace = true
+edition.workspace = true
 license.workspace = true
+description.workspace = true
 
 [dependencies]
-bevy_ecs = "0.19.1"
-engine_compute = { version = "0.0.0", path = "../engine_compute" }
-engine_graphics = { version = "0.0.0", path = "../engine_graphics" }
-engine_input = { version = "0.0.0", path = "../engine_input" }
-rapier2d = { version = "0.35.3", features = ["parallel"] }
+bevy_ecs = { workspace = true }
+dogwood_engine_compute = { workspace = true }
+dogwood_engine_graphics = { workspace = true }
+dogwood_engine_input = { workspace = true }
+rapier2d = { workspace = true }
 tracing.workspace = true
 wgpu.workspace = true

@@ -1,29 +1,30 @@
 # Copyright Rob Gage 2026
 
 [package]
-name = "engine"
-version = "0.0.0"
-edition = "2024"
+name = "dogwood_engine"
+version.workspace = true
+edition.workspace = true
 license.workspace = true
+description.workspace = true
 
 [features]
 default = ["x11"]
-x11 = ["winit/x11", "engine_user_interface/x11"]
+x11 = ["winit/x11", "dogwood_engine_user_interface/x11"]
 wayland = [
     "winit/wayland",
     "winit/wayland-dlopen",
-    "engine_user_interface/wayland",
+    "dogwood_engine_user_interface/wayland",
 ]
 
 [dependencies]
-engine_compute = { version = "0.0.0", path = "../engine_compute" }
-engine_graphics = { version = "0.0.0", path = "../engine_graphics" }
-engine_input = { version = "0.0.0", path = "../engine_input" }
-engine_physics = { version = "0.0.0", path = "../engine_physics" }
+dogwood_engine_compute = { workspace = true }
+dogwood_engine_graphics = { workspace = true }
+dogwood_engine_input = { workspace = true }
+dogwood_engine_physics = { workspace = true }
 wgpu = { workspace = true }
 egui-wgpu = { workspace = true }
-engine_user_interface = { version = "0.0.0", path = "../engine_user_interface" }
-winit = { version = "0.30.13", default-features = false, features = ["rwh_06"] }
+dogwood_engine_user_interface = { workspace = true }
+winit = { workspace = true, features = ["rwh_06"] }
 egui.workspace = true
 tracing.workspace = true
 tracing-appender.workspace = true

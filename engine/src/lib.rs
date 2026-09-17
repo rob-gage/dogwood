@@ -1,5 +1,11 @@
 // Copyright Rob Gage 2026
 
+extern crate dogwood_engine_compute as engine_compute;
+extern crate dogwood_engine_graphics as engine_graphics;
+extern crate dogwood_engine_input as engine_input;
+extern crate dogwood_engine_physics as engine_physics;
+extern crate dogwood_engine_user_interface as engine_user_interface;
+
 mod games;
 mod renders;
 

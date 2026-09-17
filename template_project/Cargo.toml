@@ -1,10 +1,11 @@
 # Copyright Rob Gage 2026
 
 [package]
-name = "template_project"
-version = "0.0.0"
-edition = "2024"
+name = "dogwood_template_project"
+version.workspace = true
+edition.workspace = true
 license.workspace = true
+description.workspace = true
 autobins = false
 
 [lib]
@@ -19,7 +20,7 @@ name = "template-project-editor"
 path = "template-project-editor.rs"
 
 [dependencies]
-editor = { version = "0.0.0", path = "../editor" }
-engine = { version = "0.0.0", path = "../engine" }
-template_materials = { version = "0.0.0", path = "../template_materials" }
+dogwood_editor = { workspace = true }
+dogwood_engine = { workspace = true }
+dogwood_template_materials = { workspace = true }
 tracing.workspace = true

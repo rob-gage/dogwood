@@ -22,15 +22,31 @@ opt-level = 1
 opt-level = 3
 
 [workspace.package]
+version = "0.0.1"
 license = "AGPL-3.0-only"
+edition = "2024"
+repository = "https://github.com/rob-gage/dogwood"
+description = "Dogwood Game Engine"
 
 [workspace.dependencies]
-egui = "0.36.1"
-egui-wgpu = { version = "0.36.1", default-features = false, features = ["winit"] }
-egui-winit = { version = "0.36.1", default-features = false }
-wgpu = { version = "30.0.0", features = ["naga-ir"] }
-naga_oil = "0.23.0"
-pollster = "0.4.0"
-tracing = { version = "0.1.44", features = ["release_max_level_off"] }
-tracing-appender = "0.2.5"
-tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+bevy_ecs = { version = "=0.19.1" }
+clap = { version = "=4.6.6", features = ["derive"] }
+dogwood_editor = { version = "=0.0.1", path = "editor" }
+dogwood_engine = { version = "=0.0.1", path = "engine" }
+dogwood_engine_compute = { version = "=0.0.1", path = "engine_compute" }
+dogwood_engine_graphics = { version = "=0.0.1", path = "engine_graphics" }
+dogwood_engine_input = { version = "=0.0.1", path = "engine_input" }
+dogwood_engine_physics = { version = "=0.0.1", path = "engine_physics" }
+dogwood_engine_user_interface = { version = "=0.0.1", path = "engine_user_interface" }
+dogwood_template_materials = { version = "=0.0.1", path = "template_materials" }
+egui = "=0.36.1"
+egui-wgpu = { version = "=0.36.1", default-features = false, features = ["winit"] }
+egui-winit = { version = "=0.36.1", default-features = false }
+naga_oil = "=0.23.0"
+pollster = "=0.4.0"
+rapier2d = { version = "=0.35.3", features = ["parallel"] }
+tracing = { version = "=0.1.44", features = ["release_max_level_off"] }
+tracing-appender = "=0.2.5"
+tracing-subscriber = { version = "=0.3.23", features = ["env-filter"] }
+wgpu = { version = "=30.0.0", features = ["naga-ir"] }
+winit = { version = "=0.30.13", default-features = false }

@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+pub(crate) use dogwood_engine_compute as engine_compute;
+
 mod camera;
 mod color;
 mod material_appearance;

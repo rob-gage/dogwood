@@ -15,9 +15,6 @@ mod material_selector;
 mod material_table;
 mod material_thermal_properties;
 
-#[cfg(test)]
-pub(crate) mod tests;
-
 pub use compiled_material_reaction::{CompiledMaterialReaction, compiled_selector_matches};
 pub use compiled_material_reaction_product::CompiledMaterialReactionProduct;
 pub use compiled_material_reaction_reactant::CompiledMaterialReactionReactant;

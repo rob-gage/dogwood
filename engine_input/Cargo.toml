@@ -1,10 +1,11 @@
 # Copyright Rob Gage 2026
 
 [package]
-name = "engine_input"
-version = "0.0.0"
-edition = "2024"
+name = "dogwood_engine_input"
+version.workspace = true
+edition.workspace = true
 license.workspace = true
+description.workspace = true
 
 [features]
 default = ["x11"]
@@ -16,4 +17,4 @@ wayland = [
 
 [dependencies]
 tracing.workspace = true
-winit = { version = "0.30.13", default-features = false }
+winit = { workspace = true }

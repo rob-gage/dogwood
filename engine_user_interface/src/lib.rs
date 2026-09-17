@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+extern crate dogwood_engine_graphics as engine_graphics;
+
 mod user_interface;
 mod user_interface_context;
 mod widget;

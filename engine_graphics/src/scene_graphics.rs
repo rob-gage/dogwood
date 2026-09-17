@@ -1,7 +1,7 @@
 // Copyright Rob Gage 2026
 
 use super::MaterialGraphics;
-use engine_compute::AcceleratorBuffer;
+use crate::engine_compute::AcceleratorBuffer;
 
 /// Scene graphics information that is passed to the renderer
 pub struct SceneGraphics<'a> {

@@ -541,13 +541,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
-name = "cli"
-version = "0.0.0"
-dependencies = [
- "clap",
-]
-
-[[package]]
 name = "codespan-reporting"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -790,6 +783,124 @@ dependencies = [
 ]
 
 [[package]]
+name = "dogwood"
+version = "0.0.1"
+dependencies = [
+ "clap",
+]
+
+[[package]]
+name = "dogwood_editor"
+version = "0.0.1"
+dependencies = [
+ "dogwood_engine",
+ "dogwood_engine_compute",
+ "dogwood_engine_graphics",
+ "dogwood_engine_user_interface",
+ "egui",
+ "pollster",
+ "tracing",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
+name = "dogwood_engine"
+version = "0.0.1"
+dependencies = [
+ "dogwood_engine_compute",
+ "dogwood_engine_graphics",
+ "dogwood_engine_input",
+ "dogwood_engine_physics",
+ "dogwood_engine_user_interface",
+ "egui",
+ "egui-wgpu",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
+name = "dogwood_engine_audio"
+version = "0.0.1"
+dependencies = [
+ "tracing",
+]
+
+[[package]]
+name = "dogwood_engine_compute"
+version = "0.0.1"
+dependencies = [
+ "naga_oil",
+ "pollster",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "wgpu",
+]
+
+[[package]]
+name = "dogwood_engine_graphics"
+version = "0.0.1"
+dependencies = [
+ "dogwood_engine_compute",
+ "egui",
+ "tracing",
+ "wgpu",
+]
+
+[[package]]
+name = "dogwood_engine_input"
+version = "0.0.1"
+dependencies = [
+ "tracing",
+ "winit",
+]
+
+[[package]]
+name = "dogwood_engine_physics"
+version = "0.0.1"
+dependencies = [
+ "bevy_ecs",
+ "dogwood_engine_compute",
+ "dogwood_engine_graphics",
+ "dogwood_engine_input",
+ "rapier2d",
+ "tracing",
+ "wgpu",
+]
+
+[[package]]
+name = "dogwood_engine_user_interface"
+version = "0.0.1"
+dependencies = [
+ "dogwood_engine_graphics",
+ "egui",
+ "egui-wgpu",
+ "egui-winit",
+ "tracing",
+]
+
+[[package]]
+name = "dogwood_template_materials"
+version = "0.0.1"
+dependencies = [
+ "dogwood_engine",
+]
+
+[[package]]
+name = "dogwood_template_project"
+version = "0.0.1"
+dependencies = [
+ "dogwood_editor",
+ "dogwood_engine",
+ "dogwood_template_materials",
+ "tracing",
+]
+
+[[package]]
 name = "downcast-rs"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -815,21 +926,6 @@ checksum = "fc883f505d446814c0226bef4b64564b9adb9966fc00c88c57ce6d827dd152d6"
 dependencies = [
  "bytemuck",
  "emath",
-]
-
-[[package]]
-name = "editor"
-version = "0.0.0"
-dependencies = [
- "egui",
- "engine",
- "engine_compute",
- "engine_graphics",
- "engine_user_interface",
- "pollster",
- "tracing",
- "wgpu",
- "winit",
 ]
 
 [[package]]
@@ -912,85 +1008,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eabffdaee24bd1bf95c5ef7cec31260444317e72ea56c4c91750e8b7ee58d5f1"
 dependencies = [
  "log",
-]
-
-[[package]]
-name = "engine"
-version = "0.0.0"
-dependencies = [
- "egui",
- "egui-wgpu",
- "engine_compute",
- "engine_graphics",
- "engine_input",
- "engine_physics",
- "engine_user_interface",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "wgpu",
- "winit",
-]
-
-[[package]]
-name = "engine_audio"
-version = "0.0.0"
-dependencies = [
- "tracing",
-]
-
-[[package]]
-name = "engine_compute"
-version = "0.0.0"
-dependencies = [
- "naga_oil",
- "pollster",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "wgpu",
-]
-
-[[package]]
-name = "engine_graphics"
-version = "0.0.0"
-dependencies = [
- "egui",
- "engine_compute",
- "tracing",
- "wgpu",
-]
-
-[[package]]
-name = "engine_input"
-version = "0.0.0"
-dependencies = [
- "tracing",
- "winit",
-]
-
-[[package]]
-name = "engine_physics"
-version = "0.0.0"
-dependencies = [
- "bevy_ecs",
- "engine_compute",
- "engine_graphics",
- "engine_input",
- "rapier2d",
- "tracing",
- "wgpu",
-]
-
-[[package]]
-name = "engine_user_interface"
-version = "0.0.0"
-dependencies = [
- "egui",
- "egui-wgpu",
- "egui-winit",
- "engine_graphics",
- "tracing",
 ]
 
 [[package]]
@@ -2906,23 +2923,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
-]
-
-[[package]]
-name = "template_materials"
-version = "0.0.0"
-dependencies = [
- "engine",
-]
-
-[[package]]
-name = "template_project"
-version = "0.0.0"
-dependencies = [
- "editor",
- "engine",
- "template_materials",
- "tracing",
 ]
 
 [[package]]

@@ -3,7 +3,9 @@
 use std::{
     error::Error,
     fs,
-    io::{self, Write},
+    io::{
+        self,
+        Write},
     path::{Path, PathBuf},
 };
 
@@ -72,7 +74,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let engine_path = repository_root.join("engine");
             let template_project_path = repository_root.join("template_project");
             let manifest = format!(
-                "# Copyright Rob Gage 2026\n\n[package]\nname = \"{project_name}\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\nengine = {{ path = \"{}\" }}\ntemplate_project = {{ path = \"{}\" }}\n",
+                "# Copyright Rob Gage 2026\n\n[package]\nname = \"{project_name}\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\ndogwood_engine = {{ path = \"{}\" }}\ndogwood_template_project = {{ path = \"{}\" }}\n",
                 engine_path.display(),
                 template_project_path.display(),
             );
@@ -81,7 +83,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             fs::create_dir_all(&source_directory)?;
             fs::write(
                 source_directory.join("main.rs"),
-                "use engine::{Game, compute::Accelerator};\nuse std::sync::Arc;\nuse template_project::TemplateProject;\n\nfn main() -> Result<(), Box<dyn std::error::Error>> {\n    let _tracing_guard = engine::diagnostics::initialize();\n    let accelerator: Arc<Accelerator> = Arc::new(Accelerator::new()?);\n    TemplateProject::new(&accelerator)?.launch(accelerator)\n}\n",
+                "use dogwood_engine::{Game, compute::Accelerator};\nuse std::sync::Arc;\nuse dogwood_template_project::TemplateProject;\n\nfn main() -> Result<(), Box<dyn std::error::Error>> {\n    let _tracing_guard = dogwood_engine::diagnostics::initialize();\n    let accelerator: Arc<Accelerator> = Arc::new(Accelerator::new()?);\n    TemplateProject::new(&accelerator)?.launch(accelerator)\n}\n",
             )?;
             println!(
                 "Created Dogwood project `{project_name}` in {}",

@@ -1,7 +1,7 @@
 // Copyright Rob Gage 2026
 
 use super::MaterialAppearance;
-use engine_compute::{Accelerator, AcceleratorBuffer};
+use crate::engine_compute::{Accelerator, AcceleratorBuffer};
 use std::mem::size_of;
 
 /// Graphics properties for every material form

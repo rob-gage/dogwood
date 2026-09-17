@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+extern crate dogwood_engine as engine;
+
 use engine::{
     graphics::{Color, MaterialAppearance},
     physics::materials::{

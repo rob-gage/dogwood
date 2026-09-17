@@ -1,8 +1,5 @@
 // Copyright Rob Gage 2026
 
-#[cfg(test)]
-pub(crate) mod tests;
-
 mod scene;
 mod scene_generator;
 

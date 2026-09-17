@@ -1,10 +1,11 @@
 # Copyright Rob Gage 2026
 
 [package]
-name = "engine_user_interface"
-version = "0.0.0"
-edition = "2024"
+name = "dogwood_engine_user_interface"
+version.workspace = true
+edition.workspace = true
 license.workspace = true
+description.workspace = true
 
 [features]
 x11 = ["egui-wgpu/x11", "egui-winit/x11"]
@@ -14,5 +15,5 @@ wayland = ["egui-wgpu/wayland", "egui-winit/wayland"]
 egui = { workspace = true }
 egui-wgpu = { workspace = true }
 egui-winit = { workspace = true }
-engine_graphics = { version = "0.0.0", path = "../engine_graphics" }
+dogwood_engine_graphics = { workspace = true }
 tracing.workspace = true

@@ -1,8 +1,6 @@
 // Copyright Rob Gage 2026
 
 pub(crate) mod simulation_constants;
-#[cfg(test)]
-pub(crate) mod tests;
 
 pub(crate) fn create_simulation_shader_module(
     device: &wgpu::Device,

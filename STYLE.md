@@ -10,6 +10,8 @@ generally not be.
 - Comments within function bodies should usually be one line, only inserted between separate sections of functions that
 are large enough to warrant them, for smaller functions or ones where the logic is obvious, no internal comments
 should be added.
+- Every name should be verbose and not ambiguous about what system it is in. All names
+should be fully written out and unabbreviated.
 
 ## Rust
 - `impl` blocks should contain an empty line before the first item they contain after the opening brace, and an empty

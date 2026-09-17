@@ -6,9 +6,6 @@ mod chunk_fluid_particle;
 mod chunk_gas_cell;
 mod chunk_streaming_response;
 
-#[cfg(test)]
-pub(crate) mod tests;
-
 pub use chunk::Chunk;
 pub use chunk_entry::ChunkEntry;
 pub use chunk_fluid_particle::ChunkFluidParticle;

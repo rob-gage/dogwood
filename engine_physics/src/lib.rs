@@ -1,5 +1,9 @@
 // Copyright Rob Gage 2026
 
+extern crate dogwood_engine_compute as engine_compute;
+extern crate dogwood_engine_graphics as engine_graphics;
+extern crate dogwood_engine_input as engine_input;
+
 pub mod actors;
 mod actors_utility;
 pub mod chunks;
