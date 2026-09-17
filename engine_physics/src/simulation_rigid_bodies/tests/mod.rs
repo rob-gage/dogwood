@@ -1,15 +1,14 @@
+mod rigid_body_test_material;
+
 use crate::simulation_rigid_bodies::ScenePhysicsWorld;
 use crate::{
     actors::{ActorCellularProxyState, ActorCollisionShape},
     simulation::CollisionOccupancySnapshot,
     tiles::TileCoordinates,
 };
-use crate::{
-    materials::{Material, MaterialRegistry},
-    tiles::CellularAppearance,
-};
-use engine_graphics::{Color, MaterialAppearance};
+use crate::{materials::MaterialRegistry, tiles::CellularAppearance};
 use rapier2d::prelude::{Pose, Vector};
+use rigid_body_test_material::register_test_stone_material;
 
 fn assert_patch_bounds(masks: [[u32; 2]; 16], origin: [f32; 2], expected: [f32; 4]) {
     let shape = ScenePhysicsWorld::terrain_patch_shape(&masks).unwrap();
@@ -38,19 +37,7 @@ fn test_full_and_almost_full_patch_keep_the_same_exterior_bounds() {
 #[test]
 fn test_generated_full_floor_and_one_pixel_edit_have_the_same_rest_height() {
     let mut materials = MaterialRegistry::new();
-    let stone = materials.register(Material::CellularStatic {
-        name: "Stone".into(),
-        graphics: MaterialAppearance::from_color(Color::new_rgb(90, 90, 90)),
-        mass: 1.0,
-        pressure_ignore_threshold: 1.0,
-        default_integrity: 1.0,
-        minimum_rigid_body_cell_count: 1,
-        debris_material: None,
-        debris_yield_rate: 0.0,
-        pressure_transmission: 1.0,
-        friction: 0.5,
-        restitution: 0.0,
-    });
+    let stone = register_test_stone_material(&mut materials, 1.0, 1.0);
     let mut world = ScenePhysicsWorld::new();
     let snapshot = |hole: bool| {
         let mut masks = vec![[u32::MAX; 2]; 16];
@@ -101,19 +88,7 @@ fn test_generated_full_floor_and_one_pixel_edit_have_the_same_rest_height() {
 #[test]
 fn test_stale_rigid_reaction_cannot_create_energy_without_grid_transfer() {
     let mut materials = MaterialRegistry::new();
-    let stone = materials.register(Material::CellularStatic {
-        name: "Stone".into(),
-        graphics: MaterialAppearance::from_color(Color::new_rgb(90, 90, 90)),
-        mass: 1.0,
-        pressure_ignore_threshold: 1000.0,
-        default_integrity: 100.0,
-        minimum_rigid_body_cell_count: 1,
-        debris_material: None,
-        debris_yield_rate: 0.0,
-        pressure_transmission: 1.0,
-        friction: 0.5,
-        restitution: 0.0,
-    });
+    let stone = register_test_stone_material(&mut materials, 1000.0, 100.0);
     let mut physics = ScenePhysicsWorld::new();
     let body = physics.insert_rigid_cellular_body(
         [0.0, 0.0],
@@ -142,19 +117,7 @@ fn test_stale_rigid_reaction_cannot_create_energy_without_grid_transfer() {
 #[test]
 fn test_rigid_cellular_bodies_still_collide_through_rapier() {
     let mut materials = MaterialRegistry::new();
-    let stone = materials.register(Material::CellularStatic {
-        name: "Stone".into(),
-        graphics: MaterialAppearance::from_color(Color::new_rgb(90, 90, 90)),
-        mass: 1.0,
-        pressure_ignore_threshold: 1000.0,
-        default_integrity: 100.0,
-        minimum_rigid_body_cell_count: 1,
-        debris_material: None,
-        debris_yield_rate: 0.0,
-        pressure_transmission: 1.0,
-        friction: 0.5,
-        restitution: 0.0,
-    });
+    let stone = register_test_stone_material(&mut materials, 1000.0, 100.0);
     let cell = || {
         vec![crate::simulation::RigidCellularBodyCell::test_cell(
             [0, 0],
@@ -383,19 +346,7 @@ fn test_dynamic_tile_geometry_and_cache_are_local() {
 #[test]
 fn test_settled_dynamic_floor_supports_rigid_and_removed_floor_releases_it() {
     let mut materials = MaterialRegistry::new();
-    let stone = materials.register(Material::CellularStatic {
-        name: "Stone".into(),
-        graphics: MaterialAppearance::from_color(Color::new_rgb(90, 90, 90)),
-        mass: 1.0,
-        pressure_ignore_threshold: 1000.0,
-        default_integrity: 100.0,
-        minimum_rigid_body_cell_count: 1,
-        debris_material: None,
-        debris_yield_rate: 0.0,
-        pressure_transmission: 1.0,
-        friction: 0.5,
-        restitution: 0.0,
-    });
+    let stone = register_test_stone_material(&mut materials, 1000.0, 100.0);
     let mut world = ScenePhysicsWorld::new();
     let snapshot = |mask| CollisionOccupancySnapshot {
         sequence: 0,
@@ -557,19 +508,7 @@ fn test_pawn_is_supported_by_settled_dynamic_sand() {
 #[test]
 fn test_distributed_rigids_demand_local_dynamic_tiles() {
     let mut materials = MaterialRegistry::new();
-    let stone = materials.register(Material::CellularStatic {
-        name: "Stone".into(),
-        graphics: MaterialAppearance::from_color(Color::new_rgb(90, 90, 90)),
-        mass: 1.0,
-        pressure_ignore_threshold: 1000.0,
-        default_integrity: 100.0,
-        minimum_rigid_body_cell_count: 1,
-        debris_material: None,
-        debris_yield_rate: 0.0,
-        pressure_transmission: 1.0,
-        friction: 0.5,
-        restitution: 0.0,
-    });
+    let stone = register_test_stone_material(&mut materials, 1000.0, 100.0);
     let mut world = ScenePhysicsWorld::new();
     world.update_cellular_snapshot(CollisionOccupancySnapshot {
         sequence: 0,
