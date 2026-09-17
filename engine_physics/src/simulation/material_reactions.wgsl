@@ -12,6 +12,7 @@ struct Candidate {
   material0: u32, material1: u32, padding0: u32, padding1: u32,
   fluid0_indices: vec4<u32>, fluid0_amounts: vec4<f32>,
   fluid1_indices: vec4<u32>, fluid1_amounts: vec4<f32>,
+  product_slots: vec2<u32>,
 }
 struct Request { cell:u32, kind:u32, locator:u32, expected_source:u32, replacement:u32, amount:u32, temperature:u32, world_x:u32, world_y:u32, }
 struct Parameters { cell_count: u32, gas_count: u32, reaction_count: u32, cell_width: u32, }
@@ -272,7 +273,24 @@ fn reserve_fluid_authority(@builtin(global_invocation_id) id: vec3<u32>) {
         bitcast<f32>(reactions[candidate.reaction].words[6]) * candidate.extent)) {
     if (material_form_from_identifier(candidate.material0) == FLUID_MATERIAL_FORM) { rollback_fluid_plan(cell, 0u); }
     candidates[cell].padding0 = 0u;
+    return;
   }
+  var output_slots = vec2<u32>(0xffffffffu);
+  for (var product = 0u; product < 2u; product += 1u) {
+    let base = 8u + product * 4u;
+    if (reactions[candidate.reaction].words[base + 2u] == 0u ||
+        material_form_from_identifier(reactions[candidate.reaction].words[base]) != FLUID_MATERIAL_FORM) { continue; }
+    let slot = reserve_fluid_slot();
+    if (slot == 0xffffffffu) {
+      if (material_form_from_identifier(candidate.material0) == FLUID_MATERIAL_FORM) { rollback_fluid_plan(cell, 0u); }
+      if (material_form_from_identifier(candidate.material1) == FLUID_MATERIAL_FORM) { rollback_fluid_plan(cell, 1u); }
+      release_fluid_slot(output_slots.x); release_fluid_slot(output_slots.y);
+      candidates[cell].padding0 = 0u;
+      return;
+    }
+    if (product == 0u) { output_slots.x = slot; } else { output_slots.y = slot; }
+  }
+  candidates[cell].product_slots = output_slots;
 }
 
 fn release_fluid_slot(slot: u32) {
@@ -327,7 +345,7 @@ fn apply_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
   if (second_present && source1.amount + 0.00001 < coefficient1 * candidate.extent) { return; }
   let remaining = select(0.0, max(amounts[cell] - coefficient0 * candidate.extent, 0.0), first_present && material_form_from_identifier(source0.material) != GAS_MATERIAL_FORM);
   var cellular_product = EMPTY_MATERIAL_IDENTIFIER; var cellular_amount = 0.0;
-  var fluid_product_slots = vec2<u32>(0xffffffffu);
+  let fluid_product_slots = candidate.product_slots;
   for (var product = 0u; product < 2u; product += 1u) {
     let base = 8u + product * 4u; if (rule.words[base + 2u] == 0u) { continue; }
     let replacement = rule.words[base]; let amount = bitcast<f32>(rule.words[base + 1u]) * candidate.extent;
@@ -335,9 +353,6 @@ fn apply_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
     if (form == GAS_MATERIAL_FORM) { continue; }
     if (form == FLUID_MATERIAL_FORM) {
       let product_index = product;
-      let slot = reserve_fluid_slot();
-      if (slot == 0xffffffffu) { release_fluid_slot(fluid_product_slots.x); rollback_fluid_plan(cell, 0u); rollback_fluid_plan(cell, 1u); return; }
-      if (product_index == 0u) { fluid_product_slots.x = slot; } else { fluid_product_slots.y = slot; }
       continue;
     }
     if ((form != CELLULAR_STATIC_MATERIAL_FORM && form != CELLULAR_DYNAMIC_MATERIAL_FORM) || cellular_product != EMPTY_MATERIAL_IDENTIFIER || remaining > 0.00001 || !(amount > 0.000001)) {
@@ -415,7 +430,7 @@ fn discover_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
   if (cell < arrayLength(&fluid_reservations)) { atomicStore(&fluid_reservations[cell], 0u); }
   if (cell >= parameters.cell_count || cell >= arrayLength(&candidates)) { return; }
   candidates[cell] = Candidate(0xffffffffu, cell, 0.0, 0xffffffffu, 0u, 0u, 0u, 0u,
-    vec4<u32>(0xffffffffu), vec4<f32>(0.0), vec4<u32>(0xffffffffu), vec4<f32>(0.0));
+    vec4<u32>(0xffffffffu), vec4<f32>(0.0), vec4<u32>(0xffffffffu), vec4<f32>(0.0), vec2<u32>(0xffffffffu));
   reaction_energy[cell] = 0.0;
   if (atomicLoad(&rigid_claims[cell]) != 0xffffffffu) { return; }
   let material = material_identifiers[cell];
@@ -463,6 +478,6 @@ fn discover_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
     let extent0 = select(1.0, source0.amount / max(bitcast<f32>(rule.words[2]), 0.000001), rule.words[3] != 0u);
     let extent1 = select(1.0, source1.amount / max(bitcast<f32>(rule.words[6]), 0.000001), rule.words[7] != 0u);
     candidates[cell] = Candidate(winner, cell, winner_extent, source1.cell, source0.material, source1.material, 0u, 0u,
-      vec4<u32>(0xffffffffu), vec4<f32>(0.0), vec4<u32>(0xffffffffu), vec4<f32>(0.0));
+      vec4<u32>(0xffffffffu), vec4<f32>(0.0), vec4<u32>(0xffffffffu), vec4<f32>(0.0), vec2<u32>(0xffffffffu));
   }
 }

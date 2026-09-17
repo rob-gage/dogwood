@@ -49,7 +49,7 @@ impl MaterialReactions {
         cell_width: u32,
     ) -> Self {
         let device = accelerator.wgpu_device();
-        let candidates = accelerator.allocate::<[u32; 24]>(cell_count as usize);
+        let candidates = accelerator.allocate::<[u32; 28]>(cell_count as usize);
         let fluid_reservations = accelerator.allocate::<u32>(cell_count as usize);
         let parameters = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("material reaction parameters"),
