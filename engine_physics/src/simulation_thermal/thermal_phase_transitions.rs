@@ -41,29 +41,7 @@ impl ThermalPhaseTransitions {
         if self.rigid_phase_readback_result.is_none() {
             self.clear_rigid_candidates(accelerator);
         }
-        let parameter_values = [
-            origin[0] as u32,
-            origin[1] as u32,
-            tiles[0],
-            tiles[1],
-            ring[0],
-            ring[1],
-            self.cell_count,
-            self.particle_count,
-            self.gas_count,
-            self.tick,
-            rigid_count,
-            0,
-        ];
-        accelerator.wgpu_queue().write_buffer(
-            &self.parameters,
-            0,
-            &parameter_values
-                .iter()
-                .flat_map(|value| value.to_le_bytes())
-                .collect::<Vec<_>>(),
-        );
-        self.tick = self.tick.wrapping_add(1);
+        self.write_parameters(accelerator, origin, tiles, ring, rigid_count);
         let mut pass = accelerator.begin_compute_pass(encoder, "thermal phase transitions");
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.set_pipeline(&self.cells);
@@ -401,6 +379,39 @@ impl ThermalPhaseTransitions {
         if self.rigid_phase_readback_result.is_none() {
             self.clear_rigid_candidates(accelerator);
         }
+        self.write_parameters(accelerator, origin, tiles, ring, rigid_count);
+        let mut e =
+            accelerator
+                .wgpu_device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("thermal phase transitions"),
+                });
+        let mut p = accelerator.begin_compute_pass(&mut e, "thermal phase transitions");
+        p.set_bind_group(0, &self.bind_group, &[]);
+        p.set_pipeline(&self.cells);
+        p.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+        p.set_pipeline(&self.particles);
+        p.dispatch_workgroups(self.particle_count.div_ceil(64), 1, 1);
+        p.set_pipeline(&self.gases);
+        p.dispatch_workgroups(self.cell_count / 64, self.gas_count, 2);
+        if self.rigid_phase_readback_result.is_none() {
+            p.set_pipeline(&self.rigid);
+            if rigid_count > 0 {
+                p.dispatch_workgroups(rigid_count.div_ceil(64), 1, 1);
+            }
+        }
+        drop(p);
+        accelerator.wgpu_queue().submit(Some(e.finish()));
+    }
+
+    fn write_parameters(
+        &mut self,
+        accelerator: &Accelerator,
+        origin: [i32; 2],
+        tiles: [u32; 2],
+        ring: [u32; 2],
+        rigid_count: u32,
+    ) {
         let parameter_values = [
             origin[0] as u32,
             origin[1] as u32,
@@ -424,28 +435,6 @@ impl ThermalPhaseTransitions {
                 .collect::<Vec<_>>(),
         );
         self.tick = self.tick.wrapping_add(1);
-        let mut e =
-            accelerator
-                .wgpu_device()
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("thermal phase transitions"),
-                });
-        let mut p = accelerator.begin_compute_pass(&mut e, "thermal phase transitions");
-        p.set_bind_group(0, &self.bind_group, &[]);
-        p.set_pipeline(&self.cells);
-        p.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
-        p.set_pipeline(&self.particles);
-        p.dispatch_workgroups(self.particle_count.div_ceil(64), 1, 1);
-        p.set_pipeline(&self.gases);
-        p.dispatch_workgroups(self.cell_count / 64, self.gas_count, 2);
-        if self.rigid_phase_readback_result.is_none() {
-            p.set_pipeline(&self.rigid);
-            if rigid_count > 0 {
-                p.dispatch_workgroups(rigid_count.div_ceil(64), 1, 1);
-            }
-        }
-        drop(p);
-        accelerator.wgpu_queue().submit(Some(e.finish()));
     }
 }
 impl Drop for ThermalPhaseTransitions {
