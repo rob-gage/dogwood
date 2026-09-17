@@ -1,21 +1,32 @@
 // Copyright Rob Gage 2026
 
+mod compiled_material_reaction;
+mod compiled_material_reaction_product;
+mod compiled_material_reaction_reactant;
 mod material;
 mod material_form;
 mod material_identifier;
 mod material_reaction;
+mod material_reaction_product;
+mod material_reaction_reactant;
 mod material_registry;
 mod material_registry_builder;
+mod material_selector;
 mod material_thermal_properties;
 
+#[cfg(test)]
+pub(crate) mod tests;
+
+pub use compiled_material_reaction::{CompiledMaterialReaction, compiled_selector_matches};
+pub use compiled_material_reaction_product::CompiledMaterialReactionProduct;
+pub use compiled_material_reaction_reactant::CompiledMaterialReactionReactant;
 pub use material::Material;
 pub use material_form::MaterialForm;
 pub use material_identifier::MaterialIdentifier;
-pub use material_reaction::{
-    CompiledMaterialReaction, CompiledMaterialReactionProduct, CompiledMaterialReactionReactant,
-    MaterialReaction, MaterialReactionProduct, MaterialReactionReactant, MaterialSelector,
-    compiled_selector_matches,
-};
+pub use material_reaction::MaterialReaction;
+pub use material_reaction_product::MaterialReactionProduct;
+pub use material_reaction_reactant::MaterialReactionReactant;
 pub use material_registry::MaterialRegistry;
 pub use material_registry_builder::MaterialRegistryBuilder;
+pub use material_selector::MaterialReference;
 pub use material_thermal_properties::{MaterialThermalProperties, MaterialThermalTransition};

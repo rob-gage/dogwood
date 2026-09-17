@@ -2,7 +2,7 @@
 
 use super::{
     CompiledMaterialReaction, CompiledMaterialReactionProduct, CompiledMaterialReactionReactant,
-    Material, MaterialForm, MaterialIdentifier, MaterialReaction, MaterialSelector,
+    Material, MaterialForm, MaterialIdentifier, MaterialReaction, MaterialReference,
     MaterialThermalProperties, MaterialThermalTransition,
 };
 use engine_compute::Accelerator;
@@ -243,13 +243,13 @@ impl MaterialRegistry {
                     return Err("Invalid reaction reactant amount".into());
                 }
                 let resolved: Vec<MaterialIdentifier> = match &reactant.selector {
-                    MaterialSelector::Material(id) => {
+                    MaterialReference::Material(id) => {
                         if registry.get(*id).is_none() {
                             return Err("Reaction references an unregistered material".into());
                         }
                         vec![*id]
                     }
-                    MaterialSelector::Tag(tag) => tags
+                    MaterialReference::Tag(tag) => tags
                         .get(tag)
                         .cloned()
                         .ok_or("Reaction references an unknown tag")?,
@@ -1186,7 +1186,7 @@ mod tests {
     use super::*;
     use crate::materials::{
         MaterialReaction, MaterialReactionProduct, MaterialReactionReactant,
-        MaterialRegistryBuilder, MaterialSelector, MaterialThermalTransition,
+        MaterialRegistryBuilder, MaterialReference, MaterialThermalTransition,
     };
 
     #[test]
@@ -1313,7 +1313,7 @@ mod tests {
         builder.register_reaction(MaterialReaction {
             reactants: [
                 Some(MaterialReactionReactant {
-                    selector: MaterialSelector::Tag("mixed".into()),
+                    selector: MaterialReference::Tag("mixed".into()),
                     amount: 1.0,
                 }),
                 None,
@@ -1485,7 +1485,7 @@ mod tests {
             invalid(MaterialReaction {
                 reactants: [
                     Some(MaterialReactionReactant {
-                        selector: MaterialSelector::Material(unknown),
+                        selector: MaterialReference::Material(unknown),
                         amount: 1.0
                     }),
                     None
@@ -1500,7 +1500,7 @@ mod tests {
             invalid(MaterialReaction {
                 reactants: [
                     Some(MaterialReactionReactant {
-                        selector: MaterialSelector::Tag("nope".into()),
+                        selector: MaterialReference::Tag("nope".into()),
                         amount: 1.0
                     }),
                     None
