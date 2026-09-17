@@ -199,12 +199,13 @@ impl<G: Game> EditorApplication<G> {
         };
         if matches!(tool, EditorTool::Thermal) {
             let now = Instant::now();
-            let dt = self
+            let delta_time = self
                 .last_thermal_edit
                 .map_or(0.0, |last| now.duration_since(last).as_secs_f32().min(0.25));
             self.last_thermal_edit = Some(now);
-            if dt > 0.0 {
-                let delta = self.thermal_rate * dt * if self.thermal_heat { 1.0 } else { -1.0 };
+            if delta_time > 0.0 {
+                let delta =
+                    self.thermal_rate * delta_time * if self.thermal_heat { 1.0 } else { -1.0 };
                 let mut edit = SceneEditBatch::new();
                 edit.thermal(cells.into_iter().collect(), delta);
                 scene.queue_edits(edit);
@@ -214,12 +215,12 @@ impl<G: Game> EditorApplication<G> {
         }
         if matches!(tool, EditorTool::Impulse) {
             let now = Instant::now();
-            let dt = self.last_impulse_edit.map_or(1.0 / 60.0, |last| {
+            let delta_time = self.last_impulse_edit.map_or(1.0 / 60.0, |last| {
                 now.duration_since(last).as_secs_f32().min(0.25)
             });
             self.last_impulse_edit = Some(now);
             let radius_cells: f32 = (self.brush.size() as f32 * 0.5).max(0.75);
-            let strength: f32 = self.impulse_rate * dt;
+            let strength: f32 = self.impulse_rate * delta_time;
             for impulse_anchor in &anchors {
                 scene.apply_cellular_radial_impulse(*impulse_anchor, radius_cells, strength);
             }
