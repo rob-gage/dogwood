@@ -72,7 +72,7 @@ pub use crate::simulation_cellulars::{
 pub use crate::simulation_fluids::Fluids;
 pub use crate::simulation_gases::Gases;
 pub use crate::simulation_materials::MaterialMutations;
-pub(crate) use crate::simulation_materials::{MaterialReactions, ReactionMaterialTable};
+pub(crate) use crate::simulation_materials::MaterialReactions;
 pub use crate::simulation_rigid_bodies::ScenePhysicsWorld;
 pub(crate) use crate::simulation_rigid_bodies::{
     RigidCellStateGather, RigidCellStateUpload, RigidCellularBody, RigidCellularBodyCell,
@@ -82,6 +82,5 @@ pub(crate) use crate::simulation_rigid_bodies::{
 #[cfg(test)]
 pub(crate) use crate::simulation_thermal::test_rigid_phase_readback_len;
 pub(crate) use crate::simulation_thermal::{
-    ThermalConduction, ThermalEdits, ThermalInteraction, ThermalMaterialTable,
-    ThermalPhaseTransitions, ThermalScatter,
+    ThermalConduction, ThermalEdits, ThermalInteraction, ThermalPhaseTransitions, ThermalScatter,
 };

@@ -7,19 +7,18 @@ use crate::scenes::{
 use crate::simulation::{
     CellularCollision, CellularDynamic, CellularPhysicsBodyProxy, CellularPressure,
     CellularStaticStateGather, CollisionOccupancySnapshot, Fluids, Gases, MaterialMutations,
-    MaterialReactions, ReactionMaterialTable, RigidCellStateGather, RigidCellStateUpload,
-    RigidCellularBody, RigidCellularBodyCell, RigidCellularBodyState, ScenePhysicsWorld,
-    SceneSimulationConfiguration, ThermalConduction, ThermalEdits, ThermalInteraction,
-    ThermalMaterialTable, ThermalPhaseTransitions, ThermalScatter,
+    MaterialReactions, RigidCellStateGather, RigidCellStateUpload, RigidCellularBody,
+    RigidCellularBodyCell, RigidCellularBodyState, ScenePhysicsWorld, SceneSimulationConfiguration,
+    ThermalConduction, ThermalEdits, ThermalInteraction, ThermalPhaseTransitions, ThermalScatter,
 };
 use crate::{
     actors::{Actor, ActorRegistry},
     chunks::{Chunk, ChunkEntry, ChunkFluidParticle, ChunkGasCell, ChunkStreamingResponse},
-    materials::{Material, MaterialIdentifier, MaterialRegistry},
+    materials::{Material, MaterialIdentifier, MaterialRegistry, MaterialTable},
     tiles::{CellCoordinates, CellularAppearance, Tile, TileArea, TileCoordinates, TileData},
 };
 use engine_compute::{Accelerator, AcceleratorBuffer};
-use engine_graphics::{MaterialGraphics, SceneGraphics};
+use engine_graphics::SceneGraphics;
 use rapier2d::prelude::Vector;
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
@@ -127,8 +126,6 @@ pub struct Scene {
     accelerator: Arc<Accelerator>,
     /// The persistent `SceneData` backing this `Scene`
     data: SceneData,
-    /// The GPU graphics properties derived from the scene's material registry
-    material_graphics: MaterialGraphics,
     /// The `SceneGenerator` used to generate new tiles for this `Scene`
     generator: Arc<dyn SceneGenerator>,
     /// The `ActorRegistry` currently managed by this `Scene`
@@ -258,9 +255,7 @@ pub struct Scene {
     /// GPU-resident cross-form material replacement requests.
     material_mutations: MaterialMutations,
     thermal_edits: ThermalEdits,
-    thermal_material_table: ThermalMaterialTable,
-    /// Immutable fixed-stride reaction metadata for the chemistry GPU pipeline.
-    reaction_material_table: ReactionMaterialTable,
+    material_table: MaterialTable,
     material_reactions: MaterialReactions,
     thermal_interaction: ThermalInteraction,
     thermal_conduction: ThermalConduction,
@@ -331,9 +326,6 @@ impl Scene {
     ) -> Result<Self, Box<dyn Error>> {
         simulation.validate()?;
         let accelerator: Arc<Accelerator> = accelerator.clone();
-        let material_graphics: MaterialGraphics = data
-            .materials()
-            .build_material_graphics(accelerator.as_ref());
         let generator: Arc<dyn SceneGenerator> = Arc::new(generator);
         let buffer_size: u16 = u16::from(simulation.buffer_size) * 2;
         let buffered_tile_count: usize =
@@ -355,10 +347,7 @@ impl Scene {
             accelerator.allocate::<f32>(buffered_cell_count);
         let cellular_physics_body_proxy =
             CellularPhysicsBodyProxy::new(accelerator.as_ref(), buffered_cell_count);
-        let thermal_material_table =
-            ThermalMaterialTable::new(accelerator.as_ref(), data.materials());
-        let reaction_material_table =
-            ReactionMaterialTable::new(accelerator.as_ref(), data.materials());
+        let material_table = MaterialTable::new(accelerator.as_ref(), data.materials());
         // One-tick chemical energy source consumed by unified thermal gathering.
         let reaction_energy = accelerator.allocate::<f32>(buffered_cell_count);
         let fluids: Fluids = Fluids::new(
@@ -366,9 +355,9 @@ impl Scene {
             &cellular_material_identifiers,
             cellular_physics_body_proxy.occupancy_buffer(),
             cellular_physics_body_proxy.velocity_buffer(),
-            &material_graphics.fluid_properties,
-            thermal_material_table.properties_buffer(),
-            thermal_material_table.parameters_buffer(),
+            &material_table.graphics().fluid_properties,
+            material_table.properties_buffer(),
+            material_table.parameters_buffer(),
             simulation.width + buffer_size,
             simulation.height + buffer_size,
         );
@@ -378,7 +367,7 @@ impl Scene {
             &cellular_material_identifiers,
             cellular_physics_body_proxy.occupancy_buffer(),
             fluids.coverage_buffer(),
-            &material_graphics.gas_properties,
+            &material_table.graphics().gas_properties,
             buffered_cell_count,
             simulation.ambient_temperature,
         );
@@ -407,8 +396,8 @@ impl Scene {
             &reaction_energy,
             gases.concentrations_buffer(),
             gases.temperature_buffer(),
-            thermal_material_table.properties_buffer(),
-            thermal_material_table.parameters_buffer(),
+            material_table.properties_buffer(),
+            material_table.parameters_buffer(),
             cellular_physics_body_proxy.occupancy_buffer(),
             buffered_cell_count as u32,
             buffered_cell_count as u32,
@@ -519,8 +508,8 @@ impl Scene {
             fluids.particles_buffer(),
             gases.concentrations_buffer(),
             gases.temperature_buffer(),
-            thermal_material_table.properties_buffer(),
-            thermal_material_table.parameters_buffer(),
+            material_table.properties_buffer(),
+            material_table.parameters_buffer(),
             material_mutations.requests_buffer(),
             material_mutations.request_count_buffer(),
             material_mutations.gas_fluid_candidates_buffer(),
@@ -565,7 +554,7 @@ impl Scene {
             fluids.mechanical_cells_buffer(),
             gases.velocity_buffer(),
             gases.concentrations_buffer(),
-            &material_graphics.gas_properties,
+            &material_table.graphics().gas_properties,
             fluids.coverage_buffer(),
             material_mutations.requests_buffer(),
             material_mutations.request_count_buffer(),
@@ -574,7 +563,7 @@ impl Scene {
         );
         let material_reactions = MaterialReactions::new(
             accelerator.as_ref(),
-            &reaction_material_table,
+            &material_table,
             &cellular_material_identifiers,
             &cellular_amounts,
             &cellular_temperatures,
@@ -636,7 +625,6 @@ impl Scene {
         let mut scene: Self = Self {
             accelerator,
             data,
-            material_graphics,
             generator,
             actor_registry: ActorRegistry::new(),
             possessed_actor: None,
@@ -713,8 +701,7 @@ impl Scene {
             gases,
             material_mutations,
             thermal_edits,
-            thermal_material_table,
-            reaction_material_table,
+            material_table,
             material_reactions,
             thermal_interaction,
             thermal_conduction,
@@ -775,7 +762,7 @@ impl Scene {
             .actor_registry
             .first_walking_pawn_graphics(self.tick_interpolation());
         SceneGraphics {
-            material_graphics: &self.material_graphics,
+            material_graphics: self.material_table.graphics(),
             cellular_material_identifiers: &self.cellular_material_identifiers,
             cellular_appearances: &self.cellular_appearances,
             rigid_material_identifiers: self

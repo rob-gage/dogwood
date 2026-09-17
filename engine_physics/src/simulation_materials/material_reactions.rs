@@ -6,7 +6,7 @@
 
 use crate::materials::CompiledMaterialReaction;
 use crate::simulation::simulation_constants::*;
-use crate::{simulation::ReactionMaterialTable, simulation_fluids::FluidAuthorityView};
+use crate::{materials::MaterialTable, simulation_fluids::FluidAuthorityView};
 use engine_compute::{Accelerator, AcceleratorBuffer};
 use std::collections::BTreeSet;
 use std::sync::mpsc::{Receiver, sync_channel};
@@ -55,7 +55,7 @@ impl MaterialReactions {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         accelerator: &Accelerator,
-        table: &ReactionMaterialTable,
+        table: &MaterialTable,
         material_identifiers: &AcceleratorBuffer,
         amounts: &AcceleratorBuffer,
         temperatures: &AcceleratorBuffer,
@@ -692,8 +692,8 @@ pub(crate) fn extent(
 mod tests {
     use super::*;
     use crate::{
+        materials::MaterialTable,
         materials::{CompiledMaterialReaction, MaterialRegistry},
-        simulation::ReactionMaterialTable,
     };
 
     #[test]
@@ -866,7 +866,7 @@ mod tests {
     fn canonical_discovery_and_apply_pipelines_compile() {
         let accelerator = Accelerator::new().unwrap();
         let registry = MaterialRegistry::new();
-        let table = ReactionMaterialTable::new(&accelerator, &registry);
+        let table = MaterialTable::new(&accelerator, &registry);
         let ids = accelerator.allocate::<u32>(64);
         let amounts = accelerator.allocate::<f32>(64);
         let temperatures = accelerator.allocate::<f32>(64);

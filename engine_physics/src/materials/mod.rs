@@ -12,6 +12,7 @@ mod material_reaction_reactant;
 mod material_registry;
 mod material_registry_builder;
 mod material_selector;
+mod material_table;
 mod material_thermal_properties;
 
 #[cfg(test)]
@@ -29,4 +30,5 @@ pub use material_reaction_reactant::MaterialReactionReactant;
 pub use material_registry::MaterialRegistry;
 pub use material_registry_builder::MaterialRegistryBuilder;
 pub use material_selector::MaterialReference;
+pub(crate) use material_table::MaterialTable;
 pub use material_thermal_properties::{MaterialThermalProperties, MaterialThermalTransition};
