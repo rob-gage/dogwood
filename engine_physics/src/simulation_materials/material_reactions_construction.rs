@@ -3,6 +3,13 @@
 use super::*;
 
 impl MaterialReactions {
+    fn binding(binding: u32, buffer: &AcceleratorBuffer) -> wgpu::BindGroupEntry<'_> {
+        wgpu::BindGroupEntry {
+            binding,
+            resource: buffer.wgpu_buffer().as_entire_binding(),
+        }
+    }
+
     pub(crate) fn new(
         accelerator: &Accelerator,
         table: &MaterialTable,
