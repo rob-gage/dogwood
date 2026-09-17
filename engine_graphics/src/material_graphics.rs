@@ -4,7 +4,10 @@ use super::MaterialAppearance;
 use crate::engine_compute::{Accelerator, AcceleratorBuffer};
 use std::mem::size_of;
 
-/// Graphics properties for every material form
+/// Accelerator-resident appearance and derived properties for every material form.
+///
+/// The physics material registry owns the source values; this type owns the packed
+/// buffers consumed by rendering and material simulation shaders.
 pub struct MaterialGraphics {
     /// The graphics properties for static cellular materials
     pub cellular_statics: AcceleratorBuffer,

@@ -3,7 +3,10 @@
 use super::MaterialGraphics;
 use crate::engine_compute::AcceleratorBuffer;
 
-/// Scene graphics information that is passed to the renderer
+/// Borrowed scene resources exposed to the renderer for one frame.
+///
+/// The scene retains ownership of all buffers. The renderer may bind these
+/// references while encoding a frame but must not retain them after that frame.
 pub struct SceneGraphics<'a> {
     /// The graphics properties for every material in the scene
     pub material_graphics: &'a MaterialGraphics,
