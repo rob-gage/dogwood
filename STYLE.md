@@ -40,3 +40,4 @@ line after the last item before the closing brace.
     ```
 
 ## WGSL
+- Shader code should be formatted in a manner similar to Rust where applicable.
