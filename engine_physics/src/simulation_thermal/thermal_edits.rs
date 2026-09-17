@@ -122,16 +122,6 @@ impl ThermalEdits {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = |entry| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(entry),
-                layout: Some(&pipeline_layout),
-                module: &shader,
-                entry_point: Some(entry),
-                compilation_options: Default::default(),
-                cache: None,
-            })
-        };
         Self {
             requests,
             count,
@@ -139,9 +129,24 @@ impl ThermalEdits {
             rigid_flags,
             parameters,
             bind_group,
-            request_pipeline: pipeline("apply_thermal_requests"),
-            fluid_pipeline: pipeline("apply_thermal_fluid"),
-            rigid_pipeline: pipeline("apply_thermal_rigid"),
+            request_pipeline: crate::simulation::create_simulation_compute_pipeline(
+                device,
+                &pipeline_layout,
+                &shader,
+                "apply_thermal_requests",
+            ),
+            fluid_pipeline: crate::simulation::create_simulation_compute_pipeline(
+                device,
+                &pipeline_layout,
+                &shader,
+                "apply_thermal_fluid",
+            ),
+            rigid_pipeline: crate::simulation::create_simulation_compute_pipeline(
+                device,
+                &pipeline_layout,
+                &shader,
+                "apply_thermal_rigid",
+            ),
             capacity,
             particle_capacity,
             rigid_capacity,

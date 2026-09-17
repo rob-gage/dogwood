@@ -186,25 +186,40 @@ impl ThermalScatter {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = |entry| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(entry),
-                layout: Some(&pl),
-                module: &shader,
-                entry_point: Some(entry),
-                compilation_options: Default::default(),
-                cache: None,
-            })
-        };
         Self {
             rigid_temperature_sum,
             parameters,
             bind_group,
-            cellular_pipeline: pipeline("scatter_cellular_gas"),
-            fluid_pipeline: pipeline("scatter_fluid_particles"),
-            clear_rigid_pipeline: pipeline("clear_rigid_temperature_sums"),
-            accumulate_rigid_pipeline: pipeline("accumulate_rigid_temperature_sums"),
-            apply_rigid_pipeline: pipeline("apply_rigid_temperatures"),
+            cellular_pipeline: crate::simulation::create_simulation_compute_pipeline(
+                device,
+                &pl,
+                &shader,
+                "scatter_cellular_gas",
+            ),
+            fluid_pipeline: crate::simulation::create_simulation_compute_pipeline(
+                device,
+                &pl,
+                &shader,
+                "scatter_fluid_particles",
+            ),
+            clear_rigid_pipeline: crate::simulation::create_simulation_compute_pipeline(
+                device,
+                &pl,
+                &shader,
+                "clear_rigid_temperature_sums",
+            ),
+            accumulate_rigid_pipeline: crate::simulation::create_simulation_compute_pipeline(
+                device,
+                &pl,
+                &shader,
+                "accumulate_rigid_temperature_sums",
+            ),
+            apply_rigid_pipeline: crate::simulation::create_simulation_compute_pipeline(
+                device,
+                &pl,
+                &shader,
+                "apply_rigid_temperatures",
+            ),
             cell_count,
             particle_capacity,
             rigid_capacity,

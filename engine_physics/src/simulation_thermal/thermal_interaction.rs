@@ -197,25 +197,30 @@ impl ThermalInteraction {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = |entry| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(entry),
-                layout: Some(&pipeline_layout),
-                module: &shader,
-                entry_point: Some(entry),
-                compilation_options: Default::default(),
-                cache: None,
-            })
-        };
         let _ = materials;
         Self {
             interaction,
             rigid_raster_claim_counts,
             parameters,
             bind_group,
-            clear_pipeline: pipeline("clear_rigid_claim_counts"),
-            count_pipeline: pipeline("count_rigid_claims"),
-            gather_pipeline: pipeline("gather_thermal_interaction"),
+            clear_pipeline: crate::simulation::create_simulation_compute_pipeline(
+                device,
+                &pipeline_layout,
+                &shader,
+                "clear_rigid_claim_counts",
+            ),
+            count_pipeline: crate::simulation::create_simulation_compute_pipeline(
+                device,
+                &pipeline_layout,
+                &shader,
+                "count_rigid_claims",
+            ),
+            gather_pipeline: crate::simulation::create_simulation_compute_pipeline(
+                device,
+                &pipeline_layout,
+                &shader,
+                "gather_thermal_interaction",
+            ),
             cell_count,
             rigid_capacity,
         }

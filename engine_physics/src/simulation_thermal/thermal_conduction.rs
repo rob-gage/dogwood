@@ -141,16 +141,6 @@ impl ThermalConduction {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = |entry| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(entry),
-                layout: Some(&pipeline_layout),
-                module: &shader,
-                entry_point: Some(entry),
-                compilation_options: Default::default(),
-                cache: None,
-            })
-        };
         Self {
             solved,
             face_flux,
@@ -158,10 +148,30 @@ impl ThermalConduction {
             conductance_sum,
             parameters,
             bind_group,
-            flux_pipeline: pipeline("calculate_thermal_face_flux"),
-            sum_pipeline: pipeline("calculate_thermal_conductance_sum"),
-            actual_flux_pipeline: pipeline("calculate_thermal_actual_flux"),
-            resolve_pipeline: pipeline("resolve_thermal_conduction"),
+            flux_pipeline: crate::simulation::create_simulation_compute_pipeline(
+                device,
+                &pipeline_layout,
+                &shader,
+                "calculate_thermal_face_flux",
+            ),
+            sum_pipeline: crate::simulation::create_simulation_compute_pipeline(
+                device,
+                &pipeline_layout,
+                &shader,
+                "calculate_thermal_conductance_sum",
+            ),
+            actual_flux_pipeline: crate::simulation::create_simulation_compute_pipeline(
+                device,
+                &pipeline_layout,
+                &shader,
+                "calculate_thermal_actual_flux",
+            ),
+            resolve_pipeline: crate::simulation::create_simulation_compute_pipeline(
+                device,
+                &pipeline_layout,
+                &shader,
+                "resolve_thermal_conduction",
+            ),
             cell_count,
         }
     }

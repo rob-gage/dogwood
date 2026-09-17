@@ -21,6 +21,22 @@ pub(crate) fn create_simulation_shader_module(
     )
 }
 
+pub(crate) fn create_simulation_compute_pipeline(
+    device: &wgpu::Device,
+    pipeline_layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    entry_point: &'static str,
+) -> wgpu::ComputePipeline {
+    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some(entry_point),
+        layout: Some(pipeline_layout),
+        module: shader,
+        entry_point: Some(entry_point),
+        compilation_options: Default::default(),
+        cache: None,
+    })
+}
+
 const PHYSICS_SHADER_UTILITIES: [engine_compute::ComposableShaderUtility; 8] = [
     engine_compute::ComposableShaderUtility {
         source: include_str!("simulation_constants.wgsl"),
