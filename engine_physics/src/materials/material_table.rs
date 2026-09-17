@@ -5,6 +5,9 @@ use engine_compute::{Accelerator, AcceleratorBuffer};
 use engine_graphics::MaterialGraphics;
 
 /// All immutable derived material properties uploaded to the Accelerator.
+///
+/// The registry remains the authoritative CPU-side source. This table owns the
+/// packed buffers used by rendering and simulation until the scene is dropped.
 pub(crate) struct MaterialTable {
     material_graphics: MaterialGraphics,
     thermal_properties: AcceleratorBuffer,

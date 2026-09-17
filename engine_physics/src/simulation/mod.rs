@@ -108,6 +108,7 @@ const PHYSICS_SHADER_UTILITIES: [engine_compute::ComposableShaderUtility; 8] = [
     },
 ];
 
+/// Composes a physics shader with the shared non-mathematical utility modules.
 pub fn create_physics_shader_module(
     device: &wgpu::Device,
     label: &'static str,
