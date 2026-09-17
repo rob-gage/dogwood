@@ -280,7 +280,10 @@ impl MaterialReactions {
             "material reactions",
             concat!(
                 include_str!("material_reactions_shader_helpers.wgsl"),
+                include_str!("material_reactions_shader_fluid_reservation.wgsl"),
                 include_str!("material_reactions_shader_reservation.wgsl"),
+                include_str!("material_reactions_shader_candidate_reservation.wgsl"),
+                include_str!("material_reactions_shader_fluid_authority.wgsl"),
                 include_str!("material_reactions_shader_application.wgsl"),
             ),
             file!(),

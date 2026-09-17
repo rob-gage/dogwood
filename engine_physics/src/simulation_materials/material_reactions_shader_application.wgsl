@@ -1,3 +1,5 @@
+@compute @workgroup_size(64)
+
 fn apply_canonical(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let cell = invocation.x;
     if (cell >= parameters.cell_count || cell >= arrayLength(&candidates) ){

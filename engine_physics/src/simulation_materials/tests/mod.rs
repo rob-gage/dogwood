@@ -471,7 +471,10 @@ fn test_implicit_air_respects_local_occupancy() {
 fn test_apply_shader_is_commit_only() {
     let shader = concat!(
         include_str!("../material_reactions_shader_helpers.wgsl"),
+        include_str!("../material_reactions_shader_fluid_reservation.wgsl"),
         include_str!("../material_reactions_shader_reservation.wgsl"),
+        include_str!("../material_reactions_shader_candidate_reservation.wgsl"),
+        include_str!("../material_reactions_shader_fluid_authority.wgsl"),
         include_str!("../material_reactions_shader_application.wgsl"),
     );
     let apply = shader
