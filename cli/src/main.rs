@@ -1,5 +1,8 @@
 // Copyright Rob Gage 2026
 
+mod command;
+mod subcommand;
+
 use std::{
     error::Error,
     fs,
@@ -7,28 +10,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[derive(clap::Parser)]
-#[command(version, about)]
-struct Command {
-    #[command(subcommand)]
-    subcommand: Subcommand,
-}
-
-#[derive(clap::Subcommand)]
-enum Subcommand {
-    /// Create a runnable Dogwood project.
-    New {
-        /// Directory to create the project in.
-        #[arg(default_value = ".", value_name = "DIRECTORY")]
-        directory: PathBuf,
-        /// Project/package name.
-        #[arg(long)]
-        name: Option<String>,
-    },
-}
-
 fn main() -> Result<(), Box<dyn Error>> {
-    use Subcommand::*;
+    use command::Command;
+    use subcommand::Subcommand::*;
     let command: Command = clap::Parser::parse();
     match command.subcommand {
         New { directory, name } => {
