@@ -124,7 +124,12 @@ impl Gases {
         let shader: wgpu::ShaderModule = crate::simulation::create_simulation_shader_module(
             device,
             "gas simulation shader",
-            include_str!("gases.wgsl"),
+            concat!(
+                include_str!("gases_shader_header.wgsl"),
+                include_str!("gases_shader_solver.wgsl"),
+                include_str!("gases_shader_streaming.wgsl"),
+                include_str!("gases_shader_utility.wgsl"),
+            ),
             "engine_physics/src/simulation/gases.wgsl",
         );
         let pipeline_layout: wgpu::PipelineLayout =
