@@ -13,6 +13,9 @@ mod collision_occupancy_snapshot;
 mod collision_readback_slot;
 mod collision_readback_status;
 
+#[cfg(test)]
+pub(crate) mod tests;
+
 pub use cell_particle::CellParticle;
 pub use cellular_collision::CellularCollision;
 pub use cellular_dynamic::CellularDynamic;
