@@ -3,6 +3,8 @@
 //! Scene and user-interface rendering orchestration.
 
 mod scene_renderer;
+#[cfg(test)]
+mod tests;
 mod user_interface_renderer;
 
 fn create_render_shader_module(
