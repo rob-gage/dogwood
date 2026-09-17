@@ -13,4 +13,7 @@ mod shader_composition;
 
 pub use accelerator::Accelerator;
 pub use accelerator_buffer::AcceleratorBuffer;
-pub use shader_composition::create_composed_shader_module;
+pub use shader_composition::{
+    ComposableShaderUtility, create_composed_shader_module,
+    create_composed_shader_module_with_utilities,
+};

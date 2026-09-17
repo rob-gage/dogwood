@@ -9,7 +9,7 @@ fn create_render_shader_module(
     source: &'static str,
     file_path: &'static str,
 ) -> wgpu::ShaderModule {
-    engine_compute::create_composed_shader_module(device, label, source, file_path)
+    engine_physics::simulation::create_physics_shader_module(device, label, source, file_path)
 }
 
 pub use scene_renderer::SceneRenderer;
