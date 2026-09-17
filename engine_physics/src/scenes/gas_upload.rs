@@ -43,27 +43,3 @@ impl GasUpload {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests {
-
-    use super::*;
-    use crate::{
-        materials::MaterialIdentifier,
-        tiles::{CellCoordinates, TileCoordinates},
-    };
-
-    #[test]
-    fn rejects_a_cell_outside_its_upload_area() {
-        let upload: GasUpload = GasUpload::new(
-            TileArea::new(TileCoordinates { x: 0, y: 0 }, 1, 1),
-            vec![ChunkGasCell {
-                coordinates: CellCoordinates { x: 8, y: 0 },
-                velocity: [0.0; 2],
-                species: vec![(MaterialIdentifier::from_u32(1), 1.0)],
-                temperature: 293.15,
-            }],
-        );
-        assert!(upload.validate(&MaterialRegistry::new()).is_err());
-    }
-}

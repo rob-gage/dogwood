@@ -16,6 +16,9 @@ mod scene_velocity;
 mod tile_download;
 mod tile_upload;
 
+#[cfg(test)]
+pub(crate) mod tests;
+
 pub use fluid_download::FluidDownload;
 pub use fluid_upload::FluidUpload;
 pub use gas_download::GasDownload;
