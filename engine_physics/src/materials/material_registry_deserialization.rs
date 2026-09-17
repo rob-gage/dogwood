@@ -387,9 +387,7 @@ impl MaterialRegistry {
 
     /// Reads one little-endian `u32`
     fn read_u32<R: io::Read>(reader: &mut R) -> Result<u32, io::Error> {
-        let mut bytes: [u8; 4] = [0; 4];
-        reader.read_exact(&mut bytes)?;
-        Ok(u32::from_le_bytes(bytes))
+        crate::binary_reader::read_u32(reader)
     }
 
     /// Reads one packed RGBA color

@@ -35,35 +35,36 @@ impl ChunkFluidParticle {
     /// Reads one persistent dormant particle record
     pub fn deserialize<R: io::Read>(reader: &mut R) -> Result<Self, io::Error> {
         let material_identifier: MaterialIdentifier =
-            MaterialIdentifier::from_u32(super::read_u32(reader)?);
+            MaterialIdentifier::from_u32(crate::binary_reader::read_u32(reader)?);
         let particle: Self = Self {
             material_identifier,
             position: [
-                f32::from_bits(super::read_u32(reader)?),
-                f32::from_bits(super::read_u32(reader)?),
+                f32::from_bits(crate::binary_reader::read_u32(reader)?),
+                f32::from_bits(crate::binary_reader::read_u32(reader)?),
             ],
             velocity: [
-                f32::from_bits(super::read_u32(reader)?),
-                f32::from_bits(super::read_u32(reader)?),
+                f32::from_bits(crate::binary_reader::read_u32(reader)?),
+                f32::from_bits(crate::binary_reader::read_u32(reader)?),
             ],
-            amount: f32::from_bits(super::read_u32(reader)?),
-            temperature: f32::from_bits(super::read_u32(reader)?),
+            amount: f32::from_bits(crate::binary_reader::read_u32(reader)?),
+            temperature: f32::from_bits(crate::binary_reader::read_u32(reader)?),
         };
         particle.validate()?;
         Ok(particle)
     }
 
     pub fn deserialize_legacy<R: io::Read>(reader: &mut R) -> Result<Self, io::Error> {
-        let material_identifier = MaterialIdentifier::from_u32(super::read_u32(reader)?);
+        let material_identifier =
+            MaterialIdentifier::from_u32(crate::binary_reader::read_u32(reader)?);
         let particle = Self {
             material_identifier,
             position: [
-                f32::from_bits(super::read_u32(reader)?),
-                f32::from_bits(super::read_u32(reader)?),
+                f32::from_bits(crate::binary_reader::read_u32(reader)?),
+                f32::from_bits(crate::binary_reader::read_u32(reader)?),
             ],
             velocity: [
-                f32::from_bits(super::read_u32(reader)?),
-                f32::from_bits(super::read_u32(reader)?),
+                f32::from_bits(crate::binary_reader::read_u32(reader)?),
+                f32::from_bits(crate::binary_reader::read_u32(reader)?),
             ],
             amount: 1.0,
             temperature: f32::NAN,

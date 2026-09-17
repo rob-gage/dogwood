@@ -8,6 +8,7 @@ extern crate dogwood_engine_input as engine_input;
 
 pub mod actors;
 mod actors_utility;
+mod binary_reader;
 pub mod chunks;
 pub mod materials;
 mod scene_data;

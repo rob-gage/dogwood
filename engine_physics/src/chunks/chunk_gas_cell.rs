@@ -27,15 +27,15 @@ impl ChunkGasCell {
     /// Reads one sparse dormant gas cell
     pub fn deserialize<R: io::Read>(reader: &mut R) -> Result<Self, io::Error> {
         let coordinates: CellCoordinates = CellCoordinates {
-            x: super::read_u32(reader)? as i32,
-            y: super::read_u32(reader)? as i32,
+            x: crate::binary_reader::read_u32(reader)? as i32,
+            y: crate::binary_reader::read_u32(reader)? as i32,
         };
         let velocity: [f32; 2] = [
-            f32::from_bits(super::read_u32(reader)?),
-            f32::from_bits(super::read_u32(reader)?),
+            f32::from_bits(crate::binary_reader::read_u32(reader)?),
+            f32::from_bits(crate::binary_reader::read_u32(reader)?),
         ];
-        let temperature = f32::from_bits(super::read_u32(reader)?);
-        let count: usize = super::read_u32(reader)? as usize;
+        let temperature = f32::from_bits(crate::binary_reader::read_u32(reader)?);
+        let count: usize = crate::binary_reader::read_u32(reader)? as usize;
         let mut species: Vec<(MaterialIdentifier, f32)> = Vec::new();
         species.try_reserve_exact(count).map_err(|_| {
             io::Error::new(
@@ -45,8 +45,8 @@ impl ChunkGasCell {
         })?;
         for _ in 0..count {
             species.push((
-                MaterialIdentifier::from_u32(super::read_u32(reader)?),
-                f32::from_bits(super::read_u32(reader)?),
+                MaterialIdentifier::from_u32(crate::binary_reader::read_u32(reader)?),
+                f32::from_bits(crate::binary_reader::read_u32(reader)?),
             ));
         }
         let cell: Self = Self {
@@ -61,14 +61,14 @@ impl ChunkGasCell {
 
     pub fn deserialize_legacy<R: io::Read>(reader: &mut R) -> Result<Self, io::Error> {
         let coordinates = CellCoordinates {
-            x: super::read_u32(reader)? as i32,
-            y: super::read_u32(reader)? as i32,
+            x: crate::binary_reader::read_u32(reader)? as i32,
+            y: crate::binary_reader::read_u32(reader)? as i32,
         };
         let velocity = [
-            f32::from_bits(super::read_u32(reader)?),
-            f32::from_bits(super::read_u32(reader)?),
+            f32::from_bits(crate::binary_reader::read_u32(reader)?),
+            f32::from_bits(crate::binary_reader::read_u32(reader)?),
         ];
-        let count = super::read_u32(reader)? as usize;
+        let count = crate::binary_reader::read_u32(reader)? as usize;
         let mut species = Vec::new();
         species.try_reserve_exact(count).map_err(|_| {
             io::Error::new(
@@ -78,8 +78,8 @@ impl ChunkGasCell {
         })?;
         for _ in 0..count {
             species.push((
-                MaterialIdentifier::from_u32(super::read_u32(reader)?),
-                f32::from_bits(super::read_u32(reader)?),
+                MaterialIdentifier::from_u32(crate::binary_reader::read_u32(reader)?),
+                f32::from_bits(crate::binary_reader::read_u32(reader)?),
             ));
         }
         let cell = Self {
