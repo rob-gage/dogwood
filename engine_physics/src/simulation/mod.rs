@@ -45,8 +45,8 @@ const PHYSICS_SHADER_UTILITIES: [engine_compute::ComposableShaderUtility; 8] = [
         file_path: "engine_physics/src/simulation_utility/material_identifier.wgsl",
     },
     engine_compute::ComposableShaderUtility {
-        source: include_str!("../simulation_utility/thermal_material.wgsl"),
-        file_path: "engine_physics/src/simulation_utility/thermal_material.wgsl",
+        source: include_str!("../simulation_utility/thermal_properties.wgsl"),
+        file_path: "engine_physics/src/simulation_utility/thermal_properties.wgsl",
     },
     engine_compute::ComposableShaderUtility {
         source: include_str!("../simulation_utility/tile_ring.wgsl"),
