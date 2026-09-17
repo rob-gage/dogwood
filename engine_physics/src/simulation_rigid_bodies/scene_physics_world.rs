@@ -124,7 +124,6 @@ impl ScenePhysicsWorld {
     }
 
     /// Removes one rigid body and all attached colliders
-    #[allow(dead_code)]
     pub(crate) fn remove_rigid_cellular_body(&mut self, body: &RigidCellularBody) {
         self.rapier.remove_body(body.handle);
     }

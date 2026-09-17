@@ -2805,7 +2805,6 @@ impl Scene {
     }
 
     /// Removes body-local cells and replaces the body with its remaining connected pieces
-    #[allow(dead_code)]
     fn remove_rigid_cellular_body_cells(
         &mut self,
         body_index: usize,
