@@ -81,7 +81,7 @@ impl AcceleratorTiming {
         {
             if self.query_set.is_none()
                 || !tracing::enabled!(
-                    target: "dogwood_gpu",
+                    target: "dogwood_accelerator",
                     tracing::Level::DEBUG
                 )
             {
@@ -100,7 +100,7 @@ impl AcceleratorTiming {
             let Some(slot) = state.readbacks.iter().position(|readback| {
                 readback.status.load(Ordering::Acquire) == AcceleratorTimingReadback::IDLE
             }) else {
-                tracing::debug!(target: "dogwood_gpu", "skipped Accelerator timing sample; readback busy");
+                tracing::debug!(target: "dogwood_accelerator", "skipped Accelerator timing sample; readback busy");
                 return;
             };
             state.readbacks[slot]
@@ -292,7 +292,7 @@ impl AcceleratorTiming {
             if !state.capacity_exhausted {
                 state.capacity_exhausted = true;
                 tracing::warn!(
-                    target: "dogwood_gpu",
+                    target: "dogwood_accelerator",
                     sample = state.next_sample,
                     capacity = Self::QUERY_CAPACITY,
                     "Accelerator timing query capacity exhausted"
@@ -352,7 +352,7 @@ impl AcceleratorTiming {
             (sample, records, timestamps, failed)
         };
         if failed {
-            tracing::warn!(target: "dogwood_gpu", sample, "Accelerator timing readback failed");
+            tracing::warn!(target: "dogwood_accelerator", sample, "Accelerator timing readback failed");
             return;
         }
         self.report(sample, records, &timestamps);
@@ -362,47 +362,48 @@ impl AcceleratorTiming {
     fn report(&self, sample: u64, records: Vec<AcceleratorTimingRecord>, timestamps: &[u64]) {
         let mut compute_passes: u32 = 0;
         let mut render_passes: u32 = 0;
-        let mut compute_gpu_ns: u64 = 0;
-        let mut render_gpu_ns: u64 = 0;
+        let mut compute_accelerator_ns: u64 = 0;
+        let mut render_accelerator_ns: u64 = 0;
         for (index, record) in records.into_iter().enumerate() {
             let Some(ticks) = timestamps[index * 2 + 1].checked_sub(timestamps[index * 2]) else {
                 tracing::warn!(
-                    target: "dogwood_gpu",
+                    target: "dogwood_accelerator",
                     sample,
                     pass = %record.label,
                     "discarded wrapped Accelerator timestamp"
                 );
                 continue;
             };
-            let gpu_ns: u64 = (ticks as f64 * self.timestamp_period).round() as u64;
-            let gpu_ms: f64 = gpu_ns as f64 / 1_000_000.0;
+            let accelerator_ns: u64 = (ticks as f64 * self.timestamp_period).round() as u64;
+            let accelerator_ms: f64 = accelerator_ns as f64 / 1_000_000.0;
             if record.kind == "compute" {
                 compute_passes += 1;
-                compute_gpu_ns = compute_gpu_ns.saturating_add(gpu_ns);
+                compute_accelerator_ns = compute_accelerator_ns.saturating_add(accelerator_ns);
             } else {
                 render_passes += 1;
-                render_gpu_ns = render_gpu_ns.saturating_add(gpu_ns);
+                render_accelerator_ns = render_accelerator_ns.saturating_add(accelerator_ns);
             }
             tracing::debug!(
-                target: "dogwood_gpu",
+                target: "dogwood_accelerator",
                 sample,
                 kind = record.kind,
                 pass = %record.label,
                 occurrence = record.occurrence,
-                gpu_ns,
-                gpu_ms,
+                accelerator_ns,
+                accelerator_ms,
                 "Accelerator pass"
             );
         }
-        let measured_gpu_ns: u64 = compute_gpu_ns.saturating_add(render_gpu_ns);
+        let measured_accelerator_ns: u64 =
+            compute_accelerator_ns.saturating_add(render_accelerator_ns);
         tracing::debug!(
-            target: "dogwood_gpu",
+            target: "dogwood_accelerator",
             sample,
             compute_passes,
             render_passes,
-            compute_gpu_ms = compute_gpu_ns as f64 / 1_000_000.0,
-            render_gpu_ms = render_gpu_ns as f64 / 1_000_000.0,
-            measured_gpu_ms = measured_gpu_ns as f64 / 1_000_000.0,
+            compute_accelerator_ms = compute_accelerator_ns as f64 / 1_000_000.0,
+            render_accelerator_ms = render_accelerator_ns as f64 / 1_000_000.0,
+            measured_accelerator_ms = measured_accelerator_ns as f64 / 1_000_000.0,
             "Accelerator measured-pass sample"
         );
     }

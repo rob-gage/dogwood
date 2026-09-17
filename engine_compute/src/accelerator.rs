@@ -51,7 +51,7 @@ impl Accelerator {
             AcceleratorTiming::new(&device, &queue, timestamp_query_supported);
         #[cfg(debug_assertions)]
         tracing::info!(
-            target: "dogwood_gpu",
+            target: "dogwood_accelerator",
             available = timestamp_query_supported,
             "Accelerator timestamp profiling availability"
         );
