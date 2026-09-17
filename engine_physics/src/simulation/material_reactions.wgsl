@@ -350,10 +350,17 @@ fn rollback_fluid_plan(cell: u32, reactant: u32) {
 }
 
 @compute @workgroup_size(64)
+fn clear_transaction_state(@builtin(global_invocation_id) id: vec3<u32>) {
+  let index = id.x;
+  if (index < arrayLength(&fluid_reservations)) { atomicStore(&fluid_reservations[index], 0u); }
+  if (index < arrayLength(&gas_reservations)) { atomicStore(&gas_reservations[index], 0u); }
+  if (index < arrayLength(&gas_output_reservations)) { atomicStore(&gas_output_reservations[index], 0u); }
+}
+
+@compute @workgroup_size(64)
 fn reserve_fluid_authority(@builtin(global_invocation_id) id: vec3<u32>) {
   let cell = id.x;
   if (cell >= parameters.cell_count || cell >= arrayLength(&candidates)) { return; }
-  if (cell < arrayLength(&fluid_reservations)) { atomicStore(&fluid_reservations[cell], 0u); }
   let candidate = candidates[cell];
   if (candidate.reaction == 0xffffffffu || candidate.extent <= 0.000001) { return; }
   // A candidate can only share an authority with anchors at the same cell or
@@ -615,12 +622,6 @@ fn environment_matches(rule: Reaction, cell: u32, air: f32) -> bool {
 @compute @workgroup_size(64)
 fn discover_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
   let cell = id.x;
-  if (cell < arrayLength(&fluid_reservations)) { atomicStore(&fluid_reservations[cell], 0u); }
-  for (var species = 0u; species < parameters.gas_count; species += 1u) {
-    let reservation_index = species * parameters.cell_count + cell;
-    if (reservation_index < arrayLength(&gas_reservations)) { atomicStore(&gas_reservations[reservation_index], 0u); }
-    if (reservation_index < arrayLength(&gas_output_reservations)) { atomicStore(&gas_output_reservations[reservation_index], 0u); }
-  }
   if (cell >= parameters.cell_count || cell >= arrayLength(&candidates)) { return; }
   candidates[cell] = Candidate(0xffffffffu, cell, 0.0, 0xffffffffu, 0u, 0u, 0u, 0u,
     vec4<u32>(0xffffffffu), vec4<f32>(0.0), vec4<u32>(0xffffffffu), vec4<f32>(0.0), vec2<u32>(0xffffffffu));

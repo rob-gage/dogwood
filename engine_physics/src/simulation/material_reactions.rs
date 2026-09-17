@@ -20,10 +20,12 @@ pub(crate) struct MaterialReactions {
     reaction_energy: AcceleratorBuffer,
     parameters: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
+    clear_pipeline: wgpu::ComputePipeline,
     discover_pipeline: wgpu::ComputePipeline,
     reserve_pipeline: wgpu::ComputePipeline,
     apply_pipeline: wgpu::ComputePipeline,
     cell_count: u32,
+    clear_count: u32,
     reaction_count: u32,
 }
 
@@ -52,7 +54,8 @@ impl MaterialReactions {
     ) -> Self {
         let device = accelerator.wgpu_device();
         let candidates = accelerator.allocate::<[u32; 28]>(cell_count as usize);
-        let fluid_reservations = accelerator.allocate::<u32>(cell_count as usize);
+        let fluid_reservations =
+            accelerator.allocate::<u32>(fluid_authority.particle_capacity as usize);
         let gas_reservations =
             accelerator.allocate::<u32>((cell_count * gas_count.max(1)) as usize);
         let gas_output_reservations =
@@ -198,6 +201,10 @@ impl MaterialReactions {
             reaction_energy,
             parameters,
             bind_group,
+            clear_pipeline: pipeline(
+                "clear_transaction_state",
+                "material reaction transaction clear pipeline",
+            ),
             discover_pipeline: pipeline(
                 "discover_canonical",
                 "material reaction discovery pipeline",
@@ -211,6 +218,9 @@ impl MaterialReactions {
                 "material reaction canonical apply pipeline",
             ),
             cell_count,
+            clear_count: fluid_authority
+                .particle_capacity
+                .max(cell_count.saturating_mul(gas_count.max(1))),
             reaction_count,
         }
     }
@@ -219,6 +229,9 @@ impl MaterialReactions {
             return;
         }
         let mut pass = accelerator.begin_compute_pass(encoder, "chemistry discover canonical");
+        pass.set_pipeline(&self.clear_pipeline);
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.dispatch_workgroups(self.clear_count.div_ceil(64), 1, 1);
         pass.set_pipeline(&self.discover_pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
@@ -553,6 +566,7 @@ mod tests {
             &request_count,
             FluidAuthorityView {
                 particles: &fluid_particles,
+                particle_capacity: 8,
                 free_indices: &fluid_next_particle,
                 free_count: &fluid_bucket_heads,
                 bucket_heads: &fluid_bucket_heads,
