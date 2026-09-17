@@ -152,6 +152,22 @@ impl Fluids {
             parameters: &self.parameters,
         }
     }
+
+    /// Returns the maximum number of authoritative resident particles
+    pub const fn particle_capacity(&self) -> u32 {
+        self.particle_capacity
+    }
+
+    pub(crate) const fn derived_thermal_buffer(&self) -> &AcceleratorBuffer {
+        &self.derived_thermal
+    }
+
+    /// Returns the tile buffer required by active movement and PBF support
+    pub fn minimum_buffer_tiles() -> u8 {
+        let predicted_movement: f32 = MAXIMUM_MOVEMENT_CELLS as f32 / PBF_SUBSTEP_COUNT as f32
+            + MAXIMUM_CORRECTION_CELLS * PBF_CONSTRAINT_ITERATION_COUNT as f32;
+        ((SUPPORT_RADIUS_CELLS * 2.0 + predicted_movement) / 8.0).ceil() as u8
+    }
 }
 
 impl Drop for Fluids {
