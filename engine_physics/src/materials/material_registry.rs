@@ -1,8 +1,9 @@
 // Copyright Rob Gage 2026
 
 use super::{
-    Material, MaterialForm, MaterialIdentifier, MaterialThermalProperties,
-    MaterialThermalTransition,
+    CompiledMaterialReaction, CompiledMaterialReactionProduct, CompiledMaterialReactionReactant,
+    Material, MaterialForm, MaterialIdentifier, MaterialReaction, MaterialSelector,
+    MaterialThermalProperties, MaterialThermalTransition,
 };
 use engine_compute::Accelerator;
 use engine_graphics::{Color, MaterialAppearance, MaterialGraphics};
@@ -20,6 +21,8 @@ pub struct MaterialRegistry {
     gases: Vec<Material>,
     thermal: Vec<MaterialThermalProperties>,
     tags: BTreeMap<String, Vec<MaterialIdentifier>>,
+    reactions: Vec<CompiledMaterialReaction>,
+    reaction_selector_members: Vec<MaterialIdentifier>,
 }
 
 impl MaterialRegistry {
@@ -32,6 +35,8 @@ impl MaterialRegistry {
             gases: Vec::new(),
             thermal: Vec::new(),
             tags: BTreeMap::new(),
+            reactions: Vec::new(),
+            reaction_selector_members: Vec::new(),
         }
     }
 
@@ -127,10 +132,19 @@ impl MaterialRegistry {
     pub fn tag_members(&self, tag: &str) -> Option<&[MaterialIdentifier]> {
         self.tags.get(tag).map(Vec::as_slice)
     }
+    /// Fixed-stride, GPU-ready reaction metadata in stable authoring order.
+    pub fn reactions(&self) -> &[CompiledMaterialReaction] {
+        &self.reactions
+    }
+    /// Material IDs used by compiled reaction selector ranges.
+    pub fn reaction_selector_members(&self) -> &[MaterialIdentifier] {
+        &self.reaction_selector_members
+    }
     pub(crate) fn set_compiled_metadata(
         &mut self,
         metadata: BTreeMap<MaterialIdentifier, MaterialThermalProperties>,
         mut tags: BTreeMap<String, Vec<MaterialIdentifier>>,
+        reactions: Vec<MaterialReaction>,
     ) -> Result<(), String> {
         let mut thermal =
             vec![MaterialThermalProperties::default(); self.material_count() as usize];
@@ -150,8 +164,148 @@ impl MaterialRegistry {
             }
         }
         self.thermal = thermal;
+        let (compiled_reactions, selector_members) =
+            Self::compile_reactions(&reactions, &tags, self)?;
         self.tags = tags;
+        self.reactions = compiled_reactions;
+        self.reaction_selector_members = selector_members;
         Ok(())
+    }
+    fn compile_reactions(
+        reactions: &[MaterialReaction],
+        tags: &BTreeMap<String, Vec<MaterialIdentifier>>,
+        registry: &Self,
+    ) -> Result<(Vec<CompiledMaterialReaction>, Vec<MaterialIdentifier>), String> {
+        let mut compiled = Vec::with_capacity(reactions.len());
+        let mut members = Vec::new();
+        for (order, reaction) in reactions.iter().enumerate() {
+            let finite = |value: f32| value.is_finite();
+            if !finite(reaction.maximum_extent_per_tick)
+                || reaction.maximum_extent_per_tick < 0.0
+                || !finite(reaction.thermal_energy)
+                || !finite(reaction.pressure_output)
+                || reaction
+                    .minimum_temperature
+                    .is_some_and(|v| !finite(v) || v < 0.0)
+                || reaction
+                    .maximum_temperature
+                    .is_some_and(|v| !finite(v) || v < 0.0)
+                || reaction
+                    .minimum_pressure
+                    .is_some_and(|v| !finite(v) || v < 0.0)
+                || reaction
+                    .maximum_pressure
+                    .is_some_and(|v| !finite(v) || v < 0.0)
+                || reaction
+                    .minimum_air
+                    .is_some_and(|v| !finite(v) || !(0.0..=1.0).contains(&v))
+                || reaction
+                    .maximum_air
+                    .is_some_and(|v| !finite(v) || !(0.0..=1.0).contains(&v))
+            {
+                return Err("Invalid reaction numeric value".into());
+            }
+            if reaction
+                .minimum_temperature
+                .zip(reaction.maximum_temperature)
+                .is_some_and(|(min, max)| min > max)
+                || reaction
+                    .minimum_pressure
+                    .zip(reaction.maximum_pressure)
+                    .is_some_and(|(min, max)| min > max)
+                || reaction
+                    .minimum_air
+                    .zip(reaction.maximum_air)
+                    .is_some_and(|(min, max)| min > max)
+            {
+                return Err("Invalid reaction range".into());
+            }
+            let has_environment = reaction.minimum_temperature.is_some()
+                || reaction.maximum_temperature.is_some()
+                || reaction.minimum_pressure.is_some()
+                || reaction.maximum_pressure.is_some()
+                || reaction.minimum_air.is_some()
+                || reaction.maximum_air.is_some();
+            let reactant_count = reaction.reactants.iter().flatten().count();
+            if reactant_count == 0 && !has_environment {
+                return Err("Unconditional zero-reactant reaction is invalid".into());
+            }
+            if reaction.products.iter().flatten().count() == 0
+                && reaction.thermal_energy == 0.0
+                && reaction.pressure_output == 0.0
+            {
+                return Err("Reaction has no observable output".into());
+            }
+            let mut compiled_reactants = [CompiledMaterialReactionReactant::default(); 2];
+            for (i, reactant) in reaction.reactants.iter().enumerate() {
+                let Some(reactant) = reactant else { continue };
+                if !finite(reactant.amount) || reactant.amount <= 0.0 {
+                    return Err("Invalid reaction reactant amount".into());
+                }
+                let resolved: Vec<MaterialIdentifier> = match &reactant.selector {
+                    MaterialSelector::Material(id) => {
+                        if registry.get(*id).is_none() {
+                            return Err("Reaction references an unregistered material".into());
+                        }
+                        vec![*id]
+                    }
+                    MaterialSelector::Tag(tag) => tags
+                        .get(tag)
+                        .cloned()
+                        .ok_or("Reaction references an unknown tag")?,
+                };
+                if resolved.is_empty() {
+                    return Err("Reaction selector cannot match an empty tag".into());
+                }
+                let offset: u32 = members
+                    .len()
+                    .try_into()
+                    .map_err(|_| "Too many reaction selector members")?;
+                let count: u32 = resolved
+                    .len()
+                    .try_into()
+                    .map_err(|_| "Too many reaction selector members")?;
+                members.extend(resolved);
+                compiled_reactants[i] = CompiledMaterialReactionReactant {
+                    member_offset: offset,
+                    member_count: count,
+                    amount_bits: reactant.amount.to_bits(),
+                    present: 1,
+                };
+            }
+            let mut compiled_products = [CompiledMaterialReactionProduct::default(); 2];
+            for (i, product) in reaction.products.iter().enumerate() {
+                let Some(product) = product else { continue };
+                if registry.get(product.material).is_none() {
+                    return Err("Reaction product references an unregistered material".into());
+                }
+                if !finite(product.amount) || product.amount <= 0.0 {
+                    return Err("Invalid reaction product amount".into());
+                }
+                compiled_products[i] = CompiledMaterialReactionProduct {
+                    material: product.material.as_u32(),
+                    amount_bits: product.amount.to_bits(),
+                    present: 1,
+                    _padding: 0,
+                };
+            }
+            compiled.push(CompiledMaterialReaction {
+                reactants: compiled_reactants,
+                products: compiled_products,
+                minimum_temperature: reaction.minimum_temperature.unwrap_or(f32::NAN),
+                maximum_temperature: reaction.maximum_temperature.unwrap_or(f32::NAN),
+                minimum_pressure: reaction.minimum_pressure.unwrap_or(f32::NAN),
+                maximum_pressure: reaction.maximum_pressure.unwrap_or(f32::NAN),
+                minimum_air: reaction.minimum_air.unwrap_or(f32::NAN),
+                maximum_extent_per_tick: reaction.maximum_extent_per_tick,
+                maximum_air: reaction.maximum_air.unwrap_or(f32::NAN),
+                thermal_energy: reaction.thermal_energy,
+                pressure_output: reaction.pressure_output,
+                priority: reaction.priority,
+                authoring_order: order as u32,
+            });
+        }
+        Ok((compiled, members))
     }
     fn validate_thermal(
         identifier: MaterialIdentifier,
@@ -445,6 +599,8 @@ impl MaterialRegistry {
             gases,
             thermal: Vec::new(),
             tags: BTreeMap::new(),
+            reactions: Vec::new(),
+            reaction_selector_members: Vec::new(),
         };
         registry.thermal =
             vec![MaterialThermalProperties::default(); registry.material_count() as usize];
@@ -460,7 +616,7 @@ impl MaterialRegistry {
         Self::serialize_form(writer, &self.fluids)?;
         Self::serialize_form(writer, &self.gases)?;
         writer.write_all(b"dwmtmeta")?;
-        writer.write_all(&1u32.to_le_bytes())?;
+        writer.write_all(&2u32.to_le_bytes())?;
         writer.write_all(&self.material_count().to_le_bytes())?;
         for value in &self.thermal {
             writer.write_all(&value.conductivity.to_bits().to_le_bytes())?;
@@ -512,6 +668,45 @@ impl MaterialRegistry {
                 writer.write_all(&member.as_u32().to_le_bytes())?;
             }
         }
+        writer.write_all(&(self.reaction_selector_members.len() as u32).to_le_bytes())?;
+        for member in &self.reaction_selector_members {
+            writer.write_all(&member.as_u32().to_le_bytes())?;
+        }
+        writer.write_all(&(self.reactions.len() as u32).to_le_bytes())?;
+        for rule in &self.reactions {
+            let words = [
+                rule.reactants[0].member_offset,
+                rule.reactants[0].member_count,
+                rule.reactants[0].amount_bits,
+                rule.reactants[0].present,
+                rule.reactants[1].member_offset,
+                rule.reactants[1].member_count,
+                rule.reactants[1].amount_bits,
+                rule.reactants[1].present,
+                rule.products[0].material,
+                rule.products[0].amount_bits,
+                rule.products[0].present,
+                0,
+                rule.products[1].material,
+                rule.products[1].amount_bits,
+                rule.products[1].present,
+                0,
+                rule.minimum_temperature.to_bits(),
+                rule.maximum_temperature.to_bits(),
+                rule.minimum_pressure.to_bits(),
+                rule.maximum_pressure.to_bits(),
+                rule.minimum_air.to_bits(),
+                rule.maximum_air.to_bits(),
+                rule.maximum_extent_per_tick.to_bits(),
+                rule.thermal_energy.to_bits(),
+                rule.pressure_output.to_bits(),
+                rule.priority as u32,
+                rule.authoring_order,
+            ];
+            for word in words {
+                writer.write_all(&word.to_le_bytes())?;
+            }
+        }
         Ok(())
     }
 
@@ -521,7 +716,14 @@ impl MaterialRegistry {
         if read == 0 {
             return Ok(());
         }
-        if read != 8 || &magic != b"dwmtmeta" || Self::read_u32(reader)? != 1 {
+        if read != 8 || &magic != b"dwmtmeta" {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Invalid material metadata extension",
+            ));
+        }
+        let version = Self::read_u32(reader)?;
+        if version != 1 && version != 2 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Invalid material metadata extension",
@@ -593,8 +795,111 @@ impl MaterialRegistry {
                 return Err(io::Error::new(io::ErrorKind::InvalidData, "Duplicate tag"));
             }
         }
-        self.set_compiled_metadata(metadata, tags)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+        self.set_compiled_metadata(metadata, tags, Vec::new())
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        if version == 2 {
+            let member_count = Self::read_u32(reader)? as usize;
+            if member_count > self.material_count() as usize * 1024 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Too many reaction selector members",
+                ));
+            }
+            let mut members = Vec::with_capacity(member_count);
+            for _ in 0..member_count {
+                let id = MaterialIdentifier::from_u32(Self::read_u32(reader)?);
+                if self.get(id).is_none() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Invalid reaction selector member",
+                    ));
+                }
+                members.push(id);
+            }
+            let reaction_count = Self::read_u32(reader)? as usize;
+            if reaction_count > 65536 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Too many reactions",
+                ));
+            }
+            let mut reactions = Vec::with_capacity(reaction_count);
+            for _ in 0..reaction_count {
+                let mut words = [0u32; CompiledMaterialReaction::WORD_COUNT];
+                for word in &mut words {
+                    *word = Self::read_u32(reader)?;
+                }
+                let reactant =
+                    |offset, count, amount_bits, present| CompiledMaterialReactionReactant {
+                        member_offset: offset,
+                        member_count: count,
+                        amount_bits,
+                        present,
+                    };
+                let product = |material, amount_bits, present| CompiledMaterialReactionProduct {
+                    material,
+                    amount_bits,
+                    present,
+                    _padding: 0,
+                };
+                let rule = CompiledMaterialReaction {
+                    reactants: [
+                        reactant(words[0], words[1], words[2], words[3]),
+                        reactant(words[4], words[5], words[6], words[7]),
+                    ],
+                    products: [
+                        product(words[8], words[9], words[10]),
+                        product(words[12], words[13], words[14]),
+                    ],
+                    minimum_temperature: f32::from_bits(words[16]),
+                    maximum_temperature: f32::from_bits(words[17]),
+                    minimum_pressure: f32::from_bits(words[18]),
+                    maximum_pressure: f32::from_bits(words[19]),
+                    minimum_air: f32::from_bits(words[20]),
+                    maximum_air: f32::from_bits(words[21]),
+                    maximum_extent_per_tick: f32::from_bits(words[22]),
+                    thermal_energy: f32::from_bits(words[23]),
+                    pressure_output: f32::from_bits(words[24]),
+                    priority: words[25] as i32,
+                    authoring_order: words[26],
+                };
+                for reactant in &rule.reactants {
+                    if reactant.present > 1
+                        || reactant
+                            .member_offset
+                            .checked_add(reactant.member_count)
+                            .is_none_or(|end| end as usize > members.len())
+                        || (reactant.present == 1
+                            && (!f32::from_bits(reactant.amount_bits).is_finite()
+                                || f32::from_bits(reactant.amount_bits) <= 0.0))
+                    {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "Invalid compiled reaction reactant",
+                        ));
+                    }
+                }
+                for product in &rule.products {
+                    if product.present > 1
+                        || (product.present == 1
+                            && (self
+                                .get(MaterialIdentifier::from_u32(product.material))
+                                .is_none()
+                                || !f32::from_bits(product.amount_bits).is_finite()
+                                || f32::from_bits(product.amount_bits) <= 0.0))
+                    {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "Invalid compiled reaction product",
+                        ));
+                    }
+                }
+                reactions.push(rule);
+            }
+            self.reaction_selector_members = members;
+            self.reactions = reactions;
+        }
+        Ok(())
     }
 
     /// Reads an optional trailing material form, preserving three-form registries
@@ -879,7 +1184,10 @@ impl Index<MaterialIdentifier> for MaterialRegistry {
 mod tests {
 
     use super::*;
-    use crate::materials::{MaterialRegistryBuilder, MaterialThermalTransition};
+    use crate::materials::{
+        MaterialReaction, MaterialReactionProduct, MaterialReactionReactant,
+        MaterialRegistryBuilder, MaterialSelector, MaterialThermalTransition,
+    };
 
     #[test]
     fn gas_round_trips_and_three_form_registry_remains_readable() {
@@ -1002,6 +1310,26 @@ mod tests {
         builder.tag(static_id, "mixed").unwrap();
         builder.tag(fluid_id, "mixed").unwrap();
         builder.tag(gas_id, "mixed").unwrap();
+        builder.register_reaction(MaterialReaction {
+            reactants: [
+                Some(MaterialReactionReactant {
+                    selector: MaterialSelector::Tag("mixed".into()),
+                    amount: 1.0,
+                }),
+                None,
+            ],
+            products: [
+                Some(MaterialReactionProduct {
+                    material: dynamic_id,
+                    amount: 0.5,
+                }),
+                None,
+            ],
+            minimum_temperature: Some(300.0),
+            maximum_temperature: Some(600.0),
+            priority: 4,
+            ..Default::default()
+        });
         builder
             .set_thermal(
                 static_id,
@@ -1046,6 +1374,12 @@ mod tests {
                 .target,
             dynamic_id
         );
+        assert_eq!(registry.reactions().len(), 1);
+        assert_eq!(registry.reactions()[0].priority, 4);
+        assert_eq!(
+            registry.reaction_selector_members(),
+            &[gas_id, static_id, fluid_id]
+        );
         let mut bytes = Vec::new();
         registry.serialize(&mut bytes).unwrap();
         let loaded = MaterialRegistry::deserialize(&mut bytes.as_slice()).unwrap();
@@ -1057,6 +1391,127 @@ mod tests {
             loaded.thermal_properties(static_id),
             registry.thermal_properties(static_id)
         );
+        assert_eq!(loaded.reactions().len(), 1);
+        assert_eq!(loaded.reactions()[0].priority, 4);
+        assert_eq!(
+            loaded.reaction_selector_members(),
+            registry.reaction_selector_members()
+        );
+    }
+
+    #[test]
+    fn reaction_compiler_rejects_invalid_authoring_and_accepts_pressure_only_rules() {
+        let mut builder = MaterialRegistryBuilder::new();
+        let id = builder.register(Material::CellularDynamic {
+            name: "a".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(1, 1, 1)),
+            mass: 1.0,
+            pressure_transmission: 0.5,
+            friction: 0.5,
+            restitution: 0.0,
+        });
+        builder.register_reaction(MaterialReaction {
+            minimum_pressure: Some(2.0),
+            pressure_output: 1.0,
+            ..Default::default()
+        });
+        let registry = builder.compile().unwrap();
+        assert_eq!(registry.reactions().len(), 1);
+
+        let invalid = |reaction: MaterialReaction| {
+            let mut builder = MaterialRegistryBuilder::new();
+            let known = builder.register(Material::CellularDynamic {
+                name: "a".into(),
+                graphics: MaterialAppearance::from_color(Color::new_rgb(1, 1, 1)),
+                mass: 1.0,
+                pressure_transmission: 0.5,
+                friction: 0.5,
+                restitution: 0.0,
+            });
+            builder.register_reaction(reaction);
+            (builder.compile(), known)
+        };
+        assert!(invalid(MaterialReaction::default()).0.is_err());
+        assert!(
+            invalid(MaterialReaction {
+                minimum_temperature: Some(3.0),
+                maximum_temperature: Some(2.0),
+                thermal_energy: 1.0,
+                ..Default::default()
+            })
+            .0
+            .is_err()
+        );
+        assert!(
+            invalid(MaterialReaction {
+                minimum_pressure: Some(3.0),
+                maximum_pressure: Some(2.0),
+                thermal_energy: 1.0,
+                ..Default::default()
+            })
+            .0
+            .is_err()
+        );
+        assert!(
+            invalid(MaterialReaction {
+                minimum_air: Some(0.9),
+                maximum_air: Some(0.1),
+                thermal_energy: 1.0,
+                ..Default::default()
+            })
+            .0
+            .is_err()
+        );
+        assert!(
+            invalid(MaterialReaction {
+                minimum_pressure: Some(1.0),
+                thermal_energy: f32::NAN,
+                ..Default::default()
+            })
+            .0
+            .is_err()
+        );
+        assert!(
+            invalid(MaterialReaction {
+                minimum_pressure: Some(1.0),
+                maximum_extent_per_tick: -1.0,
+                ..Default::default()
+            })
+            .0
+            .is_err()
+        );
+        let unknown = MaterialIdentifier::from_u32(0x3fff_ffff);
+        assert!(
+            invalid(MaterialReaction {
+                reactants: [
+                    Some(MaterialReactionReactant {
+                        selector: MaterialSelector::Material(unknown),
+                        amount: 1.0
+                    }),
+                    None
+                ],
+                thermal_energy: 1.0,
+                ..Default::default()
+            })
+            .0
+            .is_err()
+        );
+        assert!(
+            invalid(MaterialReaction {
+                reactants: [
+                    Some(MaterialReactionReactant {
+                        selector: MaterialSelector::Tag("nope".into()),
+                        amount: 1.0
+                    }),
+                    None
+                ],
+                thermal_energy: 1.0,
+                ..Default::default()
+            })
+            .0
+            .is_err()
+        );
+        let _ = id;
     }
 
     #[test]
@@ -1068,7 +1523,7 @@ mod tests {
             .windows(8)
             .position(|value| value == b"dwmtmeta")
             .unwrap();
-        bytes[extension + 8] = 2;
+        bytes[extension + 8] = 3;
         assert!(MaterialRegistry::deserialize(&mut bytes.as_slice()).is_err());
     }
 

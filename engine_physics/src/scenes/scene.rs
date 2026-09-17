@@ -6,10 +6,11 @@ use super::{
 };
 use crate::simulation::{
     CellularCollision, CellularDynamic, CellularPhysicsBodyProxy, CellularPressure,
-    CollisionOccupancySnapshot, Fluids, Gases, MaterialMutations, RigidCellStateGather,
-    RigidCellStateUpload, RigidCellularBody, RigidCellularBodyCell, RigidCellularBodyState,
-    ScenePhysicsWorld, SceneSimulationConfiguration, ThermalConduction, ThermalEdits,
-    ThermalInteraction, ThermalMaterialTable, ThermalPhaseTransitions, ThermalScatter,
+    CollisionOccupancySnapshot, Fluids, Gases, MaterialMutations, MaterialReactions,
+    ReactionMaterialTable, RigidCellStateGather, RigidCellStateUpload, RigidCellularBody,
+    RigidCellularBodyCell, RigidCellularBodyState, ScenePhysicsWorld, SceneSimulationConfiguration,
+    ThermalConduction, ThermalEdits, ThermalInteraction, ThermalMaterialTable,
+    ThermalPhaseTransitions, ThermalScatter,
 };
 use crate::{
     actors::{Actor, ActorRegistry},
@@ -244,6 +245,9 @@ pub struct Scene {
     material_mutations: MaterialMutations,
     thermal_edits: ThermalEdits,
     thermal_material_table: ThermalMaterialTable,
+    /// Immutable fixed-stride reaction metadata for the chemistry GPU pipeline.
+    reaction_material_table: ReactionMaterialTable,
+    material_reactions: MaterialReactions,
     thermal_interaction: ThermalInteraction,
     thermal_conduction: ThermalConduction,
     thermal_scatter: ThermalScatter,
@@ -339,6 +343,8 @@ impl Scene {
             CellularPhysicsBodyProxy::new(accelerator.as_ref(), buffered_cell_count);
         let thermal_material_table =
             ThermalMaterialTable::new(accelerator.as_ref(), data.materials());
+        let reaction_material_table =
+            ReactionMaterialTable::new(accelerator.as_ref(), data.materials());
         let fluids: Fluids = Fluids::new(
             accelerator.as_ref(),
             &cellular_material_identifiers,
@@ -540,6 +546,21 @@ impl Scene {
             gases.gas_count(),
             buffered_cell_count,
         );
+        let material_reactions = MaterialReactions::new(
+            accelerator.as_ref(),
+            &reaction_material_table,
+            &cellular_material_identifiers,
+            &cellular_amounts,
+            &cellular_temperatures,
+            cellular_pressure.retained_pressure(),
+            fluids.coverage_buffer(),
+            gases.concentrations_buffer(),
+            cellular_physics_body_proxy.occupancy_buffer(),
+            cellular_physics_body_proxy.rigid_claims_buffer(),
+            buffered_cell_count as u32,
+            gases.gas_count(),
+            data.materials().reactions().len() as u32,
+        );
         let cellular_collision: CellularCollision = CellularCollision::new(
             accelerator.as_ref(),
             &cellular_material_identifiers,
@@ -652,6 +673,8 @@ impl Scene {
             material_mutations,
             thermal_edits,
             thermal_material_table,
+            reaction_material_table,
+            material_reactions,
             thermal_interaction,
             thermal_conduction,
             thermal_scatter,
@@ -2038,6 +2061,19 @@ impl Scene {
                 self.gravity,
                 1.0 / TICK_RATE as f32,
             );
+            // Chemistry discovery observes the post-advection material snapshot
+            // and the prior resolved pressure field. Its outputs are applied in
+            // later stages, never recursively during this discovery pass.
+            {
+                let mut encoder = self.accelerator.wgpu_device().create_command_encoder(
+                    &wgpu::CommandEncoderDescriptor {
+                        label: Some("material reaction discovery"),
+                    },
+                );
+                self.material_reactions
+                    .encode(self.accelerator.as_ref(), &mut encoder);
+                self.accelerator.wgpu_queue().submit(Some(encoder.finish()));
+            }
             self.cellular_pressure.simulate(
                 self.accelerator.as_ref(),
                 TileCoordinates {

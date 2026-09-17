@@ -1,6 +1,8 @@
 // Copyright Rob Gage 2026
 
-use super::{Material, MaterialIdentifier, MaterialRegistry, MaterialThermalProperties};
+use super::{
+    Material, MaterialIdentifier, MaterialReaction, MaterialRegistry, MaterialThermalProperties,
+};
 use std::collections::BTreeMap;
 
 /// Declarative authoring path for compiled material metadata.
@@ -8,6 +10,7 @@ pub struct MaterialRegistryBuilder {
     registry: MaterialRegistry,
     thermal: BTreeMap<MaterialIdentifier, MaterialThermalProperties>,
     tags: BTreeMap<String, Vec<MaterialIdentifier>>,
+    reactions: Vec<MaterialReaction>,
 }
 
 impl MaterialRegistryBuilder {
@@ -16,7 +19,13 @@ impl MaterialRegistryBuilder {
             registry: MaterialRegistry::new(),
             thermal: BTreeMap::new(),
             tags: BTreeMap::new(),
+            reactions: Vec::new(),
         }
+    }
+    /// Registers a generic reaction. Identifiers and tags are checked only once
+    /// all material/tag declarations have been supplied, at `compile` time.
+    pub fn register_reaction(&mut self, reaction: MaterialReaction) {
+        self.reactions.push(reaction);
     }
     pub fn register(&mut self, material: Material) -> MaterialIdentifier {
         self.registry.register(material)
@@ -48,7 +57,7 @@ impl MaterialRegistryBuilder {
     }
     pub fn compile(mut self) -> Result<MaterialRegistry, String> {
         self.registry
-            .set_compiled_metadata(self.thermal, self.tags)?;
+            .set_compiled_metadata(self.thermal, self.tags, self.reactions)?;
         Ok(self.registry)
     }
 }
