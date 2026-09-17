@@ -5,5 +5,8 @@
 mod fluid_authority_view;
 mod fluids;
 
+#[cfg(test)]
+pub(crate) mod tests;
+
 pub(crate) use fluid_authority_view::FluidAuthorityView;
 pub use fluids::Fluids;
