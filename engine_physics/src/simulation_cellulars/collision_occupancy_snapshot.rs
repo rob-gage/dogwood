@@ -2,7 +2,6 @@
 
 use crate::tiles::TileCoordinates;
 
-#[allow(dead_code)]
 #[derive(Clone)]
 /// A completed CPU collision snapshot in logical buffered-tile order
 pub struct CollisionOccupancySnapshot {
@@ -67,6 +66,7 @@ impl CollisionOccupancySnapshot {
     }
 
     /// Removes one static cell from this derived snapshot
+    #[cfg(test)]
     pub(crate) fn clear_static_cell(&mut self, x: i32, y: i32) {
         let tile_x: i32 = x.div_euclid(8) - self.origin.x;
         let tile_y: i32 = y.div_euclid(8) - self.origin.y;
