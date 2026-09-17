@@ -431,6 +431,8 @@ fn reserve_fluid_authority(@builtin(global_invocation_id) id: vec3<u32>) {
         material_form_from_identifier(reactions[candidate.reaction].words[base]) != FLUID_MATERIAL_FORM) { continue; }
     let slot = reserve_fluid_slot();
     if (slot == 0xffffffffu) {
+      if (material_form_from_identifier(candidate.material0) == GAS_MATERIAL_FORM) { release_gas_reservation(cell, candidate.material0, bitcast<f32>(reactions[candidate.reaction].words[2]) * candidate.extent); }
+      if (material_form_from_identifier(candidate.material1) == GAS_MATERIAL_FORM) { release_gas_reservation(candidate.partner, candidate.material1, bitcast<f32>(reactions[candidate.reaction].words[6]) * candidate.extent); }
       if (material_form_from_identifier(candidate.material0) == FLUID_MATERIAL_FORM) { rollback_fluid_plan(cell, 0u); }
       if (material_form_from_identifier(candidate.material1) == FLUID_MATERIAL_FORM) { rollback_fluid_plan(cell, 1u); }
       release_fluid_slot(output_slots.x); release_fluid_slot(output_slots.y);
@@ -472,6 +474,14 @@ fn reserve_fluid_authority(@builtin(global_invocation_id) id: vec3<u32>) {
       material_form_from_identifier(candidate.material1) != FLUID_MATERIAL_FORM) { request_count += 1u; }
   let request_base = reserve_mutation_requests(request_count);
   if (request_base == 0xffffffffu) {
+    if (material_form_from_identifier(candidate.material0) == GAS_MATERIAL_FORM) { release_gas_reservation(cell, candidate.material0, bitcast<f32>(reactions[candidate.reaction].words[2]) * candidate.extent); }
+    if (material_form_from_identifier(candidate.material1) == GAS_MATERIAL_FORM) { release_gas_reservation(candidate.partner, candidate.material1, bitcast<f32>(reactions[candidate.reaction].words[6]) * candidate.extent); }
+    for (var product = 0u; product < 2u; product += 1u) {
+      let base = 8u + product * 4u;
+      if (reactions[candidate.reaction].words[base + 2u] != 0u && material_form_from_identifier(reactions[candidate.reaction].words[base]) == GAS_MATERIAL_FORM) {
+        release_gas_output_reservation(gas_output_cell, reactions[candidate.reaction].words[base], bitcast<f32>(reactions[candidate.reaction].words[base + 1u]) * candidate.extent);
+      }
+    }
     if (material_form_from_identifier(candidate.material0) == FLUID_MATERIAL_FORM) { rollback_fluid_plan(cell, 0u); }
     if (material_form_from_identifier(candidate.material1) == FLUID_MATERIAL_FORM) { rollback_fluid_plan(cell, 1u); }
     release_fluid_slot(output_slots.x); release_fluid_slot(output_slots.y);

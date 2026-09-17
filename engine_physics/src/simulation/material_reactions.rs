@@ -499,6 +499,7 @@ mod tests {
             "reserve_mutation_requests",
             "source_for(",
             "find_partner(",
+            "atomicAdd",
         ] {
             assert!(!apply.contains(forbidden), "apply contains {forbidden}");
         }
