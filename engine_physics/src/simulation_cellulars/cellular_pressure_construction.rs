@@ -299,6 +299,8 @@ impl CellularPressure {
                 include_str!("cellular_pressure_shader_contact_resolution.wgsl"),
                 include_str!("cellular_pressure_shader_rigid_cellular_contacts.wgsl"),
                 include_str!("cellular_pressure_shader_propagation.wgsl"),
+                include_str!("cellular_pressure_shader_rigid_static_contacts.wgsl"),
+                include_str!("cellular_pressure_shader_coordinates.wgsl"),
             ),
             "engine_physics/src/simulation/cellular_pressure.wgsl",
         );
