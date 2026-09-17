@@ -10,9 +10,9 @@ use engine::{
             ActorCollisionShape, ActorPawn, ActorPawnMovement, ActorPawnSwimmingConfiguration,
             ActorPawnWalkingConfiguration,
         },
-        scenes::{Scene, SceneData, SceneEditBatch, ScenePosition, SceneVelocity},
+        scenes::{Scene, SceneData, ScenePosition, SceneVelocity},
         simulation::SceneSimulationConfiguration,
-        tiles::{CellCoordinates, CellularAppearance, TileCoordinates},
+        tiles::TileCoordinates,
     },
     user_interface::UserInterfaceContext,
 };
@@ -34,13 +34,8 @@ impl TemplateProject {
     pub fn new(accelerator: &Arc<Accelerator>) -> Result<Self, Box<dyn Error>> {
         let TemplateMaterials {
             registry,
-            stone_debris: _,
-            sand,
             stone,
-            water_vapor,
-            smoke,
             stone_variation,
-            sand_variation,
             ..
         } = TemplateMaterials::new().map_err(std::io::Error::other)?;
         let data: SceneData = SceneData::new_temporary(registry)?;
@@ -61,27 +56,9 @@ impl TemplateProject {
             TemplateSceneGenerator {
                 stone,
                 stone_variation,
-                sand,
-                sand_variation,
                 stone_integrity: 20.0,
             },
         )?;
-        let mut gas_edits: SceneEditBatch = SceneEditBatch::new();
-        gas_edits.place_material(
-            water_vapor,
-            CellularAppearance::NEUTRAL,
-            (8..20)
-                .flat_map(|y| (-56..-40).map(move |x| CellCoordinates { x, y }))
-                .collect(),
-        );
-        gas_edits.place_material(
-            smoke,
-            CellularAppearance::NEUTRAL,
-            (8..20)
-                .flat_map(|y| (-44..-28).map(move |x| CellCoordinates { x, y }))
-                .collect(),
-        );
-        scene.queue_edits(gas_edits);
         let mut pawn_configuration: ActorPawn = ActorPawn::new();
         pawn_configuration.collision_shape = Some(ActorCollisionShape::Circle { radius: 0.375 });
         pawn_configuration.walking = Some(ActorPawnWalkingConfiguration {
