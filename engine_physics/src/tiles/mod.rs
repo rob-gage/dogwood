@@ -7,6 +7,9 @@ mod tile_area;
 mod tile_coordinates;
 mod tile_data;
 
+#[cfg(test)]
+pub(crate) mod tests;
+
 pub use cell_coordinates::CellCoordinates;
 pub use cellular_appearance::CellularAppearance;
 pub use tile::Tile;

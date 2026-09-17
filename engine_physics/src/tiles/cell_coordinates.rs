@@ -38,25 +38,3 @@ impl CellCoordinates {
         (self.x as u32).wrapping_mul(0x9e37_79b9) ^ (self.y as u32).wrapping_mul(0x85eb_ca6b)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::CellCoordinates;
-
-    #[test]
-    fn from_world_position_floors_cell_coordinates() {
-        assert!(
-            CellCoordinates::from_world_position([0.01, 0.0]) == CellCoordinates { x: 0, y: 0 }
-        );
-        assert!(
-            CellCoordinates::from_world_position([0.99, 0.0]) == CellCoordinates { x: 7, y: 0 }
-        );
-        assert!(CellCoordinates::from_world_position([1.0, 0.0]) == CellCoordinates { x: 8, y: 0 });
-        assert!(
-            CellCoordinates::from_world_position([-0.01, 0.0]) == CellCoordinates { x: -1, y: 0 }
-        );
-        assert!(
-            CellCoordinates::from_world_position([-1.0, -0.01]) == CellCoordinates { x: -8, y: -1 }
-        );
-    }
-}
