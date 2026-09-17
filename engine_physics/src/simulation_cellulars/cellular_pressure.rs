@@ -85,6 +85,7 @@ impl CellularPressure {
         &self.pending_impulses
     }
 
+    /// Creates pressure fields, material tables, and compute pipelines for a scene
     pub fn new(
         accelerator: &Accelerator,
         materials: &MaterialRegistry,
@@ -549,6 +550,7 @@ impl CellularPressure {
         }
     }
 
+    /// Queues a radial pressure impulse for the next simulation dispatch
     pub fn apply_radial_impulse(
         &self,
         accelerator: &Accelerator,
@@ -620,6 +622,7 @@ impl CellularPressure {
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
 
+    /// Advances pressure propagation and rigid-cell coupling for one fixed tick
     pub fn simulate(
         &mut self,
         accelerator: &Accelerator,
@@ -1084,6 +1087,7 @@ impl CellularPressure {
         Ok(ordered)
     }
 
+    /// Clears pressure fields that are derived again during the next fixed tick
     pub fn clear_transient_state(
         &self,
         accelerator: &Accelerator,
