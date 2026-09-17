@@ -167,7 +167,7 @@ struct DerivedFluidActorSample {
 @group(0) @binding(22) var<storage, read_write> mechanical_original_velocity: array<
   vec2<f32>
 >;
-@group(0) @binding(23) var<storage, read_write> gpu_edits_pending: array<
+@group(0) @binding(23) var<storage, read_write> accelerator_edits_pending: array<
   atomic<u32>
 >;
 @group(0) @binding(24) var<storage, read_write> edit_amounts: array<f32>;
@@ -179,7 +179,7 @@ struct DerivedFluidActorSample {
 @group(0) @binding(28) var<storage, read_write> derived_thermal: array<
   vec4<f32>
 >;
-@group(1) @binding(0) var<storage, read_write> gpu_edit_dispatch: array<u32>;
+@group(1) @binding(0) var<storage, read_write> accelerator_edit_dispatch: array<u32>;
 
 fn is_hard_external_body(occupancy: u32) -> bool {
   return
@@ -249,38 +249,38 @@ fn clear_fluid_edits(@builtin(global_invocation_id) invocation: vec3<u32>) {
   }
 }
 
-// Produces zero-work indirect records unless another GPU subsystem wrote a fluid edit.
+// Produces zero-work indirect records unless another Accelerator subsystem wrote a fluid edit.
 @compute @workgroup_size(1)
-fn prepare_gpu_fluid_edits(
+fn prepare_accelerator_fluid_edits(
   @builtin(global_invocation_id) invocation: vec3<u32>) {
   if invocation.x != 0u {
     return;
   }
-  let pending: u32 = atomicExchange(&gpu_edits_pending[0], 0u);
+  let pending: u32 = atomicExchange(&accelerator_edits_pending[0], 0u);
   let particle_workgroups: u32 =
     select(0u, (parameters.particle_capacity + 63u) / 64u, pending != 0u);
   let cell_workgroups: u32 =
     select(0u, (parameters.buffered_cell_count + 63u) / 64u, pending != 0u);
   let bucket_workgroups: u32 =
     select(0u, (parameters.bucket_count + 63u) / 64u, pending != 0u);
-  gpu_edit_dispatch[0] = particle_workgroups;
-  gpu_edit_dispatch[1] = 1u;
-  gpu_edit_dispatch[2] = 1u;
-  gpu_edit_dispatch[3] = cell_workgroups;
-  gpu_edit_dispatch[4] = 1u;
-  gpu_edit_dispatch[5] = 1u;
-  gpu_edit_dispatch[6] = cell_workgroups;
-  gpu_edit_dispatch[7] = 1u;
-  gpu_edit_dispatch[8] = 1u;
-  gpu_edit_dispatch[9] = bucket_workgroups;
-  gpu_edit_dispatch[10] = 1u;
-  gpu_edit_dispatch[11] = 1u;
-  gpu_edit_dispatch[12] = particle_workgroups;
-  gpu_edit_dispatch[13] = 1u;
-  gpu_edit_dispatch[14] = 1u;
-  gpu_edit_dispatch[15] = cell_workgroups;
-  gpu_edit_dispatch[16] = 1u;
-  gpu_edit_dispatch[17] = 1u;
+  accelerator_edit_dispatch[0] = particle_workgroups;
+  accelerator_edit_dispatch[1] = 1u;
+  accelerator_edit_dispatch[2] = 1u;
+  accelerator_edit_dispatch[3] = cell_workgroups;
+  accelerator_edit_dispatch[4] = 1u;
+  accelerator_edit_dispatch[5] = 1u;
+  accelerator_edit_dispatch[6] = cell_workgroups;
+  accelerator_edit_dispatch[7] = 1u;
+  accelerator_edit_dispatch[8] = 1u;
+  accelerator_edit_dispatch[9] = bucket_workgroups;
+  accelerator_edit_dispatch[10] = 1u;
+  accelerator_edit_dispatch[11] = 1u;
+  accelerator_edit_dispatch[12] = particle_workgroups;
+  accelerator_edit_dispatch[13] = 1u;
+  accelerator_edit_dispatch[14] = 1u;
+  accelerator_edit_dispatch[15] = cell_workgroups;
+  accelerator_edit_dispatch[16] = 1u;
+  accelerator_edit_dispatch[17] = 1u;
 }
 
 // Freezes active-area membership for all substeps in this fixed tick
@@ -639,7 +639,7 @@ fn export_fluid_particles(
   release_fluid_particle_index(particle_index);
 }
 
-// Reclaims authoritative GPU slots and records each claim result for asynchronous ownership transfer
+// Reclaims authoritative Accelerator slots and records each claim result for asynchronous ownership transfer
 @compute @workgroup_size(64)
 fn import_fluid_particles(
   @builtin(global_invocation_id) invocation: vec3<u32>) {

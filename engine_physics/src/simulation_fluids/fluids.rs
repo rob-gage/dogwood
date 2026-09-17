@@ -23,7 +23,7 @@ pub struct Fluids {
     edit_amounts: AcceleratorBuffer,
     edit_temperatures: AcceleratorBuffer,
     /// Set by Accelerator producers when `edit_cells` contains one or more edits.
-    gpu_edits_pending: AcceleratorBuffer,
+    accelerator_edits_pending: AcceleratorBuffer,
     /// Atomic head of each support-radius-sized spatial bucket
     bucket_heads: AcceleratorBuffer,
     /// Linked-list successor for each particle in the current spatial buckets
@@ -55,15 +55,15 @@ pub struct Fluids {
     parameters: wgpu::Buffer,
     /// All concrete particle, edit, collision, bucket, and derived-cell bindings
     bind_group: wgpu::BindGroup,
-    gpu_edit_prepare_bind_group: wgpu::BindGroup,
+    accelerator_edit_prepare_bind_group: wgpu::BindGroup,
     /// Removes authoritative particles from edited cells
     edit_remove_pipeline: wgpu::ComputePipeline,
     /// Claims free slots for requested fluid cells
     edit_spawn_pipeline: wgpu::ComputePipeline,
     /// Clears transient edit values after they are consumed
     edit_clear_pipeline: wgpu::ComputePipeline,
-    prepare_gpu_edits_pipeline: wgpu::ComputePipeline,
-    gpu_edit_dispatch: wgpu::Buffer,
+    prepare_accelerator_edits_pipeline: wgpu::ComputePipeline,
+    accelerator_edit_dispatch: wgpu::Buffer,
     /// Integrates gravity into predicted positions without replacing authoritative positions
     predict_pipeline: wgpu::ComputePipeline,
     /// Snapshots active-area membership once for the entire fixed tick
@@ -151,8 +151,8 @@ impl Fluids {
             accelerator.allocate::<u32>(buffered_cell_count as usize);
         let edit_amounts = accelerator.allocate::<f32>(buffered_cell_count as usize);
         let edit_temperatures = accelerator.allocate::<f32>(buffered_cell_count as usize);
-        let gpu_edits_pending: AcceleratorBuffer = accelerator.allocate::<u32>(1);
-        let gpu_edit_dispatch = device.create_buffer(&wgpu::BufferDescriptor {
+        let accelerator_edits_pending: AcceleratorBuffer = accelerator.allocate::<u32>(1);
+        let accelerator_edit_dispatch = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Accelerator fluid edit indirect dispatch"),
             size: 72,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
@@ -293,7 +293,7 @@ impl Fluids {
                 Self::binding(20, &sample_output),
                 Self::binding(21, &mechanical_cells),
                 Self::binding(22, &mechanical_original_velocity),
-                Self::binding(23, &gpu_edits_pending),
+                Self::binding(23, &accelerator_edits_pending),
                 Self::binding(24, &edit_amounts),
                 Self::binding(25, &edit_temperatures),
                 Self::binding(26, thermal_properties),
@@ -316,23 +316,24 @@ impl Fluids {
                 bind_group_layouts: &[Some(&layout)],
                 immediate_size: 0,
             });
-        let gpu_edit_prepare_layout =
+        let accelerator_edit_prepare_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Accelerator fluid edit preparation layout"),
                 entries: &[storage(0, false)],
             });
-        let gpu_edit_prepare_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Accelerator fluid edit preparation"),
-            layout: &gpu_edit_prepare_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: gpu_edit_dispatch.as_entire_binding(),
-            }],
-        });
-        let gpu_edit_prepare_pipeline_layout =
+        let accelerator_edit_prepare_bind_group =
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Accelerator fluid edit preparation"),
+                layout: &accelerator_edit_prepare_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: accelerator_edit_dispatch.as_entire_binding(),
+                }],
+            });
+        let accelerator_edit_prepare_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Accelerator fluid edit preparation"),
-                bind_group_layouts: &[Some(&layout), Some(&gpu_edit_prepare_layout)],
+                bind_group_layouts: &[Some(&layout), Some(&accelerator_edit_prepare_layout)],
                 immediate_size: 0,
             });
         let pipeline = |entry_point, label| {
@@ -345,12 +346,12 @@ impl Fluids {
                 cache: None,
             })
         };
-        let prepare_gpu_edits_pipeline =
+        let prepare_accelerator_edits_pipeline =
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some("Accelerator fluid edit preparation pipeline"),
-                layout: Some(&gpu_edit_prepare_pipeline_layout),
+                layout: Some(&accelerator_edit_prepare_pipeline_layout),
                 module: &shader,
-                entry_point: Some("prepare_gpu_fluid_edits"),
+                entry_point: Some("prepare_accelerator_fluid_edits"),
                 compilation_options: Default::default(),
                 cache: None,
             });
@@ -361,7 +362,7 @@ impl Fluids {
             edit_cells,
             edit_amounts,
             edit_temperatures,
-            gpu_edits_pending,
+            accelerator_edits_pending,
             bucket_heads,
             next_particle,
             predicted_positions,
@@ -379,7 +380,7 @@ impl Fluids {
             sample_output,
             parameters,
             bind_group,
-            gpu_edit_prepare_bind_group,
+            accelerator_edit_prepare_bind_group,
             edit_remove_pipeline: pipeline(
                 "remove_edited_fluid_particles",
                 "fluid edit removal pipeline",
@@ -389,8 +390,8 @@ impl Fluids {
                 "fluid edit spawn pipeline",
             ),
             edit_clear_pipeline: pipeline("clear_fluid_edits", "fluid edit clear pipeline"),
-            prepare_gpu_edits_pipeline,
-            gpu_edit_dispatch,
+            prepare_accelerator_edits_pipeline,
+            accelerator_edit_dispatch,
             predict_pipeline: pipeline("predict_fluid_particles", "fluid prediction pipeline"),
             classify_active_pipeline: pipeline(
                 "classify_active_fluid_particles",
@@ -543,12 +544,12 @@ impl Fluids {
         &self.edit_temperatures
     }
 
-    pub(crate) const fn gpu_edits_pending_buffer(&self) -> &AcceleratorBuffer {
-        &self.gpu_edits_pending
+    pub(crate) const fn accelerator_edits_pending_buffer(&self) -> &AcceleratorBuffer {
+        &self.accelerator_edits_pending
     }
 
     /// Consumes edits written by another Accelerator subsystem using the same authoritative pool.
-    pub(crate) fn consume_gpu_edits(
+    pub(crate) fn consume_accelerator_edits(
         &self,
         accelerator: &Accelerator,
         active_origin: TileCoordinates,
@@ -584,9 +585,9 @@ impl Fluids {
         {
             let mut pass =
                 accelerator.begin_compute_pass(&mut encoder, "prepare Accelerator fluid edits");
-            pass.set_pipeline(&self.prepare_gpu_edits_pipeline);
+            pass.set_pipeline(&self.prepare_accelerator_edits_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.set_bind_group(1, &self.gpu_edit_prepare_bind_group, &[]);
+            pass.set_bind_group(1, &self.accelerator_edit_prepare_bind_group, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }
         self.dispatch_indirect(
@@ -1199,7 +1200,7 @@ impl Fluids {
         let mut pass: wgpu::ComputePass<'_> = accelerator.begin_compute_pass(encoder, label);
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.dispatch_workgroups_indirect(&self.gpu_edit_dispatch, offset);
+        pass.dispatch_workgroups_indirect(&self.accelerator_edit_dispatch, offset);
     }
 
     fn write_parameters(
@@ -1287,7 +1288,7 @@ impl Drop for Fluids {
         self.edit_cells.free();
         self.edit_amounts.free();
         self.edit_temperatures.free();
-        self.gpu_edits_pending.free();
+        self.accelerator_edits_pending.free();
         self.bucket_heads.free();
         self.next_particle.free();
         self.predicted_positions.free();
@@ -1318,7 +1319,7 @@ mod tests {
     };
 
     #[test]
-    fn mechanical_raster_and_scatter_pipelines_compile_on_gpu() {
+    fn mechanical_raster_and_scatter_pipelines_compile_on_accelerator() {
         let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
         let accelerator = Accelerator::new().unwrap();
         let cells = accelerator.allocate::<u32>(64);
@@ -1345,7 +1346,7 @@ mod tests {
             1,
             1,
         );
-        fluids.consume_gpu_edits(
+        fluids.consume_accelerator_edits(
             &accelerator,
             TileCoordinates { x: 0, y: 0 },
             1,

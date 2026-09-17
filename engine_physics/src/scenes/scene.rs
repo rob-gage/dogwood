@@ -455,7 +455,7 @@ impl Scene {
             fluids.edit_cells_buffer(),
             fluids.edit_amounts_buffer(),
             fluids.edit_temperatures_buffer(),
-            fluids.gpu_edits_pending_buffer(),
+            fluids.accelerator_edits_pending_buffer(),
             gases.velocity_buffer(),
             gases.concentrations_buffer(),
             gases.temperature_buffer(),
@@ -2171,7 +2171,7 @@ impl Scene {
                     * 64,
                 self.gases.gas_count(),
             );
-            self.fluids.consume_gpu_edits(
+            self.fluids.consume_accelerator_edits(
                 self.accelerator.as_ref(),
                 fluid_active_area.origin(),
                 fluid_active_dimensions[0],
@@ -5771,7 +5771,7 @@ mod tests {
     }
 
     #[test]
-    fn gpu_phase_static_cells_resolve_to_debris_or_rigid_body() {
+    fn accelerator_phase_static_cells_resolve_to_debris_or_rigid_body() {
         let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
         let accelerator = Arc::new(Accelerator::new().unwrap());
         let mut builder = MaterialRegistryBuilder::new();
