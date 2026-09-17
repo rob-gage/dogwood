@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-use engine_compute::Accelerator;
+use crate::simulation::tests::new_accelerator_test;
 
 use super::*;
 use crate::materials::{Material, MaterialRegistry};
@@ -22,8 +22,7 @@ use engine_graphics::{Color, MaterialAppearance};
 
 #[test]
 fn test_colored_face_pipelines_compile_on_accelerator() {
-    let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
-    let accelerator = Accelerator::new().unwrap();
+    let (_accelerator_test_lock, accelerator) = new_accelerator_test();
     let materials = MaterialRegistry::new();
     let cells = accelerator.allocate::<u32>(64);
     let appearances = accelerator.allocate::<u32>(64);
@@ -66,8 +65,7 @@ fn test_colored_face_pipelines_compile_on_accelerator() {
 
 #[test]
 fn test_falling_cell_transfers_momentum_into_anchored_cell_without_pressure_kick() {
-    let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
-    let accelerator = Accelerator::new().unwrap();
+    let (_accelerator_test_lock, accelerator) = new_accelerator_test();
     let mut materials = MaterialRegistry::new();
     let stone = materials.register(Material::CellularStatic {
         name: "Stone".into(),
@@ -197,8 +195,7 @@ fn test_falling_cell_transfers_momentum_into_anchored_cell_without_pressure_kick
 
 #[test]
 fn test_rigid_static_overlap_uses_one_coherent_reaction_per_tick_under_readback_backlog() {
-    let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
-    let accelerator = Accelerator::new().unwrap();
+    let (_accelerator_test_lock, accelerator) = new_accelerator_test();
     let mut materials = MaterialRegistry::new();
     let stone = materials.register(Material::CellularStatic {
         name: "Stone".into(),
@@ -325,8 +322,7 @@ fn test_rigid_static_overlap_uses_one_coherent_reaction_per_tick_under_readback_
 
 #[test]
 fn test_axis_aligned_rigid_block_raster_has_every_cell_once() {
-    let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
-    let accelerator = Accelerator::new().unwrap();
+    let (_accelerator_test_lock, accelerator) = new_accelerator_test();
     let material = MaterialIdentifier::new(MaterialForm::CellularStatic, 3);
     let body = RigidCellularBody {
         id: 0,

@@ -1,5 +1,6 @@
 // Copyright Rob Gage 2026
 
+use crate::simulation::tests::new_accelerator_test;
 use engine_compute::{Accelerator, AcceleratorBuffer};
 
 use super::*;
@@ -64,8 +65,7 @@ fn read_species(accelerator: &Accelerator, gases: &Gases, species: u32) -> Vec<f
 
 #[test]
 fn test_gas_obstacles_displace_without_destroying_inventory() {
-    let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
-    let accelerator = Accelerator::new().unwrap();
+    let (_accelerator_test_lock, accelerator) = new_accelerator_test();
     let mut materials = MaterialRegistry::new();
     let vapor = materials.register(Material::Gas {
         name: "Vapor".into(),
@@ -204,8 +204,7 @@ fn test_gas_obstacles_displace_without_destroying_inventory() {
 
 #[test]
 fn test_coexisting_species_remain_spread_inside_a_circular_enclosure_for_one_minute() {
-    let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
-    let accelerator: Accelerator = Accelerator::new().unwrap();
+    let (_accelerator_test_lock, accelerator) = new_accelerator_test();
     let mut materials: MaterialRegistry = MaterialRegistry::new();
     let vapor: MaterialIdentifier = materials.register(Material::Gas {
         name: "Vapor".into(),
@@ -391,8 +390,7 @@ fn test_coexisting_species_remain_spread_inside_a_circular_enclosure_for_one_min
 #[test]
 #[ignore = "full-size Accelerator performance smoke"]
 fn test_full_demo_sized_gas_field_runs_sixty_ticks() {
-    let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
-    let accelerator: Accelerator = Accelerator::new().unwrap();
+    let (_accelerator_test_lock, accelerator) = new_accelerator_test();
     eprintln!(
         "gas performance adapter: {:?}",
         accelerator.wgpu_adapter().get_info()

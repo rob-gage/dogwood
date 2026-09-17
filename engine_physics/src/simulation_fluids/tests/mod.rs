@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-use engine_compute::Accelerator;
+use crate::simulation::tests::new_accelerator_test;
 
 use super::*;
 use crate::{
@@ -14,8 +14,7 @@ use std::{
 
 #[test]
 fn test_mechanical_raster_and_scatter_pipelines_compile_on_accelerator() {
-    let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
-    let accelerator = Accelerator::new().unwrap();
+    let (_accelerator_test_lock, accelerator) = new_accelerator_test();
     let cells = accelerator.allocate::<u32>(64);
     let occupancy = accelerator.allocate::<u32>(64);
     let velocity = accelerator.allocate::<[f32; 4]>(64);
@@ -57,8 +56,7 @@ fn test_mechanical_raster_and_scatter_pipelines_compile_on_accelerator() {
 
 #[test]
 fn test_solved_mechanical_delta_persists_in_authoritative_particle() {
-    let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
-    let accelerator = Accelerator::new().unwrap();
+    let (_accelerator_test_lock, accelerator) = new_accelerator_test();
     let cells = accelerator.allocate::<u32>(64);
     let occupancy = accelerator.allocate::<u32>(64);
     let velocity = accelerator.allocate::<[f32; 4]>(64);

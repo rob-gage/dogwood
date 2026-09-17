@@ -11,9 +11,9 @@ use crate::materials::{
     CompiledMaterialReaction, Material, MaterialIdentifier, MaterialRegistry, MaterialTable,
 };
 use crate::simulation::Fluids;
+use crate::simulation::tests::new_accelerator_test;
 use crate::simulation_fluids::FluidAuthorityView;
 use crate::simulation_materials::material_reactions::MaterialReactions;
-use engine_compute::Accelerator;
 use engine_graphics::{Color, MaterialAppearance};
 use material_mutation_test_readback::read_u32;
 use reaction_candidate::{ReactionCandidate, resolve_contention};
@@ -23,8 +23,7 @@ use reaction_implicit_air::implicit_air;
 
 #[test]
 fn test_resolver_pipeline_compiles() {
-    let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
-    let accelerator = Accelerator::new().unwrap();
+    let (_accelerator_test_lock, accelerator) = new_accelerator_test();
     let cells = accelerator.allocate::<u32>(64);
     let appearances = accelerator.allocate::<u32>(64);
     let integrities = accelerator.allocate::<f32>(64);
@@ -64,8 +63,7 @@ fn test_resolver_pipeline_compiles() {
 
 #[test]
 fn test_indirect_resolver_replaces_and_deletes_cells() {
-    let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
-    let accelerator = Accelerator::new().unwrap();
+    let (_accelerator_test_lock, accelerator) = new_accelerator_test();
     let mut materials = MaterialRegistry::new();
     let static_material = materials.register(Material::CellularStatic {
         name: "static".into(),
@@ -207,8 +205,7 @@ fn test_indirect_resolver_replaces_and_deletes_cells() {
 
 #[test]
 fn test_gas_condensation_aggregates_a_tile_into_unit_particles() {
-    let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
-    let accelerator = Accelerator::new().unwrap();
+    let (_accelerator_test_lock, accelerator) = new_accelerator_test();
     let cells = accelerator.allocate::<u32>(64);
     let appearances = accelerator.allocate::<u32>(64);
     let integrities = accelerator.allocate::<f32>(64);
@@ -498,7 +495,7 @@ fn test_apply_shader_is_commit_only() {
 
 #[test]
 fn test_canonical_discovery_and_apply_pipelines_compile() {
-    let accelerator = Accelerator::new().unwrap();
+    let (_accelerator_test_lock, accelerator) = new_accelerator_test();
     let registry = MaterialRegistry::new();
     let table = MaterialTable::new(&accelerator, &registry);
     let ids = accelerator.allocate::<u32>(64);

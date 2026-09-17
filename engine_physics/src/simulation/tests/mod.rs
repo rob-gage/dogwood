@@ -2,7 +2,7 @@
 
 mod accelerator_test_lock;
 
-pub(crate) use accelerator_test_lock::acquire_accelerator_test_lock;
+pub(crate) use accelerator_test_lock::new_accelerator_test;
 
 use crate::simulation::test_rigid_phase_readback_len;
 
@@ -76,7 +76,6 @@ use crate::simulation::{
     RigidCellularBody, RigidCellularBodyCell, ThermalConduction, ThermalEdits,
 };
 use crate::tiles::CellularAppearance;
-use engine_compute::Accelerator;
 use std::{
     collections::BTreeMap,
     sync::mpsc::sync_channel,
@@ -85,8 +84,7 @@ use std::{
 
 #[test]
 fn test_hot_rigid_field_cell_conducts_into_cold_canonical_neighbor() {
-    let _accelerator_test_lock = acquire_accelerator_test_lock();
-    let accelerator = Accelerator::new().unwrap();
+    let (_accelerator_test_lock, accelerator) = new_accelerator_test();
     let interaction = accelerator.allocate::<[f32; 4]>(64);
     let mut values: Vec<[f32; 4]> = vec![[0.0; 4]; 64];
     values[0] = [1.0, 100.0, 1.0, 100.0];
@@ -140,7 +138,7 @@ fn test_hot_rigid_field_cell_conducts_into_cold_canonical_neighbor() {
 
 #[test]
 fn test_dispatch_applies_cellular_delta() {
-    let accelerator = Accelerator::new().unwrap();
+    let (_accelerator_test_lock, accelerator) = new_accelerator_test();
     let alloc = |count: usize| accelerator.allocate::<u32>(count);
     let materials = alloc(1);
     let temperatures = accelerator.allocate::<f32>(1);
@@ -212,8 +210,7 @@ fn test_dispatch_applies_cellular_delta() {
 
 #[test]
 fn test_dispatch_applies_one_delta_to_a_multi_claim_rigid_state() {
-    let _accelerator_test_lock = acquire_accelerator_test_lock();
-    let accelerator = Accelerator::new().unwrap();
+    let (_accelerator_test_lock, accelerator) = new_accelerator_test();
     let materials = accelerator.allocate::<u32>(2);
     let temperatures = accelerator.allocate::<f32>(2);
     let gas_temperatures = accelerator.allocate::<f32>(2);
