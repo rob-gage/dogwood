@@ -50,6 +50,16 @@ pub(crate) fn uniform_bind_group_layout_entry(binding: u32) -> wgpu::BindGroupLa
     }
 }
 
+pub(crate) fn accelerator_buffer_bind_group_entry<'a>(
+    binding: u32,
+    buffer: &'a engine_compute::AcceleratorBuffer,
+) -> wgpu::BindGroupEntry<'a> {
+    wgpu::BindGroupEntry {
+        binding,
+        resource: buffer.wgpu_buffer().as_entire_binding(),
+    }
+}
+
 pub(crate) fn create_simulation_uniform_buffer(
     device: &wgpu::Device,
     label: &'static str,

@@ -92,10 +92,7 @@ impl CellularCollision {
                         .wgpu_buffer()
                         .as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: occupancy.wgpu_buffer().as_entire_binding(),
-                },
+                crate::simulation::accelerator_buffer_bind_group_entry(1, &occupancy),
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: parameters.as_entire_binding(),

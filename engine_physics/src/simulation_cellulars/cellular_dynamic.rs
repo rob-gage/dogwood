@@ -105,52 +105,22 @@ impl CellularDynamic {
                         .wgpu_buffer()
                         .as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
-                    binding: 9,
-                    resource: cellular_amounts.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 10,
-                    resource: cellular_temperatures.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 11,
-                    resource: amounts_output.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 12,
-                    resource: temperatures_output.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 8,
-                    resource: external_body_occupancy.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: cellular_appearances.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: kinematics.wgpu_buffer().as_entire_binding(),
-                },
+                crate::simulation::accelerator_buffer_bind_group_entry(9, &cellular_amounts),
+                crate::simulation::accelerator_buffer_bind_group_entry(10, &cellular_temperatures),
+                crate::simulation::accelerator_buffer_bind_group_entry(11, &amounts_output),
+                crate::simulation::accelerator_buffer_bind_group_entry(12, &temperatures_output),
+                crate::simulation::accelerator_buffer_bind_group_entry(8, &external_body_occupancy),
+                crate::simulation::accelerator_buffer_bind_group_entry(1, &cellular_appearances),
+                crate::simulation::accelerator_buffer_bind_group_entry(2, &kinematics),
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: material_identifiers_output
                         .wgpu_buffer()
                         .as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: appearances_output.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: destination_claims.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: proposals.wgpu_buffer().as_entire_binding(),
-                },
+                crate::simulation::accelerator_buffer_bind_group_entry(4, &appearances_output),
+                crate::simulation::accelerator_buffer_bind_group_entry(5, &destination_claims),
+                crate::simulation::accelerator_buffer_bind_group_entry(6, &proposals),
                 wgpu::BindGroupEntry {
                     binding: 7,
                     resource: parameters.as_entire_binding(),

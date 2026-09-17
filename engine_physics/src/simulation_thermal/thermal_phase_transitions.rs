@@ -153,26 +153,25 @@ impl ThermalPhaseTransitions {
             binding: 7,
             resource: thermal.as_entire_binding(),
         });
-        bind_group_entries.push(wgpu::BindGroupEntry {
-            binding: 8,
-            resource: requests.wgpu_buffer().as_entire_binding(),
-        });
-        bind_group_entries.push(wgpu::BindGroupEntry {
-            binding: 9,
-            resource: request_count.wgpu_buffer().as_entire_binding(),
-        });
+        bind_group_entries.push(crate::simulation::accelerator_buffer_bind_group_entry(
+            8, requests,
+        ));
+        bind_group_entries.push(crate::simulation::accelerator_buffer_bind_group_entry(
+            9,
+            request_count,
+        ));
         bind_group_entries.push(wgpu::BindGroupEntry {
             binding: 10,
             resource: parameters.as_entire_binding(),
         });
-        bind_group_entries.push(wgpu::BindGroupEntry {
-            binding: 11,
-            resource: rigid_claims.wgpu_buffer().as_entire_binding(),
-        });
-        bind_group_entries.push(wgpu::BindGroupEntry {
-            binding: 12,
-            resource: gas_fluid_candidates.wgpu_buffer().as_entire_binding(),
-        });
+        bind_group_entries.push(crate::simulation::accelerator_buffer_bind_group_entry(
+            11,
+            rigid_claims,
+        ));
+        bind_group_entries.push(crate::simulation::accelerator_buffer_bind_group_entry(
+            12,
+            gas_fluid_candidates,
+        ));
         let rigid_phase_candidates = accelerator.allocate::<[u32; 10]>(cell_count as usize);
         let rigid_phase_count = accelerator.allocate::<u32>(1);
         let rigid_phase_readback = device.create_buffer(&wgpu::BufferDescriptor {
@@ -200,22 +199,22 @@ impl ThermalPhaseTransitions {
                 resource: buffer.wgpu_buffer().as_entire_binding(),
             });
         }
-        bind_group_entries.push(wgpu::BindGroupEntry {
-            binding: 18,
-            resource: fluid_free_indices.wgpu_buffer().as_entire_binding(),
-        });
-        bind_group_entries.push(wgpu::BindGroupEntry {
-            binding: 19,
-            resource: fluid_free_count.wgpu_buffer().as_entire_binding(),
-        });
-        bind_group_entries.push(wgpu::BindGroupEntry {
-            binding: 20,
-            resource: rollback_slots.wgpu_buffer().as_entire_binding(),
-        });
-        bind_group_entries.push(wgpu::BindGroupEntry {
-            binding: 21,
-            resource: rollback_count.wgpu_buffer().as_entire_binding(),
-        });
+        bind_group_entries.push(crate::simulation::accelerator_buffer_bind_group_entry(
+            18,
+            fluid_free_indices,
+        ));
+        bind_group_entries.push(crate::simulation::accelerator_buffer_bind_group_entry(
+            19,
+            fluid_free_count,
+        ));
+        bind_group_entries.push(crate::simulation::accelerator_buffer_bind_group_entry(
+            20,
+            &rollback_slots,
+        ));
+        bind_group_entries.push(crate::simulation::accelerator_buffer_bind_group_entry(
+            21,
+            &rollback_count,
+        ));
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("thermal phase"),
             layout: &layout,

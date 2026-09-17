@@ -85,26 +85,11 @@ impl ThermalConduction {
             label: Some("thermal conduction"),
             layout: &layout,
             entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: interaction.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: face_flux.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: face_conductance.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: conductance_sum.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: solved.wgpu_buffer().as_entire_binding(),
-                },
+                crate::simulation::accelerator_buffer_bind_group_entry(0, &interaction),
+                crate::simulation::accelerator_buffer_bind_group_entry(1, &face_flux),
+                crate::simulation::accelerator_buffer_bind_group_entry(2, &face_conductance),
+                crate::simulation::accelerator_buffer_bind_group_entry(3, &conductance_sum),
+                crate::simulation::accelerator_buffer_bind_group_entry(4, &solved),
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: parameters.as_entire_binding(),

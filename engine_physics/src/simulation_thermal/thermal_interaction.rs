@@ -141,14 +141,14 @@ impl ThermalInteraction {
             binding: 14,
             resource: parameters.as_entire_binding(),
         });
-        bind_entries.push(wgpu::BindGroupEntry {
-            binding: 17,
-            resource: reaction_energy.wgpu_buffer().as_entire_binding(),
-        });
-        bind_entries.push(wgpu::BindGroupEntry {
-            binding: 16,
-            resource: rigid_raster_claim_counts.wgpu_buffer().as_entire_binding(),
-        });
+        bind_entries.push(crate::simulation::accelerator_buffer_bind_group_entry(
+            17,
+            reaction_energy,
+        ));
+        bind_entries.push(crate::simulation::accelerator_buffer_bind_group_entry(
+            16,
+            &rigid_raster_claim_counts,
+        ));
         bind_entries.push(wgpu::BindGroupEntry {
             binding: 15,
             resource: thermal_parameters.as_entire_binding(),

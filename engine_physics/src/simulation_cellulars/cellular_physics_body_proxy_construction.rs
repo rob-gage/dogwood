@@ -50,62 +50,26 @@ impl CellularPhysicsBodyProxy {
             label: Some("cellular physics body proxy bind group"),
             layout: &layout,
             entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: occupancy.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: velocity.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: actor_counts.wgpu_buffer().as_entire_binding(),
-                },
+                crate::simulation::accelerator_buffer_bind_group_entry(0, &occupancy),
+                crate::simulation::accelerator_buffer_bind_group_entry(1, &velocity),
+                crate::simulation::accelerator_buffer_bind_group_entry(2, &actor_counts),
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: parameters.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: rigid_material_identifiers.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: rigid_appearances.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: rigid_claims.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 7,
-                    resource: rigid_cells.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 8,
-                    resource: rigid_transforms.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 9,
-                    resource: rigid_owners.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 10,
-                    resource: actor_proxies.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 11,
-                    resource: actor_claims.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 12,
-                    resource: destroy_requests.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 13,
-                    resource: destroy_results.wgpu_buffer().as_entire_binding(),
-                },
+                crate::simulation::accelerator_buffer_bind_group_entry(
+                    4,
+                    &rigid_material_identifiers,
+                ),
+                crate::simulation::accelerator_buffer_bind_group_entry(5, &rigid_appearances),
+                crate::simulation::accelerator_buffer_bind_group_entry(6, &rigid_claims),
+                crate::simulation::accelerator_buffer_bind_group_entry(7, &rigid_cells),
+                crate::simulation::accelerator_buffer_bind_group_entry(8, &rigid_transforms),
+                crate::simulation::accelerator_buffer_bind_group_entry(9, &rigid_owners),
+                crate::simulation::accelerator_buffer_bind_group_entry(10, &actor_proxies),
+                crate::simulation::accelerator_buffer_bind_group_entry(11, &actor_claims),
+                crate::simulation::accelerator_buffer_bind_group_entry(12, &destroy_requests),
+                crate::simulation::accelerator_buffer_bind_group_entry(13, &destroy_results),
             ],
         });
         let shader = crate::simulation::create_simulation_shader_module(

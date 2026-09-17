@@ -115,82 +115,28 @@ impl MaterialMutations {
             label: Some("material mutations"),
             layout: &layout,
             entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: requests.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: request_count.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: material_ids.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: appearances.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: static_defaults.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: integrities.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: kinematics.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 7,
-                    resource: fluid_edits.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 8,
-                    resource: gas_concentrations.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 10,
-                    resource: fluid_edits_pending.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 11,
-                    resource: amounts.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 12,
-                    resource: temperatures.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 13,
-                    resource: fluid_edit_amounts.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 14,
-                    resource: fluid_edit_temperatures.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 15,
-                    resource: gas_temperatures.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 16,
-                    resource: particles.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 17,
-                    resource: fluid_free_indices.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 18,
-                    resource: fluid_free_count.wgpu_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 19,
-                    resource: gas_fluid_candidates.wgpu_buffer().as_entire_binding(),
-                },
+                crate::simulation::accelerator_buffer_bind_group_entry(0, &requests),
+                crate::simulation::accelerator_buffer_bind_group_entry(1, &request_count),
+                crate::simulation::accelerator_buffer_bind_group_entry(2, &material_ids),
+                crate::simulation::accelerator_buffer_bind_group_entry(3, &appearances),
+                crate::simulation::accelerator_buffer_bind_group_entry(4, &static_defaults),
+                crate::simulation::accelerator_buffer_bind_group_entry(5, &integrities),
+                crate::simulation::accelerator_buffer_bind_group_entry(6, &kinematics),
+                crate::simulation::accelerator_buffer_bind_group_entry(7, &fluid_edits),
+                crate::simulation::accelerator_buffer_bind_group_entry(8, &gas_concentrations),
+                crate::simulation::accelerator_buffer_bind_group_entry(10, &fluid_edits_pending),
+                crate::simulation::accelerator_buffer_bind_group_entry(11, &amounts),
+                crate::simulation::accelerator_buffer_bind_group_entry(12, &temperatures),
+                crate::simulation::accelerator_buffer_bind_group_entry(13, &fluid_edit_amounts),
+                crate::simulation::accelerator_buffer_bind_group_entry(
+                    14,
+                    &fluid_edit_temperatures,
+                ),
+                crate::simulation::accelerator_buffer_bind_group_entry(15, &gas_temperatures),
+                crate::simulation::accelerator_buffer_bind_group_entry(16, &particles),
+                crate::simulation::accelerator_buffer_bind_group_entry(17, &fluid_free_indices),
+                crate::simulation::accelerator_buffer_bind_group_entry(18, &fluid_free_count),
+                crate::simulation::accelerator_buffer_bind_group_entry(19, &gas_fluid_candidates),
                 wgpu::BindGroupEntry {
                     binding: 9,
                     resource: parameters.as_entire_binding(),
