@@ -1,61 +1,22 @@
 // Copyright Rob Gage 2026
 
+use super::{
+    actor_physics_proxy::ActorPhysicsProxy, dynamic_tile::DynamicTile,
+    dynamic_tile_key::DynamicTileKey, terrain_bridge_statistics::TerrainBridgeStatistics,
+    terrain_patch::TerrainPatch, terrain_patch_key::TerrainPatchKey,
+};
 use crate::actors::{Actor, ActorCellularProxyState, ActorCollisionShape};
 use crate::materials::MaterialRegistry;
 use crate::simulation::simulation_constants::*;
 use crate::simulation::{CollisionOccupancySnapshot, RigidCellularBody, RigidCellularBodyState};
 use rapier2d::parry::query::ShapeCastOptions;
 use rapier2d::prelude::{
-    ColliderBuilder, ColliderHandle, Group, InteractionGroups, LockedAxes, PhysicsWorld, Pose,
-    QueryFilter, RigidBodyBuilder, RigidBodyHandle, SharedShape, Vector,
+    ColliderBuilder, ColliderHandle, LockedAxes, PhysicsWorld, Pose, QueryFilter, RigidBodyBuilder,
+    RigidBodyHandle, SharedShape, Vector,
 };
 use std::collections::{HashMap, HashSet};
 #[cfg(debug_assertions)]
 use std::time::Instant;
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-struct TerrainPatchKey {
-    x: i32,
-    y: i32,
-}
-struct TerrainPatch {
-    collider: Option<ColliderHandle>,
-    masks: [[u32; 2]; 16],
-    last_required_tick: u64,
-}
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-struct DynamicTileKey {
-    x: i32,
-    y: i32,
-}
-struct DynamicTile {
-    collider: Option<ColliderHandle>,
-    mask: [u32; 2],
-    last_required_tick: u64,
-}
-struct ActorPhysicsProxy {
-    body: RigidBodyHandle,
-    collider: ColliderHandle,
-    shape: ActorCollisionShape,
-}
-#[cfg_attr(not(test), allow(dead_code))]
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct TerrainBridgeStatistics {
-    pub(crate) active_patches: usize,
-    pub(crate) collider_patches: usize,
-    pub(crate) patch_rebuilds: u64,
-    pub(crate) patch_cells_scanned: u64,
-    pub(crate) dynamic_required_tiles: usize,
-    pub(crate) dynamic_cached_tiles: usize,
-    pub(crate) dynamic_collider_tiles: usize,
-    pub(crate) dynamic_mask_changes: u64,
-    pub(crate) dynamic_shape_rebuilds: u64,
-    pub(crate) dynamic_set_shape_calls: u64,
-    pub(crate) dynamic_enable_disable_changes: u64,
-    pub(crate) dynamic_cells_scanned: u64,
-    pub(crate) dynamic_rectangles_emitted: u64,
-    pub(crate) collision_snapshot_age: u64,
-}
 
 /// Owns Rapier rigid bodies and the CPU-readable cellular collision snapshot
 pub struct ScenePhysicsWorld {
@@ -773,50 +734,6 @@ impl ScenePhysicsWorld {
             rigid_body.apply_torque_impulse(angular_impulse * scale, wake);
         }
         true
-    }
-
-    pub(crate) fn rigid_solver_groups() -> InteractionGroups {
-        InteractionGroups::all()
-            .with_memberships(Group::GROUP_1)
-            .with_filter(Group::ALL)
-    }
-    pub(crate) fn rigid_collision_groups() -> InteractionGroups {
-        InteractionGroups::all()
-            .with_memberships(Group::GROUP_1)
-            .with_filter(Group::ALL)
-    }
-    pub(crate) fn terrain_collision_groups() -> InteractionGroups {
-        InteractionGroups::all()
-            .with_memberships(Group::GROUP_3)
-            .with_filter(Group::GROUP_1)
-    }
-    pub(crate) fn terrain_solver_groups() -> InteractionGroups {
-        InteractionGroups::all()
-            .with_memberships(Group::GROUP_3)
-            .with_filter(Group::GROUP_1)
-    }
-    pub(crate) fn dynamic_collision_groups() -> InteractionGroups {
-        InteractionGroups::all()
-            .with_memberships(Group::GROUP_4)
-            .with_filter(Group::GROUP_1)
-    }
-    pub(crate) fn dynamic_solver_groups() -> InteractionGroups {
-        InteractionGroups::all()
-            .with_memberships(Group::GROUP_4)
-            .with_filter(Group::GROUP_1)
-    }
-    pub(crate) fn pawn_collision_groups() -> InteractionGroups {
-        InteractionGroups::all()
-            .with_memberships(Group::GROUP_2)
-            .with_filter(Group::GROUP_1)
-    }
-    pub(crate) fn pawn_solver_groups() -> InteractionGroups {
-        InteractionGroups::all()
-            .with_memberships(Group::GROUP_2)
-            .with_filter(Group::GROUP_1)
-    }
-    pub(crate) fn pawn_query_groups() -> InteractionGroups {
-        InteractionGroups::all().with_memberships(Group::GROUP_1 | Group::GROUP_3 | Group::GROUP_4)
     }
 
     /// Resolves authoritative actor motion through Rapier terrain and rigid-body queries.
