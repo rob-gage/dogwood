@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+//! Reusable layout and interaction widgets for the engine user interface.
+
 mod button;
 mod spacer;
 mod stack_horizontal;

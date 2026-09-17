@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+//! Scene and user-interface rendering orchestration.
+
 mod scene_renderer;
 mod user_interface_renderer;
 

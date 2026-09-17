@@ -1,3 +1,5 @@
+//! Input control state and translation abstractions.
+
 mod control_state;
 mod input_translator;
 mod simple_input_translator;
