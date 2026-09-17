@@ -19,6 +19,7 @@ pub(crate) struct MaterialReactions {
     parameters: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     discover_pipeline: wgpu::ComputePipeline,
+    reserve_pipeline: wgpu::ComputePipeline,
     apply_pipeline: wgpu::ComputePipeline,
     cell_count: u32,
     reaction_count: u32,
@@ -189,6 +190,10 @@ impl MaterialReactions {
                 "discover_canonical",
                 "material reaction discovery pipeline",
             ),
+            reserve_pipeline: pipeline(
+                "reserve_fluid_authority",
+                "material reaction fluid reservation pipeline",
+            ),
             apply_pipeline: pipeline(
                 "apply_canonical",
                 "material reaction canonical apply pipeline",
@@ -204,6 +209,8 @@ impl MaterialReactions {
         let mut pass = accelerator.begin_compute_pass(encoder, "chemistry discover canonical");
         pass.set_pipeline(&self.discover_pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+        pass.set_pipeline(&self.reserve_pipeline);
         pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
         pass.set_pipeline(&self.apply_pipeline);
         pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
