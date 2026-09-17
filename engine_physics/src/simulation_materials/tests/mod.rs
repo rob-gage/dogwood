@@ -469,7 +469,11 @@ fn test_implicit_air_respects_local_occupancy() {
 
 #[test]
 fn test_apply_shader_is_commit_only() {
-    let shader = include_str!("../material_reactions.wgsl");
+    let shader = concat!(
+        include_str!("../material_reactions_shader_helpers.wgsl"),
+        include_str!("../material_reactions_shader_reservation.wgsl"),
+        include_str!("../material_reactions_shader_application.wgsl"),
+    );
     let apply = shader
         .split_once("fn apply_canonical")
         .and_then(|(_, rest)| rest.split_once("fn has_environment"))

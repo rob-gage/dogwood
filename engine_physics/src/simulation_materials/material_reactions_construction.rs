@@ -278,7 +278,11 @@ impl MaterialReactions {
         let shader = crate::simulation::create_simulation_shader_module(
             device,
             "material reactions",
-            include_str!("material_reactions.wgsl"),
+            concat!(
+                include_str!("material_reactions_shader_helpers.wgsl"),
+                include_str!("material_reactions_shader_reservation.wgsl"),
+                include_str!("material_reactions_shader_application.wgsl"),
+            ),
             file!(),
         );
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
