@@ -15,6 +15,8 @@ use std::collections::BTreeSet;
 pub(crate) struct MaterialReactions {
     candidates: AcceleratorBuffer,
     fluid_reservations: AcceleratorBuffer,
+    gas_reservations: AcceleratorBuffer,
+    gas_output_reservations: AcceleratorBuffer,
     reaction_energy: AcceleratorBuffer,
     parameters: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
@@ -51,6 +53,10 @@ impl MaterialReactions {
         let device = accelerator.wgpu_device();
         let candidates = accelerator.allocate::<[u32; 28]>(cell_count as usize);
         let fluid_reservations = accelerator.allocate::<u32>(cell_count as usize);
+        let gas_reservations =
+            accelerator.allocate::<u32>((cell_count * gas_count.max(1)) as usize);
+        let gas_output_reservations =
+            accelerator.allocate::<u32>((cell_count * gas_count.max(1)) as usize);
         let parameters = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("material reaction parameters"),
             size: 16,
@@ -122,6 +128,8 @@ impl MaterialReactions {
                 storage(20, false),
                 storage(21, false),
                 storage(22, false),
+                storage(23, false),
+                storage(24, false),
             ],
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -157,6 +165,8 @@ impl MaterialReactions {
                 Self::binding(20, fluid_authority.free_indices),
                 Self::binding(21, fluid_authority.free_count),
                 Self::binding(22, &fluid_reservations),
+                Self::binding(23, &gas_reservations),
+                Self::binding(24, &gas_output_reservations),
             ],
         });
         let shader = super::create_simulation_shader_module(
@@ -183,6 +193,8 @@ impl MaterialReactions {
         Self {
             candidates,
             fluid_reservations,
+            gas_reservations,
+            gas_output_reservations,
             reaction_energy,
             parameters,
             bind_group,
@@ -281,13 +293,7 @@ pub(crate) struct ReactionCandidate {
 /// candidates reserve every authority as an all-or-nothing set, so neither GPU
 /// invocation order nor overlapping raster claims can double-consume matter.
 pub(crate) fn resolve_contention(mut candidates: Vec<ReactionCandidate>) -> Vec<ReactionCandidate> {
-    candidates.sort_by(|a, b| {
-        b.priority
-            .cmp(&a.priority)
-            .then_with(|| a.authoring_order.cmp(&b.authoring_order))
-            .then_with(|| a.anchor.cmp(&b.anchor))
-            .then_with(|| a.reaction_index.cmp(&b.reaction_index))
-    });
+    candidates.sort_by_key(candidate_order_key);
     let mut claimed = BTreeSet::new();
     candidates
         .into_iter()
@@ -300,6 +306,15 @@ pub(crate) fn resolve_contention(mut candidates: Vec<ReactionCandidate>) -> Vec<
             true
         })
         .collect()
+}
+
+fn candidate_order_key(candidate: &ReactionCandidate) -> (std::cmp::Reverse<i32>, u32, u32, u32) {
+    (
+        std::cmp::Reverse(candidate.priority),
+        candidate.authoring_order,
+        candidate.anchor,
+        candidate.reaction_index,
+    )
 }
 
 /// The extent calculation used by every authority form after discovery.
@@ -403,9 +418,61 @@ mod tests {
             vec![2, 3]
         );
     }
+
+    #[test]
+    fn contention_tie_uses_authoring_order() {
+        let candidates = vec![
+            ReactionCandidate {
+                anchor: 4,
+                reaction_index: 9,
+                priority: 3,
+                authoring_order: 8,
+                extent: 1.0,
+                authorities: [Some(12), None],
+            },
+            ReactionCandidate {
+                anchor: 2,
+                reaction_index: 3,
+                priority: 3,
+                authoring_order: 2,
+                extent: 1.0,
+                authorities: [Some(12), None],
+            },
+        ];
+        let accepted = resolve_contention(candidates);
+        assert_eq!(accepted.len(), 1);
+        assert_eq!(accepted[0].reaction_index, 3);
+    }
+
+    #[test]
+    fn contention_final_tie_uses_reaction_index() {
+        let candidates = vec![
+            ReactionCandidate {
+                anchor: 2,
+                reaction_index: 9,
+                priority: 3,
+                authoring_order: 2,
+                extent: 1.0,
+                authorities: [Some(12), None],
+            },
+            ReactionCandidate {
+                anchor: 2,
+                reaction_index: 3,
+                priority: 3,
+                authoring_order: 2,
+                extent: 1.0,
+                authorities: [Some(12), None],
+            },
+        ];
+        let accepted = resolve_contention(candidates);
+        assert_eq!(accepted.len(), 1);
+        assert_eq!(accepted[0].reaction_index, 3);
+    }
     #[test]
     fn extent_is_stoichiometric() {
         assert_eq!(extent(0.5, [1.0, 0.4], [1.0, 2.0]), 0.2);
+        // Two slots resolving to one authority share its inventory budget.
+        assert_eq!(extent(1.0, [0.7], [1.0 + 1.0]), 0.35);
     }
     #[test]
     fn implicit_air_respects_local_occupancy() {
@@ -414,6 +481,27 @@ mod tests {
         assert_eq!(implicit_air(true, false, 0.0, 1.0), 0.0);
         assert_eq!(implicit_air(false, false, 0.0, 0.0), 0.0);
         assert_eq!(implicit_air(true, true, 0.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn apply_shader_is_commit_only() {
+        let shader = include_str!("material_reactions.wgsl");
+        let apply = shader
+            .split_once("fn apply_canonical")
+            .and_then(|(_, rest)| rest.split_once("fn has_environment"))
+            .map(|(body, _)| body)
+            .expect("apply shader entry point must exist");
+        for forbidden in [
+            "reserve_fluid_slot",
+            "reserve_fluid_plan",
+            "reserve_gas(",
+            "reserve_gas_output",
+            "reserve_mutation_requests",
+            "source_for(",
+            "find_partner(",
+        ] {
+            assert!(!apply.contains(forbidden), "apply contains {forbidden}");
+        }
     }
 
     #[test]
@@ -431,6 +519,9 @@ mod tests {
         let claims = accelerator.allocate::<u32>(64);
         let requests = accelerator.allocate::<[u32; 9]>(128);
         let request_count = accelerator.allocate::<u32>(1);
+        accelerator
+            .wgpu_queue()
+            .write_buffer(request_count.wgpu_buffer(), 0, &0u32.to_le_bytes());
         let reaction_energy = accelerator.allocate::<f32>(64);
         let pending_pressure = accelerator.allocate::<[f32; 4]>(64);
         let fluid_particles = accelerator.allocate::<[u32; 10]>(8);
