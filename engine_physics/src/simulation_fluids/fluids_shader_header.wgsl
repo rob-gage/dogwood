@@ -133,43 +133,27 @@ struct DerivedFluidActorSample {
 @group(0) @binding(3) var<storage, read_write> edit_cells: array<u32>;
 @group(0) @binding(4) var<storage, read_write> bucket_heads: array<atomic<u32>>;
 @group(0) @binding(5) var<storage, read_write> next_particle: array<u32>;
-@group(0) @binding(6) var<storage, read_write> derived_material_identifiers: array<u32
->;
+@group(0) @binding(6) var<storage, read_write> derived_material_identifiers: array<u32>;
 @group(0) @binding(7) var<storage, read_write> derived_coverage: array<f32>;
-@group(0) @binding(8) var<storage, read_write> derived_velocity: array<vec4<f32>
->;
-@group(0) @binding(9) var<storage, read> cellular_material_identifiers: array<u32
->;
+@group(0) @binding(8) var<storage, read_write> derived_velocity: array<vec4<f32>>;
+@group(0) @binding(9) var<storage, read> cellular_material_identifiers: array<u32>;
 @group(0) @binding(10) var<storage, read> external_body_occupancy: array<u32>;
-@group(0) @binding(11) var<storage, read> external_body_velocity: array<vec4<f32>
->;
+@group(0) @binding(11) var<storage, read> external_body_velocity: array<vec4<f32>>;
 @group(0) @binding(12) var<uniform> parameters: Parameters;
-@group(0) @binding(13) var<storage, read_write> predicted_positions: array<vec2<f32>
->;
+@group(0) @binding(13) var<storage, read_write> predicted_positions: array<vec2<f32>>;
 @group(0) @binding(14) var<storage, read_write> lambdas: array<f32>;
-@group(0) @binding(15) var<storage, read_write> position_corrections: array<vec2<f32>
->;
-@group(0) @binding(16) var<storage, read> fluid_material_properties: array<vec4<f32>
->;
-@group(0) @binding(17) var<storage, read_write> streaming_particles: array<Particle
->;
-@group(0) @binding(18) var<storage, read_write> streaming_count: array<atomic<u32>
->;
+@group(0) @binding(15) var<storage, read_write> position_corrections: array<vec2<f32>>;
+@group(0) @binding(16) var<storage, read> fluid_material_properties: array<vec4<f32>>;
+@group(0) @binding(17) var<storage, read_write> streaming_particles: array<Particle>;
+@group(0) @binding(18) var<storage, read_write> streaming_count: array<atomic<u32>>;
 @group(0) @binding(19) var<storage, read_write> streaming_results: array<u32>;
 @group(0) @binding(20) var<storage, read_write> sample_output: array<vec4<f32>>;
-@group(0) @binding(21) var<storage, read_write> mechanical_cells: array<MechanicalFluidCell
->;
-@group(0) @binding(22) var<storage, read_write> mechanical_original_velocity: array<vec2<f32>
->;
-@group(0) @binding(23) var<storage, read_write> accelerator_edits_pending: array<atomic<u32>
->;
+@group(0) @binding(21) var<storage, read_write> mechanical_cells: array<MechanicalFluidCell>;
+@group(0) @binding(22) var<storage, read_write> mechanical_original_velocity: array<vec2<f32>>;
+@group(0) @binding(23) var<storage, read_write> accelerator_edits_pending: array<atomic<u32>>;
 @group(0) @binding(24) var<storage, read_write> edit_amounts: array<f32>;
 @group(0) @binding(25) var<storage, read_write> edit_temperatures: array<f32>;
-@group(0) @binding(26) var<storage, read> thermal_material_properties: array<ThermalMaterialRecord
->;
+@group(0) @binding(26) var<storage, read> thermal_material_properties: array<ThermalMaterialRecord>;
 @group(0) @binding(27) var<uniform> thermal_material_parameters: ThermalMaterialParameters;
-@group(0) @binding(28) var<storage, read_write> derived_thermal: array<vec4<f32>
->;
+@group(0) @binding(28) var<storage, read_write> derived_thermal: array<vec4<f32>>;
 @group(1) @binding(0) var<storage, read_write> accelerator_edit_dispatch: array<u32>;
-
-

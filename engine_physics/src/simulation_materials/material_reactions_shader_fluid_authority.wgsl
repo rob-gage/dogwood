@@ -1,20 +1,20 @@
 // Deterministic global arbitration walks the compact, Accelerator-sorted candidate list.
 @compute @workgroup_size(1)
 fn reserve_fluid_authority(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    if (invocation.x != 0u ){
+    if (invocation.x != 0u) {
         return;
     }
     let count = min(atomicLoad(&candidate_count[0]), arrayLength(&candidate_indices));
-    for (var processed = 0u; processed < count; processed   += 1u) {
+    for (var processed = 0u; processed < count; processed += 1u) {
         let best = candidate_indices[processed];
-        if (best == 0xffffffffu || best >= arrayLength(&candidates) ){
+        if (best == 0xffffffffu || best >= arrayLength(&candidates)) {
             continue;
         }
         let candidate = candidates[best];
         candidates[best].padding0 = 2u;
-        if (reserve_candidate_canonical(candidate) ){
+        if (reserve_candidate_canonical(candidate)) {
             reserve_candidate(best);
-            if (candidates[best].padding0 == 0u ){
+            if (candidates[best].padding0 == 0u) {
                 release_candidate_canonical(candidate);
             }
         }
@@ -22,35 +22,33 @@ fn reserve_fluid_authority(@builtin(global_invocation_id) invocation: vec3<u32>)
 }
 
 fn release_fluid_slot(slot: u32) {
-    if (slot == 0xffffffffu ){
+    if (slot == 0xffffffffu) {
         return;
     }
     let count = atomicAdd(&fluid_free_count[0], 1u);
-    if (count < arrayLength(&fluid_free_indices) ){
+    if (count < arrayLength(&fluid_free_indices)) {
         fluid_free_indices[count] = slot;
     }
 }
 
-fn spawn_fluid_product(
-    slot: u32,
-    material: u32,
-    amount: f32,
-    cell: u32,
-    temperature: f32
-) {
-    let world = world_cell_from_physical_tile_ring_index(
-      cell,
-      fluid_spatial_parameters.buffered_origin,
-      fluid_spatial_parameters.buffered_tile_size,
-      fluid_spatial_parameters.ring_offset);
-    fluid_particles[slot] = FluidParticleAuthority(
-      material,
-      1u,
-      (vec2<f32>(world) + vec2<f32>(0.5)) / CELLS_PER_TILE_FLOAT,
-      vec2<f32>(0.0),
-      vec2<f32>(0.0),
-      amount,
-      temperature);
+fn spawn_fluid_product(slot: u32, material: u32, amount: f32, cell: u32, temperature: f32) {
+    let world =
+        world_cell_from_physical_tile_ring_index(
+            cell,
+            fluid_spatial_parameters.buffered_origin,
+            fluid_spatial_parameters.buffered_tile_size,
+            fluid_spatial_parameters.ring_offset,
+        );
+    fluid_particles[slot] =
+        FluidParticleAuthority(
+            material,
+            1u,
+            (vec2<f32>(world) + vec2<f32>(0.5)) / CELLS_PER_TILE_FLOAT,
+            vec2<f32>(0.0),
+            vec2<f32>(0.0),
+            amount,
+            temperature,
+        );
 }
 
 // Applies only representations which can be reserved deterministically in the

@@ -11,8 +11,10 @@ fn clear_gas_area(@builtin(global_invocation_id) invocation: vec3<u32>) {
     velocity[index] = vec2<f32>(0.0);
     for (var species: u32 = 0u; species < parameters.gas_count; species++) {
         concentrations[gas_concentration_storage_index_from_species_and_physical_cell(
-      species,
-      index)] = 0.0;
+            species,
+            index,
+        )] =
+            0.0;
     }
     gas_temperature[index] = parameters.ambient_temperature;
 }
@@ -34,9 +36,8 @@ fn export_gas_area(@builtin(global_invocation_id) invocation: vec3<u32>) {
     streaming_data[start + 3u] = bitcast<u32>(velocity[index].y);
     velocity[index] = vec2<f32>(0.0);
     for (var species: u32 = 0u; species < parameters.gas_count; species++) {
-        let concentration: u32 = gas_concentration_storage_index_from_species_and_physical_cell(
-        species,
-        index);
+        let concentration: u32 =
+            gas_concentration_storage_index_from_species_and_physical_cell(species, index);
         streaming_data[start + 4u] = bitcast<u32>(gas_temperature[index]);
         streaming_data[start + 5u + species] = bitcast<u32>(concentrations[concentration]);
         concentrations[concentration] = 0.0;
@@ -44,4 +45,3 @@ fn export_gas_area(@builtin(global_invocation_id) invocation: vec3<u32>) {
 }
 
 // Sums density difference from the implicit ambient atmosphere
-

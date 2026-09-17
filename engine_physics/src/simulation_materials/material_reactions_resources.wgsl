@@ -48,7 +48,7 @@ struct RigidCell {
     appearance: u32,
     state_slot: u32,
     state_generation: u32,
-    padding: u32
+    padding: u32,
 }
 
 @group(0) @binding(0) var<storage, read> reactions: array<Reaction>;
@@ -63,13 +63,10 @@ struct RigidCell {
 @group(0) @binding(9) var<storage, read> rigid_claims: array<atomic<u32>>;
 @group(0) @binding(10) var<storage, read_write> candidates: array<Candidate>;
 @group(0) @binding(11) var<uniform> parameters: Parameters;
-@group(0) @binding(12) var<storage, read_write> mutation_requests: array<Request
->;
-@group(0) @binding(13) var<storage, read_write> mutation_request_count: array<atomic<u32>
->;
+@group(0) @binding(12) var<storage, read_write> mutation_requests: array<Request>;
+@group(0) @binding(13) var<storage, read_write> mutation_request_count: array<atomic<u32>>;
 @group(0) @binding(14) var<storage, read_write> reaction_energy: array<f32>;
-@group(0) @binding(15) var<storage, read_write> pending_pressure: array<vec4<f32>
->;
+@group(0) @binding(15) var<storage, read_write> pending_pressure: array<vec4<f32>>;
 
 // Read-only authoritative fluid bridge; discovery will use the shared spatial
 // utility and these chains in the fluid-reaction pass.
@@ -83,10 +80,8 @@ struct FluidParticleAuthority {
     temperature: f32,
 }
 
-@group(0) @binding(16) var<storage, read_write> fluid_particles: array<FluidParticleAuthority
->;
-@group(0) @binding(17) var<storage, read> fluid_bucket_heads: array<atomic<u32>
->;
+@group(0) @binding(16) var<storage, read_write> fluid_particles: array<FluidParticleAuthority>;
+@group(0) @binding(17) var<storage, read> fluid_bucket_heads: array<atomic<u32>>;
 @group(0) @binding(18) var<storage, read> fluid_next_particle: array<u32>;
 
 struct FluidSpatialParameters {
@@ -115,29 +110,19 @@ struct FluidSpatialParameters {
 
 @group(0) @binding(19) var<uniform> fluid_spatial_parameters: FluidSpatialParameters;
 @group(0) @binding(20) var<storage, read_write> fluid_free_indices: array<u32>;
-@group(0) @binding(21) var<storage, read_write> fluid_free_count: array<atomic<u32>
->;
-@group(0) @binding(22) var<storage, read_write> fluid_reservations: array<atomic<u32>
->;
-@group(0) @binding(23) var<storage, read_write> gas_reservations: array<atomic<u32>
->;
-@group(0) @binding(24) var<storage, read_write> gas_output_reservations: array<atomic<u32>
->;
-@group(0) @binding(25) var<storage, read_write> canonical_reservations: array<atomic<u32>
->;
-@group(0) @binding(26) var<storage, read_write> fluid_reservation_owners: array<atomic<u32>
->;
+@group(0) @binding(21) var<storage, read_write> fluid_free_count: array<atomic<u32>>;
+@group(0) @binding(22) var<storage, read_write> fluid_reservations: array<atomic<u32>>;
+@group(0) @binding(23) var<storage, read_write> gas_reservations: array<atomic<u32>>;
+@group(0) @binding(24) var<storage, read_write> gas_output_reservations: array<atomic<u32>>;
+@group(0) @binding(25) var<storage, read_write> canonical_reservations: array<atomic<u32>>;
+@group(0) @binding(26) var<storage, read_write> fluid_reservation_owners: array<atomic<u32>>;
 @group(0) @binding(27) var<storage, read> rigid_cells: array<RigidCell>;
 @group(0) @binding(28) var<storage, read_write> rigid_amounts: array<f32>;
-@group(0) @binding(29) var<storage, read_write> rigid_reservations: array<atomic<u32>
->;
-@group(0) @binding(30) var<storage, read_write> rigid_removal_events: array<vec4<u32>
->;
-@group(0) @binding(31) var<storage, read_write> rigid_removal_count: array<atomic<u32>
->;
+@group(0) @binding(29) var<storage, read_write> rigid_reservations: array<atomic<u32>>;
+@group(0) @binding(30) var<storage, read_write> rigid_removal_events: array<vec4<u32>>;
+@group(0) @binding(31) var<storage, read_write> rigid_removal_count: array<atomic<u32>>;
 @group(0) @binding(32) var<storage, read_write> candidate_indices: array<u32>;
-@group(0) @binding(33) var<storage, read_write> candidate_count: array<atomic<u32>
->;
+@group(0) @binding(33) var<storage, read_write> candidate_count: array<atomic<u32>>;
 
 struct SortParameters {
     k: u32,

@@ -31,7 +31,11 @@ fn fluid_bucket_index_from_coordinates(
     bucket_dimensions: vec2<u32>,
     invalid_bucket: u32,
 ) -> u32 {
-    if any(coordinates < vec2<i32>(0)) || coordinates.x >= i32(bucket_dimensions.x) || coordinates.y >= i32(bucket_dimensions.y) {
+    if
+        any(coordinates < vec2<i32>(0))
+            || coordinates.x >= i32(bucket_dimensions.x)
+            || coordinates.y >= i32(bucket_dimensions.y)
+    {
         return invalid_bucket;
     }
     return u32(coordinates.y) * bucket_dimensions.x + u32(coordinates.x);
@@ -45,10 +49,13 @@ fn fluid_bucket_coordinates_from_cell_center(
     support_radius_cells: f32,
     cells_per_tile: f32,
 ) -> vec2<i32> {
-    return fluid_bucket_coordinates_from_position(
-        cell_center / cells_per_tile, buffered_origin, support_radius_cells,
-        cells_per_tile,
-    );
+    return
+        fluid_bucket_coordinates_from_position(
+            cell_center / cells_per_tile,
+            buffered_origin,
+            support_radius_cells,
+            cells_per_tile,
+        );
 }
 
 // Stable tie-breaking primitive for consumers that need deterministic

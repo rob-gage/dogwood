@@ -62,12 +62,14 @@ fn world_cell_from_logical_tile_major_index(
 ) -> vec2<i32> {
     let logical_tile_index: u32 = logical_index / CELL_COUNT_PER_TILE;
     let local_cell_index: u32 = logical_index % CELL_COUNT_PER_TILE;
-    let logical_tile: vec2<u32> = vec2<u32>(
-      logical_tile_index % buffered_tile_size.x,
-      logical_tile_index / buffered_tile_size.x,);
+    let logical_tile: vec2<u32> =
+        vec2<u32>(
+            logical_tile_index % buffered_tile_size.x,
+            logical_tile_index / buffered_tile_size.x,
+        );
     return
-    (buffered_origin + vec2<i32>(logical_tile)) * i32(CELLS_PER_TILE) + vec2<i32
-    >(
-      i32(local_cell_index % CELLS_PER_TILE),
-      i32(local_cell_index / CELLS_PER_TILE),);
+        (buffered_origin + vec2<i32>(logical_tile)) * i32(CELLS_PER_TILE) + vec2<i32>(
+            i32(local_cell_index % CELLS_PER_TILE),
+            i32(local_cell_index / CELLS_PER_TILE),
+        );
 }

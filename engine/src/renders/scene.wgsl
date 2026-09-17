@@ -88,9 +88,8 @@ const CELLS_PER_CHUNK_EDGE: i32 = 512;
 fn render_scene_fullscreen_triangle_vertex(
     @builtin(vertex_index) index: u32,
 ) -> @builtin(position) vec4<f32> {
-    let positions = array<vec2<f32>, 3>(
-        vec2<f32>(-1.0, -1.0), vec2<f32>(3.0, -1.0), vec2<f32>(-1.0, 3.0),
-    );
+    let positions =
+        array<vec2<f32>, 3>(vec2<f32>(-1.0, -1.0), vec2<f32>(3.0, -1.0), vec2<f32>(-1.0, 3.0));
     return vec4<f32>(positions[index], 0.0, 1.0);
 }
 
@@ -103,9 +102,13 @@ fn render_scene_fragment(@builtin(position) position: vec4<f32>) -> @location(0)
         return vec4<f32>(1.0);
     }
     let cell: vec2<i32> = vec2<i32>(floor(world * CELLS_PER_TILE_FLOAT));
-    let cell_index: u32 = physical_cell_index_from_world_cell(
-        cell, uniforms.buffered_origin, uniforms.buffered_tile_size, uniforms.ring_offset,
-    );
+    let cell_index: u32 =
+        physical_cell_index_from_world_cell(
+            cell,
+            uniforms.buffered_origin,
+            uniforms.buffered_tile_size,
+            uniforms.ring_offset,
+        );
     if cell_index == INVALID_PHYSICAL_CELL_INDEX {
         return vec4<f32>(0.0, 0.0, 0.0, 1.0);
     }
@@ -114,37 +117,32 @@ fn render_scene_fragment(@builtin(position) position: vec4<f32>) -> @location(0)
         return render_scene_debug_view(scene_cell, cell, cell_index, world);
     }
     if scene_cell.material_identifier != EMPTY_MATERIAL_IDENTIFIER {
-        let material_form: u32 = material_form_from_identifier(
-            scene_cell.material_identifier,
-        );
-        if material_form != CELLULAR_STATIC_MATERIAL_FORM &&
-                material_form != CELLULAR_DYNAMIC_MATERIAL_FORM &&
-                material_form != FLUID_MATERIAL_FORM {
+        let material_form: u32 = material_form_from_identifier(scene_cell.material_identifier);
+        if
+            material_form != CELLULAR_STATIC_MATERIAL_FORM
+                && material_form != CELLULAR_DYNAMIC_MATERIAL_FORM
+                && material_form != FLUID_MATERIAL_FORM
+        {
             return vec4<f32>(0.0, 0.0, 0.0, 1.0);
         }
     }
     let result: vec4<f32> = render_scene_material_color(scene_cell, cell_index);
-    let gas: vec4<f32> = render_gas_scattering_at_cell_position(
-        world * CELLS_PER_TILE_FLOAT,
-    );
+    let gas: vec4<f32> = render_gas_scattering_at_cell_position(world * CELLS_PER_TILE_FLOAT);
     return apply_scene_grid_borders(vec4<f32>(mix(result.rgb, gas.rgb, gas.a), 1.0), cell, world);
 }
 
 // Converts a viewport fragment position into continuous scene-world coordinates
 fn scene_world_position_from_fragment_position(position: vec2<f32>) -> vec2<f32> {
-    let normalized: vec2<f32> = vec2<f32>(
-        (position.x - uniforms.viewport_origin.x) / uniforms.window_size.x,
-        1.0 - (position.y - uniforms.viewport_origin.y) / uniforms.window_size.y,
-    );
-    return uniforms.camera_position +
-        (normalized - vec2<f32>(0.5)) * uniforms.camera_size;
+    let normalized: vec2<f32> =
+        vec2<f32>(
+            (position.x - uniforms.viewport_origin.x) / uniforms.window_size.x,
+            1.0 - (position.y - uniforms.viewport_origin.y) / uniforms.window_size.y,
+        );
+    return uniforms.camera_position + (normalized - vec2<f32>(0.5)) * uniforms.camera_size;
 }
 
 // Resolves cellular material or the display-smoothed derived fluid sample
-fn resolve_scene_cellular_or_fluid_sample(
-    cell: vec2<i32>,
-    cell_index: u32,
-) -> SceneCellSample {
+fn resolve_scene_cellular_or_fluid_sample(cell: vec2<i32>, cell_index: u32) -> SceneCellSample {
     var material_identifier: u32 = cellular_material_identifiers[cell_index];
     var appearance: u32 = cellular_appearances[cell_index];
     if rigid_material_identifiers[cell_index] != EMPTY_MATERIAL_IDENTIFIER {
@@ -159,12 +157,16 @@ fn resolve_scene_cellular_or_fluid_sample(
         var strongest_material_identifier: u32 = EMPTY_MATERIAL_IDENTIFIER;
         for (var offset_y: i32 = -1; offset_y <= 1; offset_y++) {
             for (var offset_x: i32 = -1; offset_x <= 1; offset_x++) {
-                if offset_x == 0 && offset_y == 0 { continue; }
-                let neighbor_index: u32 = scene_physical_cell_index_from_world_cell(
-                    cell + vec2<i32>(offset_x, offset_y),
-                );
-                if neighbor_index == INVALID_PHYSICAL_CELL_INDEX ||
-                        fluid_coverage[neighbor_index] <= 0.35 { continue; }
+                if offset_x == 0 && offset_y == 0 {
+                    continue;
+                }
+                let neighbor_index: u32 =
+                    scene_physical_cell_index_from_world_cell(cell + vec2<i32>(offset_x, offset_y));
+                if
+                    neighbor_index == INVALID_PHYSICAL_CELL_INDEX || fluid_coverage[neighbor_index] <= 0.35
+                {
+                    continue;
+                }
                 neighbor_count += 1u;
                 if fluid_coverage[neighbor_index] > strongest_coverage {
                     strongest_coverage = fluid_coverage[neighbor_index];
@@ -181,7 +183,9 @@ fn resolve_scene_cellular_or_fluid_sample(
         }
     }
     let is_fluid: bool = material_identifier == EMPTY_MATERIAL_IDENTIFIER && coverage > 0.0;
-    if is_fluid { material_identifier = fluid_material_identifier; }
+    if is_fluid {
+        material_identifier = fluid_material_identifier;
+    }
     return SceneCellSample(material_identifier, coverage, is_fluid, appearance);
 }
 
@@ -195,31 +199,34 @@ fn render_scene_debug_view(
     if uniforms.view_mode == 2u {
         let pressure: f32 = length(cellular_pressure[cell_index].xy);
         let heat: f32 = clamp(log2(1.0 + pressure) * 0.2, 0.0, 1.0);
-        return apply_scene_grid_borders(
-            vec4<f32>(heat, heat * heat * 0.55, 1.0 - heat, 1.0), cell, world,
-        );
+        return
+            apply_scene_grid_borders(
+                vec4<f32>(heat, heat * heat * 0.55, 1.0 - heat, 1.0),
+                cell,
+                world,
+            );
     }
     // Temperature remains neutral until temperature state exists
     if uniforms.view_mode == 3u {
-        return apply_scene_grid_borders(
-            vec4<f32>(0.12, 0.14, 0.18, 1.0), cell, world,
-        );
+        return apply_scene_grid_borders(vec4<f32>(0.12, 0.14, 0.18, 1.0), cell, world);
     }
-    let total_gas: f32 = total_gas_concentration_at_cell_position(
-        world * CELLS_PER_TILE_FLOAT,
-    );
+    let total_gas: f32 = total_gas_concentration_at_cell_position(world * CELLS_PER_TILE_FLOAT);
     if uniforms.view_mode == 4u {
         let intensity: f32 = 1.0 - exp(-total_gas * 2.0);
-        return apply_scene_grid_borders(vec4<f32>(
-            intensity, intensity * intensity * 0.35, 1.0 - intensity * 0.65, 1.0,
-        ), cell, world);
+        return
+            apply_scene_grid_borders(
+                vec4<f32>(intensity, intensity * intensity * 0.35, 1.0 - intensity * 0.65, 1.0),
+                cell,
+                world,
+            );
     }
-    let form_color = array<vec3<f32>, 4>(
-        vec3<f32>(0.72, 0.32, 0.88),
-        vec3<f32>(0.35, 0.58, 0.88),
-        vec3<f32>(0.90, 0.62, 0.20),
-        vec3<f32>(0.22, 0.72, 0.82),
-    );
+    let form_color =
+        array<vec3<f32>, 4>(
+            vec3<f32>(0.72, 0.32, 0.88),
+            vec3<f32>(0.35, 0.58, 0.88),
+            vec3<f32>(0.90, 0.62, 0.20),
+            vec3<f32>(0.22, 0.72, 0.82),
+        );
     if scene_cell.material_identifier == EMPTY_MATERIAL_IDENTIFIER && total_gas > 0.0001 {
         return apply_scene_grid_borders(vec4<f32>(form_color[0], 1.0), cell, world);
     }
@@ -239,10 +246,18 @@ fn render_scene_material_color(scene_cell: SceneCellSample, cell_index: u32) -> 
     let material_index: u32 = material_index_from_identifier(scene_cell.material_identifier);
     var properties: MaterialAppearance;
     switch material_form {
-        case CELLULAR_STATIC_MATERIAL_FORM: { properties = cellular_statics[material_index]; }
-        case CELLULAR_DYNAMIC_MATERIAL_FORM: { properties = cellular_dynamics[material_index]; }
-        case FLUID_MATERIAL_FORM: { properties = fluids[material_index]; }
-        default: { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }
+        case CELLULAR_STATIC_MATERIAL_FORM: {
+            properties = cellular_statics[material_index];
+        }
+        case CELLULAR_DYNAMIC_MATERIAL_FORM: {
+            properties = cellular_dynamics[material_index];
+        }
+        case FLUID_MATERIAL_FORM: {
+            properties = fluids[material_index];
+        }
+        default: {
+            return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        }
     }
     let packed_appearance: u32 = select(scene_cell.appearance, 0u, scene_cell.is_fluid);
     var appearance_sample: vec4<f32> = vec4<f32>(0.0);
@@ -252,10 +267,12 @@ fn render_scene_material_color(scene_cell: SceneCellSample, cell_index: u32) -> 
         appearance_sample[channel] = max(f32(signed_byte), -127.0) / 127.0;
     }
     let base_color: vec4<f32> = unpack_rgba8_color(properties.color_freezing);
-    var result: vec4<f32> = clamp(
-        base_color * (vec4<f32>(1.0) + appearance_sample * properties.color_influence),
-        vec4<f32>(0.0), vec4<f32>(1.0),
-    );
+    var result: vec4<f32> =
+        clamp(
+            base_color * (vec4<f32>(1.0) + appearance_sample * properties.color_influence),
+            vec4<f32>(0.0),
+            vec4<f32>(1.0),
+        );
     if scene_cell.is_fluid {
         result = vec4<f32>(result.rgb * scene_cell.fluid_coverage, 1.0);
     }
@@ -276,17 +293,15 @@ fn render_gas_scattering_at_cell_position(cell_position: vec2<f32>) -> vec4<f32>
     var optical_depth: f32 = 0.0;
     var weighted_color: vec3<f32> = vec3<f32>(0.0);
     for (var species: u32 = 0u; species < uniforms.gas_count; species++) {
-        let concentration: f32 = sample_gas_concentration_bilinear_at_cell_position(
-            species, cell_position,
-        );
+        let concentration: f32 =
+            sample_gas_concentration_bilinear_at_cell_position(species, cell_position);
         let extinction: f32 = max(gas_properties[species * 2u].z, 0.0);
         let weight: f32 = concentration * extinction;
         optical_depth += weight;
         weighted_color += unpack_rgba8_color(gases[species].color_freezing).rgb * weight;
     }
-    let color: vec3<f32> = select(
-        vec3<f32>(0.0), weighted_color / max(optical_depth, 0.000001), optical_depth > 0.0,
-    );
+    let color: vec3<f32> =
+        select(vec3<f32>(0.0), weighted_color / max(optical_depth, 0.000001), optical_depth > 0.0);
     return vec4<f32>(color, 1.0 - exp(-optical_depth));
 }
 
@@ -298,34 +313,41 @@ fn sample_gas_concentration_bilinear_at_cell_position(
     let shifted: vec2<f32> = cell_position - vec2<f32>(0.5);
     let base: vec2<i32> = vec2<i32>(floor(shifted));
     let fraction: vec2<f32> = fract(shifted);
-    let bottom: f32 = mix(
-        gas_concentration_at_world_cell(species, base),
-        gas_concentration_at_world_cell(species, base + vec2<i32>(1, 0)), fraction.x,
-    );
-    let top: f32 = mix(
-        gas_concentration_at_world_cell(species, base + vec2<i32>(0, 1)),
-        gas_concentration_at_world_cell(species, base + vec2<i32>(1, 1)), fraction.x,
-    );
+    let bottom: f32 =
+        mix(
+            gas_concentration_at_world_cell(species, base),
+            gas_concentration_at_world_cell(species, base + vec2<i32>(1, 0)),
+            fraction.x,
+        );
+    let top: f32 =
+        mix(
+            gas_concentration_at_world_cell(species, base + vec2<i32>(0, 1)),
+            gas_concentration_at_world_cell(species, base + vec2<i32>(1, 1)),
+            fraction.x,
+        );
     return mix(bottom, top, fraction.y);
 }
 
 // Reads one gas species at a resident world cell with an empty boundary
 fn gas_concentration_at_world_cell(species: u32, cell: vec2<i32>) -> f32 {
     let index: u32 = scene_physical_cell_index_from_world_cell(cell);
-    if index == INVALID_PHYSICAL_CELL_INDEX { return 0.0; }
-    let buffered_cell_count: u32 = uniforms.buffered_tile_size.x *
-        uniforms.buffered_tile_size.y * CELL_COUNT_PER_TILE;
+    if index == INVALID_PHYSICAL_CELL_INDEX {
+        return 0.0;
+    }
+    let buffered_cell_count: u32 =
+        uniforms.buffered_tile_size.x * uniforms.buffered_tile_size.y * CELL_COUNT_PER_TILE;
     return gas_concentrations[species * buffered_cell_count + index];
 }
 
 // Unpacks little-endian RGBA8 channels into normalized color
 fn unpack_rgba8_color(color: u32) -> vec4<f32> {
-    return vec4<f32>(
-        f32(color & 0xffu) / 255.0,
-        f32((color >> 8u) & 0xffu) / 255.0,
-        f32((color >> 16u) & 0xffu) / 255.0,
-        f32(color >> 24u) / 255.0,
-    );
+    return
+        vec4<f32>(
+            f32(color & 0xffu) / 255.0,
+            f32((color >> 8u) & 0xffu) / 255.0,
+            f32((color >> 16u) & 0xffu) / 255.0,
+            f32(color >> 24u) / 255.0,
+        );
 }
 
 // Overlays optional tile and chunk boundaries on a scene color
@@ -333,16 +355,24 @@ fn apply_scene_grid_borders(color: vec4<f32>, cell: vec2<i32>, world: vec2<f32>)
     let cell_position = world * CELLS_PER_TILE_FLOAT;
     let distance_to_edge = min(fract(cell_position.x), fract(cell_position.y));
     let pixel_width = max(fwidth(cell_position.x), fwidth(cell_position.y));
-    if uniforms.show_chunk_borders != 0u &&
-            (floor_modulo_signed_coordinate(cell.x, CELLS_PER_CHUNK_EDGE) == 0 ||
-                floor_modulo_signed_coordinate(cell.y, CELLS_PER_CHUNK_EDGE) == 0) &&
-            distance_to_edge < pixel_width * 1.5 {
+    if
+        uniforms.show_chunk_borders != 0u
+            && (floor_modulo_signed_coordinate(
+                cell.x,
+                CELLS_PER_CHUNK_EDGE,
+            ) == 0 || floor_modulo_signed_coordinate(cell.y, CELLS_PER_CHUNK_EDGE) == 0)
+            && distance_to_edge < pixel_width * 1.5
+    {
         return mix(color, vec4<f32>(0.95, 0.45, 0.12, 1.0), 0.85);
     }
-    if uniforms.show_tile_borders != 0u &&
-            (floor_modulo_signed_coordinate(cell.x, i32(CELLS_PER_TILE)) == 0 ||
-                floor_modulo_signed_coordinate(cell.y, i32(CELLS_PER_TILE)) == 0) &&
-            distance_to_edge < pixel_width {
+    if
+        uniforms.show_tile_borders != 0u
+            && (floor_modulo_signed_coordinate(
+                cell.x,
+                i32(CELLS_PER_TILE),
+            ) == 0 || floor_modulo_signed_coordinate(cell.y, i32(CELLS_PER_TILE)) == 0)
+            && distance_to_edge < pixel_width
+    {
         return mix(color, vec4<f32>(0.35, 0.72, 1.0, 1.0), 0.65);
     }
     return color;
@@ -350,7 +380,11 @@ fn apply_scene_grid_borders(color: vec4<f32>, cell: vec2<i32>, world: vec2<f32>)
 
 // Maps a world cell through the scene renderer's current tile ring
 fn scene_physical_cell_index_from_world_cell(world_cell: vec2<i32>) -> u32 {
-    return physical_cell_index_from_world_cell(
-        world_cell, uniforms.buffered_origin, uniforms.buffered_tile_size, uniforms.ring_offset,
-    );
+    return
+        physical_cell_index_from_world_cell(
+            world_cell,
+            uniforms.buffered_origin,
+            uniforms.buffered_tile_size,
+            uniforms.ring_offset,
+        );
 }
