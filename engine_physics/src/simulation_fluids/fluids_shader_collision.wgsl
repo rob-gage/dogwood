@@ -10,7 +10,8 @@ fn project_fluid_particle_out_of_cellular_collision(initial_position: vec2<f32>)
                 let cell: vec2<i32> = center_cell + vec2<i32>(offset_x, offset_y);
                 let index: u32 = fluid_physical_cell_index_from_world_cell(cell);
                 if
-                    index == INVALID_PHYSICAL_CELL_INDEX || (cellular_material_identifiers[index] == EMPTY_MATERIAL_IDENTIFIER && !is_hard_external_body(
+                    index == INVALID_PHYSICAL_CELL_INDEX
+                    || (cellular_material_identifiers[index] == EMPTY_MATERIAL_IDENTIFIER && !is_hard_external_body(
                         external_body_occupancy[index],
                     ))
                 {

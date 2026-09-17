@@ -7,7 +7,8 @@ fn is_hard_external_body(occupancy: u32) -> bool {
 fn remove_edited_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let particle_index: u32 = invocation.x;
     if
-        particle_index >= parameters.particle_capacity || particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER
+        particle_index >= parameters.particle_capacity
+            || particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER
     {
         return;
     }
@@ -102,7 +103,8 @@ fn prepare_accelerator_fluid_edits(@builtin(global_invocation_id) invocation: ve
 fn classify_active_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let particle_index: u32 = invocation.x;
     if
-        particle_index >= parameters.particle_capacity || particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER
+        particle_index >= parameters.particle_capacity
+            || particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER
     {
         return;
     }
@@ -115,7 +117,8 @@ fn classify_active_fluid_particles(@builtin(global_invocation_id) invocation: ve
 fn predict_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let particle_index: u32 = invocation.x;
     if
-        particle_index >= parameters.particle_capacity || particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER
+        particle_index >= parameters.particle_capacity
+            || particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER
     {
         return;
     }
@@ -164,7 +167,8 @@ fn insert_committed_fluid_particles_into_spatial_buckets(
 ) {
     let particle_index: u32 = invocation.x;
     if
-        particle_index >= parameters.particle_capacity || particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER
+        particle_index >= parameters.particle_capacity
+            || particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER
     {
         return;
     }
@@ -183,7 +187,8 @@ fn insert_predicted_fluid_particles_into_spatial_buckets(
 ) {
     let particle_index: u32 = invocation.x;
     if
-        particle_index >= parameters.particle_capacity || particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER
+        particle_index >= parameters.particle_capacity
+            || particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER
     {
         return;
     }
@@ -205,7 +210,8 @@ fn calculate_fluid_density_constraint_lambdas(
 ) {
     let particle_index: u32 = invocation.x;
     if
-        particle_index >= parameters.particle_capacity || particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER
+        particle_index >= parameters.particle_capacity
+            || particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER
     {
         return;
     }
@@ -228,7 +234,8 @@ fn calculate_fluid_density_constraint_lambdas(
 fn calculate_fluid_position_corrections(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let particle_index: u32 = invocation.x;
     if
-        particle_index >= parameters.particle_capacity || particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER
+        particle_index >= parameters.particle_capacity
+            || particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER
     {
         return;
     }
@@ -250,7 +257,8 @@ fn calculate_fluid_position_corrections(@builtin(global_invocation_id) invocatio
 fn apply_fluid_position_corrections(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let particle_index: u32 = invocation.x;
     if
-        particle_index >= parameters.particle_capacity || particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER
+        particle_index >= parameters.particle_capacity
+            || particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER
     {
         return;
     }
@@ -268,7 +276,8 @@ fn apply_fluid_position_corrections(@builtin(global_invocation_id) invocation: v
 fn commit_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let particle_index: u32 = invocation.x;
     if
-        particle_index >= parameters.particle_capacity || particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER
+        particle_index >= parameters.particle_capacity
+            || particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER
     {
         return;
     }
@@ -299,7 +308,8 @@ fn commit_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>) 
 fn calculate_fluid_velocity_smoothing(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let particle_index: u32 = invocation.x;
     if
-        particle_index >= parameters.particle_capacity || particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER
+        particle_index >= parameters.particle_capacity
+            || particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER
     {
         return;
     }
@@ -316,7 +326,8 @@ fn calculate_fluid_velocity_smoothing(@builtin(global_invocation_id) invocation:
 fn apply_fluid_velocity_smoothing(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let particle_index: u32 = invocation.x;
     if
-        particle_index >= parameters.particle_capacity || particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER
+        particle_index >= parameters.particle_capacity
+            || particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER
     {
         return;
     }
@@ -373,7 +384,8 @@ fn apply_fluid_cellular_contact_velocity_to_particles(
 ) {
     let particle_index: u32 = invocation.x;
     if
-        particle_index >= parameters.particle_capacity || particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER
+        particle_index >= parameters.particle_capacity
+            || particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER
     {
         return;
     }
@@ -384,7 +396,8 @@ fn apply_fluid_cellular_contact_velocity_to_particles(
         vec2<i32>(floor(particles[particle_index].position * CELLS_PER_TILE_FLOAT));
     let index: u32 = fluid_physical_cell_index_from_world_cell(cell);
     if
-        index == INVALID_PHYSICAL_CELL_INDEX || derived_material_identifiers[index] != particles[particle_index].material_identifier
+        index == INVALID_PHYSICAL_CELL_INDEX
+            || derived_material_identifiers[index] != particles[particle_index].material_identifier
     {
         return;
     }

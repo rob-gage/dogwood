@@ -1,7 +1,8 @@
 fn export_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let particle_index: u32 = invocation.x;
     if
-        particle_index >= parameters.particle_capacity || particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER
+        particle_index >= parameters.particle_capacity
+            || particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER
     {
         return;
     }

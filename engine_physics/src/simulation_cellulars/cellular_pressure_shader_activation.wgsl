@@ -60,7 +60,8 @@ fn mark_active_cellular_pressure_tiles(
             material_form_from_identifier(effective_pressure_material(neighbor));
         let rigid_interface: bool = (rigid_owners[index] != 0u) != (rigid_owners[neighbor] != 0u);
         let fluid_interface: bool =
-            (mechanical_fluid_cells[index].mass > 0.0) != (mechanical_fluid_cells[neighbor].mass > 0.0) && (form == CELLULAR_DYNAMIC_MATERIAL_FORM
+            (mechanical_fluid_cells[index].mass > 0.0) != (mechanical_fluid_cells[neighbor].mass > 0.0)
+                && (form == CELLULAR_DYNAMIC_MATERIAL_FORM
                 || form == CELLULAR_STATIC_MATERIAL_FORM
                 || neighbor_form == CELLULAR_DYNAMIC_MATERIAL_FORM
                 || neighbor_form == CELLULAR_STATIC_MATERIAL_FORM
@@ -77,7 +78,9 @@ fn mark_active_cellular_pressure_tiles(
                 ) > 0.0001);
         var granular_impact: bool = false;
         if
-            form == CELLULAR_DYNAMIC_MATERIAL_FORM && (neighbor_form == CELLULAR_DYNAMIC_MATERIAL_FORM || neighbor_form == CELLULAR_STATIC_MATERIAL_FORM)
+            form == CELLULAR_DYNAMIC_MATERIAL_FORM
+                && (neighbor_form == CELLULAR_DYNAMIC_MATERIAL_FORM
+                    || neighbor_form == CELLULAR_STATIC_MATERIAL_FORM)
         {
             granular_impact =
                 dot(
