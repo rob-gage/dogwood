@@ -114,16 +114,7 @@ impl ThermalScatter {
                 .flat_map(|v| v.to_le_bytes())
                 .collect::<Vec<_>>(),
         );
-        let storage = |binding, read_only| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only },
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        };
+        let storage = crate::simulation::storage_bind_group_layout_entry;
         let mut entries: Vec<_> = (0..15)
             .map(|b| storage(b, !matches!(b, 3 | 4 | 6 | 11 | 13)))
             .collect();

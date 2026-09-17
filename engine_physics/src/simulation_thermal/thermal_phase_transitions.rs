@@ -107,16 +107,7 @@ impl ThermalPhaseTransitions {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let storage = |binding, read_only| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only },
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        };
+        let storage = crate::simulation::storage_bind_group_layout_entry;
         let mut entries: Vec<_> = (0..10)
             .filter(|b| *b != 7)
             .map(|b| storage(b, !matches!(b, 8 | 9)))

@@ -21,6 +21,22 @@ pub(crate) fn create_simulation_shader_module(
     )
 }
 
+pub(crate) fn storage_bind_group_layout_entry(
+    binding: u32,
+    read_only: bool,
+) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
 const PHYSICS_SHADER_UTILITIES: [engine_compute::ComposableShaderUtility; 8] = [
     engine_compute::ComposableShaderUtility {
         source: include_str!("simulation_constants.wgsl"),
