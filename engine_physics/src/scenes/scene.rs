@@ -4969,8 +4969,133 @@ mod tests {
         accelerator.poll().unwrap();
     }
 
+    fn read_cell_state(accelerator: &Accelerator, scene: &Scene, index: usize) -> (u32, f32) {
+        let readback = accelerator
+            .wgpu_device()
+            .create_buffer(&wgpu::BufferDescriptor {
+                label: Some("chemistry cell state readback"),
+                size: 8,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+        let mut encoder = accelerator
+            .wgpu_device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        encoder.copy_buffer_to_buffer(
+            scene.cellular_material_identifiers.wgpu_buffer(),
+            index as u64 * 4,
+            &readback,
+            0,
+            4,
+        );
+        encoder.copy_buffer_to_buffer(
+            scene.cellular_amounts.wgpu_buffer(),
+            index as u64 * 4,
+            &readback,
+            4,
+            4,
+        );
+        accelerator.wgpu_queue().submit(Some(encoder.finish()));
+        let (sender, receiver) = mpsc::sync_channel(1);
+        readback
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                sender.send(result).unwrap();
+            });
+        loop {
+            accelerator.poll().unwrap();
+            if let Ok(result) = receiver.try_recv() {
+                result.unwrap();
+                break;
+            }
+            std::thread::yield_now();
+        }
+        let bytes = readback.slice(..).get_mapped_range().unwrap();
+        let material = u32::from_le_bytes(bytes[..4].try_into().unwrap());
+        let amount = f32::from_le_bytes(bytes[4..8].try_into().unwrap());
+        (material, amount)
+    }
+
+    fn read_amount(
+        accelerator: &Accelerator,
+        buffer: &engine_compute::AcceleratorBuffer,
+        slot: u32,
+    ) -> f32 {
+        let readback = accelerator
+            .wgpu_device()
+            .create_buffer(&wgpu::BufferDescriptor {
+                label: Some("chemistry amount readback"),
+                size: 4,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+        let mut encoder = accelerator
+            .wgpu_device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        encoder.copy_buffer_to_buffer(buffer.wgpu_buffer(), u64::from(slot) * 4, &readback, 0, 4);
+        accelerator.wgpu_queue().submit(Some(encoder.finish()));
+        let (sender, receiver) = mpsc::sync_channel(1);
+        readback
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                sender.send(result).unwrap()
+            });
+        loop {
+            accelerator.poll().unwrap();
+            if let Ok(result) = receiver.try_recv() {
+                result.unwrap();
+                break;
+            }
+            std::thread::yield_now();
+        }
+        let bytes = readback.slice(..).get_mapped_range().unwrap();
+        f32::from_le_bytes(bytes[..4].try_into().unwrap())
+    }
+
+    fn read_fluid_state(accelerator: &Accelerator, scene: &Scene, slot: u32) -> (u32, u32, f32) {
+        let readback = accelerator
+            .wgpu_device()
+            .create_buffer(&wgpu::BufferDescriptor {
+                label: Some("chemistry fluid state readback"),
+                size: 40,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+        let mut encoder = accelerator
+            .wgpu_device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        encoder.copy_buffer_to_buffer(
+            scene.fluids.particles_buffer().wgpu_buffer(),
+            u64::from(slot) * 40,
+            &readback,
+            0,
+            40,
+        );
+        accelerator.wgpu_queue().submit(Some(encoder.finish()));
+        let (sender, receiver) = mpsc::sync_channel(1);
+        readback
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                sender.send(result).unwrap()
+            });
+        loop {
+            accelerator.poll().unwrap();
+            if let Ok(result) = receiver.try_recv() {
+                result.unwrap();
+                break;
+            }
+            std::thread::yield_now();
+        }
+        let bytes = readback.slice(..).get_mapped_range().unwrap();
+        (
+            u32::from_le_bytes(bytes[..4].try_into().unwrap()),
+            u32::from_le_bytes(bytes[4..8].try_into().unwrap()),
+            f32::from_le_bytes(bytes[32..36].try_into().unwrap()),
+        )
+    }
+
     #[test]
-    fn acid_fluid_reduces_adjacent_canonical_inventory() {
+    fn acid_fluid_erodes_same_cell_and_cardinal_stone_across_ticks() {
         let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
         let accelerator = Arc::new(Accelerator::new().unwrap());
         let mut materials = MaterialRegistryBuilder::new();
@@ -4978,6 +5103,151 @@ mod tests {
             name: "Stone".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(100, 100, 100)),
             mass: 1.0,
+            pressure_transmission: 1.0,
+            friction: 0.5,
+            restitution: 0.0,
+        });
+        let acid = materials.register(Material::Fluid {
+            name: "Acid".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(80, 220, 70)),
+            pressure_transmission: 1.0,
+            friction: 0.0,
+            restitution: 0.0,
+            rest_density: 1.0,
+            artificial_pressure: 0.0,
+            xsph_smoothing: 0.0,
+            body_push_speed: 0.0,
+            density: 1.0,
+            viscosity: 1.0,
+        });
+        materials.tag(stone, "corrodable").unwrap();
+        materials.register_reaction(MaterialReaction {
+            reactants: [
+                Some(MaterialReactionReactant {
+                    selector: MaterialSelector::Material(acid),
+                    amount: 0.2,
+                }),
+                Some(MaterialReactionReactant {
+                    selector: MaterialSelector::Tag("corrodable".into()),
+                    amount: 1.0,
+                }),
+            ],
+            maximum_extent_per_tick: 0.15,
+            thermal_energy: 0.01,
+            ..Default::default()
+        });
+        let compiled_materials = materials.compile().unwrap();
+        assert_eq!(compiled_materials.reactions().len(), 1);
+        assert_eq!(compiled_materials.reaction_selector_members()[1], stone);
+        let mut scene = Scene::new(
+            &accelerator,
+            compiled_materials,
+            SceneSimulationConfiguration {
+                gravity: [0.0, 0.0],
+                ambient_temperature: 293.15,
+                empty_space_thermal_conductivity: 0.0,
+                empty_space_heat_capacity: 1.0,
+                maximum_gas_concentration: 4.0,
+                width: 4,
+                height: 4,
+                buffer_size: 2,
+                streaming_batch_size: 1,
+            },
+        )
+        .unwrap();
+        let acid_cell = CellCoordinates { x: 0, y: 8 };
+        let cardinal_stone_cell = CellCoordinates { x: 1, y: 8 };
+        let same_cell = CellCoordinates { x: 2, y: 8 };
+        scene.update(Duration::ZERO, false).unwrap();
+        let mut edits = SceneEditBatch::new();
+        edits.place_material(acid, CellularAppearance::NEUTRAL, vec![acid_cell]);
+        edits.place_material(
+            stone,
+            CellularAppearance::NEUTRAL,
+            vec![cardinal_stone_cell, same_cell],
+        );
+        scene.queue_edits(edits);
+        scene.update(Duration::ZERO, false).unwrap();
+        scene.update(Duration::ZERO, false).unwrap();
+        accelerator.poll().unwrap();
+        let cardinal_index = scene.cell_edit_index(cardinal_stone_cell).unwrap();
+        let same_index = scene.cell_edit_index(same_cell).unwrap();
+        eprintln!(
+            "initial: cardinal={:?} same={:?}",
+            read_cell_state(accelerator.as_ref(), &scene, cardinal_index),
+            read_cell_state(accelerator.as_ref(), &scene, same_index)
+        );
+        let mut previous = 1.0;
+        let mut sequence = Vec::new();
+        for tick in 1..=7 {
+            scene.update(Duration::from_secs(1) / 60, true).unwrap();
+            let (_, cardinal_amount) =
+                read_cell_state(accelerator.as_ref(), &scene, cardinal_index);
+            assert!(cardinal_amount <= previous + 0.00001);
+            assert!((cardinal_amount - (1.0 - tick as f32 * 0.15).max(0.0)).abs() < 0.0001);
+            sequence.push(cardinal_amount);
+            previous = cardinal_amount;
+        }
+        eprintln!("multi-tick Acid erosion: {sequence:?}");
+
+        scene.fluids.commit_reserved_particle(
+            accelerator.as_ref(),
+            scene.fluids.particle_capacity() - 1,
+            acid.as_u32(),
+            [same_cell.x as f32 + 0.5, same_cell.y as f32 + 0.5].map(|coordinate| coordinate / 8.0),
+            [0.0, 0.0],
+            0.8,
+            293.15,
+        );
+        accelerator.wgpu_queue().write_buffer(
+            scene.cellular_material_identifiers.wgpu_buffer(),
+            same_index as u64 * 4,
+            &stone.as_u32().to_le_bytes(),
+        );
+        accelerator.wgpu_queue().write_buffer(
+            scene.cellular_amounts.wgpu_buffer(),
+            same_index as u64 * 4,
+            &1.0f32.to_le_bytes(),
+        );
+        accelerator.poll().unwrap();
+        let mut same_sequence = Vec::new();
+        for tick in 1..=7 {
+            scene.update(Duration::from_secs(1) / 60, true).unwrap();
+            let (same_material, same_amount) =
+                read_cell_state(accelerator.as_ref(), &scene, same_index);
+            let (acid_material, acid_active, acid_amount) = read_fluid_state(
+                accelerator.as_ref(),
+                &scene,
+                scene.fluids.particle_capacity() - 1,
+            );
+            assert_eq!(acid_material, acid.as_u32());
+            assert_eq!(acid_active, 1);
+            assert!(acid_amount > 0.000001);
+            assert!((same_amount - (1.0 - tick as f32 * 0.15).max(0.0)).abs() < 0.0001);
+            if tick < 7 {
+                assert_eq!(same_material, stone.as_u32());
+            } else {
+                assert_eq!(same_material, MaterialIdentifier::NULL.as_u32());
+            }
+            same_sequence.push(same_amount);
+        }
+        eprintln!("same-cell Acid erosion: {same_sequence:?}");
+    }
+
+    #[test]
+    fn acid_fluid_erodes_rigid_stone_and_removes_topology() {
+        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let accelerator = Arc::new(Accelerator::new().unwrap());
+        let mut materials = MaterialRegistryBuilder::new();
+        let stone = materials.register(Material::CellularStatic {
+            name: "Stone".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(100, 100, 100)),
+            mass: 1.0,
+            pressure_ignore_threshold: 1.0,
+            default_integrity: 1.0,
+            minimum_rigid_body_cell_count: 1,
+            debris_material: None,
+            debris_yield_rate: 0.0,
             pressure_transmission: 1.0,
             friction: 0.5,
             restitution: 0.0,
@@ -5027,52 +5297,39 @@ mod tests {
             },
         )
         .unwrap();
+        scene.update(Duration::ZERO, false).unwrap();
         let acid_cell = CellCoordinates { x: 0, y: 8 };
         let stone_cell = CellCoordinates { x: 1, y: 8 };
         let mut edits = SceneEditBatch::new();
         edits.place_material(acid, CellularAppearance::NEUTRAL, vec![acid_cell]);
-        edits.place_material(stone, CellularAppearance::NEUTRAL, vec![stone_cell]);
-        scene.apply_edits_immediate(&mut edits).unwrap();
-        scene.update(Duration::from_secs(1) / 60, true).unwrap();
-        accelerator.poll().unwrap();
-
-        let index = scene.cell_edit_index(stone_cell).unwrap() as u64;
-        let readback = accelerator
-            .wgpu_device()
-            .create_buffer(&wgpu::BufferDescriptor {
-                label: Some("acid chemistry runtime readback"),
-                size: 4,
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                mapped_at_creation: false,
-            });
-        let mut encoder = accelerator
-            .wgpu_device()
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-        encoder.copy_buffer_to_buffer(
-            scene.cellular_amounts.wgpu_buffer(),
-            index * 4,
-            &readback,
-            0,
-            4,
-        );
-        accelerator.wgpu_queue().submit(Some(encoder.finish()));
-        let (sender, receiver) = mpsc::sync_channel(1);
-        readback
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, move |result| {
-                sender.send(result).unwrap();
-            });
-        let result = loop {
-            if let Ok(result) = receiver.try_recv() {
-                break result;
-            }
-            accelerator.poll().unwrap();
-            std::thread::yield_now();
-        };
-        result.unwrap();
-        let bytes = readback.slice(..).get_mapped_range().unwrap();
-        let amount = f32::from_le_bytes(bytes[..4].try_into().unwrap());
-        assert!(amount < 1.0, "acid did not consume Stone: {amount}");
+        edits.place_rigid_body(vec![SceneEditCellPlacement {
+            coordinates: stone_cell,
+            material_identifier: stone,
+            appearance: CellularAppearance::NEUTRAL,
+        }]);
+        scene.queue_edits(edits);
+        scene.update(Duration::ZERO, false).unwrap();
+        scene.update(Duration::ZERO, false).unwrap();
+        assert_eq!(scene.rigid_cellular_bodies.len(), 1);
+        let state_slot = scene.rigid_cellular_bodies[0].cells[0].state_slot;
+        let mut sequence = Vec::new();
+        for _ in 1..=7 {
+            scene.update(Duration::from_secs(1) / 60, true).unwrap();
+            sequence.push(read_amount(
+                accelerator.as_ref(),
+                scene.rigid_cell_amounts_buffer(),
+                state_slot,
+            ));
+        }
+        assert!(sequence.windows(2).all(|pair| pair[1] <= pair[0] + 0.00001));
+        for (tick, amount) in sequence.iter().enumerate() {
+            assert!((*amount - (1.0 - (tick + 1) as f32 * 0.15).max(0.0)).abs() < 0.0001);
+        }
+        for _ in 0..3 {
+            scene.update(Duration::ZERO, false).unwrap();
+        }
+        assert!(scene.rigid_cellular_bodies.is_empty());
+        eprintln!("rigid Acid erosion: {sequence:?}");
     }
 
     #[test]

@@ -22,6 +22,12 @@ impl ReactionMaterialTable {
             .reactions()
             .iter()
             .map(|rule| {
+                let environment_flags = u32::from(rule.minimum_temperature.is_finite())
+                    | (u32::from(rule.maximum_temperature.is_finite()) << 1)
+                    | (u32::from(rule.minimum_pressure.is_finite()) << 2)
+                    | (u32::from(rule.maximum_pressure.is_finite()) << 3)
+                    | (u32::from(rule.minimum_air.is_finite()) << 4)
+                    | (u32::from(rule.maximum_air.is_finite()) << 5);
                 [
                     rule.reactants[0].member_offset,
                     rule.reactants[0].member_count,
@@ -34,17 +40,47 @@ impl ReactionMaterialTable {
                     rule.products[0].material,
                     rule.products[0].amount_bits,
                     rule.products[0].present,
-                    0,
+                    environment_flags,
                     rule.products[1].material,
                     rule.products[1].amount_bits,
                     rule.products[1].present,
                     0,
-                    rule.minimum_temperature.to_bits(),
-                    rule.maximum_temperature.to_bits(),
-                    rule.minimum_pressure.to_bits(),
-                    rule.maximum_pressure.to_bits(),
-                    rule.minimum_air.to_bits(),
-                    rule.maximum_air.to_bits(),
+                    if rule.minimum_temperature.is_nan() {
+                        f32::NEG_INFINITY
+                    } else {
+                        rule.minimum_temperature
+                    }
+                    .to_bits(),
+                    if rule.maximum_temperature.is_nan() {
+                        f32::INFINITY
+                    } else {
+                        rule.maximum_temperature
+                    }
+                    .to_bits(),
+                    if rule.minimum_pressure.is_nan() {
+                        f32::NEG_INFINITY
+                    } else {
+                        rule.minimum_pressure
+                    }
+                    .to_bits(),
+                    if rule.maximum_pressure.is_nan() {
+                        f32::INFINITY
+                    } else {
+                        rule.maximum_pressure
+                    }
+                    .to_bits(),
+                    if rule.minimum_air.is_nan() {
+                        f32::NEG_INFINITY
+                    } else {
+                        rule.minimum_air
+                    }
+                    .to_bits(),
+                    if rule.maximum_air.is_nan() {
+                        f32::INFINITY
+                    } else {
+                        rule.maximum_air
+                    }
+                    .to_bits(),
                     rule.maximum_extent_per_tick.to_bits(),
                     rule.thermal_energy.to_bits(),
                     rule.pressure_output.to_bits(),

@@ -20,7 +20,7 @@ struct RigidCell { local:vec2<i32>, body:u32, material_identifier:u32, appearanc
 @group(0) @binding(0) var<storage, read> reactions: array<Reaction>;
 @group(0) @binding(1) var<storage, read> selector_members: array<u32>;
 @group(0) @binding(2) var<storage, read> material_identifiers: array<u32>;
-@group(0) @binding(3) var<storage, read> amounts: array<f32>;
+@group(0) @binding(3) var<storage, read_write> amounts: array<f32>;
 @group(0) @binding(4) var<storage, read> temperatures: array<f32>;
 @group(0) @binding(5) var<storage, read> retained_pressure: array<vec4<f32>>;
 @group(0) @binding(6) var<storage, read> fluid_coverage: array<f32>;
@@ -512,8 +512,12 @@ fn reserve_candidate(cell: u32) {
   // (or return a slot it already reserved).
   let first_form = material_form_from_identifier(candidate.material0);
   let first_amount = source_amount(Source(cell, candidate.material0, 0.0, true, candidate.rigid_claims.x));
+  let first_same_authority = candidate.partner == cell && candidate.material0 == candidate.material1 &&
+    candidate.rigid_claims.x == 0xffffffffu && candidate.rigid_claims.y == 0xffffffffu;
+  let first_demand = bitcast<f32>(reactions[candidate.reaction].words[2]) +
+    select(0.0, bitcast<f32>(reactions[candidate.reaction].words[6]), first_same_authority);
   let first_remaining = select(0.0,
-    max(first_amount - bitcast<f32>(reactions[candidate.reaction].words[2]) * candidate.extent, 0.0),
+    max(first_amount - first_demand * candidate.extent, 0.0),
     candidate.material0 != EMPTY_MATERIAL_IDENTIFIER &&
       first_form != GAS_MATERIAL_FORM && first_form != FLUID_MATERIAL_FORM);
   var cellular_products = 0u;
@@ -605,12 +609,18 @@ fn reserve_candidate(cell: u32) {
     }
   }
   var request_count = 0u;
-  if (candidate.material0 != EMPTY_MATERIAL_IDENTIFIER && candidate.rigid_claims.x == 0xffffffffu &&
+  let source0_needs_mutation = candidate.material0 != EMPTY_MATERIAL_IDENTIFIER && candidate.rigid_claims.x == 0xffffffffu &&
       material_form_from_identifier(candidate.material0) != GAS_MATERIAL_FORM &&
-      material_form_from_identifier(candidate.material0) != FLUID_MATERIAL_FORM) { request_count += 1u; }
-  if (candidate.material1 != EMPTY_MATERIAL_IDENTIFIER && candidate.rigid_claims.y == 0xffffffffu &&
+      material_form_from_identifier(candidate.material0) != FLUID_MATERIAL_FORM &&
+      (cellular_products != 0u || first_remaining <= 0.00001);
+  if (source0_needs_mutation) { request_count += 1u; }
+  let second_amount = source_amount(Source(candidate.partner, candidate.material1, 0.0, true, candidate.rigid_claims.y));
+  let second_remaining = max(second_amount - bitcast<f32>(reactions[candidate.reaction].words[6]) * candidate.extent, 0.0);
+  let source1_needs_mutation = candidate.material1 != EMPTY_MATERIAL_IDENTIFIER && candidate.rigid_claims.y == 0xffffffffu &&
       material_form_from_identifier(candidate.material1) != GAS_MATERIAL_FORM &&
-      material_form_from_identifier(candidate.material1) != FLUID_MATERIAL_FORM) { request_count += 1u; }
+      material_form_from_identifier(candidate.material1) != FLUID_MATERIAL_FORM && candidate.partner != cell &&
+      second_remaining <= 0.00001;
+  if (source1_needs_mutation) { request_count += 1u; }
   let request_base = reserve_mutation_requests(request_count);
   if (request_base == 0xffffffffu) {
     if (material_form_from_identifier(candidate.material0) == GAS_MATERIAL_FORM) { release_gas_reservation(cell, candidate.material0, bitcast<f32>(reactions[candidate.reaction].words[2]) * candidate.extent); }
@@ -767,15 +777,24 @@ fn apply_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
     consume_rigid(source1.rigid_claim, coefficient1 * candidate.extent);
   }
   if (source0_canonical) {
-    let slot = candidate.padding1;
-    let replacement = select(select(source0.material, cellular_product, cellular_product != EMPTY_MATERIAL_IDENTIFIER), EMPTY_MATERIAL_IDENTIFIER, remaining <= 0.00001 && cellular_product == EMPTY_MATERIAL_IDENTIFIER);
-    let result_amount = select(remaining, cellular_amount, cellular_product != EMPTY_MATERIAL_IDENTIFIER);
-    mutation_requests[slot] = Request(cell, 0u, cell, source0.material, replacement, bitcast<u32>(result_amount), bitcast<u32>(temperatures[cell]), 0u, 0u);
+    let needs_mutation = cellular_product != EMPTY_MATERIAL_IDENTIFIER || remaining <= 0.00001;
+    if (needs_mutation) {
+      let slot = candidate.padding1;
+      let replacement = select(select(source0.material, cellular_product, cellular_product != EMPTY_MATERIAL_IDENTIFIER), EMPTY_MATERIAL_IDENTIFIER, remaining <= 0.00001 && cellular_product == EMPTY_MATERIAL_IDENTIFIER);
+      let result_amount = select(remaining, cellular_amount, cellular_product != EMPTY_MATERIAL_IDENTIFIER);
+      mutation_requests[slot] = Request(cell, 0u, cell, source0.material, replacement, bitcast<u32>(result_amount), bitcast<u32>(temperatures[cell]), 0u, 0u);
+    } else {
+      amounts[cell] = remaining;
+    }
   }
   if (source1_canonical && !same_canonical) {
-    let slot = candidate.padding1 + select(0u, 1u, source0_canonical);
-    let replacement = select(source1.material, EMPTY_MATERIAL_IDENTIFIER, remaining1 <= 0.00001);
-    mutation_requests[slot] = Request(source1.cell, 0u, source1.cell, source1.material, replacement, bitcast<u32>(remaining1), bitcast<u32>(temperatures[source1.cell]), 0u, 0u);
+    if (remaining1 <= 0.00001) {
+      let slot = candidate.padding1 + select(0u, 1u, source0_canonical &&
+        (cellular_product != EMPTY_MATERIAL_IDENTIFIER || remaining <= 0.00001));
+      mutation_requests[slot] = Request(source1.cell, 0u, source1.cell, source1.material, EMPTY_MATERIAL_IDENTIFIER, bitcast<u32>(remaining1), bitcast<u32>(temperatures[source1.cell]), 0u, 0u);
+    } else {
+      amounts[source1.cell] = remaining1;
+    }
   }
   if (first_present && source0_form == GAS_MATERIAL_FORM) {
     let gas_index = material_index_from_identifier(source0.material) * parameters.cell_count + source0.cell;
@@ -815,10 +834,7 @@ fn apply_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
   }
 }
 fn has_environment(rule: Reaction) -> bool {
-  let a = bitcast<f32>(rule.words[16]); let b = bitcast<f32>(rule.words[17]);
-  let c = bitcast<f32>(rule.words[18]); let d = bitcast<f32>(rule.words[19]);
-  let e = bitcast<f32>(rule.words[20]); let f = bitcast<f32>(rule.words[21]);
-  return a == a || b == b || c == c || d == d || e == e || f == f;
+  return rule.words[11] != 0u;
 }
 fn environment_matches(rule: Reaction, cell: u32, source0: Source, air: f32) -> bool {
   let temperature = authority_temperature(source0, rule, 0u);
@@ -826,11 +842,9 @@ fn environment_matches(rule: Reaction, cell: u32, source0: Source, air: f32) -> 
   let min_temperature = bitcast<f32>(rule.words[16]); let max_temperature = bitcast<f32>(rule.words[17]);
   let min_pressure = bitcast<f32>(rule.words[18]); let max_pressure = bitcast<f32>(rule.words[19]);
   let min_air = bitcast<f32>(rule.words[20]); let max_air = bitcast<f32>(rule.words[21]);
-  return (min_temperature != min_temperature || temperature >= min_temperature) &&
-    (max_temperature != max_temperature || temperature <= max_temperature) &&
-    (min_pressure != min_pressure || pressure >= min_pressure) &&
-    (max_pressure != max_pressure || pressure <= max_pressure) &&
-    (min_air != min_air || air >= min_air) && (max_air != max_air || air <= max_air);
+  return temperature >= min_temperature && temperature <= max_temperature &&
+    pressure >= min_pressure && pressure <= max_pressure &&
+    air >= min_air && air <= max_air;
 }
 
 // Discovery only reads the immutable fields for this chemistry tick. Applying
@@ -858,7 +872,8 @@ fn discover_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
     let source0 = source_for(cell, 0u, rule);
     if (first_present && !source0.found) { continue; }
     if (!first_present && !has_environment(rule)) { continue; }
-    if (!environment_matches(rule, cell, source0, air)) { continue; }
+    let environment_allowed = environment_matches(rule, cell, source0, air);
+    if (!environment_allowed) { continue; }
     var source1 = Source(cell, EMPTY_MATERIAL_IDENTIFIER, 0.0, false, 0xffffffffu);
     if (second_present) {
       source1 = find_partner(cell, rule);

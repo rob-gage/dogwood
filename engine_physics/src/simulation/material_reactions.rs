@@ -170,7 +170,7 @@ impl MaterialReactions {
                 storage(0, true),
                 storage(1, true),
                 storage(2, true),
-                storage(3, true),
+                storage(3, false),
                 storage(4, true),
                 storage(5, true),
                 storage(6, true),
@@ -477,9 +477,6 @@ impl MaterialReactions {
         pass.set_pipeline(&self.apply_pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
-    }
-    pub(crate) const fn candidates_buffer(&self) -> &AcceleratorBuffer {
-        &self.candidates
     }
     pub(crate) const fn reaction_energy_buffer(&self) -> &AcceleratorBuffer {
         &self.reaction_energy
