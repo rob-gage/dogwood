@@ -167,25 +167,3 @@ impl RigidCellularBody {
         components
     }
 }
-
-#[cfg(test)]
-mod tests {
-
-    use super::*;
-    use crate::materials::MaterialForm;
-
-    #[test]
-    fn removed_bridge_splits_body_local_cells() {
-        let material = MaterialIdentifier::new(MaterialForm::CellularStatic, 0);
-        let cells = [[0, 0], [1, 0], [2, 0]]
-            .into_iter()
-            .map(|local| {
-                RigidCellularBodyCell::test_cell(local, material, CellularAppearance::NEUTRAL)
-            })
-            .filter(|cell| cell.local != [1, 0])
-            .collect();
-        let components = RigidCellularBody::connected_components(cells);
-        assert!(components.len() == 2);
-        assert!(components.iter().all(|component| component.len() == 1));
-    }
-}

@@ -72,7 +72,10 @@ fn test_latent_arithmetic_is_symmetric() {
     );
 }
 
-use crate::simulation::{ThermalConduction, ThermalEdits};
+use crate::simulation::{
+    RigidCellularBody, RigidCellularBodyCell, ThermalConduction, ThermalEdits,
+};
+use crate::tiles::CellularAppearance;
 use engine_compute::Accelerator;
 use std::{
     collections::BTreeMap,
@@ -292,4 +295,20 @@ fn test_dispatch_applies_one_delta_to_a_multi_claim_rigid_state() {
     let mapped = readback.slice(..).get_mapped_range().unwrap();
     let value = f32::from_bits(u32::from_le_bytes(mapped[..4].try_into().unwrap()));
     assert!((value - 283.15).abs() < 0.001, "{value}");
+}
+
+#[test]
+fn test_removed_bridge_splits_body_local_cells() {
+    let material = crate::materials::MaterialIdentifier::new(
+        crate::materials::MaterialForm::CellularStatic,
+        0,
+    );
+    let cells = [[0, 0], [1, 0], [2, 0]]
+        .into_iter()
+        .map(|local| RigidCellularBodyCell::test_cell(local, material, CellularAppearance::NEUTRAL))
+        .filter(|cell| cell.local != [1, 0])
+        .collect();
+    let components = RigidCellularBody::connected_components(cells);
+    assert!(components.len() == 2);
+    assert!(components.iter().all(|component| component.len() == 1));
 }
