@@ -723,15 +723,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
 
 [[package]]
-name = "demo_game"
-version = "0.0.0"
-dependencies = [
- "editor",
- "engine",
- "tracing",
-]
-
-[[package]]
 name = "deranged"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2923,6 +2914,23 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "template_materials"
+version = "0.0.0"
+dependencies = [
+ "engine",
+]
+
+[[package]]
+name = "template_project"
+version = "0.0.0"
+dependencies = [
+ "editor",
+ "engine",
+ "template_materials",
+ "tracing",
 ]
 
 [[package]]

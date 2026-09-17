@@ -8,7 +8,7 @@ use engine::physics::{
 };
 
 /// Generates flat stone ground with a suspended Stone Debris test mass
-pub(super) struct DemoSceneGenerator {
+pub(super) struct TemplateSceneGenerator {
     pub(super) stone: MaterialIdentifier,
     pub(super) stone_variation: [f32; 4],
     pub(super) sand: MaterialIdentifier,
@@ -16,7 +16,7 @@ pub(super) struct DemoSceneGenerator {
     pub(super) stone_integrity: f32,
 }
 
-impl SceneGenerator for DemoSceneGenerator {
+impl SceneGenerator for TemplateSceneGenerator {
     fn generate_chunk_with_seed(&self, _: u128, coordinates: TileCoordinates) -> Chunk {
         let mut chunk: Chunk = Chunk::new_empty(coordinates);
         for y in 0..Chunk::WIDTH {

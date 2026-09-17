@@ -1,11 +1,12 @@
 // Copyright Rob Gage 2026
 
-use demo_game::DemoGame;
-use engine::{Game, compute::Accelerator};
+use editor::EditorGame;
+use engine::compute::Accelerator;
 use std::sync::Arc;
+use template_project::TemplateProject;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _tracing_guard = engine::diagnostics::initialize();
     let accelerator: Arc<Accelerator> = Arc::new(Accelerator::new()?);
-    DemoGame::new(&accelerator)?.launch(accelerator)
+    TemplateProject::new(&accelerator)?.launch_in_editor(accelerator)
 }

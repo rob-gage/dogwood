@@ -1,0 +1,10 @@
+# Copyright Rob Gage 2026
+
+[package]
+name = "template_materials"
+version = "0.0.0"
+edition = "2024"
+license.workspace = true
+
+[dependencies]
+engine = { version = "0.0.0", path = "../engine" }

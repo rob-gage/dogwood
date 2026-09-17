@@ -2,21 +2,25 @@
 
 #define_import_path graphics::scene
 
-#import utility::cell_coordinates::{
+#import utility::simulation_constants::{
     CELL_COUNT_PER_TILE,
     CELLS_PER_TILE,
     CELLS_PER_TILE_FLOAT,
-    floor_modulo_signed_coordinate,
-}
-#import utility::material_identifier::{
     CELLULAR_DYNAMIC_MATERIAL_FORM,
     CELLULAR_STATIC_MATERIAL_FORM,
     EMPTY_MATERIAL_IDENTIFIER,
     FLUID_MATERIAL_FORM,
+    INVALID_PHYSICAL_CELL_INDEX,
+}
+
+#import utility::cell_coordinates::{
+    floor_modulo_signed_coordinate,
+}
+#import utility::material_identifier::{
     material_form_from_identifier,
     material_index_from_identifier,
 }
-#import utility::tile_ring::{INVALID_PHYSICAL_CELL_INDEX, physical_cell_index_from_world_cell}
+#import utility::tile_ring::physical_cell_index_from_world_cell
 
 struct Uniforms {
     camera_position: vec2<f32>,

@@ -1,17 +1,106 @@
 // Copyright Rob Gage 2026
 
+use std::{
+    error::Error,
+    fs,
+    io::{self, Write},
+    path::{Path, PathBuf},
+};
+
 #[derive(clap::Parser)]
 #[command(version, about)]
 struct Command {
     #[command(subcommand)]
-    subcommand: Option<Subcommand>,
+    subcommand: Subcommand,
 }
 
 #[derive(clap::Subcommand)]
-enum Subcommand {}
+enum Subcommand {
+    /// Create a runnable Dogwood project.
+    New(NewCommand),
+}
 
-fn main() {
+#[derive(clap::Args)]
+struct NewCommand {
+    /// Directory to create the project in.
+    #[arg(default_value = ".", value_name = "DIRECTORY")]
+    directory: PathBuf,
+    /// Project/package name.
+    #[arg(long)]
+    name: Option<String>,
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
     let _tracing_guard = engine_diagnostics::initialize();
-    let _command: Command = clap::Parser::parse();
-    tracing::debug!("parsed command line");
+    match clap::Parser::parse() {
+        Command {
+            subcommand: Subcommand::New(command),
+        } => create_project(command),
+    }
+}
+
+fn create_project(command: NewCommand) -> Result<(), Box<dyn Error>> {
+    let project_name = match command.name {
+        Some(name) => name,
+        None => prompt_for_project_name()?,
+    };
+    validate_project_name(&project_name)?;
+
+    let project_directory: PathBuf = if command.directory == Path::new(".") {
+        PathBuf::from(".")
+    } else {
+        command.directory
+    };
+    fs::create_dir_all(&project_directory)?;
+    let manifest_path: PathBuf = project_directory.join("Cargo.toml");
+    if manifest_path.exists() {
+        return Err(format!("{} already exists", manifest_path.display()).into());
+    }
+
+    let repository_root: PathBuf = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("CLI repository root is unavailable")?
+        .to_path_buf();
+    let engine_path = repository_root.join("engine");
+    let template_project_path = repository_root.join("template_project");
+    let manifest = format!(
+        "# Copyright Rob Gage 2026\n\n[package]\nname = \"{project_name}\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\nengine = {{ path = \"{}\" }}\ntemplate_project = {{ path = \"{}\" }}\n",
+        engine_path.display(),
+        template_project_path.display(),
+    );
+    fs::write(manifest_path, manifest)?;
+    let source_directory: PathBuf = project_directory.join("src");
+    fs::create_dir_all(&source_directory)?;
+    fs::write(
+        source_directory.join("main.rs"),
+        "use engine::{Game, compute::Accelerator};\nuse std::sync::Arc;\nuse template_project::TemplateProject;\n\nfn main() -> Result<(), Box<dyn std::error::Error>> {\n    let _tracing_guard = engine::diagnostics::initialize();\n    let accelerator: Arc<Accelerator> = Arc::new(Accelerator::new()?);\n    TemplateProject::new(&accelerator)?.launch(accelerator)\n}\n",
+    )?;
+    println!(
+        "Created Dogwood project `{project_name}` in {}",
+        project_directory.display()
+    );
+    Ok(())
+}
+
+fn prompt_for_project_name() -> Result<String, io::Error> {
+    print!("Project name: ");
+    io::stdout().flush()?;
+    let mut project_name = String::new();
+    io::stdin().read_line(&mut project_name)?;
+    Ok(project_name.trim().to_owned())
+}
+
+fn validate_project_name(project_name: &str) -> Result<(), Box<dyn Error>> {
+    if project_name.is_empty()
+        || !project_name.chars().all(|character| {
+            character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || character == '_'
+                || character == '-'
+        })
+        || project_name.starts_with(|character: char| character.is_ascii_digit())
+    {
+        return Err("project name must be a non-empty Cargo-compatible name".into());
+    }
+    Ok(())
 }

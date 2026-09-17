@@ -1,7 +1,7 @@
 # Copyright Rob Gage 2026
 
 [package]
-name = "demo_game"
+name = "template_project"
 version = "0.0.0"
 edition = "2024"
 license.workspace = true
@@ -11,14 +11,15 @@ autobins = false
 path = "src/lib.rs"
 
 [[bin]]
-name = "demo-game"
-path = "demo-game.rs"
+name = "template-project"
+path = "template-project.rs"
 
 [[bin]]
-name = "demo-game-editor"
-path = "demo-game-editor.rs"
+name = "template-project-editor"
+path = "template-project-editor.rs"
 
 [dependencies]
 editor = { version = "0.0.0", path = "../editor" }
 engine = { version = "0.0.0", path = "../engine" }
+template_materials = { version = "0.0.0", path = "../template_materials" }
 tracing.workspace = true

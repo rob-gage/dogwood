@@ -2,7 +2,8 @@
 
 [workspace]
 members = ["cli",
-    "demo_game",
+    "template_materials",
+    "template_project",
     "editor",
     "engine",
     "engine_audio",
