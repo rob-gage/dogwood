@@ -5,7 +5,9 @@ use std::borrow::Cow;
 
 /// A composable shader source supplied by the owning subsystem.
 pub struct ComposableShaderUtility {
+    /// WGSL source containing the utility's importable declarations
     pub source: &'static str,
+    /// Stable source path used in composition diagnostics
     pub file_path: &'static str,
 }
 
