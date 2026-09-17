@@ -253,7 +253,10 @@ impl ThermalPhaseTransitions {
         let shader = crate::simulation::create_simulation_shader_module(
             d,
             "thermal phase shader",
-            include_str!("thermal_phase_transitions.wgsl"),
+            concat!(
+                include_str!("thermal_phase_transitions_shader_helpers.wgsl"),
+                include_str!("thermal_phase_transitions_shader_entry_points.wgsl"),
+            ),
             "engine_physics/src/simulation/thermal_phase_transitions.wgsl",
         );
         let pl = d.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
