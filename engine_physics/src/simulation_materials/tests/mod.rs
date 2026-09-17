@@ -1,6 +1,10 @@
 // Copyright Rob Gage 2026
 
 mod material_mutation_test_readback;
+mod reaction_candidate;
+mod reaction_environment;
+mod reaction_extent;
+mod reaction_implicit_air;
 
 use super::MaterialMutations;
 use crate::materials::{
@@ -12,6 +16,10 @@ use crate::simulation_materials::material_reactions::MaterialReactions;
 use engine_compute::Accelerator;
 use engine_graphics::{Color, MaterialAppearance};
 use material_mutation_test_readback::read_u32;
+use reaction_candidate::{ReactionCandidate, resolve_contention};
+use reaction_environment::{ReactionEnvironment, environment_matches};
+use reaction_extent::extent;
+use reaction_implicit_air::implicit_air;
 
 #[test]
 fn test_resolver_pipeline_compiles() {
@@ -311,94 +319,6 @@ fn test_gas_condensation_aggregates_a_tile_into_unit_particles() {
             .sum();
         assert!((remaining - (4 - tick) as f32).abs() < 0.001);
     }
-}
-use std::collections::BTreeSet;
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct ReactionEnvironment {
-    pub temperature: f32,
-    pub pressure: f32,
-    pub air: f32,
-}
-
-fn environment_matches(rule: &CompiledMaterialReaction, env: ReactionEnvironment) -> bool {
-    (rule.minimum_temperature.is_nan() || env.temperature >= rule.minimum_temperature)
-        && (rule.maximum_temperature.is_nan() || env.temperature <= rule.maximum_temperature)
-        && (rule.minimum_pressure.is_nan() || env.pressure >= rule.minimum_pressure)
-        && (rule.maximum_pressure.is_nan() || env.pressure <= rule.maximum_pressure)
-        && (rule.minimum_air.is_nan() || env.air >= rule.minimum_air)
-        && (rule.maximum_air.is_nan() || env.air <= rule.maximum_air)
-}
-
-/// Matches the occupancy convention used by thermal interaction: canonical or
-/// rigid/external solid occupancy excludes implicit air; otherwise fluid and
-/// explicit gas consume the unit local gas capacity.
-fn implicit_air(
-    canonical_empty: bool,
-    rigid_or_external_blocked: bool,
-    fluid_coverage: f32,
-    explicit_gas: f32,
-) -> f32 {
-    if !canonical_empty || rigid_or_external_blocked {
-        0.0
-    } else {
-        (1.0 - fluid_coverage.clamp(0.0, 1.0) - explicit_gas.max(0.0)).clamp(0.0, 1.0)
-    }
-}
-
-/// A claim key encodes one authoritative inventory location, rather than a
-/// derived raster location. The producer is responsible for including rigid
-/// state generation in its key.
-#[derive(Clone, Debug, PartialEq)]
-struct ReactionCandidate {
-    pub anchor: u32,
-    pub reaction_index: u32,
-    pub priority: i32,
-    pub authoring_order: u32,
-    pub extent: f32,
-    pub authorities: [Option<u64>; 2],
-}
-
-/// Sort by explicit priority, stable authoring order, then anchor. Accepted
-/// candidates reserve every authority as an all-or-nothing set, so neither Accelerator
-/// invocation order nor overlapping raster claims can double-consume matter.
-fn resolve_contention(mut candidates: Vec<ReactionCandidate>) -> Vec<ReactionCandidate> {
-    candidates.sort_by_key(candidate_order_key);
-    let mut claimed = BTreeSet::new();
-    candidates
-        .into_iter()
-        .filter(|candidate| {
-            let keys: Vec<u64> = candidate.authorities.iter().flatten().copied().collect();
-            if keys.iter().any(|key| claimed.contains(key)) {
-                return false;
-            }
-            claimed.extend(keys);
-            true
-        })
-        .collect()
-}
-
-fn candidate_order_key(candidate: &ReactionCandidate) -> (std::cmp::Reverse<i32>, u32, u32, u32) {
-    (
-        std::cmp::Reverse(candidate.priority),
-        candidate.authoring_order,
-        candidate.anchor,
-        candidate.reaction_index,
-    )
-}
-
-/// The extent calculation used by every authority form after discovery.
-fn extent(
-    maximum: f32,
-    available: impl IntoIterator<Item = f32>,
-    coefficients: impl IntoIterator<Item = f32>,
-) -> f32 {
-    let inventory_limit = available
-        .into_iter()
-        .zip(coefficients)
-        .map(|(amount, coefficient)| amount / coefficient)
-        .fold(f32::INFINITY, f32::min);
-    maximum.min(inventory_limit).max(0.0)
 }
 
 #[test]
