@@ -5,12 +5,12 @@
 @group(0) @binding(4) var<storage, read_write> output: array<vec4<f32>>;
 @group(0) @binding(5) var<uniform> count: u32;
 @compute @workgroup_size(64)
-fn gather(@builtin(global_invocation_id) id: vec3<u32>) {
-    if (id.x >= count) {
+fn gather(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    if (invocation.x >= count) {
         return;
     }
-    let slot = descriptors[id.x];
-    output[id.x] = vec4<f32>(
+    let slot = descriptors[invocation.x];
+    output[invocation.x] = vec4<f32>(
         integrities[slot],
         amounts[slot],
         temperatures[slot],
