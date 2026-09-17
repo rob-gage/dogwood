@@ -5,5 +5,8 @@
 mod material_mutations;
 mod material_reactions;
 
+#[cfg(test)]
+pub(crate) mod tests;
+
 pub use material_mutations::MaterialMutations;
 pub(crate) use material_reactions::MaterialReactions;
