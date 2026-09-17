@@ -9,6 +9,10 @@ use super::fluids::FluidAuthorityView;
 use crate::materials::CompiledMaterialReaction;
 use engine_compute::{Accelerator, AcceleratorBuffer};
 use std::collections::BTreeSet;
+use std::sync::mpsc::{Receiver, sync_channel};
+
+const RIGID_REMOVAL_EVENT_SIZE: u64 = 32;
+const RIGID_REMOVAL_EVENTS_OFFSET: u64 = 256;
 
 /// Immutable-snapshot GPU reaction discovery. Application is intentionally a
 /// separate stage so no product becomes an input until the next chemistry tick.
@@ -18,6 +22,13 @@ pub(crate) struct MaterialReactions {
     gas_reservations: AcceleratorBuffer,
     gas_output_reservations: AcceleratorBuffer,
     canonical_reservations: AcceleratorBuffer,
+    rigid_reservations: AcceleratorBuffer,
+    rigid_removal_events: AcceleratorBuffer,
+    rigid_removal_count: AcceleratorBuffer,
+    rigid_removal_readback: wgpu::Buffer,
+    rigid_removal_readback_len: u64,
+    rigid_removal_readback_capacity: u32,
+    rigid_removal_readback_result: Option<Receiver<Result<(), wgpu::BufferAsyncError>>>,
     fluid_reservation_owners: AcceleratorBuffer,
     reaction_energy: AcceleratorBuffer,
     parameters: wgpu::Buffer,
@@ -44,6 +55,8 @@ impl MaterialReactions {
         gas_concentrations: &AcceleratorBuffer,
         external_occupancy: &AcceleratorBuffer,
         rigid_claims: &AcceleratorBuffer,
+        rigid_cells: &AcceleratorBuffer,
+        rigid_amounts: &AcceleratorBuffer,
         reaction_energy: AcceleratorBuffer,
         pending_pressure: &AcceleratorBuffer,
         mutation_requests: &AcceleratorBuffer,
@@ -55,7 +68,7 @@ impl MaterialReactions {
         cell_width: u32,
     ) -> Self {
         let device = accelerator.wgpu_device();
-        let candidates = accelerator.allocate::<[u32; 28]>(cell_count as usize);
+        let candidates = accelerator.allocate::<[u32; 32]>(cell_count as usize);
         let fluid_reservations =
             accelerator.allocate::<u32>(fluid_authority.particle_capacity as usize);
         let gas_reservations =
@@ -63,6 +76,20 @@ impl MaterialReactions {
         let gas_output_reservations =
             accelerator.allocate::<u32>((cell_count * gas_count.max(1)) as usize);
         let canonical_reservations = accelerator.allocate::<u32>(cell_count as usize);
+        let rigid_reservations = accelerator.allocate::<u32>(cell_count as usize);
+        let rigid_removal_events = accelerator.allocate::<[u32; 8]>(cell_count as usize);
+        let rigid_removal_count = accelerator.allocate::<u32>(1);
+        let rigid_removal_readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("rigid chemistry removal readback"),
+            size: RIGID_REMOVAL_EVENTS_OFFSET + u64::from(cell_count) * RIGID_REMOVAL_EVENT_SIZE,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        accelerator.wgpu_queue().write_buffer(
+            rigid_removal_count.wgpu_buffer(),
+            0,
+            &0u32.to_le_bytes(),
+        );
         let fluid_reservation_owners =
             accelerator.allocate::<u32>(fluid_authority.particle_capacity as usize);
         let parameters = device.create_buffer(&wgpu::BufferDescriptor {
@@ -140,6 +167,11 @@ impl MaterialReactions {
                 storage(24, false),
                 storage(25, false),
                 storage(26, false),
+                storage(27, true),
+                storage(28, false),
+                storage(29, false),
+                storage(30, false),
+                storage(31, false),
             ],
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -179,6 +211,11 @@ impl MaterialReactions {
                 Self::binding(24, &gas_output_reservations),
                 Self::binding(25, &canonical_reservations),
                 Self::binding(26, &fluid_reservation_owners),
+                Self::binding(27, rigid_cells),
+                Self::binding(28, rigid_amounts),
+                Self::binding(29, &rigid_reservations),
+                Self::binding(30, &rigid_removal_events),
+                Self::binding(31, &rigid_removal_count),
             ],
         });
         let shader = super::create_simulation_shader_module(
@@ -208,6 +245,13 @@ impl MaterialReactions {
             gas_reservations,
             gas_output_reservations,
             canonical_reservations,
+            rigid_reservations,
+            rigid_removal_events,
+            rigid_removal_count,
+            rigid_removal_readback,
+            rigid_removal_readback_len: 0,
+            rigid_removal_readback_capacity: 0,
+            rigid_removal_readback_result: None,
             fluid_reservation_owners,
             reaction_energy,
             parameters,
@@ -264,6 +308,112 @@ impl MaterialReactions {
             binding,
             resource: buffer.wgpu_buffer().as_entire_binding(),
         }
+    }
+    pub(crate) fn submit_rigid_removal_readback(&mut self, accelerator: &Accelerator) {
+        if self.rigid_removal_readback_result.is_some() {
+            return;
+        }
+        let len = RIGID_REMOVAL_EVENTS_OFFSET;
+        let mut encoder =
+            accelerator
+                .wgpu_device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("rigid chemistry removal readback"),
+                });
+        encoder.copy_buffer_to_buffer(
+            self.rigid_removal_count.wgpu_buffer(),
+            0,
+            &self.rigid_removal_readback,
+            0,
+            4,
+        );
+        accelerator.wgpu_queue().submit(Some(encoder.finish()));
+        self.rigid_removal_readback_len = len;
+        self.rigid_removal_readback_capacity = 0;
+        let (sender, receiver) = sync_channel(1);
+        self.rigid_removal_readback
+            .slice(0..len)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                let _ = sender.send(result);
+            });
+        self.rigid_removal_readback_result = Some(receiver);
+    }
+    pub(crate) fn take_rigid_removal_events(
+        &mut self,
+        accelerator: &Accelerator,
+    ) -> Option<Vec<[u32; 6]>> {
+        let result = self
+            .rigid_removal_readback_result
+            .as_ref()?
+            .try_recv()
+            .ok()?;
+        self.rigid_removal_readback_result = None;
+        if result.is_err() {
+            self.rigid_removal_readback.unmap();
+            return Some(Vec::new());
+        }
+        let bytes = self
+            .rigid_removal_readback
+            .slice(0..self.rigid_removal_readback_len)
+            .get_mapped_range()
+            .ok()?;
+        let count = u32::from_le_bytes(bytes[..4].try_into().ok()?).min(self.cell_count) as usize;
+        if self.rigid_removal_readback_capacity == 0 {
+            drop(bytes);
+            self.rigid_removal_readback.unmap();
+            if count == 0 {
+                return Some(Vec::new());
+            }
+            let len = RIGID_REMOVAL_EVENTS_OFFSET + count as u64 * RIGID_REMOVAL_EVENT_SIZE;
+            let mut encoder =
+                accelerator
+                    .wgpu_device()
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("rigid chemistry event readback"),
+                    });
+            encoder.copy_buffer_to_buffer(
+                self.rigid_removal_events.wgpu_buffer(),
+                0,
+                &self.rigid_removal_readback,
+                RIGID_REMOVAL_EVENTS_OFFSET,
+                count as u64 * RIGID_REMOVAL_EVENT_SIZE,
+            );
+            accelerator.wgpu_queue().submit(Some(encoder.finish()));
+            self.rigid_removal_readback_len = len;
+            self.rigid_removal_readback_capacity = count as u32;
+            let (sender, receiver) = sync_channel(1);
+            self.rigid_removal_readback.slice(0..len).map_async(
+                wgpu::MapMode::Read,
+                move |result| {
+                    let _ = sender.send(result);
+                },
+            );
+            self.rigid_removal_readback_result = Some(receiver);
+            return None;
+        }
+        let events = bytes[usize::try_from(RIGID_REMOVAL_EVENTS_OFFSET).unwrap()..]
+            .chunks_exact(32)
+            .take(count)
+            .map(|b| {
+                let mut event = [0; 6];
+                for (word, value) in event.iter_mut().zip(b.chunks_exact(4)) {
+                    *word = u32::from_le_bytes(value.try_into().unwrap());
+                }
+                event
+            })
+            .collect();
+        drop(bytes);
+        self.rigid_removal_readback.unmap();
+        Some(events)
+    }
+}
+
+impl Drop for MaterialReactions {
+    fn drop(&mut self) {
+        self.rigid_reservations.free();
+        self.rigid_removal_events.free();
+        self.rigid_removal_count.free();
+        self.rigid_removal_readback.destroy();
     }
 }
 
@@ -544,6 +694,8 @@ mod tests {
         let gas = accelerator.allocate::<f32>(1);
         let occupancy = accelerator.allocate::<u32>(64);
         let claims = accelerator.allocate::<u32>(64);
+        let rigid_cells = accelerator.allocate::<[u32; 8]>(64);
+        let rigid_amounts = accelerator.allocate::<f32>(64);
         let requests = accelerator.allocate::<[u32; 9]>(128);
         let request_count = accelerator.allocate::<u32>(1);
         accelerator
@@ -573,6 +725,8 @@ mod tests {
             &gas,
             &occupancy,
             &claims,
+            &rigid_cells,
+            &rigid_amounts,
             reaction_energy,
             &pending_pressure,
             &requests,

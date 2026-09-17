@@ -111,6 +111,7 @@ enum RigidCellRemovalCause {
     /// must never take the fracture debris path: its inventory belongs to the
     /// phase-transition product.
     PhaseTransition,
+    Chemistry,
 }
 
 /// A scene that can be simulated by the engine
@@ -560,6 +561,8 @@ impl Scene {
             gases.concentrations_buffer(),
             cellular_physics_body_proxy.occupancy_buffer(),
             cellular_physics_body_proxy.rigid_claims_buffer(),
+            cellular_physics_body_proxy.rigid_cells_buffer(),
+            &rigid_cell_amounts,
             reaction_energy,
             cellular_pressure.pending_pressure(),
             material_mutations.requests_buffer(),
@@ -1236,6 +1239,38 @@ impl Scene {
 
     /// Applies every compatible completed GPU reaction in submission order
     fn apply_completed_rigid_cellular_reactions(&mut self) -> Result<(), io::Error> {
+        let mut chemistry_removals: HashMap<usize, HashSet<[i32; 2]>> = HashMap::new();
+        for event in self
+            .material_reactions
+            .take_rigid_removal_events(self.accelerator.as_ref())
+            .into_iter()
+            .flatten()
+        {
+            let body = event[3] as usize;
+            let local = [event[4] as i32, event[5] as i32];
+            if self
+                .rigid_cell_state_generations
+                .get(event[0] as usize)
+                .copied()
+                != Some(event[1])
+                || self.rigid_cellular_bodies.get(body).is_none_or(|body| {
+                    !body.cells.iter().any(|cell| {
+                        cell.state_slot == event[0]
+                            && cell.state_generation == event[1]
+                            && cell.material.as_u32() == event[2]
+                            && cell.local == local
+                    })
+                })
+            {
+                continue;
+            }
+            chemistry_removals.entry(body).or_default().insert(local);
+        }
+        let mut chemistry_removals: Vec<_> = chemistry_removals.into_iter().collect();
+        chemistry_removals.sort_unstable_by_key(|(body, _)| std::cmp::Reverse(*body));
+        for (body, cells) in chemistry_removals {
+            self.remove_rigid_cellular_body_cells(body, &cells, RigidCellRemovalCause::Chemistry);
+        }
         let destroyed: HashSet<[u32; 2]> = self
             .cellular_physics_body_proxy
             .take_destroyed_handles()
@@ -2092,6 +2127,8 @@ impl Scene {
                     self.gases.gas_count(),
                 );
                 self.accelerator.wgpu_queue().submit(Some(encoder.finish()));
+                self.material_reactions
+                    .submit_rigid_removal_readback(self.accelerator.as_ref());
             }
             self.cellular_pressure.simulate(
                 self.accelerator.as_ref(),
