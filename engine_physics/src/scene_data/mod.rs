@@ -2,6 +2,9 @@
 
 //! Scene persistence data and dormant rigid-body records.
 
+#[cfg(test)]
+pub(crate) mod tests;
+
 mod scene_data_dormant_rigid;
 mod scene_data_store;
 
