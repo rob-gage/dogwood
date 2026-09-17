@@ -8,8 +8,8 @@ mod scene_generator;
 
 pub use crate::scene_editing::{SceneEdit, SceneEditBatch, SceneEditCellPlacement};
 pub use crate::scene_geometry::{ScenePosition, SceneVelocity};
-pub use crate::scene_persistence::SceneData;
-pub(crate) use crate::scene_persistence::{
+pub use crate::scene_data::SceneData;
+pub(crate) use crate::scene_data::{
     DormantRigidBody, DormantRigidCell, append_record, intersects_area, owner_chunk, remove_ids,
     world_aabb,
 };

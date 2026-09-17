@@ -5,7 +5,7 @@ pub mod chunks;
 pub mod materials;
 mod scene_editing;
 mod scene_geometry;
-mod scene_persistence;
+mod scene_data;
 mod scene_simulation;
 mod scene_streaming;
 pub mod scenes;
