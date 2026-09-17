@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+//! Scene edit commands and their cell-placement helpers.
+
 mod scene_edit;
 mod scene_edit_batch;
 mod scene_edit_cell_placement;

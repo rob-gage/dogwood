@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+//! Shared simulation shader composition and simulation-wide constants.
+
 pub(crate) mod simulation_constants;
 
 pub(crate) fn create_simulation_shader_module(

@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+//! Scene position and velocity coordinate-space types.
+
 mod scene_position;
 mod scene_velocity;
 

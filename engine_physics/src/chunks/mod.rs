@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+//! Tile-sized authoritative storage and persistence records.
+
 mod chunk;
 mod chunk_entry;
 mod chunk_fluid_particle;

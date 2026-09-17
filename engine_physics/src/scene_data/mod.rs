@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+//! Scene persistence data and dormant rigid-body records.
+
 mod scene_data;
 mod scene_data_dormant_rigid;
 

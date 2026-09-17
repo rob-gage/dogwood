@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+//! Coordinate, appearance, and cell data types for streamed tiles.
+
 mod cell_coordinates;
 mod cellular_appearance;
 mod tile;

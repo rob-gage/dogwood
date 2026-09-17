@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+//! Actor identifiers, ECS components, and pawn configuration types.
+
 mod actor;
 mod actor_control_state;
 mod actor_pawn;

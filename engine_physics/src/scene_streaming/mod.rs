@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+//! Scene tile, fluid, and gas transfer resources.
+
 mod fluid_download;
 mod fluid_upload;
 mod gas_download;

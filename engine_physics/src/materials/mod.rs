@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+//! Material definitions, registries, reactions, and derived tables.
+
 mod compiled_material_reaction;
 mod compiled_material_reaction_product;
 mod compiled_material_reaction_reactant;

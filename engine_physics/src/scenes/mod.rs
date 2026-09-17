@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+//! Public scene facade and scene-facing transfer and persistence types.
+
 mod scene;
 mod scene_generator;
 

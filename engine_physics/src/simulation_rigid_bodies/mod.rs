@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+//! Rigid cellular bodies, state transfer, and granular reaction systems.
+
 mod rigid_cell_state_gather;
 mod rigid_cell_state_upload;
 mod rigid_cellular_body;

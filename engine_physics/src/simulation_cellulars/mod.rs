@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+//! Cellular collision, pressure, occupancy, and body-proxy systems.
+
 mod cell_particle;
 mod cellular_collision;
 mod cellular_dynamic;

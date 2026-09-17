@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+//! Thermal interaction, conduction, editing, scattering, and phase systems.
+
 mod thermal_conduction;
 mod thermal_edits;
 mod thermal_interaction;

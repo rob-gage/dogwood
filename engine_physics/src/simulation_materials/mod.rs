@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+//! Runtime material mutation and reaction execution resources.
+
 mod material_mutations;
 mod material_reactions;
 
