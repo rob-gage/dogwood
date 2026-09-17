@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+//! Composes root shaders with utility modules owned by their subsystem.
+
 use naga_oil::compose::{ComposableModuleDescriptor, Composer, NagaModuleDescriptor};
 use std::borrow::Cow;
 

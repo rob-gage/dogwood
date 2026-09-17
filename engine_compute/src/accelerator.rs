@@ -18,7 +18,7 @@ pub struct Accelerator {
 }
 
 impl Accelerator {
-    /// Creates an `Accelerator`
+    /// Creates the shared graphics and compute device used by Dogwood.
     pub fn new() -> Result<Self, Box<dyn Error>> {
         let instance: wgpu::Instance = wgpu::Instance::default();
         let adapter: wgpu::Adapter =
@@ -68,7 +68,7 @@ impl Accelerator {
         })
     }
 
-    /// Allocates an `AcceleratorBuffer`
+    /// Allocates storage for `size` values owned by this Accelerator.
     pub fn allocate<T>(&self, size: usize) -> AcceleratorBuffer {
         AcceleratorBuffer(self.wgpu_device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
@@ -80,14 +80,14 @@ impl Accelerator {
         }))
     }
 
-    /// Polls the accelerator for completed work
+    /// Polls the Accelerator and collects completed debug timing readbacks.
     pub fn poll(&self) -> Result<(), wgpu::PollError> {
         self.wgpu_device.poll(wgpu::PollType::Poll)?;
         self.accelerator_timing.collect();
         Ok(())
     }
 
-    /// Starts a sampled application-frame Accelerator timing interval when requested by tracing.
+    /// Starts a sampled application-frame timing interval when debug tracing requests it.
     #[inline]
     pub fn accelerator_timing_begin_sample(&self) {
         #[cfg(debug_assertions)]
@@ -132,22 +132,22 @@ impl Accelerator {
         self.accelerator_timing.map_sample();
     }
 
-    /// Returns a reference to the `Accelerator`'s `wgpu::Instance`
+    /// Returns the underlying WGPU instance.
     pub const fn wgpu_instance(&self) -> &wgpu::Instance {
         &self.wgpu_instance
     }
 
-    /// Returns a reference to the `Accelerator`'s `wgpu::Adapter`
+    /// Returns the adapter selected for this Accelerator.
     pub const fn wgpu_adapter(&self) -> &wgpu::Adapter {
         &self.wgpu_adapter
     }
 
-    /// Returns a reference the `Accelerator`'s `wgpu::Device`
+    /// Returns the underlying device used for graphics and compute work.
     pub const fn wgpu_device(&self) -> &wgpu::Device {
         &self.wgpu_device
     }
 
-    /// Returns a reference to the `Accelerator`'s `wgpu::Device`
+    /// Returns the queue used to submit graphics and compute work.
     pub const fn wgpu_queue(&self) -> &wgpu::Queue {
         &self.wgpu_queue
     }

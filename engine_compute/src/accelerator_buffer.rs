@@ -1,15 +1,15 @@
 // Copyright Rob Gage 2026
 
-/// A buffer of data stored on an `Accelerator`
+/// A storage buffer allocated from an [`Accelerator`](crate::Accelerator).
 pub struct AcceleratorBuffer(pub(crate) wgpu::Buffer);
 
 impl AcceleratorBuffer {
-    /// Returns the `AcceleratorBuffer` as a `&wgpu::Buffer`
+    /// Returns the underlying WGPU buffer for bind groups and copies.
     pub const fn wgpu_buffer(&self) -> &wgpu::Buffer {
         &self.0
     }
 
-    /// Frees the buffer
+    /// Releases the underlying WGPU allocation.
     pub fn free(&self) {
         self.0.destroy();
     }
