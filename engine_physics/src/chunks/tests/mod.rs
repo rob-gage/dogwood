@@ -16,7 +16,7 @@ fn particle(index: u32) -> ChunkFluidParticle {
 }
 
 #[test]
-fn test_gpu_record_is_complete_and_round_trips() {
+fn test_accelerator_record_is_complete_and_round_trips() {
     let source = particle(1);
     let mut bytes = Vec::new();
     source.serialize_gpu(&mut bytes).unwrap();
@@ -30,7 +30,7 @@ fn test_gpu_record_is_complete_and_round_trips() {
 }
 
 #[test]
-fn test_gpu_records_keep_their_stride() {
+fn test_accelerator_records_keep_their_stride() {
     let sources: Vec<_> = (0..3).map(particle).collect();
     let mut bytes = Vec::new();
     for source in &sources {
