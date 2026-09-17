@@ -62,6 +62,8 @@ impl MaterialReactions {
         material_identifiers: &AcceleratorBuffer,
         amounts: &AcceleratorBuffer,
         temperatures: &AcceleratorBuffer,
+        gas_temperatures: &AcceleratorBuffer,
+        rigid_temperatures: &AcceleratorBuffer,
         retained_pressure: &AcceleratorBuffer,
         fluid_coverage: &AcceleratorBuffer,
         gas_concentrations: &AcceleratorBuffer,
@@ -217,6 +219,8 @@ impl MaterialReactions {
                 storage(31, false),
                 storage(32, false),
                 storage(33, false),
+                storage(37, true),
+                storage(38, true),
             ],
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -263,6 +267,8 @@ impl MaterialReactions {
                 Self::binding(31, &rigid_removal_count),
                 Self::binding(32, &candidate_indices),
                 Self::binding(33, &candidate_count),
+                Self::binding(37, gas_temperatures),
+                Self::binding(38, rigid_temperatures),
             ],
         });
         let prepare_sort_layout =
@@ -870,6 +876,8 @@ mod tests {
         let ids = accelerator.allocate::<u32>(64);
         let amounts = accelerator.allocate::<f32>(64);
         let temperatures = accelerator.allocate::<f32>(64);
+        let gas_temperatures = accelerator.allocate::<f32>(64);
+        let rigid_temperatures = accelerator.allocate::<f32>(64);
         let pressure = accelerator.allocate::<[f32; 4]>(64);
         let coverage = accelerator.allocate::<f32>(64);
         let gas = accelerator.allocate::<f32>(1);
@@ -901,6 +909,8 @@ mod tests {
             &ids,
             &amounts,
             &temperatures,
+            &gas_temperatures,
+            &rigid_temperatures,
             &pressure,
             &coverage,
             &gas,

@@ -69,6 +69,8 @@ struct SortParameters { k:u32, j:u32, }
 @group(0) @binding(34) var<uniform> sort_parameters: SortParameters;
 @group(0) @binding(35) var<storage, read> sort_steps: array<vec2<u32>>;
 @group(0) @binding(36) var<storage, read_write> sort_indirect: array<u32>;
+@group(0) @binding(37) var<storage, read> gas_temperatures: array<f32>;
+@group(0) @binding(38) var<storage, read> rigid_temperatures: array<f32>;
 const RESERVATION_SCALE: f32 = 1000000.0;
 const RESERVATION_SCALE_U32: u32 = 1000000u;
 
@@ -112,6 +114,43 @@ fn gas_source(cell: u32, reactant: u32, rule: Reaction) -> Source {
     }
   }
   return Source(cell, EMPTY_MATERIAL_IDENTIFIER, 0.0, false, 0xffffffffu);
+}
+
+fn fluid_temperature(cell: u32, reactant: u32, rule: Reaction) -> f32 {
+  let world = world_cell_from_physical_tile_ring_index(cell,
+    fluid_spatial_parameters.buffered_origin, fluid_spatial_parameters.buffered_tile_size,
+    fluid_spatial_parameters.ring_offset);
+  let center = (vec2<f32>(world) + vec2<f32>(0.5)) / CELLS_PER_TILE_FLOAT;
+  let base = fluid_bucket_coordinates_from_position(center,
+    fluid_spatial_parameters.buffered_origin, fluid_spatial_parameters.support_radius_cells,
+    CELLS_PER_TILE_FLOAT);
+  var chosen = 0xffffffffu; var temperature = temperatures[cell];
+  for (var y: i32 = -1; y <= 1; y += 1) {
+    for (var x: i32 = -1; x <= 1; x += 1) {
+      let bucket = fluid_bucket_index_from_coordinates(base + vec2<i32>(x, y), fluid_spatial_parameters.bucket_dimensions, 0xffffffffu);
+      if (bucket == 0xffffffffu) { continue; }
+      var p = atomicLoad(&fluid_bucket_heads[bucket]);
+      for (var n: u32 = 0u; p != 0xffffffffu && n < fluid_spatial_parameters.particle_capacity; n += 1u) {
+        let particle = fluid_particles[p];
+        if (particle.is_active != 0u && p < chosen && material_form_from_identifier(particle.material_identifier) == FLUID_MATERIAL_FORM &&
+            fluid_particle_belongs_to_cell(particle.position, world, CELLS_PER_TILE_FLOAT) && particle.amount > 0.000001 &&
+            matches_selector(rule, reactant, particle.material_identifier)) { chosen = p; temperature = particle.temperature; }
+        p = fluid_next_particle[p];
+      }
+    }
+  }
+  return temperature;
+}
+
+fn authority_temperature(source: Source, rule: Reaction, reactant: u32) -> f32 {
+  if (source.rigid_claim != 0xffffffffu && source.rigid_claim < arrayLength(&rigid_cells)) {
+    let slot = rigid_cells[source.rigid_claim].state_slot;
+    if (slot < arrayLength(&rigid_temperatures)) { return rigid_temperatures[slot]; }
+  }
+  let form = material_form_from_identifier(source.material);
+  if (form == GAS_MATERIAL_FORM && source.cell < arrayLength(&gas_temperatures)) { return gas_temperatures[source.cell]; }
+  if (form == FLUID_MATERIAL_FORM) { return fluid_temperature(source.cell, reactant, rule); }
+  return temperatures[source.cell];
 }
 
 fn fluid_source(cell: u32, reactant: u32, rule: Reaction) -> Source {
@@ -417,7 +456,7 @@ fn compact_candidates(@builtin(global_invocation_id) id: vec3<u32>) {
 @compute @workgroup_size(1)
 fn prepare_sort_dispatch(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x == 0u) {
-    sort_indirect[0] = (min(atomicLoad(&candidate_count[0]), arrayLength(&candidate_indices)) + 63u) / 64u;
+    sort_indirect[0] = (arrayLength(&candidate_indices) + 63u) / 64u;
     sort_indirect[1] = 1u;
     sort_indirect[2] = 1u;
   }
@@ -432,8 +471,7 @@ fn candidate_before(a: u32, b: u32) -> bool {
 @compute @workgroup_size(64)
 fn sort_candidates(@builtin(global_invocation_id) id: vec3<u32>) {
   let index = id.x;
-  let count = min(atomicLoad(&candidate_count[0]), arrayLength(&candidate_indices));
-  if (index >= count) { return; }
+  let count = arrayLength(&candidate_indices);
   let partner = index ^ sort_parameters.j;
   if (partner <= index || partner >= arrayLength(&candidate_indices)) { return; }
   let a = candidate_indices[index];
@@ -690,6 +728,7 @@ fn apply_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
   let source1 = Source(candidate.partner, candidate.material1, 0.0, second_present && candidate.partner != 0xffffffffu && candidate.material1 != EMPTY_MATERIAL_IDENTIFIER, candidate.rigid_claims.y);
   let source0_form = material_form_from_identifier(source0.material);
   let source1_form = material_form_from_identifier(source1.material);
+  let reaction_temperature = authority_temperature(source0, rule, 0u);
   let coefficient0 = select(0.0, bitcast<f32>(rule.words[2]), first_present);
   let coefficient1 = select(0.0, bitcast<f32>(rule.words[6]), second_present);
   // All capacity and authority checks happened in reserve_fluid_authority.
@@ -757,7 +796,7 @@ fn apply_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
     if (material_form_from_identifier(replacement) == FLUID_MATERIAL_FORM) {
       let slot = select(fluid_product_slots.x, fluid_product_slots.y, product == 1u);
       spawn_fluid_product(slot, replacement, bitcast<f32>(rule.words[base + 1u]) * candidate.extent,
-        cell, temperatures[cell]);
+        cell, reaction_temperature);
     }
   }
   reaction_energy[cell] += bitcast<f32>(rule.words[23]) * candidate.extent;
@@ -781,8 +820,8 @@ fn has_environment(rule: Reaction) -> bool {
   let e = bitcast<f32>(rule.words[20]); let f = bitcast<f32>(rule.words[21]);
   return a == a || b == b || c == c || d == d || e == e || f == f;
 }
-fn environment_matches(rule: Reaction, cell: u32, air: f32) -> bool {
-  let temperature = temperatures[cell];
+fn environment_matches(rule: Reaction, cell: u32, source0: Source, air: f32) -> bool {
+  let temperature = authority_temperature(source0, rule, 0u);
   let pressure = length(retained_pressure[cell].xy);
   let min_temperature = bitcast<f32>(rule.words[16]); let max_temperature = bitcast<f32>(rule.words[17]);
   let min_pressure = bitcast<f32>(rule.words[18]); let max_pressure = bitcast<f32>(rule.words[19]);
@@ -815,11 +854,11 @@ fn discover_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
   var winner = 0xffffffffu; var winner_extent = 0.0; var winner_priority = -2147483647i; var winner_order = 0xffffffffu;
   for (var reaction_index = 0u; reaction_index < parameters.reaction_count && reaction_index < arrayLength(&reactions); reaction_index += 1u) {
     let rule = reactions[reaction_index];
-    if (!environment_matches(rule, cell, air)) { continue; }
     let first_present = rule.words[3] != 0u; let second_present = rule.words[7] != 0u;
     let source0 = source_for(cell, 0u, rule);
     if (first_present && !source0.found) { continue; }
     if (!first_present && !has_environment(rule)) { continue; }
+    if (!environment_matches(rule, cell, source0, air)) { continue; }
     var source1 = Source(cell, EMPTY_MATERIAL_IDENTIFIER, 0.0, false, 0xffffffffu);
     if (second_present) {
       source1 = find_partner(cell, rule);

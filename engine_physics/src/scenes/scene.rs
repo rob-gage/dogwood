@@ -556,6 +556,8 @@ impl Scene {
             &cellular_material_identifiers,
             &cellular_amounts,
             &cellular_temperatures,
+            gases.temperature_buffer(),
+            &rigid_cell_temperatures,
             cellular_pressure.retained_pressure(),
             fluids.coverage_buffer(),
             gases.concentrations_buffer(),
@@ -4826,6 +4828,9 @@ impl Drop for Scene {
 mod tests {
 
     use super::*;
+    use crate::materials::{
+        MaterialReaction, MaterialReactionReactant, MaterialRegistryBuilder, MaterialSelector,
+    };
     use engine_graphics::{Color, MaterialAppearance};
     use std::{sync::mpsc, time::Instant};
 
@@ -4962,6 +4967,112 @@ mod tests {
         scene.apply_edits_immediate(&mut edits).unwrap();
         scene.update(Duration::from_secs(1) / 60, true).unwrap();
         accelerator.poll().unwrap();
+    }
+
+    #[test]
+    fn acid_fluid_reduces_adjacent_canonical_inventory() {
+        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let accelerator = Arc::new(Accelerator::new().unwrap());
+        let mut materials = MaterialRegistryBuilder::new();
+        let stone = materials.register(Material::CellularDynamic {
+            name: "Stone".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(100, 100, 100)),
+            mass: 1.0,
+            pressure_transmission: 1.0,
+            friction: 0.5,
+            restitution: 0.0,
+        });
+        let acid = materials.register(Material::Fluid {
+            name: "Acid".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(80, 220, 70)),
+            pressure_transmission: 1.0,
+            friction: 0.0,
+            restitution: 0.0,
+            rest_density: 1.0,
+            artificial_pressure: 0.0,
+            xsph_smoothing: 0.0,
+            body_push_speed: 0.0,
+            density: 1.0,
+            viscosity: 1.0,
+        });
+        materials.tag(stone, "corrodable").unwrap();
+        materials.register_reaction(MaterialReaction {
+            reactants: [
+                Some(MaterialReactionReactant {
+                    selector: MaterialSelector::Material(acid),
+                    amount: 0.2,
+                }),
+                Some(MaterialReactionReactant {
+                    selector: MaterialSelector::Tag("corrodable".into()),
+                    amount: 1.0,
+                }),
+            ],
+            maximum_extent_per_tick: 0.15,
+            thermal_energy: 0.01,
+            ..Default::default()
+        });
+        let mut scene = Scene::new(
+            &accelerator,
+            materials.compile().unwrap(),
+            SceneSimulationConfiguration {
+                gravity: [0.0, 0.0],
+                ambient_temperature: 293.15,
+                empty_space_thermal_conductivity: 0.0,
+                empty_space_heat_capacity: 1.0,
+                maximum_gas_concentration: 4.0,
+                width: 4,
+                height: 4,
+                buffer_size: 2,
+                streaming_batch_size: 1,
+            },
+        )
+        .unwrap();
+        let acid_cell = CellCoordinates { x: 0, y: 8 };
+        let stone_cell = CellCoordinates { x: 1, y: 8 };
+        let mut edits = SceneEditBatch::new();
+        edits.place_material(acid, CellularAppearance::NEUTRAL, vec![acid_cell]);
+        edits.place_material(stone, CellularAppearance::NEUTRAL, vec![stone_cell]);
+        scene.apply_edits_immediate(&mut edits).unwrap();
+        scene.update(Duration::from_secs(1) / 60, true).unwrap();
+        accelerator.poll().unwrap();
+
+        let index = scene.cell_edit_index(stone_cell).unwrap() as u64;
+        let readback = accelerator
+            .wgpu_device()
+            .create_buffer(&wgpu::BufferDescriptor {
+                label: Some("acid chemistry runtime readback"),
+                size: 4,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+        let mut encoder = accelerator
+            .wgpu_device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        encoder.copy_buffer_to_buffer(
+            scene.cellular_amounts.wgpu_buffer(),
+            index * 4,
+            &readback,
+            0,
+            4,
+        );
+        accelerator.wgpu_queue().submit(Some(encoder.finish()));
+        let (sender, receiver) = mpsc::sync_channel(1);
+        readback
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                sender.send(result).unwrap();
+            });
+        let result = loop {
+            if let Ok(result) = receiver.try_recv() {
+                break result;
+            }
+            accelerator.poll().unwrap();
+            std::thread::yield_now();
+        };
+        result.unwrap();
+        let bytes = readback.slice(..).get_mapped_range().unwrap();
+        let amount = f32::from_le_bytes(bytes[..4].try_into().unwrap());
+        assert!(amount < 1.0, "acid did not consume Stone: {amount}");
     }
 
     #[test]

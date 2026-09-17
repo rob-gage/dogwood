@@ -272,13 +272,12 @@ impl DemoGame {
             Some(MaterialReactionProduct { material, amount })
         };
         materials.register_reaction(MaterialReaction {
-            reactants: [tag("flammable", 1.0), None],
+            reactants: [exact(fire, 0.08), tag("flammable", 1.0)],
             products: [product(fire, 0.08), product(smoke, 0.12)],
-            minimum_temperature: Some(520.0),
             minimum_air: Some(0.02),
-            maximum_extent_per_tick: 0.035,
+            maximum_extent_per_tick: 0.08,
             thermal_energy: 18.0,
-            priority: 10,
+            priority: 80,
             ..Default::default()
         });
         materials.register_reaction(MaterialReaction {
@@ -315,7 +314,7 @@ impl DemoGame {
         materials.register_reaction(MaterialReaction {
             reactants: [exact(acid, 0.2), tag("corrodable", 1.0)],
             products: [None, None],
-            maximum_extent_per_tick: 0.025,
+            maximum_extent_per_tick: 0.15,
             thermal_energy: 0.01,
             priority: 20,
             ..Default::default()
@@ -601,6 +600,26 @@ impl DemoGame {
                 },
             )
             .map_err(std::io::Error::other)?;
+        for (material, conductivity, specific_heat_capacity, default_temperature) in [
+            (coal, 0.35, 1.5, 293.15),
+            (oil, 0.12, 2.0, 293.15),
+            (natural_gas, 0.08, 2.2, 293.15),
+            (blasting_powder, 0.25, 1.3, 293.15),
+            (smoke, 0.05, 1.1, 500.0),
+        ] {
+            materials
+                .set_thermal(
+                    material,
+                    MaterialThermalProperties {
+                        conductivity,
+                        specific_heat_capacity,
+                        default_temperature: Some(default_temperature),
+                        cold_transition: None,
+                        hot_transition: None,
+                    },
+                )
+                .map_err(std::io::Error::other)?;
+        }
         let data: SceneData =
             SceneData::new_temporary(materials.compile().map_err(std::io::Error::other)?)?;
         let mut scene: Scene = Scene::load_with_generator(
