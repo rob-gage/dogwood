@@ -1,5 +1,3 @@
-}
-
 @compute @workgroup_size(64)
 fn propagate_pending_cellular_pressure(
     @builtin(workgroup_id) workgroup: vec3<u32>,
@@ -705,4 +703,3 @@ fn cellular_fracture_yield_random_from_world_cell(
     value   ^= value >> 16u;
     return f32(value) / 4294967295.0;
 }
-

@@ -400,4 +400,4 @@ fn resolve_fluid_cellular_face(fluid: u32, cellular: u32, normal: vec2<f32>) {
     pending_pressure[cellular]   +=
     encode_directional_pressure(
       normal * normal_impulse * CONTACT_PRESSURE_TRANSFER);
-
+}
