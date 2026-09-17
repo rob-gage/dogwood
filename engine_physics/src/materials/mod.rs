@@ -16,6 +16,7 @@ mod material_registry_builder;
 mod material_selector;
 mod material_table;
 mod material_thermal_properties;
+mod material_thermal_transition;
 
 #[cfg(test)]
 pub(crate) mod tests;
@@ -33,4 +34,5 @@ pub use material_registry::MaterialRegistry;
 pub use material_registry_builder::MaterialRegistryBuilder;
 pub use material_selector::MaterialReference;
 pub(crate) use material_table::MaterialTable;
-pub use material_thermal_properties::{MaterialThermalProperties, MaterialThermalTransition};
+pub use material_thermal_properties::MaterialThermalProperties;
+pub use material_thermal_transition::MaterialThermalTransition;
