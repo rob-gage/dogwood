@@ -13,6 +13,7 @@ use std::collections::BTreeSet;
 /// separate stage so no product becomes an input until the next chemistry tick.
 pub(crate) struct MaterialReactions {
     candidates: AcceleratorBuffer,
+    reaction_energy: AcceleratorBuffer,
     parameters: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     discover_pipeline: wgpu::ComputePipeline,
@@ -34,6 +35,8 @@ impl MaterialReactions {
         gas_concentrations: &AcceleratorBuffer,
         external_occupancy: &AcceleratorBuffer,
         rigid_claims: &AcceleratorBuffer,
+        reaction_energy: AcceleratorBuffer,
+        pending_pressure: &AcceleratorBuffer,
         mutation_requests: &AcceleratorBuffer,
         mutation_request_count: &AcceleratorBuffer,
         cell_count: u32,
@@ -95,6 +98,8 @@ impl MaterialReactions {
                 },
                 storage(12, false),
                 storage(13, false),
+                storage(14, false),
+                storage(15, false),
             ],
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -118,6 +123,8 @@ impl MaterialReactions {
                 },
                 Self::binding(12, mutation_requests),
                 Self::binding(13, mutation_request_count),
+                Self::binding(14, &reaction_energy),
+                Self::binding(15, pending_pressure),
             ],
         });
         let shader = super::create_simulation_shader_module(
@@ -143,6 +150,7 @@ impl MaterialReactions {
         };
         Self {
             candidates,
+            reaction_energy,
             parameters,
             bind_group,
             discover_pipeline: pipeline(
@@ -170,6 +178,9 @@ impl MaterialReactions {
     }
     pub(crate) const fn candidates_buffer(&self) -> &AcceleratorBuffer {
         &self.candidates
+    }
+    pub(crate) const fn reaction_energy_buffer(&self) -> &AcceleratorBuffer {
+        &self.reaction_energy
     }
     fn binding(binding: u32, buffer: &AcceleratorBuffer) -> wgpu::BindGroupEntry<'_> {
         wgpu::BindGroupEntry {
@@ -269,7 +280,10 @@ pub(crate) fn extent(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{materials::{CompiledMaterialReaction, MaterialRegistry}, simulation::ReactionMaterialTable};
+    use crate::{
+        materials::{CompiledMaterialReaction, MaterialRegistry},
+        simulation::ReactionMaterialTable,
+    };
 
     #[test]
     fn environment_bounds_are_independent() {
@@ -378,9 +392,26 @@ mod tests {
         let claims = accelerator.allocate::<u32>(64);
         let requests = accelerator.allocate::<[u32; 9]>(128);
         let request_count = accelerator.allocate::<u32>(1);
+        let reaction_energy = accelerator.allocate::<f32>(64);
+        let pending_pressure = accelerator.allocate::<[f32; 4]>(64);
         let _reactions = MaterialReactions::new(
-            &accelerator, &table, &ids, &amounts, &temperatures, &pressure, &coverage, &gas,
-            &occupancy, &claims, &requests, &request_count, 64, 0, 0,
+            &accelerator,
+            &table,
+            &ids,
+            &amounts,
+            &temperatures,
+            &pressure,
+            &coverage,
+            &gas,
+            &occupancy,
+            &claims,
+            reaction_energy,
+            &pending_pressure,
+            &requests,
+            &request_count,
+            64,
+            0,
+            0,
         );
     }
 }

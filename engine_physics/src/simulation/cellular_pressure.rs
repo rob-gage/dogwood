@@ -83,6 +83,11 @@ impl CellularPressure {
     pub(crate) const fn retained_pressure(&self) -> &AcceleratorBuffer {
         &self.retained_pressure
     }
+    /// Local pressure-source accumulator shared with chemistry before the
+    /// ordinary pressure propagation stage.
+    pub(crate) const fn pending_pressure(&self) -> &AcceleratorBuffer {
+        &self.pending_impulses
+    }
 
     pub fn new(
         accelerator: &Accelerator,

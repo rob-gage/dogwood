@@ -345,6 +345,8 @@ impl Scene {
             ThermalMaterialTable::new(accelerator.as_ref(), data.materials());
         let reaction_material_table =
             ReactionMaterialTable::new(accelerator.as_ref(), data.materials());
+        // One-tick chemical energy source consumed by unified thermal gathering.
+        let reaction_energy = accelerator.allocate::<f32>(buffered_cell_count);
         let fluids: Fluids = Fluids::new(
             accelerator.as_ref(),
             &cellular_material_identifiers,
@@ -388,6 +390,7 @@ impl Scene {
             &rigid_cell_temperatures,
             fluids.derived_thermal_buffer(),
             fluids.coverage_buffer(),
+            &reaction_energy,
             gases.concentrations_buffer(),
             gases.temperature_buffer(),
             thermal_material_table.properties_buffer(),
@@ -557,6 +560,8 @@ impl Scene {
             gases.concentrations_buffer(),
             cellular_physics_body_proxy.occupancy_buffer(),
             cellular_physics_body_proxy.rigid_claims_buffer(),
+            reaction_energy,
+            cellular_pressure.pending_pressure(),
             material_mutations.requests_buffer(),
             material_mutations.request_count_buffer(),
             buffered_cell_count as u32,
@@ -2074,6 +2079,16 @@ impl Scene {
                 );
                 self.material_reactions
                     .encode(self.accelerator.as_ref(), &mut encoder);
+                // Resolve chemistry's authority-addressed cell mutations before
+                // pressure observes this tick's post-reaction material snapshot.
+                self.material_mutations.encode_requests(
+                    self.accelerator.as_ref(),
+                    &mut encoder,
+                    u32::from(self.simulation_width + dimensions)
+                        * u32::from(self.simulation_height + dimensions)
+                        * 64,
+                    self.gases.gas_count(),
+                );
                 self.accelerator.wgpu_queue().submit(Some(encoder.finish()));
             }
             self.cellular_pressure.simulate(

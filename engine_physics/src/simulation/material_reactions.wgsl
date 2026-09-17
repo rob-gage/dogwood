@@ -21,6 +21,8 @@ struct Parameters { cell_count: u32, gas_count: u32, reaction_count: u32, paddin
 @group(0) @binding(11) var<uniform> parameters: Parameters;
 @group(0) @binding(12) var<storage, read_write> mutation_requests: array<Request>;
 @group(0) @binding(13) var<storage, read_write> mutation_request_count: array<atomic<u32>>;
+@group(0) @binding(14) var<storage, read_write> reaction_energy: array<f32>;
+@group(0) @binding(15) var<storage, read_write> pending_pressure: array<vec4<f32>>;
 
 fn matches_selector(rule: Reaction, reactant: u32, material: u32) -> bool {
   let base = reactant * 4u;
@@ -42,6 +44,7 @@ fn apply_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
   let cell = id.x; if (cell >= parameters.cell_count || cell >= arrayLength(&candidates)) { return; }
   let candidate = candidates[cell]; if (candidate.reaction == 0xffffffffu || candidate.reaction >= arrayLength(&reactions) || candidate.extent <= 0.000001) { return; }
   let rule = reactions[candidate.reaction];
+  reaction_energy[cell] += bitcast<f32>(rule.words[23]) * candidate.extent;
   let first_present = rule.words[3] != 0u; let second_present = rule.words[7] != 0u;
   if (second_present) { return; }
   let source = material_identifiers[cell];
@@ -67,6 +70,8 @@ fn apply_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
     let result_amount = select(remaining, cellular_amount, cellular_product != EMPTY_MATERIAL_IDENTIFIER);
     mutation_requests[slot] = Request(cell, 0u, cell, source, replacement, bitcast<u32>(result_amount), bitcast<u32>(temperatures[cell]), 0u, 0u);
   }
+  let pressure_output = bitcast<f32>(rule.words[24]) * candidate.extent;
+  pending_pressure[cell] += vec4<f32>(pressure_output);
   for (var product = 0u; product < 2u; product += 1u) {
     let base = 8u + product * 4u; if (rule.words[base + 2u] == 0u) { continue; }
     let replacement = rule.words[base];
@@ -103,6 +108,7 @@ fn discover_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
   let cell = id.x;
   if (cell >= parameters.cell_count || cell >= arrayLength(&candidates)) { return; }
   candidates[cell] = Candidate(0xffffffffu, cell, 0.0, 0u);
+  reaction_energy[cell] = 0.0;
   if (atomicLoad(&rigid_claims[cell]) != 0xffffffffu) { return; }
   let material = material_identifiers[cell];
   let blocked = material != EMPTY_MATERIAL_IDENTIFIER || external_occupancy[cell] != 0u;

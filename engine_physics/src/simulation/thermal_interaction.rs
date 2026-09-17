@@ -63,6 +63,7 @@ impl ThermalInteraction {
         rigid_temperatures: &AcceleratorBuffer,
         fluid_thermal: &AcceleratorBuffer,
         fluid_coverage: &AcceleratorBuffer,
+        reaction_energy: &AcceleratorBuffer,
         gas_concentrations: &AcceleratorBuffer,
         gas_temperatures: &AcceleratorBuffer,
         thermal_properties: &AcceleratorBuffer,
@@ -135,6 +136,7 @@ impl ThermalInteraction {
             count: None,
         });
         entries.push(storage(16, false));
+        entries.push(storage(17, false));
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("thermal interaction"),
             entries: &entries,
@@ -166,6 +168,10 @@ impl ThermalInteraction {
         bind_entries.push(wgpu::BindGroupEntry {
             binding: 14,
             resource: parameters.as_entire_binding(),
+        });
+        bind_entries.push(wgpu::BindGroupEntry {
+            binding: 17,
+            resource: reaction_energy.wgpu_buffer().as_entire_binding(),
         });
         bind_entries.push(wgpu::BindGroupEntry {
             binding: 16,

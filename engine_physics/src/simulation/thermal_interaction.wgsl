@@ -22,6 +22,7 @@ struct RigidCell { local: vec2<i32>, body: u32, material_identifier: u32, appear
 @group(0) @binding(14) var<uniform> parameters: Parameters;
 @group(0) @binding(15) var<uniform> material_parameters: ThermalMaterialParameters;
 @group(0) @binding(16) var<storage, read_write> rigid_raster_claim_counts: array<atomic<u32>>;
+@group(0) @binding(17) var<storage, read_write> reaction_energy: array<f32>;
 
 @compute @workgroup_size(64)
 fn clear_rigid_claim_counts(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -64,6 +65,7 @@ fn gather_thermal_interaction(@builtin(global_invocation_id) id: vec3<u32>) {
         }
     }
     let fluid = fluid_thermal[index]; capacity += fluid.x; energy += fluid.y; conductivity += fluid.z;
+    energy += reaction_energy[index]; reaction_energy[index] = 0.0;
     var gas_amount = 0.0; var gas_capacity = 0.0; var gas_conductivity = 0.0;
     for (var species=0u; species < parameters.gas_count; species++) {
             let amount = max(gas_concentrations[species * parameters.cell_count + index], 0.0); gas_amount += amount;
