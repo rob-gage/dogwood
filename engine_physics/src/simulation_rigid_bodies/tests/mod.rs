@@ -1,4 +1,6 @@
+mod rigid_body_test_actor_terrain;
 mod rigid_body_test_material;
+mod rigid_body_test_patch_bounds;
 
 use crate::simulation_rigid_bodies::ScenePhysicsWorld;
 use crate::{
@@ -8,21 +10,9 @@ use crate::{
 };
 use crate::{materials::MaterialRegistry, tiles::CellularAppearance};
 use rapier2d::prelude::{Pose, Vector};
+use rigid_body_test_actor_terrain::prepare_actor_terrain;
 use rigid_body_test_material::register_test_stone_material;
-
-fn assert_patch_bounds(masks: [[u32; 2]; 16], origin: [f32; 2], expected: [f32; 4]) {
-    let shape = ScenePhysicsWorld::terrain_patch_shape(&masks).unwrap();
-    let aabb = shape.compute_aabb(&Pose::translation(origin[0], origin[1]));
-    assert!(
-        (aabb.mins.x - expected[0]).abs() < 1e-5
-            && (aabb.mins.y - expected[1]).abs() < 1e-5
-            && (aabb.maxs.x - expected[2]).abs() < 1e-5
-            && (aabb.maxs.y - expected[3]).abs() < 1e-5,
-        "actual {:?}..{:?}",
-        aabb.mins,
-        aabb.maxs
-    );
-}
+use rigid_body_test_patch_bounds::assert_patch_bounds;
 
 #[test]
 fn test_full_and_almost_full_patch_keep_the_same_exterior_bounds() {
@@ -161,19 +151,6 @@ fn test_rigid_cellular_bodies_still_collide_through_rapier() {
         left_x + 0.12 <= right_x,
         "rigid bodies interpenetrated: {left_x}, {right_x}"
     );
-}
-
-fn prepare_actor_terrain(physics: &mut ScenePhysicsWorld, shape: ActorCollisionShape) {
-    let actor = ActorCellularProxyState {
-        center: [0.0, 0.5625],
-        velocity: [0.0; 2],
-        drive: [0.0; 2],
-        shape,
-        occupancy_kind: 1,
-        mass: 0.0,
-    };
-    physics.prepare_cellular_terrain(&[], &[actor], [0.0; 2], 1.0 / 60.0);
-    physics.step([0.0; 2], 1.0 / 60.0);
 }
 
 #[test]
