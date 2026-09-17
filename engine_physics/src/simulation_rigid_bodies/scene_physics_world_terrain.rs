@@ -34,7 +34,7 @@ impl ScenePhysicsWorld {
         bodies: &[RigidCellularBody],
         actors: &[ActorCellularProxyState],
         gravity: [f32; 2],
-        dt: f32,
+        delta_time: f32,
     ) {
         #[cfg(debug_assertions)]
         let started = Instant::now();
@@ -55,8 +55,9 @@ impl ScenePhysicsWorld {
                 };
                 let aabb = collider.compute_aabb();
                 let radius = (aabb.maxs - aabb.mins).length() * 0.5;
-                let d = rigid.linvel() * dt + Vector::new(gravity[0], gravity[1]) * (0.5 * dt * dt);
-                let angular = rigid.angvel().abs() * dt * radius;
+                let d = rigid.linvel() * delta_time
+                    + Vector::new(gravity[0], gravity[1]) * (0.5 * delta_time * delta_time);
+                let angular = rigid.angvel().abs() * delta_time * radius;
                 let lo = aabb.mins.min(aabb.mins + d) - Vector::splat(angular + 0.25);
                 let hi = aabb.maxs.max(aabb.maxs + d) + Vector::splat(angular + 0.25);
                 Self::demand_dynamic_tiles(&mut self.required_dynamic_tiles, lo, hi);
@@ -84,8 +85,8 @@ impl ScenePhysicsWorld {
                 .into_iter()
                 .fold(0.0f32, f32::max)
                 * 0.5;
-            let d = Vector::new(actor.velocity[0], actor.velocity[1]) * dt
-                + Vector::new(gravity[0], gravity[1]) * (0.5 * dt * dt);
+            let d = Vector::new(actor.velocity[0], actor.velocity[1]) * delta_time
+                + Vector::new(gravity[0], gravity[1]) * (0.5 * delta_time * delta_time);
             let lo = center.min(center + d) - Vector::splat(radius + 0.25);
             let hi = center.max(center + d) + Vector::splat(radius + 0.25);
             Self::demand_dynamic_tiles(&mut self.required_dynamic_tiles, lo, hi);
