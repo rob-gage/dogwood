@@ -71,8 +71,8 @@ impl GasDownload {
         for cell_index in 0..cell_count {
             let offset: usize = cell_index * stride * 4;
             let coordinates: CellCoordinates = CellCoordinates {
-                x: Self::u32_at(bytes, offset) as i32,
-                y: Self::u32_at(bytes, offset + 4) as i32,
+                x: crate::binary_reader::read_u32_at(bytes, offset) as i32,
+                y: crate::binary_reader::read_u32_at(bytes, offset + 4) as i32,
             };
             if !area.contains(coordinates.tile_coordinates()) {
                 return Err(io::Error::new(
@@ -81,10 +81,10 @@ impl GasDownload {
                 ));
             }
             let velocity: [f32; 2] = [
-                f32::from_bits(Self::u32_at(bytes, offset + 8)),
-                f32::from_bits(Self::u32_at(bytes, offset + 12)),
+                f32::from_bits(crate::binary_reader::read_u32_at(bytes, offset + 8)),
+                f32::from_bits(crate::binary_reader::read_u32_at(bytes, offset + 12)),
             ];
-            let temperature = f32::from_bits(Self::u32_at(bytes, offset + 16));
+            let temperature = f32::from_bits(crate::binary_reader::read_u32_at(bytes, offset + 16));
             if !velocity.into_iter().all(f32::is_finite) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -99,8 +99,10 @@ impl GasDownload {
             }
             let mut species: Vec<(MaterialIdentifier, f32)> = Vec::new();
             for (species_index, identifier) in gas_identifiers.iter().enumerate() {
-                let concentration: f32 =
-                    f32::from_bits(Self::u32_at(bytes, offset + (5 + species_index) * 4));
+                let concentration: f32 = f32::from_bits(crate::binary_reader::read_u32_at(
+                    bytes,
+                    offset + (5 + species_index) * 4,
+                ));
                 if !concentration.is_finite() || concentration < 0.0 {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
@@ -121,9 +123,5 @@ impl GasDownload {
             }
         }
         Ok(cells)
-    }
-
-    fn u32_at(bytes: &[u8], offset: usize) -> u32 {
-        u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
     }
 }

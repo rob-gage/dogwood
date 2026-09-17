@@ -93,17 +93,19 @@ impl ChunkFluidParticle {
             ));
         }
         let particle: Self = Self {
-            material_identifier: MaterialIdentifier::from_u32(Self::u32_at(bytes, 0)),
+            material_identifier: MaterialIdentifier::from_u32(crate::binary_reader::read_u32_at(
+                bytes, 0,
+            )),
             position: [
-                f32::from_bits(Self::u32_at(bytes, 8)),
-                f32::from_bits(Self::u32_at(bytes, 12)),
+                f32::from_bits(crate::binary_reader::read_u32_at(bytes, 8)),
+                f32::from_bits(crate::binary_reader::read_u32_at(bytes, 12)),
             ],
             velocity: [
-                f32::from_bits(Self::u32_at(bytes, 16)),
-                f32::from_bits(Self::u32_at(bytes, 20)),
+                f32::from_bits(crate::binary_reader::read_u32_at(bytes, 16)),
+                f32::from_bits(crate::binary_reader::read_u32_at(bytes, 20)),
             ],
-            amount: f32::from_bits(Self::u32_at(bytes, 32)),
-            temperature: f32::from_bits(Self::u32_at(bytes, 36)),
+            amount: f32::from_bits(crate::binary_reader::read_u32_at(bytes, 32)),
+            temperature: f32::from_bits(crate::binary_reader::read_u32_at(bytes, 36)),
         };
         particle.validate()?;
         Ok(particle)
@@ -135,10 +137,6 @@ impl ChunkFluidParticle {
         bytes.extend_from_slice(&self.temperature.to_bits().to_le_bytes());
         debug_assert_eq!(bytes.len() % Self::GPU_SIZE, 0);
         Ok(())
-    }
-
-    fn u32_at(bytes: &[u8], offset: usize) -> u32 {
-        u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
     }
 
     fn validate(&self) -> Result<(), io::Error> {
