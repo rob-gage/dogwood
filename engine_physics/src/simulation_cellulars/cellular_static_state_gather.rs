@@ -27,12 +27,11 @@ impl CellularStaticStateGather {
         let capacity = capacity.max(1);
         let descriptors = accelerator.allocate::<u32>(capacity);
         let output = accelerator.allocate::<[u32; 8]>(capacity);
-        let count = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cellular static state gather count"),
-            size: 4,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let count = crate::simulation::create_simulation_uniform_buffer(
+            device,
+            "cellular static state gather count",
+            4,
+        );
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("cellular static state gather readback"),
             size: capacity as u64 * 32,

@@ -167,12 +167,11 @@ impl CellularPressure {
             mapped_at_creation: false,
         });
         let rigid_fracture_word_count = u64::from(buffered_cell_count).div_ceil(32);
-        let parameters: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cellular pressure parameters"),
-            size: 96,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let parameters = crate::simulation::create_simulation_uniform_buffer(
+            device,
+            "cellular pressure parameters",
+            96,
+        );
         let layout: wgpu::BindGroupLayout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("cellular pressure bind group layout"),

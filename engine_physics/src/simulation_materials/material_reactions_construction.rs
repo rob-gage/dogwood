@@ -62,12 +62,11 @@ impl MaterialReactions {
                     .collect::<Vec<_>>(),
             );
         }
-        let sort_parameters = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("chemistry sort parameters"),
-            size: 8,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let sort_parameters = crate::simulation::create_simulation_uniform_buffer(
+            device,
+            "chemistry sort parameters",
+            8,
+        );
         let fluid_reservations =
             accelerator.allocate::<u32>(fluid_authority.particle_capacity as usize);
         let gas_reservations =
@@ -91,12 +90,11 @@ impl MaterialReactions {
         );
         let fluid_reservation_owners =
             accelerator.allocate::<u32>(fluid_authority.particle_capacity as usize);
-        let parameters = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("material reaction parameters"),
-            size: 16,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let parameters = crate::simulation::create_simulation_uniform_buffer(
+            device,
+            "material reaction parameters",
+            16,
+        );
         accelerator.wgpu_queue().write_buffer(
             &parameters,
             0,

@@ -48,12 +48,11 @@ impl ThermalEdits {
                 .flat_map(|value| value.to_le_bytes())
                 .collect::<Vec<_>>(),
         );
-        let parameters = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("thermal edit parameters"),
-            size: 48,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let parameters = crate::simulation::create_simulation_uniform_buffer(
+            device,
+            "thermal edit parameters",
+            48,
+        );
         let storage = crate::simulation::storage_bind_group_layout_entry;
         let mut layout_entries: Vec<_> = (0..11)
             .map(|b| storage(b, matches!(b, 0 | 1 | 6 | 7)))

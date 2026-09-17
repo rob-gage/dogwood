@@ -21,12 +21,11 @@ impl CellularPhysicsBodyProxy {
         let destroy_requests = accelerator.allocate::<u32>(buffered_cell_count as usize + 1);
         let destroy_results = accelerator.allocate::<[u32; 2]>(buffered_cell_count as usize);
         let destroy_completed = Arc::new(Mutex::new(Vec::new()));
-        let parameters = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cellular physics body proxy parameters"),
-            size: 96,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let parameters = crate::simulation::create_simulation_uniform_buffer(
+            device,
+            "cellular physics body proxy parameters",
+            96,
+        );
         let storage = crate::simulation::storage_bind_group_layout_entry;
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("cellular physics body proxy bind group layout"),

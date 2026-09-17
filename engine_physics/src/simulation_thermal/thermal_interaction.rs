@@ -79,12 +79,11 @@ impl ThermalInteraction {
         let device = accelerator.wgpu_device();
         let interaction = accelerator.allocate::<[f32; 4]>(cell_count as usize);
         let rigid_raster_claim_counts = accelerator.allocate::<u32>(rigid_capacity as usize);
-        let parameters = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("thermal interaction parameters"),
-            size: 64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let parameters = crate::simulation::create_simulation_uniform_buffer(
+            device,
+            "thermal interaction parameters",
+            64,
+        );
         let values = [
             ambient_temperature.to_bits(),
             empty_space_conductivity.to_bits(),

@@ -21,12 +21,11 @@ impl RigidCellStateGather {
         let device = accelerator.wgpu_device();
         let descriptors = accelerator.allocate::<u32>(capacity.max(1));
         let output = accelerator.allocate::<[f32; 4]>(capacity.max(1));
-        let count = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("rigid cell state gather count"),
-            size: 4,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let count = crate::simulation::create_simulation_uniform_buffer(
+            device,
+            "rigid cell state gather count",
+            4,
+        );
         let storage = crate::simulation::storage_bind_group_layout_entry;
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("rigid cell state gather"),

@@ -74,12 +74,11 @@ impl Fluids {
             0,
             &particle_capacity.to_le_bytes(),
         );
-        let parameters: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("fluid simulation parameters"),
-            size: 128,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let parameters = crate::simulation::create_simulation_uniform_buffer(
+            device,
+            "fluid simulation parameters",
+            128,
+        );
         let storage = crate::simulation::storage_bind_group_layout_entry;
         let layout: wgpu::BindGroupLayout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

@@ -82,12 +82,11 @@ impl ThermalScatter {
     ) -> Self {
         let device = accelerator.wgpu_device();
         let rigid_temperature_sum = accelerator.allocate::<u32>(rigid_capacity as usize);
-        let parameters = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("thermal scatter parameters"),
-            size: 64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let parameters = crate::simulation::create_simulation_uniform_buffer(
+            device,
+            "thermal scatter parameters",
+            64,
+        );
         let vals = [
             0u32,
             0,

@@ -37,6 +37,19 @@ pub(crate) fn storage_bind_group_layout_entry(
     }
 }
 
+pub(crate) fn create_simulation_uniform_buffer(
+    device: &wgpu::Device,
+    label: &'static str,
+    size: u64,
+) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
 const PHYSICS_SHADER_UTILITIES: [engine_compute::ComposableShaderUtility; 8] = [
     engine_compute::ComposableShaderUtility {
         source: include_str!("simulation_constants.wgsl"),

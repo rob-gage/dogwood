@@ -64,12 +64,11 @@ impl ThermalConduction {
         let face_flux = accelerator.allocate::<[f32; 2]>(cell_count as usize);
         let face_conductance = accelerator.allocate::<[f32; 2]>(cell_count as usize);
         let conductance_sum = accelerator.allocate::<f32>(cell_count as usize);
-        let parameters = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("thermal conduction parameters"),
-            size: 64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let parameters = crate::simulation::create_simulation_uniform_buffer(
+            device,
+            "thermal conduction parameters",
+            64,
+        );
         let storage = crate::simulation::storage_bind_group_layout_entry;
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("thermal conduction"),

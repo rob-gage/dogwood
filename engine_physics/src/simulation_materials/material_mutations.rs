@@ -74,12 +74,11 @@ impl MaterialMutations {
                     .collect::<Vec<_>>(),
             );
         }
-        let parameters = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("material mutation parameters"),
-            size: 16,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let parameters = crate::simulation::create_simulation_uniform_buffer(
+            device,
+            "material mutation parameters",
+            16,
+        );
         let indirect = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("material mutation indirect"),
             size: 12,

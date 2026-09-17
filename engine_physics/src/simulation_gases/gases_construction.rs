@@ -51,12 +51,11 @@ impl Gases {
         let curl: AcceleratorBuffer = accelerator.allocate::<f32>(buffered_cell_count as usize);
         let streaming_data: AcceleratorBuffer =
             accelerator.allocate::<u32>(streaming_value_count as usize);
-        let parameters: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("gas simulation parameters"),
-            size: 96,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let parameters = crate::simulation::create_simulation_uniform_buffer(
+            device,
+            "gas simulation parameters",
+            96,
+        );
         let storage = crate::simulation::storage_bind_group_layout_entry;
         let layout: wgpu::BindGroupLayout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

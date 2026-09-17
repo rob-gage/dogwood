@@ -70,12 +70,11 @@ impl CellularDynamic {
         let proposals: AcceleratorBuffer =
             accelerator.allocate::<[u32; 8]>(buffered_cell_count as usize);
         // describe the active and buffered ring mapping shared by every pass
-        let parameters: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cellular dynamic parameters"),
-            size: 96,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let parameters = crate::simulation::create_simulation_uniform_buffer(
+            device,
+            "cellular dynamic parameters",
+            96,
+        );
         let bind_group_layout: wgpu::BindGroupLayout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("cellular dynamic bind group layout"),
