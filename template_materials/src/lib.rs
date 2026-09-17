@@ -13,7 +13,9 @@ use engine::{
     },
 };
 
+/// The complete declarative material set used by the runnable template.
 pub struct TemplateMaterials {
+    /// Registered materials and their compiled derived properties.
     pub registry: MaterialRegistry,
     pub stone_debris: MaterialIdentifier,
     pub sand: MaterialIdentifier,
@@ -35,11 +37,14 @@ pub struct TemplateMaterials {
     pub acid: MaterialIdentifier,
     pub acid_gas: MaterialIdentifier,
     pub acid_sludge: MaterialIdentifier,
+    /// Per-channel variation applied when rendering stone.
     pub stone_variation: [f32; 4],
+    /// Per-channel variation applied when rendering sand.
     pub sand_variation: [f32; 4],
 }
 
 impl TemplateMaterials {
+    /// Builds and validates the template material registry.
     pub fn new() -> Result<Self, String> {
         let mut materials = MaterialRegistryBuilder::new();
         let stone_debris_graphics: MaterialAppearance =
