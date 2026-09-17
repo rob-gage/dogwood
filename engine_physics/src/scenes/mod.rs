@@ -2,6 +2,9 @@
 
 //! Public scene facade and scene-facing transfer and persistence types.
 
+#[cfg(test)]
+pub(crate) mod tests;
+
 mod scene;
 mod scene_generator;
 
