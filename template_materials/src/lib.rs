@@ -4,13 +4,12 @@
 
 extern crate dogwood_engine as engine;
 
+mod template_materials_reactions;
+mod template_materials_thermal;
+
 use engine::{
     graphics::{Color, MaterialAppearance},
-    physics::materials::{
-        Material, MaterialIdentifier, MaterialReaction, MaterialReactionProduct,
-        MaterialReactionReactant, MaterialReference, MaterialRegistry, MaterialRegistryBuilder,
-        MaterialThermalProperties, MaterialThermalTransition,
-    },
+    physics::materials::{Material, MaterialIdentifier, MaterialRegistry, MaterialRegistryBuilder},
 };
 
 /// The complete declarative material set used by the runnable template.
@@ -269,370 +268,46 @@ impl TemplateMaterials {
             density: 1.15,
             viscosity: 6.0,
         });
-        let exact = |material: MaterialIdentifier, amount: f32| {
-            Some(MaterialReactionReactant {
-                selector: MaterialReference::Material(material),
-                amount,
-            })
-        };
-        let tag = |name: &str, amount: f32| {
-            Some(MaterialReactionReactant {
-                selector: MaterialReference::Tag(name.into()),
-                amount,
-            })
-        };
-        let product = |material: MaterialIdentifier, amount: f32| {
-            Some(MaterialReactionProduct { material, amount })
-        };
-        materials.register_reaction(MaterialReaction {
-            reactants: [exact(fire, 0.08), tag("flammable", 1.0)],
-            products: [product(fire, 0.08), product(smoke, 0.12)],
-            minimum_air: Some(0.02),
-            maximum_extent_per_tick: 0.08,
-            thermal_energy: 18.0,
-            priority: 80,
-            ..Default::default()
-        });
-        materials.register_reaction(MaterialReaction {
-            reactants: [exact(natural_gas, 1.0), None],
-            products: [product(fire, 0.18), product(smoke, 0.25)],
-            minimum_temperature: Some(430.0),
-            minimum_air: Some(0.02),
-            maximum_extent_per_tick: 0.35,
-            thermal_energy: 95.0,
-            pressure_output: 3.0,
-            priority: 90,
-            ..Default::default()
-        });
-        materials.register_reaction(MaterialReaction {
-            reactants: [exact(blasting_powder, 1.0), None],
-            products: [product(fire, 0.2), product(smoke, 0.2)],
-            minimum_temperature: Some(420.0),
-            maximum_extent_per_tick: 0.8,
-            thermal_energy: 160.0,
-            pressure_output: 80.0,
-            priority: 100,
-            ..Default::default()
-        });
-        materials.register_reaction(MaterialReaction {
-            reactants: [exact(blasting_powder, 1.0), None],
-            products: [product(fire, 0.2), product(smoke, 0.2)],
-            minimum_pressure: Some(12.0),
-            maximum_extent_per_tick: 0.8,
-            thermal_energy: 180.0,
-            pressure_output: 100.0,
-            priority: 101,
-            ..Default::default()
-        });
-        materials.register_reaction(MaterialReaction {
-            reactants: [exact(acid, 0.2), tag("corrodable", 1.0)],
-            products: [None, None],
-            maximum_extent_per_tick: 0.15,
-            thermal_energy: 0.01,
-            priority: 20,
-            ..Default::default()
-        });
-        materials.register_reaction(MaterialReaction {
-            reactants: [exact(acid_gas, 0.2), tag("corrodable", 1.0)],
-            products: [None, None],
-            maximum_extent_per_tick: 0.008,
-            thermal_energy: 0.002,
-            priority: 20,
-            ..Default::default()
-        });
-        materials.register_reaction(MaterialReaction {
-            reactants: [exact(acid, 1.0), exact(water, 1.0)],
-            products: [product(acid_sludge, 1.0), None],
-            maximum_extent_per_tick: 0.12,
-            priority: 30,
-            ..Default::default()
-        });
-        materials.register_reaction(MaterialReaction {
-            reactants: [exact(sand, 1.0), exact(acid_sludge, 1.0)],
-            products: [product(blasting_powder, 1.0), None],
-            minimum_temperature: Some(500.0),
-            maximum_temperature: Some(1500.0),
-            maximum_extent_per_tick: 1.0,
-            priority: 30,
-            ..Default::default()
-        });
-        for (material, name) in [
-            (coal, "flammable"),
-            (oil, "flammable"),
-            (natural_gas, "flammable"),
-            (blasting_powder, "flammable"),
-            (stone, "corrodable"),
-            (stone_debris, "corrodable"),
-            (sand, "corrodable"),
-            (glass, "corrodable"),
-            (broken_glass, "corrodable"),
-            (coal, "corrodable"),
-            (blasting_powder, "corrodable"),
-        ] {
-            materials
-                .tag(material, name)
-                .map_err(|error| error.to_string())?;
-        }
-        // All identifiers now exist, so transition metadata can be compiled
-        // without relying on registration order.
-        materials
-            .set_thermal(
-                ice,
-                MaterialThermalProperties {
-                    conductivity: 2.2,
-                    specific_heat_capacity: 2.1,
-                    default_temperature: Some(263.15),
-                    cold_transition: None,
-                    hot_transition: Some(MaterialThermalTransition {
-                        threshold_temperature: 273.15,
-                        target: water,
-                        yield_rate: 1.0,
-                        latent_energy: 20.0,
-                    }),
-                },
-            )
-            .map_err(|error| error.to_string())?;
-        materials
-            .set_thermal(
-                slush,
-                MaterialThermalProperties {
-                    conductivity: 1.6,
-                    specific_heat_capacity: 2.1,
-                    default_temperature: Some(268.15),
-                    cold_transition: None,
-                    hot_transition: Some(MaterialThermalTransition {
-                        threshold_temperature: 273.15,
-                        target: water,
-                        yield_rate: 1.0,
-                        latent_energy: 20.0,
-                    }),
-                },
-            )
-            .map_err(|error| error.to_string())?;
-        materials
-            .set_thermal(
-                stone,
-                MaterialThermalProperties {
-                    conductivity: 1.4,
-                    specific_heat_capacity: 0.88,
-                    default_temperature: Some(293.15),
-                    cold_transition: None,
-                    hot_transition: Some(MaterialThermalTransition {
-                        threshold_temperature: 1473.15,
-                        target: lava,
-                        yield_rate: 1.0,
-                        latent_energy: 120.0,
-                    }),
-                },
-            )
-            .map_err(|error| error.to_string())?;
-        materials
-            .set_thermal(
-                stone_debris,
-                MaterialThermalProperties {
-                    conductivity: 1.2,
-                    specific_heat_capacity: 0.88,
-                    default_temperature: Some(293.15),
-                    cold_transition: None,
-                    hot_transition: Some(MaterialThermalTransition {
-                        threshold_temperature: 1473.15,
-                        target: lava,
-                        yield_rate: 1.0,
-                        latent_energy: 120.0,
-                    }),
-                },
-            )
-            .map_err(|error| error.to_string())?;
-        materials
-            .set_thermal(
-                lava,
-                MaterialThermalProperties {
-                    conductivity: 1.0,
-                    specific_heat_capacity: 1.1,
-                    default_temperature: Some(1573.15),
-                    cold_transition: Some(MaterialThermalTransition {
-                        threshold_temperature: 1473.15,
-                        target: stone,
-                        yield_rate: 1.0,
-                        latent_energy: 120.0,
-                    }),
-                    hot_transition: None,
-                },
-            )
-            .map_err(|error| error.to_string())?;
-        materials
-            .set_thermal(
-                sand,
-                MaterialThermalProperties {
-                    conductivity: 0.8,
-                    specific_heat_capacity: 0.83,
-                    default_temperature: Some(293.15),
-                    cold_transition: None,
-                    hot_transition: Some(MaterialThermalTransition {
-                        threshold_temperature: 1700.0,
-                        target: molten_glass,
-                        yield_rate: 1.0,
-                        latent_energy: 80.0,
-                    }),
-                },
-            )
-            .map_err(|error| error.to_string())?;
-        materials
-            .set_thermal(
-                molten_glass,
-                MaterialThermalProperties {
-                    conductivity: 0.7,
-                    specific_heat_capacity: 1.0,
-                    default_temperature: Some(1800.0),
-                    cold_transition: Some(MaterialThermalTransition {
-                        threshold_temperature: 1400.0,
-                        target: glass,
-                        yield_rate: 1.0,
-                        latent_energy: 80.0,
-                    }),
-                    hot_transition: None,
-                },
-            )
-            .map_err(|error| error.to_string())?;
-        materials
-            .set_thermal(
-                glass,
-                MaterialThermalProperties {
-                    conductivity: 0.9,
-                    specific_heat_capacity: 0.84,
-                    default_temperature: Some(293.15),
-                    cold_transition: None,
-                    hot_transition: Some(MaterialThermalTransition {
-                        threshold_temperature: 1400.0,
-                        target: molten_glass,
-                        yield_rate: 1.0,
-                        latent_energy: 80.0,
-                    }),
-                },
-            )
-            .map_err(|error| error.to_string())?;
-        materials
-            .set_thermal(
-                broken_glass,
-                MaterialThermalProperties {
-                    conductivity: 0.8,
-                    specific_heat_capacity: 0.84,
-                    default_temperature: Some(293.15),
-                    cold_transition: None,
-                    hot_transition: Some(MaterialThermalTransition {
-                        threshold_temperature: 1400.0,
-                        target: molten_glass,
-                        yield_rate: 1.0,
-                        latent_energy: 80.0,
-                    }),
-                },
-            )
-            .map_err(|error| error.to_string())?;
-        materials
-            .set_thermal(
-                water,
-                MaterialThermalProperties {
-                    conductivity: 0.6,
-                    specific_heat_capacity: 4.18,
-                    default_temperature: Some(293.15),
-                    cold_transition: Some(MaterialThermalTransition {
-                        threshold_temperature: 273.15,
-                        target: ice,
-                        yield_rate: 1.0,
-                        latent_energy: 20.0,
-                    }),
-                    hot_transition: Some(MaterialThermalTransition {
-                        threshold_temperature: 373.15,
-                        target: water_vapor,
-                        yield_rate: 1.0,
-                        latent_energy: 50.0,
-                    }),
-                },
-            )
-            .map_err(|error| error.to_string())?;
-        materials
-            .set_thermal(
-                water_vapor,
-                MaterialThermalProperties {
-                    conductivity: 0.025,
-                    specific_heat_capacity: 2.0,
-                    default_temperature: Some(393.15),
-                    cold_transition: Some(MaterialThermalTransition {
-                        threshold_temperature: 373.15,
-                        target: water,
-                        yield_rate: 1.0,
-                        latent_energy: 50.0,
-                    }),
-                    hot_transition: None,
-                },
-            )
-            .map_err(|error| error.to_string())?;
-        materials
-            .set_thermal(
-                acid,
-                MaterialThermalProperties {
-                    conductivity: 0.55,
-                    specific_heat_capacity: 3.2,
-                    default_temperature: Some(293.15),
-                    cold_transition: None,
-                    hot_transition: Some(MaterialThermalTransition {
-                        threshold_temperature: 450.0,
-                        target: acid_gas,
-                        yield_rate: 1.0,
-                        latent_energy: 35.0,
-                    }),
-                },
-            )
-            .map_err(|error| error.to_string())?;
-        materials
-            .set_thermal(
-                acid_gas,
-                MaterialThermalProperties {
-                    conductivity: 0.03,
-                    specific_heat_capacity: 1.6,
-                    default_temperature: Some(500.0),
-                    cold_transition: Some(MaterialThermalTransition {
-                        threshold_temperature: 450.0,
-                        target: acid,
-                        yield_rate: 1.0,
-                        latent_energy: 35.0,
-                    }),
-                    hot_transition: None,
-                },
-            )
-            .map_err(|error| error.to_string())?;
-        materials
-            .set_thermal(
-                fire,
-                MaterialThermalProperties {
-                    conductivity: 0.04,
-                    specific_heat_capacity: 1.2,
-                    default_temperature: Some(1050.0),
-                    cold_transition: None,
-                    hot_transition: None,
-                },
-            )
-            .map_err(|error| error.to_string())?;
-        for (material, conductivity, specific_heat_capacity, default_temperature) in [
-            (coal, 0.35, 1.5, 293.15),
-            (oil, 0.12, 2.0, 293.15),
-            (natural_gas, 0.08, 2.2, 293.15),
-            (blasting_powder, 0.25, 1.3, 293.15),
-            (smoke, 0.05, 1.1, 500.0),
-        ] {
-            materials
-                .set_thermal(
-                    material,
-                    MaterialThermalProperties {
-                        conductivity,
-                        specific_heat_capacity,
-                        default_temperature: Some(default_temperature),
-                        cold_transition: None,
-                        hot_transition: None,
-                    },
-                )
-                .map_err(|error| error.to_string())?;
-        }
+        template_materials_reactions::register_reactions(
+            &mut materials,
+            fire,
+            smoke,
+            natural_gas,
+            blasting_powder,
+            acid,
+            acid_gas,
+            water,
+            acid_sludge,
+            sand,
+            stone,
+            stone_debris,
+            oil,
+            glass,
+            broken_glass,
+            coal,
+        )?;
+        template_materials_thermal::register_thermal_properties(
+            &mut materials,
+            ice,
+            water,
+            slush,
+            stone,
+            stone_debris,
+            lava,
+            sand,
+            molten_glass,
+            glass,
+            broken_glass,
+            water_vapor,
+            acid,
+            acid_gas,
+            fire,
+            coal,
+            oil,
+            natural_gas,
+            blasting_powder,
+            smoke,
+        )?;
 
         Ok(Self {
             registry: materials.compile().map_err(|error| error.to_string())?,
