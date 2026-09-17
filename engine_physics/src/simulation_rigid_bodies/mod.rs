@@ -12,6 +12,9 @@ mod rigid_granular_readback_slot;
 mod rigid_granular_readback_status;
 mod scene_physics_world;
 
+#[cfg(test)]
+pub(crate) mod tests;
+
 pub(crate) use rigid_cell_state_gather::RigidCellStateGather;
 pub(crate) use rigid_cell_state_upload::RigidCellStateUpload;
 pub(crate) use rigid_cellular_body::RigidCellularBody;
