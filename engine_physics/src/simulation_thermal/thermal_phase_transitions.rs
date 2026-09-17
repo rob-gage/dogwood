@@ -2,13 +2,8 @@ use crate::simulation::simulation_constants::*;
 use engine_compute::{Accelerator, AcceleratorBuffer};
 use std::sync::mpsc::{Receiver, sync_channel};
 
-fn rigid_phase_readback_len(rigid_count: u32) -> u64 {
+pub(crate) fn rigid_phase_readback_len(rigid_count: u32) -> u64 {
     RIGID_PHASE_CANDIDATES_OFFSET + u64::from(rigid_count) * RIGID_PHASE_CANDIDATE_SIZE
-}
-
-#[cfg(test)]
-pub(crate) fn test_rigid_phase_readback_len(rigid_count: u32) -> u64 {
-    rigid_phase_readback_len(rigid_count)
 }
 
 /// Evaluates declarative phase metadata after scatter; mutation application remains shared.
