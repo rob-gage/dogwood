@@ -7,6 +7,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[cfg(debug_assertions)]
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
+
 #[derive(clap::Parser)]
 #[command(version, about)]
 struct Command {
@@ -31,12 +34,34 @@ struct NewCommand {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let _tracing_guard = engine_diagnostics::initialize();
+    let _tracing_guard = initialize_tracing();
     match clap::Parser::parse() {
         Command {
             subcommand: Subcommand::New(command),
         } => create_project(command),
     }
+}
+
+#[cfg(debug_assertions)]
+fn initialize_tracing() -> Option<tracing_appender::non_blocking::WorkerGuard> {
+    let filter: EnvFilter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let (writer, guard) = tracing_appender::non_blocking(std::io::stderr());
+    let console = tracing_subscriber::fmt::layer()
+        .compact()
+        .with_target(true)
+        .with_writer(writer);
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(console)
+        .try_init()
+        .ok()
+        .map(|()| guard)
+}
+
+#[cfg(not(debug_assertions))]
+const fn initialize_tracing() -> Option<tracing_appender::non_blocking::WorkerGuard> {
+    None
 }
 
 fn create_project(command: NewCommand) -> Result<(), Box<dyn Error>> {

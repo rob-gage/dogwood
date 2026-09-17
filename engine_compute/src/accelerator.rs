@@ -157,9 +157,34 @@ mod tests {
 
     use super::Accelerator;
 
+    #[cfg(debug_assertions)]
+    use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
+
+    #[cfg(debug_assertions)]
+    fn initialize_test_tracing() -> Option<tracing_appender::non_blocking::WorkerGuard> {
+        let filter: EnvFilter =
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+        let (writer, guard) = tracing_appender::non_blocking(std::io::stderr());
+        let console = tracing_subscriber::fmt::layer()
+            .compact()
+            .with_target(true)
+            .with_writer(writer);
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(console)
+            .try_init()
+            .ok()
+            .map(|()| guard)
+    }
+
+    #[cfg(not(debug_assertions))]
+    const fn initialize_test_tracing() -> Option<tracing_appender::non_blocking::WorkerGuard> {
+        None
+    }
+
     #[test]
     fn gpu_timing_readback_completes_with_nonblocking_polls() {
-        let _tracing_guard = engine_diagnostics::initialize();
+        let _tracing_guard = initialize_test_tracing();
         let accelerator: Accelerator = Accelerator::new().unwrap();
         if !accelerator.gpu_timing.is_available() {
             return;

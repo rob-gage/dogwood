@@ -13,4 +13,5 @@ tracing = { workspace = true }
 wgpu = { workspace = true }
 
 [dev-dependencies]
-engine_diagnostics = { version = "0.0.0", path = "../engine_diagnostics" }
+tracing-appender = { workspace = true }
+tracing-subscriber = { workspace = true }

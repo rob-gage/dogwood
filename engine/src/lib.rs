@@ -3,14 +3,13 @@
 mod games;
 mod renders;
 
+pub mod diagnostics;
+
 pub use games::{Game, GameApplication};
 
 pub mod audio {}
 pub mod compute {
     pub use engine_compute::Accelerator;
-}
-pub mod diagnostics {
-    pub use engine_diagnostics::initialize;
 }
 pub mod input {}
 pub mod graphics {
