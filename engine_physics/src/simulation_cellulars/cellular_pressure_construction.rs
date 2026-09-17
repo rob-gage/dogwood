@@ -293,7 +293,10 @@ impl CellularPressure {
             "cellular pressure shader",
             concat!(
                 include_str!("cellular_pressure_shader_header.wgsl"),
-                include_str!("cellular_pressure_shader_contacts.wgsl"),
+                include_str!("cellular_pressure_shader_damage.wgsl"),
+                include_str!("cellular_pressure_shader_activation.wgsl"),
+                include_str!("cellular_pressure_shader_contact_dispatch.wgsl"),
+                include_str!("cellular_pressure_shader_contact_resolution.wgsl"),
                 include_str!("cellular_pressure_shader_rigid_cellular_contacts.wgsl"),
                 include_str!("cellular_pressure_shader_propagation.wgsl"),
             ),
