@@ -20,32 +20,32 @@ pub(crate) fn create_simulation_shader_module(
 
 const PHYSICS_SHADER_UTILITIES: [engine_compute::ComposableShaderUtility; 7] = [
     engine_compute::ComposableShaderUtility {
-        source: include_str!("../simulation_utilities/actor_collision_shape.wgsl"),
-        file_path: "engine_physics/src/simulation_utilities/actor_collision_shape.wgsl",
+        source: include_str!("../simulation_utility/actor_collision_shape.wgsl"),
+        file_path: "engine_physics/src/simulation_utility/actor_collision_shape.wgsl",
     },
     engine_compute::ComposableShaderUtility {
-        source: include_str!("../simulation_utilities/cell_coordinates.wgsl"),
-        file_path: "engine_physics/src/simulation_utilities/cell_coordinates.wgsl",
+        source: include_str!("../simulation_utility/cell_coordinates.wgsl"),
+        file_path: "engine_physics/src/simulation_utility/cell_coordinates.wgsl",
     },
     engine_compute::ComposableShaderUtility {
-        source: include_str!("../simulation_fluids/fluid_edit.wgsl"),
-        file_path: "engine_physics/src/simulation_fluids/fluid_edit.wgsl",
+        source: include_str!("../simulation_utility/fluid_edit.wgsl"),
+        file_path: "engine_physics/src/simulation_utility/fluid_edit.wgsl",
     },
     engine_compute::ComposableShaderUtility {
-        source: include_str!("../simulation_fluids/fluid_spatial.wgsl"),
-        file_path: "engine_physics/src/simulation_fluids/fluid_spatial.wgsl",
+        source: include_str!("../simulation_utility/fluid_spatial.wgsl"),
+        file_path: "engine_physics/src/simulation_utility/fluid_spatial.wgsl",
     },
     engine_compute::ComposableShaderUtility {
-        source: include_str!("../simulation_utilities/material_identifier.wgsl"),
-        file_path: "engine_physics/src/simulation_utilities/material_identifier.wgsl",
+        source: include_str!("../simulation_utility/material_identifier.wgsl"),
+        file_path: "engine_physics/src/simulation_utility/material_identifier.wgsl",
     },
     engine_compute::ComposableShaderUtility {
-        source: include_str!("../simulation_thermal/thermal_material.wgsl"),
-        file_path: "engine_physics/src/simulation_thermal/thermal_material.wgsl",
+        source: include_str!("../simulation_utility/thermal_material.wgsl"),
+        file_path: "engine_physics/src/simulation_utility/thermal_material.wgsl",
     },
     engine_compute::ComposableShaderUtility {
-        source: include_str!("../simulation_utilities/tile_ring.wgsl"),
-        file_path: "engine_physics/src/simulation_utilities/tile_ring.wgsl",
+        source: include_str!("../simulation_utility/tile_ring.wgsl"),
+        file_path: "engine_physics/src/simulation_utility/tile_ring.wgsl",
     },
 ];
 

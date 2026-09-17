@@ -12,5 +12,5 @@ mod simulation_materials;
 mod simulation_rigid_bodies;
 mod simulation_scene;
 mod simulation_thermal;
-mod simulation_utilities;
+mod simulation_utility;
 pub mod tiles;
