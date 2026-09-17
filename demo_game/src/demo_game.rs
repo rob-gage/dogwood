@@ -11,8 +11,9 @@ use engine::{
             ActorPawnWalkingConfiguration,
         },
         materials::{
-            Material, MaterialIdentifier, MaterialRegistryBuilder, MaterialThermalProperties,
-            MaterialThermalTransition,
+            Material, MaterialIdentifier, MaterialReaction, MaterialReactionProduct,
+            MaterialReactionReactant, MaterialRegistryBuilder, MaterialSelector,
+            MaterialThermalProperties, MaterialThermalTransition,
         },
         scenes::{Scene, SceneData, SceneEditBatch, ScenePosition, SceneVelocity},
         simulation::SceneSimulationConfiguration,
@@ -173,6 +174,184 @@ impl DemoGame {
             friction: 0.35,
             restitution: 0.04,
         });
+        let coal = materials.register(Material::CellularDynamic {
+            name: "Coal".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(42, 35, 32)),
+            mass: 1.4,
+            pressure_transmission: 0.4,
+            friction: 0.7,
+            restitution: 0.02,
+        });
+        let oil = materials.register(Material::Fluid {
+            name: "Oil".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(88, 62, 24)),
+            pressure_transmission: 0.9,
+            friction: 0.08,
+            restitution: 0.0,
+            rest_density: 0.9,
+            artificial_pressure: 0.02,
+            xsph_smoothing: 0.08,
+            body_push_speed: 4.0,
+            density: 0.82,
+            viscosity: 5.0,
+        });
+        let natural_gas = materials.register(Material::Gas {
+            name: "Natural Gas".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(215, 188, 105)),
+            density: 0.2,
+            diffusivity: 0.9,
+            extinction: 0.15,
+            dissipation: 0.0,
+            compressibility: 0.08,
+        });
+        let blasting_powder = materials.register(Material::CellularDynamic {
+            name: "Blasting Powder".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(150, 118, 82)),
+            mass: 1.1,
+            pressure_transmission: 0.3,
+            friction: 0.65,
+            restitution: 0.02,
+        });
+        let acid = materials.register(Material::Fluid {
+            name: "Acid".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(85, 220, 72)),
+            pressure_transmission: 0.9,
+            friction: 0.08,
+            restitution: 0.0,
+            rest_density: 1.0,
+            artificial_pressure: 0.02,
+            xsph_smoothing: 0.08,
+            body_push_speed: 4.0,
+            density: 1.05,
+            viscosity: 2.5,
+        });
+        let acid_gas = materials.register(Material::Gas {
+            name: "Acid Gas".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(180, 235, 92)),
+            density: 0.9,
+            diffusivity: 0.75,
+            extinction: 0.35,
+            dissipation: 0.0,
+            compressibility: 0.06,
+        });
+        let acid_sludge = materials.register(Material::Fluid {
+            name: "Acid Sludge".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(112, 150, 48)),
+            pressure_transmission: 0.9,
+            friction: 0.1,
+            restitution: 0.0,
+            rest_density: 1.05,
+            artificial_pressure: 0.02,
+            xsph_smoothing: 0.08,
+            body_push_speed: 4.0,
+            density: 1.15,
+            viscosity: 6.0,
+        });
+        let exact = |material: MaterialIdentifier, amount: f32| {
+            Some(MaterialReactionReactant {
+                selector: MaterialSelector::Material(material),
+                amount,
+            })
+        };
+        let tag = |name: &str, amount: f32| {
+            Some(MaterialReactionReactant {
+                selector: MaterialSelector::Tag(name.into()),
+                amount,
+            })
+        };
+        let product = |material: MaterialIdentifier, amount: f32| {
+            Some(MaterialReactionProduct { material, amount })
+        };
+        materials.register_reaction(MaterialReaction {
+            reactants: [tag("flammable", 1.0), None],
+            products: [product(smoke, 0.18), None],
+            minimum_temperature: Some(520.0),
+            minimum_air: Some(0.02),
+            maximum_extent_per_tick: 0.035,
+            thermal_energy: 18.0,
+            priority: 10,
+            ..Default::default()
+        });
+        materials.register_reaction(MaterialReaction {
+            reactants: [exact(natural_gas, 1.0), None],
+            products: [product(smoke, 0.35), None],
+            minimum_temperature: Some(430.0),
+            minimum_air: Some(0.02),
+            maximum_extent_per_tick: 0.35,
+            thermal_energy: 95.0,
+            pressure_output: 3.0,
+            priority: 90,
+            ..Default::default()
+        });
+        materials.register_reaction(MaterialReaction {
+            reactants: [exact(blasting_powder, 1.0), None],
+            products: [product(smoke, 0.3), None],
+            minimum_temperature: Some(420.0),
+            maximum_extent_per_tick: 0.8,
+            thermal_energy: 160.0,
+            pressure_output: 80.0,
+            priority: 100,
+            ..Default::default()
+        });
+        materials.register_reaction(MaterialReaction {
+            reactants: [exact(blasting_powder, 1.0), None],
+            products: [product(smoke, 0.3), None],
+            minimum_pressure: Some(12.0),
+            maximum_extent_per_tick: 0.8,
+            thermal_energy: 180.0,
+            pressure_output: 100.0,
+            priority: 101,
+            ..Default::default()
+        });
+        materials.register_reaction(MaterialReaction {
+            reactants: [exact(acid, 0.2), tag("corrodable", 1.0)],
+            products: [None, None],
+            maximum_extent_per_tick: 0.025,
+            thermal_energy: 0.01,
+            priority: 20,
+            ..Default::default()
+        });
+        materials.register_reaction(MaterialReaction {
+            reactants: [exact(acid_gas, 0.2), tag("corrodable", 1.0)],
+            products: [None, None],
+            maximum_extent_per_tick: 0.008,
+            thermal_energy: 0.002,
+            priority: 20,
+            ..Default::default()
+        });
+        materials.register_reaction(MaterialReaction {
+            reactants: [exact(acid, 1.0), exact(water, 1.0)],
+            products: [product(acid_sludge, 1.0), None],
+            maximum_extent_per_tick: 0.12,
+            priority: 30,
+            ..Default::default()
+        });
+        materials.register_reaction(MaterialReaction {
+            reactants: [exact(sand, 1.0), exact(acid_sludge, 1.0)],
+            products: [product(blasting_powder, 1.0), None],
+            minimum_temperature: Some(500.0),
+            maximum_temperature: Some(1500.0),
+            maximum_extent_per_tick: 1.0,
+            priority: 30,
+            ..Default::default()
+        });
+        for (material, name) in [
+            (coal, "flammable"),
+            (oil, "flammable"),
+            (natural_gas, "flammable"),
+            (blasting_powder, "flammable"),
+            (stone, "corrodable"),
+            (stone_debris, "corrodable"),
+            (sand, "corrodable"),
+            (glass, "corrodable"),
+            (broken_glass, "corrodable"),
+            (coal, "corrodable"),
+            (blasting_powder, "corrodable"),
+        ] {
+            materials
+                .tag(material, name)
+                .map_err(std::io::Error::other)?;
+        }
         // All identifiers now exist, so transition metadata can be compiled
         // without relying on registration order.
         materials
@@ -362,6 +541,40 @@ impl DemoGame {
                         target: water,
                         yield_rate: 1.0,
                         latent_energy: 50.0,
+                    }),
+                    hot_transition: None,
+                },
+            )
+            .map_err(std::io::Error::other)?;
+        materials
+            .set_thermal(
+                acid,
+                MaterialThermalProperties {
+                    conductivity: 0.55,
+                    specific_heat_capacity: 3.2,
+                    default_temperature: Some(293.15),
+                    cold_transition: None,
+                    hot_transition: Some(MaterialThermalTransition {
+                        threshold_temperature: 450.0,
+                        target: acid_gas,
+                        yield_rate: 1.0,
+                        latent_energy: 35.0,
+                    }),
+                },
+            )
+            .map_err(std::io::Error::other)?;
+        materials
+            .set_thermal(
+                acid_gas,
+                MaterialThermalProperties {
+                    conductivity: 0.03,
+                    specific_heat_capacity: 1.6,
+                    default_temperature: Some(500.0),
+                    cold_transition: Some(MaterialThermalTransition {
+                        threshold_temperature: 450.0,
+                        target: acid,
+                        yield_rate: 1.0,
+                        latent_energy: 35.0,
                     }),
                     hot_transition: None,
                 },
