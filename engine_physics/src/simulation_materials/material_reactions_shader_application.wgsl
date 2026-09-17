@@ -1,5 +1,5 @@
-fn apply_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
-  let cell = id.x;
+fn apply_canonical(@builtin(global_invocation_id) invocation: vec3<u32>) {
+  let cell = invocation.x;
   if (cell >= parameters.cell_count || cell >= arrayLength(&candidates)) {
     return;
   }
@@ -265,8 +265,8 @@ fn environment_matches(
 // a later candidate is intentionally a separate pass, preventing same-tick
 // reaction cascades from products or field outputs.
 @compute @workgroup_size(64)
-fn discover_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
-  let cell = id.x;
+fn discover_canonical(@builtin(global_invocation_id) invocation: vec3<u32>) {
+  let cell = invocation.x;
   if (cell >= parameters.cell_count || cell >= arrayLength(&candidates)) {
     return;
   }
@@ -446,4 +446,3 @@ fn discover_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
         vec2<u32>(0u));
   }
 }
-

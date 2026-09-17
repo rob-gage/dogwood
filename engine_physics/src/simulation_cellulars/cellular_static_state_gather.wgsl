@@ -8,12 +8,12 @@
 @group(0) @binding(7) var<uniform> count: u32;
 
 @compute @workgroup_size(64)
-fn gather(@builtin(global_invocation_id) id: vec3<u32>) {
-    if (id.x >= count) { return; }
-    let index = descriptors[id.x];
-    output[id.x * 2u] = vec4<u32>(
+fn gather(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    if (invocation.x >= count) { return; }
+    let index = descriptors[invocation.x];
+    output[invocation.x * 2u] = vec4<u32>(
         material_identifiers[index], appearances[index],
         bitcast<u32>(integrities[index]), bitcast<u32>(amounts[index]),
     );
-    output[id.x * 2u + 1u] = vec4<u32>(bitcast<u32>(temperatures[index]), 0u, 0u, 0u);
+    output[invocation.x * 2u + 1u] = vec4<u32>(bitcast<u32>(temperatures[index]), 0u, 0u, 0u);
 }

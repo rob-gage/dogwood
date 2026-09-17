@@ -1,5 +1,5 @@
-fn clear_transaction_state(@builtin(global_invocation_id) id: vec3<u32>) {
-  let index = id.x;
+fn clear_transaction_state(@builtin(global_invocation_id) invocation: vec3<u32>) {
+  let index = invocation.x;
   if (index < arrayLength(&fluid_reservations)) {
     atomicStore(&fluid_reservations[index], 0u);
   }
@@ -30,8 +30,8 @@ fn clear_transaction_state(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 @compute @workgroup_size(64)
-fn compact_candidates(@builtin(global_invocation_id) id: vec3<u32>) {
-  let cell = id.x;
+fn compact_candidates(@builtin(global_invocation_id) invocation: vec3<u32>) {
+  let cell = invocation.x;
   if (cell >= arrayLength(&candidates)) {
     return;
   }
@@ -45,8 +45,8 @@ fn compact_candidates(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 @compute @workgroup_size(1)
-fn prepare_sort_dispatch(@builtin(global_invocation_id) id: vec3<u32>) {
-  if (id.x == 0u) {
+fn prepare_sort_dispatch(@builtin(global_invocation_id) invocation: vec3<u32>) {
+  if (invocation.x == 0u) {
     sort_indirect[0] = (arrayLength(&candidate_indices) + 63u) / 64u;
     sort_indirect[1] = 1u;
     sort_indirect[2] = 1u;
@@ -64,8 +64,8 @@ fn candidate_before(a: u32, b: u32) -> bool {
 }
 
 @compute @workgroup_size(64)
-fn sort_candidates(@builtin(global_invocation_id) id: vec3<u32>) {
-  let index = id.x;
+fn sort_candidates(@builtin(global_invocation_id) invocation: vec3<u32>) {
+  let index = invocation.x;
   let count = arrayLength(&candidate_indices);
   let partner = index ^ sort_parameters.j;
   if (partner <= index || partner >= arrayLength(&candidate_indices)) {
@@ -606,8 +606,8 @@ fn consume_rigid(claim: u32, demand: f32) {
 
 // Deterministic global arbitration walks the compact, Accelerator-sorted candidate list.
 @compute @workgroup_size(1)
-fn reserve_fluid_authority(@builtin(global_invocation_id) id: vec3<u32>) {
-  if (id.x != 0u) {
+fn reserve_fluid_authority(@builtin(global_invocation_id) invocation: vec3<u32>) {
+  if (invocation.x != 0u) {
     return;
   }
   let count =
@@ -667,4 +667,3 @@ fn spawn_fluid_product(
 // product shapes are rejected before any mutation; later form-specific passes
 // add fluid and rigid transactions using the same candidate record.
 @compute @workgroup_size(64)
-
