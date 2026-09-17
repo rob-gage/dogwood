@@ -316,6 +316,144 @@ impl Scene {
     pub(crate) const fn test_fluid_particles_buffer(&self) -> &AcceleratorBuffer {
         self.fluids.particles_buffer()
     }
+
+    #[cfg(test)]
+    pub(crate) fn test_apply_edits_immediate(
+        &mut self,
+        edits: &mut SceneEditBatch,
+    ) -> Result<(), io::Error> {
+        self.apply_edits_immediate(edits)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_shift_to(&mut self, origin: TileCoordinates) -> Result<(), io::Error> {
+        self.shift_to(origin)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_set_origin_target_to_origin(&mut self) {
+        self.origin_target = self.origin;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_has_pending_streaming_downloads(&self) -> bool {
+        !self.gas_downloads.is_empty()
+            || !self.fluid_downloads.is_empty()
+            || !self.outgoing_tile_downloads.is_empty()
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn test_gas_count(&self) -> u32 {
+        self.gases.gas_count()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_export_gases(&self, accelerator: &Accelerator, download: &GasDownload) {
+        let buffered_area: TileArea = self.area_buffered();
+        let dimensions: [u16; 2] = buffered_area.dimensions();
+        self.gases.export(
+            accelerator,
+            download,
+            buffered_area.origin(),
+            dimensions[0],
+            dimensions[1],
+            self.tiles_ring_offset_x,
+            self.tiles_ring_offset_y,
+        );
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_commit_reserved_particle(
+        &self,
+        accelerator: &Accelerator,
+        slot: u32,
+        material: u32,
+        position: [f32; 2],
+        velocity: [f32; 2],
+        amount: f32,
+        temperature: f32,
+    ) {
+        self.fluids.commit_reserved_particle(
+            accelerator,
+            slot,
+            material,
+            position,
+            velocity,
+            amount,
+            temperature,
+        );
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn test_particle_capacity(&self) -> u32 {
+        self.fluids.particle_capacity()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_rigid_cellular_bodies(&self) -> &[RigidCellularBody] {
+        &self.rigid_cellular_bodies
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_apply_completed_static_detachment(&mut self) -> Result<(), io::Error> {
+        self.apply_completed_static_detachment()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_detach_unanchored_static_components(
+        &mut self,
+        snapshot: &mut CollisionOccupancySnapshot,
+    ) -> Result<(), io::Error> {
+        self.detach_unanchored_static_components(snapshot)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_cell_edit_index(&self, coordinates: CellCoordinates) -> Option<usize> {
+        self.cell_edit_index(coordinates)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_physics_world(&mut self) -> &mut ScenePhysicsWorld {
+        &mut self.physics_world
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn test_gravity(&self) -> [f32; 2] {
+        self.gravity
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn test_rigid_cellular_topology_revision(&self) -> u64 {
+        self.rigid_cellular_topology_revision
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_rigid_cellular_body_state(&self) -> Option<RigidCellularBodyState> {
+        self.rigid_cellular_bodies
+            .first()
+            .and_then(|body| self.physics_world.rigid_cellular_body_state(body))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_rasterize_rigid_cellular_bodies(
+        &mut self,
+        accelerator: &Accelerator,
+        state: RigidCellularBodyState,
+    ) {
+        self.cellular_physics_body_proxy.rasterize(
+            accelerator,
+            TileCoordinates { x: -2, y: -2 },
+            5,
+            5,
+            0,
+            0,
+            self.gravity,
+            &[],
+            &self.rigid_cellular_bodies,
+            &[state],
+            self.rigid_cellular_topology_revision,
+        );
+    }
 }
 
 impl Drop for Scene {
@@ -327,801 +465,5 @@ impl Drop for Scene {
         self.rigid_cell_amounts.free();
         self.rigid_cell_temperatures.free();
         self.fluid_sample_buffer.destroy();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-
-    use super::*;
-    use crate::materials::{
-        MaterialReaction, MaterialReactionReactant, MaterialReference, MaterialRegistryBuilder,
-        MaterialThermalProperties, MaterialThermalTransition,
-    };
-    use crate::scenes::tests::scene_test_readback::{
-        read_amount, read_cell_state, read_fluid_state,
-    };
-    use engine_graphics::{Color, MaterialAppearance};
-    use std::{sync::mpsc, time::Instant};
-
-    #[test]
-    fn gas_leaves_and_returns_through_ring_streaming() {
-        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
-        let accelerator: Arc<Accelerator> = Arc::new(Accelerator::new().unwrap());
-        let mut materials: MaterialRegistry = MaterialRegistry::new();
-        let vapor: MaterialIdentifier = materials.register(Material::Gas {
-            name: "Vapor".into(),
-            graphics: MaterialAppearance::from_color(Color::new_rgb(120, 160, 190)),
-            density: 0.65,
-            diffusivity: 0.12,
-            extinction: 0.08,
-            dissipation: 0.0,
-            compressibility: 0.05,
-        });
-        let mut scene: Scene = Scene::new(
-            &accelerator,
-            materials,
-            SceneSimulationConfiguration {
-                gravity: [0.0, -18.0],
-                ambient_temperature: 293.15,
-                empty_space_thermal_conductivity: 0.0,
-                empty_space_heat_capacity: 1.0,
-                maximum_gas_concentration: 4.0,
-                width: 4,
-                height: 4,
-                buffer_size: 2,
-                streaming_batch_size: 1,
-            },
-        )
-        .unwrap();
-        let coordinates: CellCoordinates = CellCoordinates { x: -16, y: 0 };
-        let mut edits: SceneEditBatch = SceneEditBatch::new();
-        edits.place_material(vapor, CellularAppearance::NEUTRAL, vec![coordinates]);
-        scene.apply_edits_immediate(&mut edits).unwrap();
-        scene.shift_to(TileCoordinates { x: 1, y: 0 }).unwrap();
-        scene.origin_target = scene.origin;
-        let started: Instant = Instant::now();
-        while !scene.gas_downloads.is_empty()
-            || !scene.fluid_downloads.is_empty()
-            || !scene.outgoing_tile_downloads.is_empty()
-        {
-            scene.update(Duration::ZERO, false).unwrap();
-            assert!(started.elapsed() < Duration::from_secs(5));
-            std::thread::yield_now();
-        }
-        scene.shift_to(TileCoordinates { x: 0, y: 0 }).unwrap();
-
-        let area: TileArea = TileArea::new(TileCoordinates { x: -2, y: 0 }, 1, 1);
-        let download: GasDownload =
-            GasDownload::new(accelerator.as_ref(), area, 64, scene.gases.gas_count());
-        let buffered_area: TileArea = scene.area_buffered();
-        let dimensions: [u16; 2] = buffered_area.dimensions();
-        scene.gases.export(
-            accelerator.as_ref(),
-            &download,
-            buffered_area.origin(),
-            dimensions[0],
-            dimensions[1],
-            scene.tiles_ring_offset_x,
-            scene.tiles_ring_offset_y,
-        );
-        let byte_count: u64 = 64 * u64::from(5 + scene.gases.gas_count()) * 4;
-        let (sender, receiver) = mpsc::sync_channel(1);
-        download
-            .buffer
-            .slice(0..byte_count)
-            .map_async(wgpu::MapMode::Read, move |result| {
-                sender.send(result).unwrap();
-            });
-        let started: Instant = Instant::now();
-        loop {
-            accelerator.poll().unwrap();
-            if let Ok(result) = receiver.try_recv() {
-                result.unwrap();
-                break;
-            }
-            assert!(started.elapsed() < Duration::from_secs(5));
-            std::thread::yield_now();
-        }
-        let mapped = download
-            .buffer
-            .slice(0..byte_count)
-            .get_mapped_range()
-            .unwrap();
-        let bytes: Vec<u8> = mapped.to_vec();
-        drop(mapped);
-        download.buffer.unmap();
-        let restored: Vec<ChunkGasCell> = GasDownload::deserialize(&bytes, area, &[vapor]).unwrap();
-        assert!(
-            restored
-                .iter()
-                .any(|cell| cell.coordinates == coordinates && cell.species == vec![(vapor, 1.0)])
-        );
-    }
-
-    #[test]
-    fn cellular_indirect_dispatch_executes() {
-        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
-        let accelerator: Arc<Accelerator> = Arc::new(Accelerator::new().unwrap());
-        let mut materials: MaterialRegistry = MaterialRegistry::new();
-        let sand: MaterialIdentifier = materials.register(Material::CellularDynamic {
-            name: "Sand".into(),
-            graphics: MaterialAppearance::from_color(Color::new_rgb(194, 178, 128)),
-            mass: 1.0,
-            pressure_transmission: 0.35,
-            friction: 0.65,
-            restitution: 0.05,
-        });
-        let mut scene: Scene = Scene::new(
-            &accelerator,
-            materials,
-            SceneSimulationConfiguration {
-                gravity: [0.0, -18.0],
-                ambient_temperature: 293.15,
-                empty_space_thermal_conductivity: 0.0,
-                empty_space_heat_capacity: 1.0,
-                maximum_gas_concentration: 4.0,
-                width: 4,
-                height: 4,
-                buffer_size: 2,
-                streaming_batch_size: 1,
-            },
-        )
-        .unwrap();
-        let mut edits: SceneEditBatch = SceneEditBatch::new();
-        edits.place_material(
-            sand,
-            CellularAppearance::NEUTRAL,
-            vec![CellCoordinates { x: 0, y: 8 }],
-        );
-        scene.apply_edits_immediate(&mut edits).unwrap();
-        scene.update(Duration::from_secs(1) / 60, true).unwrap();
-        accelerator.poll().unwrap();
-    }
-
-    #[test]
-    fn acid_fluid_erodes_same_cell_and_cardinal_stone_across_ticks() {
-        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
-        let accelerator = Arc::new(Accelerator::new().unwrap());
-        let mut materials = MaterialRegistryBuilder::new();
-        let stone = materials.register(Material::CellularDynamic {
-            name: "Stone".into(),
-            graphics: MaterialAppearance::from_color(Color::new_rgb(100, 100, 100)),
-            mass: 1.0,
-            pressure_transmission: 1.0,
-            friction: 0.5,
-            restitution: 0.0,
-        });
-        let acid = materials.register(Material::Fluid {
-            name: "Acid".into(),
-            graphics: MaterialAppearance::from_color(Color::new_rgb(80, 220, 70)),
-            pressure_transmission: 1.0,
-            friction: 0.0,
-            restitution: 0.0,
-            rest_density: 1.0,
-            artificial_pressure: 0.0,
-            xsph_smoothing: 0.0,
-            body_push_speed: 0.0,
-            density: 1.0,
-            viscosity: 1.0,
-        });
-        materials.tag(stone, "corrodable").unwrap();
-        materials.register_reaction(MaterialReaction {
-            reactants: [
-                Some(MaterialReactionReactant {
-                    selector: MaterialReference::Material(acid),
-                    amount: 0.2,
-                }),
-                Some(MaterialReactionReactant {
-                    selector: MaterialReference::Tag("corrodable".into()),
-                    amount: 1.0,
-                }),
-            ],
-            maximum_extent_per_tick: 0.15,
-            thermal_energy: 0.01,
-            ..Default::default()
-        });
-        let compiled_materials = materials.compile().unwrap();
-        assert_eq!(compiled_materials.reactions().len(), 1);
-        assert_eq!(compiled_materials.reaction_selector_members()[1], stone);
-        let mut scene = Scene::new(
-            &accelerator,
-            compiled_materials,
-            SceneSimulationConfiguration {
-                gravity: [0.0, 0.0],
-                ambient_temperature: 293.15,
-                empty_space_thermal_conductivity: 0.0,
-                empty_space_heat_capacity: 1.0,
-                maximum_gas_concentration: 4.0,
-                width: 4,
-                height: 4,
-                buffer_size: 2,
-                streaming_batch_size: 1,
-            },
-        )
-        .unwrap();
-        let acid_cell = CellCoordinates { x: 0, y: 8 };
-        let cardinal_stone_cell = CellCoordinates { x: 1, y: 8 };
-        let same_cell = CellCoordinates { x: 2, y: 8 };
-        scene.update(Duration::ZERO, false).unwrap();
-        let mut edits = SceneEditBatch::new();
-        edits.place_material(acid, CellularAppearance::NEUTRAL, vec![acid_cell]);
-        edits.place_material(
-            stone,
-            CellularAppearance::NEUTRAL,
-            vec![cardinal_stone_cell, same_cell],
-        );
-        scene.queue_edits(edits);
-        scene.update(Duration::ZERO, false).unwrap();
-        scene.update(Duration::ZERO, false).unwrap();
-        accelerator.poll().unwrap();
-        let cardinal_index = scene.cell_edit_index(cardinal_stone_cell).unwrap();
-        let same_index = scene.cell_edit_index(same_cell).unwrap();
-        eprintln!(
-            "initial: cardinal={:?} same={:?}",
-            read_cell_state(accelerator.as_ref(), &scene, cardinal_index),
-            read_cell_state(accelerator.as_ref(), &scene, same_index)
-        );
-        let mut previous = 1.0;
-        let mut sequence = Vec::new();
-        for tick in 1..=7 {
-            scene.update(Duration::from_secs(1) / 60, true).unwrap();
-            let (_, cardinal_amount) =
-                read_cell_state(accelerator.as_ref(), &scene, cardinal_index);
-            assert!(cardinal_amount <= previous + 0.00001);
-            assert!((cardinal_amount - (1.0 - tick as f32 * 0.15).max(0.0)).abs() < 0.0001);
-            sequence.push(cardinal_amount);
-            previous = cardinal_amount;
-        }
-        eprintln!("multi-tick Acid erosion: {sequence:?}");
-
-        scene.fluids.commit_reserved_particle(
-            accelerator.as_ref(),
-            scene.fluids.particle_capacity() - 1,
-            acid.as_u32(),
-            [same_cell.x as f32 + 0.5, same_cell.y as f32 + 0.5].map(|coordinate| coordinate / 8.0),
-            [0.0, 0.0],
-            0.8,
-            293.15,
-        );
-        accelerator.wgpu_queue().write_buffer(
-            scene
-                .test_cellular_material_identifiers_buffer()
-                .wgpu_buffer(),
-            same_index as u64 * 4,
-            &stone.as_u32().to_le_bytes(),
-        );
-        accelerator.wgpu_queue().write_buffer(
-            scene.test_cellular_amounts_buffer().wgpu_buffer(),
-            same_index as u64 * 4,
-            &1.0f32.to_le_bytes(),
-        );
-        accelerator.poll().unwrap();
-        let mut same_sequence = Vec::new();
-        for tick in 1..=7 {
-            scene.update(Duration::from_secs(1) / 60, true).unwrap();
-            let (same_material, same_amount) =
-                read_cell_state(accelerator.as_ref(), &scene, same_index);
-            let (acid_material, acid_active, acid_amount) = read_fluid_state(
-                accelerator.as_ref(),
-                &scene,
-                scene.fluids.particle_capacity() - 1,
-            );
-            assert_eq!(acid_material, acid.as_u32());
-            assert_eq!(acid_active, 1);
-            assert!(acid_amount > 0.000001);
-            assert!((same_amount - (1.0 - tick as f32 * 0.15).max(0.0)).abs() < 0.0001);
-            if tick < 7 {
-                assert_eq!(same_material, stone.as_u32());
-            } else {
-                assert_eq!(same_material, MaterialIdentifier::NULL.as_u32());
-            }
-            same_sequence.push(same_amount);
-        }
-        eprintln!("same-cell Acid erosion: {same_sequence:?}");
-    }
-
-    #[test]
-    fn acid_fluid_erodes_rigid_stone_and_removes_topology() {
-        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
-        let accelerator = Arc::new(Accelerator::new().unwrap());
-        let mut materials = MaterialRegistryBuilder::new();
-        let stone = materials.register(Material::CellularStatic {
-            name: "Stone".into(),
-            graphics: MaterialAppearance::from_color(Color::new_rgb(100, 100, 100)),
-            mass: 1.0,
-            pressure_ignore_threshold: 1.0,
-            default_integrity: 1.0,
-            minimum_rigid_body_cell_count: 1,
-            debris_material: None,
-            debris_yield_rate: 0.0,
-            pressure_transmission: 1.0,
-            friction: 0.5,
-            restitution: 0.0,
-        });
-        let acid = materials.register(Material::Fluid {
-            name: "Acid".into(),
-            graphics: MaterialAppearance::from_color(Color::new_rgb(80, 220, 70)),
-            pressure_transmission: 1.0,
-            friction: 0.0,
-            restitution: 0.0,
-            rest_density: 1.0,
-            artificial_pressure: 0.0,
-            xsph_smoothing: 0.0,
-            body_push_speed: 0.0,
-            density: 1.0,
-            viscosity: 1.0,
-        });
-        materials.tag(stone, "corrodable").unwrap();
-        materials.register_reaction(MaterialReaction {
-            reactants: [
-                Some(MaterialReactionReactant {
-                    selector: MaterialReference::Material(acid),
-                    amount: 0.2,
-                }),
-                Some(MaterialReactionReactant {
-                    selector: MaterialReference::Tag("corrodable".into()),
-                    amount: 1.0,
-                }),
-            ],
-            maximum_extent_per_tick: 0.15,
-            thermal_energy: 0.01,
-            ..Default::default()
-        });
-        let mut scene = Scene::new(
-            &accelerator,
-            materials.compile().unwrap(),
-            SceneSimulationConfiguration {
-                gravity: [0.0, 0.0],
-                ambient_temperature: 293.15,
-                empty_space_thermal_conductivity: 0.0,
-                empty_space_heat_capacity: 1.0,
-                maximum_gas_concentration: 4.0,
-                width: 4,
-                height: 4,
-                buffer_size: 2,
-                streaming_batch_size: 1,
-            },
-        )
-        .unwrap();
-        scene.update(Duration::ZERO, false).unwrap();
-        let acid_cell = CellCoordinates { x: 0, y: 8 };
-        let stone_cell = CellCoordinates { x: 1, y: 8 };
-        let mut edits = SceneEditBatch::new();
-        edits.place_material(acid, CellularAppearance::NEUTRAL, vec![acid_cell]);
-        edits.place_rigid_body(vec![SceneEditCellPlacement {
-            coordinates: stone_cell,
-            material_identifier: stone,
-            appearance: CellularAppearance::NEUTRAL,
-        }]);
-        scene.queue_edits(edits);
-        scene.update(Duration::ZERO, false).unwrap();
-        scene.update(Duration::ZERO, false).unwrap();
-        assert_eq!(scene.rigid_cellular_bodies.len(), 1);
-        let state_slot = scene.rigid_cellular_bodies[0].cells[0].state_slot;
-        let mut sequence = Vec::new();
-        for _ in 1..=7 {
-            scene.update(Duration::from_secs(1) / 60, true).unwrap();
-            sequence.push(read_amount(
-                accelerator.as_ref(),
-                scene.rigid_cell_amounts_buffer(),
-                state_slot,
-            ));
-        }
-        assert!(sequence.windows(2).all(|pair| pair[1] <= pair[0] + 0.00001));
-        for (tick, amount) in sequence.iter().enumerate() {
-            assert!((*amount - (1.0 - (tick + 1) as f32 * 0.15).max(0.0)).abs() < 0.0001);
-        }
-        for _ in 0..3 {
-            scene.update(Duration::ZERO, false).unwrap();
-        }
-        assert!(scene.rigid_cellular_bodies.is_empty());
-        eprintln!("rigid Acid erosion: {sequence:?}");
-    }
-
-    #[test]
-    fn full_screen_moving_sand_headless_tps() {
-        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
-        let accelerator: Arc<Accelerator> = Arc::new(Accelerator::new().unwrap());
-        let mut materials = MaterialRegistry::new();
-        let sand = materials.register(Material::CellularDynamic {
-            name: "Sand".into(),
-            graphics: MaterialAppearance::from_color(Color::new_rgb(194, 178, 128)),
-            mass: 1.0,
-            pressure_transmission: 0.35,
-            friction: 0.65,
-            restitution: 0.05,
-        });
-        let data_path = std::env::temp_dir().join(format!(
-            "dogwood-sand-stress-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir(&data_path).unwrap();
-        materials
-            .serialize(&mut std::fs::File::create(data_path.join("materials")).unwrap())
-            .unwrap();
-        let data = SceneData::load(data_path.clone()).unwrap();
-        let mut scene = Scene::load(
-            &accelerator,
-            SceneSimulationConfiguration {
-                gravity: [0.0, -18.0],
-                ambient_temperature: 293.15,
-                empty_space_thermal_conductivity: 0.0,
-                empty_space_heat_capacity: 1.0,
-                maximum_gas_concentration: 4.0,
-                width: 8,
-                height: 8,
-                buffer_size: 2,
-                streaming_batch_size: 1,
-            },
-            data,
-        )
-        .unwrap();
-        let mut edits = SceneEditBatch::new();
-        edits.place_material(
-            sand,
-            CellularAppearance::NEUTRAL,
-            (8..64)
-                .step_by(2)
-                .flat_map(|y| (0..64).map(move |x| CellCoordinates { x, y }))
-                .collect(),
-        );
-        scene.apply_edits_immediate(&mut edits).unwrap();
-        let tick = Duration::from_secs(1) / 60;
-        for _ in 0..5 {
-            scene.update(tick, true).unwrap();
-        }
-        let start = Instant::now();
-        let mut older_snapshots = 0;
-        let mut maximum_snapshot_age = 0;
-        for _ in 0..30 {
-            scene.update(tick, true).unwrap();
-            let age = scene
-                .physics_world
-                .terrain_bridge_statistics()
-                .collision_snapshot_age;
-            maximum_snapshot_age = maximum_snapshot_age.max(age);
-            older_snapshots += u32::from(age > 1);
-        }
-        let elapsed = start.elapsed();
-        let stats = scene.physics_world.terrain_bridge_statistics();
-        assert_eq!(stats.dynamic_shape_rebuilds, 0);
-        assert_eq!(stats.dynamic_cells_scanned, 0);
-        eprintln!(
-            "moving sand headless TPS: {:.1}, snapshot age max {}, ticks >1 {}",
-            30.0 / elapsed.as_secs_f64(),
-            maximum_snapshot_age,
-            older_snapshots
-        );
-        drop(scene);
-        std::fs::remove_dir_all(data_path).unwrap();
-    }
-
-    #[test]
-    fn disconnected_static_component_becomes_one_falling_rigid_body() {
-        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
-        let accelerator: Arc<Accelerator> = Arc::new(Accelerator::new().unwrap());
-        let mut materials: MaterialRegistry = MaterialRegistry::new();
-        let stone: MaterialIdentifier = materials.register(Material::CellularStatic {
-            name: "Stone".into(),
-            graphics: MaterialAppearance::from_color(Color::new_rgb(110, 105, 100)),
-            mass: 1.0,
-            pressure_ignore_threshold: 1.0,
-            default_integrity: 1.0,
-            minimum_rigid_body_cell_count: 4,
-            debris_material: None,
-            debris_yield_rate: 0.0,
-            pressure_transmission: 0.5,
-            friction: 0.7,
-            restitution: 0.05,
-        });
-        let mut scene: Scene = Scene::new(
-            &accelerator,
-            materials,
-            SceneSimulationConfiguration {
-                gravity: [0.0, -8.0],
-                ambient_temperature: 293.15,
-                empty_space_thermal_conductivity: 0.0,
-                empty_space_heat_capacity: 1.0,
-                maximum_gas_concentration: 4.0,
-                width: 1,
-                height: 1,
-                buffer_size: 2,
-                streaming_batch_size: 1,
-            },
-        )
-        .unwrap();
-        let cells: Vec<CellCoordinates> = (2..=5)
-            .flat_map(|x| (3..=4).map(move |y| CellCoordinates { x, y }))
-            .chain((0..=2).map(|y| CellCoordinates { x: 3, y }))
-            .collect();
-        let mut edits = SceneEditBatch::new();
-        edits.place_material(stone, CellularAppearance::NEUTRAL, cells.clone());
-        scene.apply_edits_immediate(&mut edits).unwrap();
-        let mut static_masks = vec![[0u32; 2]; 25];
-        for cell in &cells {
-            let tile_x = cell.x.div_euclid(8) + 2;
-            let tile_y = cell.y.div_euclid(8) + 2;
-            let tile = (tile_y * 5 + tile_x) as usize;
-            let local = (cell.y.rem_euclid(8) * 8 + cell.x.rem_euclid(8)) as usize;
-            static_masks[tile][local / 32] |= 1 << (local % 32);
-        }
-        let baseline = CollisionOccupancySnapshot {
-            sequence: 0,
-            origin: TileCoordinates { x: -2, y: -2 },
-            width: 5,
-            height: 5,
-            static_masks: static_masks.into_boxed_slice(),
-            dynamic_masks: vec![[0, 0]; 25].into_boxed_slice(),
-        };
-        scene
-            .detach_unanchored_static_components(&mut baseline.clone())
-            .unwrap();
-        assert!(scene.rigid_cellular_bodies.is_empty());
-        let mut separated = baseline.clone();
-        separated.sequence = 1;
-        separated.clear_static_cell(3, 2);
-        scene
-            .detach_unanchored_static_components(&mut separated)
-            .unwrap();
-        for _ in 0..20 {
-            accelerator.poll().unwrap();
-            scene.apply_completed_static_detachment().unwrap();
-            if scene.rigid_cellular_bodies.len() == 1 {
-                break;
-            }
-            std::thread::yield_now();
-        }
-        assert!(scene.rigid_cellular_bodies.len() == 1);
-        assert!(scene.rigid_cellular_bodies[0].cells.len() == 8);
-        let initial_y = scene
-            .physics_world
-            .rigid_cellular_body_state(&scene.rigid_cellular_bodies[0])
-            .unwrap()
-            .translation[1];
-        scene.physics_world.update_cellular_snapshot(separated);
-        for _ in 0..8 {
-            scene
-                .physics_world
-                .step(scene.gravity, 1.0 / TICK_RATE as f32);
-        }
-        let state = scene
-            .physics_world
-            .rigid_cellular_body_state(&scene.rigid_cellular_bodies[0])
-            .unwrap();
-        assert!(state.translation[1] < initial_y);
-        scene.cellular_physics_body_proxy.rasterize(
-            accelerator.as_ref(),
-            TileCoordinates { x: -2, y: -2 },
-            5,
-            5,
-            0,
-            0,
-            scene.gravity,
-            &[],
-            &scene.rigid_cellular_bodies,
-            &[state],
-            scene.rigid_cellular_topology_revision,
-        );
-        accelerator.poll().unwrap();
-    }
-
-    #[test]
-    fn accelerator_phase_static_cells_resolve_to_debris_or_rigid_body() {
-        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
-        let accelerator = Arc::new(Accelerator::new().unwrap());
-        let mut builder = MaterialRegistryBuilder::new();
-        let debris = builder.register(Material::CellularDynamic {
-            name: "Debris".into(),
-            graphics: MaterialAppearance::from_color(Color::new_rgb(150, 120, 90)),
-            mass: 1.0,
-            pressure_transmission: 1.0,
-            friction: 0.5,
-            restitution: 0.0,
-        });
-        let stone = builder.register(Material::CellularStatic {
-            name: "Frozen Stone".into(),
-            graphics: MaterialAppearance::from_color(Color::new_rgb(110, 105, 100)),
-            mass: 1.0,
-            pressure_ignore_threshold: 1.0,
-            default_integrity: 1.0,
-            minimum_rigid_body_cell_count: 3,
-            debris_material: Some(debris),
-            debris_yield_rate: 1.0,
-            pressure_transmission: 0.5,
-            friction: 0.7,
-            restitution: 0.05,
-        });
-        let fluid = builder.register(Material::Fluid {
-            name: "Freezing Fluid".into(),
-            graphics: MaterialAppearance::from_color(Color::new_rgb(90, 180, 230)),
-            pressure_transmission: 1.0,
-            friction: 0.0,
-            restitution: 0.0,
-            rest_density: 1.0,
-            artificial_pressure: 0.0,
-            xsph_smoothing: 0.0,
-            body_push_speed: 0.0,
-            density: 1.0,
-            viscosity: 1.0,
-        });
-        builder
-            .set_thermal(
-                debris,
-                MaterialThermalProperties {
-                    conductivity: 0.1,
-                    specific_heat_capacity: 1.0,
-                    default_temperature: Some(293.15),
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-        builder
-            .set_thermal(
-                stone,
-                MaterialThermalProperties {
-                    conductivity: 0.1,
-                    specific_heat_capacity: 1.0,
-                    default_temperature: Some(293.15),
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-        builder
-            .set_thermal(
-                fluid,
-                MaterialThermalProperties {
-                    conductivity: 0.1,
-                    specific_heat_capacity: 1.0,
-                    default_temperature: Some(400.0),
-                    hot_transition: Some(MaterialThermalTransition {
-                        threshold_temperature: 300.0,
-                        target: stone,
-                        yield_rate: 1.0,
-                        latent_energy: 0.0,
-                    }),
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-        let mut scene = Scene::new(
-            &accelerator,
-            builder.compile().unwrap(),
-            SceneSimulationConfiguration {
-                gravity: [0.0, 0.0],
-                ambient_temperature: 293.15,
-                empty_space_thermal_conductivity: 0.0,
-                empty_space_heat_capacity: 1.0,
-                maximum_gas_concentration: 4.0,
-                width: 4,
-                height: 4,
-                buffer_size: 2,
-                streaming_batch_size: 1,
-            },
-        )
-        .unwrap();
-        scene.update(Duration::from_secs(1) / 60, true).unwrap();
-        let isolated = CellCoordinates { x: 8, y: 8 };
-        let rigid_cells = [
-            CellCoordinates { x: 16, y: 8 },
-            CellCoordinates { x: 17, y: 8 },
-            CellCoordinates { x: 16, y: 9 },
-        ];
-        let mut edits = SceneEditBatch::new();
-        edits.place_material(
-            fluid,
-            CellularAppearance::NEUTRAL,
-            std::iter::once(isolated)
-                .chain(rigid_cells.iter().copied())
-                .collect(),
-        );
-        scene.queue_edits(edits);
-        scene.update(Duration::ZERO, false).unwrap();
-        scene.update(Duration::ZERO, false).unwrap();
-        for _ in 0..40 {
-            scene.update(Duration::from_secs(1) / 60, true).unwrap();
-            scene.update(Duration::ZERO, false).unwrap();
-            if scene.rigid_cellular_bodies.len() == 1
-                && read_cell_state(
-                    accelerator.as_ref(),
-                    &scene,
-                    scene.cell_edit_index(isolated).unwrap(),
-                )
-                .0 == debris.as_u32()
-            {
-                break;
-            }
-        }
-        let isolated_state = read_cell_state(
-            accelerator.as_ref(),
-            &scene,
-            scene.cell_edit_index(isolated).unwrap(),
-        );
-        assert_eq!(isolated_state.0, debris.as_u32());
-        assert_eq!(scene.rigid_cellular_bodies.len(), 1);
-        assert_eq!(scene.rigid_cellular_bodies[0].cells.len(), 3);
-        assert!(scene.rigid_cellular_bodies[0].cells.iter().all(
-            |cell| cell.material == stone && cell.appearance.0 == CellularAppearance::NEUTRAL.0
-        ));
-    }
-
-    #[test]
-    fn queued_authored_rigid_body_is_atomic_and_body_local() {
-        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
-        let accelerator = Arc::new(Accelerator::new().unwrap());
-        let mut materials = MaterialRegistry::new();
-        let stone = materials.register(Material::CellularStatic {
-            name: "Stone".into(),
-            graphics: MaterialAppearance::from_color(Color::new_rgb(1, 1, 1)),
-            mass: 2.0,
-            pressure_ignore_threshold: 1.0,
-            default_integrity: 1.0,
-            minimum_rigid_body_cell_count: 1,
-            debris_material: None,
-            debris_yield_rate: 0.0,
-            pressure_transmission: 1.0,
-            friction: 0.7,
-            restitution: 0.05,
-        });
-        let sand = materials.register(Material::CellularDynamic {
-            name: "Sand".into(),
-            graphics: MaterialAppearance::from_color(Color::new_rgb(1, 1, 1)),
-            mass: 1.0,
-            pressure_transmission: 1.0,
-            friction: 0.5,
-            restitution: 0.0,
-        });
-        let mut scene = Scene::new(
-            &accelerator,
-            materials,
-            SceneSimulationConfiguration {
-                gravity: [0.0, -8.0],
-                ambient_temperature: 293.15,
-                empty_space_thermal_conductivity: 0.0,
-                empty_space_heat_capacity: 1.0,
-                maximum_gas_concentration: 4.0,
-                width: 4,
-                height: 4,
-                buffer_size: 2,
-                streaming_batch_size: 1,
-            },
-        )
-        .unwrap();
-        let mut edits = SceneEditBatch::new();
-        edits.place_rigid_body(vec![
-            SceneEditCellPlacement {
-                coordinates: CellCoordinates { x: 10, y: 20 },
-                material_identifier: stone,
-                appearance: CellularAppearance(3),
-            },
-            SceneEditCellPlacement {
-                coordinates: CellCoordinates { x: 11, y: 20 },
-                material_identifier: stone,
-                appearance: CellularAppearance(4),
-            },
-            SceneEditCellPlacement {
-                coordinates: CellCoordinates { x: 10, y: 20 },
-                material_identifier: stone,
-                appearance: CellularAppearance(5),
-            },
-        ]);
-        edits.place_rigid_body(vec![SceneEditCellPlacement {
-            coordinates: CellCoordinates { x: 12, y: 20 },
-            material_identifier: sand,
-            appearance: CellularAppearance::NEUTRAL,
-        }]);
-        scene.queue_edits(edits);
-        scene.update(Duration::ZERO, false).unwrap();
-        assert_eq!(scene.rigid_cellular_bodies.len(), 1);
-        let body = &scene.rigid_cellular_bodies[0];
-        assert_eq!(body.cells.len(), 2);
-        assert_eq!(body.cells[0].local, [0, 0]);
-        assert_eq!(body.cells[1].local, [1, 0]);
-        assert_eq!(body.cells[0].appearance.0, 5);
-        assert_eq!(scene.rigid_cellular_topology_revision, 1);
     }
 }
