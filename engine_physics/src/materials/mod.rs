@@ -15,6 +15,7 @@ mod material_registry;
 mod material_registry_builder;
 mod material_registry_deserialization;
 mod material_registry_serialization;
+mod material_registry_validation;
 mod material_selector;
 mod material_table;
 mod material_thermal_properties;
