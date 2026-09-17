@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+pub(crate) mod scene_test_readback;
+
 use super::{GasDownload, GasUpload};
 use crate::chunks::ChunkGasCell;
 use crate::materials::{MaterialForm, MaterialIdentifier, MaterialRegistry};
