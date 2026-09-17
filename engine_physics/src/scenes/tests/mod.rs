@@ -1,5 +1,6 @@
 // Copyright Rob Gage 2026
 
+mod scene_test_configuration;
 pub(crate) mod scene_test_readback;
 
 use super::{GasDownload, GasUpload};
@@ -38,10 +39,11 @@ use crate::materials::{
 };
 use crate::scenes::tests::scene_test_readback::{read_amount, read_cell_state, read_fluid_state};
 use crate::scenes::{Scene, SceneData, SceneEditBatch, SceneEditCellPlacement};
-use crate::simulation::{CollisionOccupancySnapshot, SceneSimulationConfiguration};
+use crate::simulation::CollisionOccupancySnapshot;
 use crate::tiles::CellularAppearance;
 use engine_compute::Accelerator;
 use engine_graphics::{Color, MaterialAppearance};
+use scene_test_configuration::scene_test_configuration;
 use std::{
     sync::{Arc, mpsc},
     time::{Duration, Instant},
@@ -64,17 +66,7 @@ fn test_gas_leaves_and_returns_through_ring_streaming() {
     let mut scene: Scene = Scene::new(
         &accelerator,
         materials,
-        SceneSimulationConfiguration {
-            gravity: [0.0, -18.0],
-            ambient_temperature: 293.15,
-            empty_space_thermal_conductivity: 0.0,
-            empty_space_heat_capacity: 1.0,
-            maximum_gas_concentration: 4.0,
-            width: 4,
-            height: 4,
-            buffer_size: 2,
-            streaming_batch_size: 1,
-        },
+        scene_test_configuration([0.0, -18.0], 4, 4),
     )
     .unwrap();
     let coordinates: CellCoordinates = CellCoordinates { x: -16, y: 0 };
@@ -145,17 +137,7 @@ fn test_cellular_indirect_dispatch_executes() {
     let mut scene: Scene = Scene::new(
         &accelerator,
         materials,
-        SceneSimulationConfiguration {
-            gravity: [0.0, -18.0],
-            ambient_temperature: 293.15,
-            empty_space_thermal_conductivity: 0.0,
-            empty_space_heat_capacity: 1.0,
-            maximum_gas_concentration: 4.0,
-            width: 4,
-            height: 4,
-            buffer_size: 2,
-            streaming_batch_size: 1,
-        },
+        scene_test_configuration([0.0, -18.0], 4, 4),
     )
     .unwrap();
     let mut edits: SceneEditBatch = SceneEditBatch::new();
@@ -217,17 +199,7 @@ fn test_acid_fluid_erodes_same_cell_and_cardinal_stone_across_ticks() {
     let mut scene = Scene::new(
         &accelerator,
         compiled_materials,
-        SceneSimulationConfiguration {
-            gravity: [0.0, 0.0],
-            ambient_temperature: 293.15,
-            empty_space_thermal_conductivity: 0.0,
-            empty_space_heat_capacity: 1.0,
-            maximum_gas_concentration: 4.0,
-            width: 4,
-            height: 4,
-            buffer_size: 2,
-            streaming_batch_size: 1,
-        },
+        scene_test_configuration([0.0, 0.0], 4, 4),
     )
     .unwrap();
     let acid_cell = CellCoordinates { x: 0, y: 8 };
@@ -360,17 +332,7 @@ fn test_acid_fluid_erodes_rigid_stone_and_removes_topology() {
     let mut scene = Scene::new(
         &accelerator,
         materials.compile().unwrap(),
-        SceneSimulationConfiguration {
-            gravity: [0.0, 0.0],
-            ambient_temperature: 293.15,
-            empty_space_thermal_conductivity: 0.0,
-            empty_space_heat_capacity: 1.0,
-            maximum_gas_concentration: 4.0,
-            width: 4,
-            height: 4,
-            buffer_size: 2,
-            streaming_batch_size: 1,
-        },
+        scene_test_configuration([0.0, 0.0], 4, 4),
     )
     .unwrap();
     scene.update(Duration::ZERO, false).unwrap();
@@ -436,17 +398,7 @@ fn test_full_screen_moving_sand_headless_tps() {
     let data = SceneData::load(data_path.clone()).unwrap();
     let mut scene = Scene::load(
         &accelerator,
-        SceneSimulationConfiguration {
-            gravity: [0.0, -18.0],
-            ambient_temperature: 293.15,
-            empty_space_thermal_conductivity: 0.0,
-            empty_space_heat_capacity: 1.0,
-            maximum_gas_concentration: 4.0,
-            width: 8,
-            height: 8,
-            buffer_size: 2,
-            streaming_batch_size: 1,
-        },
+        scene_test_configuration([0.0, -18.0], 8, 8),
         data,
     )
     .unwrap();
@@ -511,17 +463,7 @@ fn test_disconnected_static_component_becomes_one_falling_rigid_body() {
     let mut scene: Scene = Scene::new(
         &accelerator,
         materials,
-        SceneSimulationConfiguration {
-            gravity: [0.0, -8.0],
-            ambient_temperature: 293.15,
-            empty_space_thermal_conductivity: 0.0,
-            empty_space_heat_capacity: 1.0,
-            maximum_gas_concentration: 4.0,
-            width: 1,
-            height: 1,
-            buffer_size: 2,
-            streaming_batch_size: 1,
-        },
+        scene_test_configuration([0.0, -8.0], 1, 1),
     )
     .unwrap();
     let cells: Vec<CellCoordinates> = (2..=5)
@@ -662,17 +604,7 @@ fn test_accelerator_phase_static_cells_resolve_to_debris_or_rigid_body() {
     let mut scene = Scene::new(
         &accelerator,
         builder.compile().unwrap(),
-        SceneSimulationConfiguration {
-            gravity: [0.0, 0.0],
-            ambient_temperature: 293.15,
-            empty_space_thermal_conductivity: 0.0,
-            empty_space_heat_capacity: 1.0,
-            maximum_gas_concentration: 4.0,
-            width: 4,
-            height: 4,
-            buffer_size: 2,
-            streaming_batch_size: 1,
-        },
+        scene_test_configuration([0.0, 0.0], 4, 4),
     )
     .unwrap();
     scene.update(Duration::from_secs(1) / 60, true).unwrap();
@@ -751,17 +683,7 @@ fn test_queued_authored_rigid_body_is_atomic_and_body_local() {
     let mut scene = Scene::new(
         &accelerator,
         materials,
-        SceneSimulationConfiguration {
-            gravity: [0.0, -8.0],
-            ambient_temperature: 293.15,
-            empty_space_thermal_conductivity: 0.0,
-            empty_space_heat_capacity: 1.0,
-            maximum_gas_concentration: 4.0,
-            width: 4,
-            height: 4,
-            buffer_size: 2,
-            streaming_batch_size: 1,
-        },
+        scene_test_configuration([0.0, -8.0], 4, 4),
     )
     .unwrap();
     let mut edits = SceneEditBatch::new();
