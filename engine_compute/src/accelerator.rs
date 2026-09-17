@@ -184,7 +184,7 @@ mod tests {
     }
 
     #[test]
-    fn accelerator_timing_readback_completes_with_nonblocking_polls() {
+    fn test_accelerator_timing_readback_completes_with_nonblocking_polls() {
         let _tracing_guard = initialize_test_tracing();
         let accelerator: Accelerator = Accelerator::new().unwrap();
         if !accelerator.accelerator_timing.is_available() {

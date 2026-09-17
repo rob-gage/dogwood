@@ -159,7 +159,7 @@ mod tests {
     }
 
     #[test]
-    fn demo_material_graph_and_rigid_thresholds_are_declarative() {
+    fn test_demo_material_graph_and_rigid_thresholds_are_declarative() {
         let accelerator = Arc::new(Accelerator::new().unwrap());
         let game = TemplateProject::new(&accelerator).unwrap();
         let scene = game.scene.as_ref().unwrap();

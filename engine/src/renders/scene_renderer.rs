@@ -438,7 +438,7 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn scene_shader_builds_without_a_window_surface() {
+    fn test_scene_shader_builds_without_a_window_surface() {
         let accelerator: Arc<Accelerator> = Arc::new(Accelerator::new().unwrap());
         let mut materials: MaterialRegistry = MaterialRegistry::new();
         materials.register(Material::Gas {
