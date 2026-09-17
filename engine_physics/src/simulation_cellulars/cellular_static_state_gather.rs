@@ -50,16 +50,7 @@ impl CellularStaticStateGather {
                 storage(4, true),
                 storage(5, true),
                 storage(6, false),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 7,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
+                crate::simulation::uniform_bind_group_layout_entry(7),
             ],
         });
         let bind_group_entries = [

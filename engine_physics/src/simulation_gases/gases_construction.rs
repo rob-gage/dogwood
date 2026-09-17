@@ -75,16 +75,7 @@ impl Gases {
                     storage(11, true),
                     storage(12, false),
                     storage(14, false),
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 13,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
+                    crate::simulation::uniform_bind_group_layout_entry(13),
                 ],
             });
         let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {

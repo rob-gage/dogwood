@@ -86,16 +86,7 @@ impl CellularDynamic {
                     Self::cellular_dynamic_storage_layout_entry(4, false),
                     Self::cellular_dynamic_storage_layout_entry(5, false),
                     Self::cellular_dynamic_storage_layout_entry(6, false),
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 7,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
+                    crate::simulation::uniform_bind_group_layout_entry(7),
                     Self::cellular_dynamic_storage_layout_entry(8, true),
                     Self::cellular_dynamic_storage_layout_entry(9, true),
                     Self::cellular_dynamic_storage_layout_entry(10, true),

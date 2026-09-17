@@ -105,26 +105,8 @@ impl ThermalInteraction {
         let mut entries: Vec<_> = (0..14).map(|b| storage(b, b != 13)).collect();
         entries[12] = storage(12, true);
         entries[13] = storage(13, false);
-        entries.push(wgpu::BindGroupLayoutEntry {
-            binding: 14,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        });
-        entries.push(wgpu::BindGroupLayoutEntry {
-            binding: 15,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        });
+        entries.push(crate::simulation::uniform_bind_group_layout_entry(14));
+        entries.push(crate::simulation::uniform_bind_group_layout_entry(15));
         entries.push(storage(16, false));
         entries.push(storage(17, false));
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

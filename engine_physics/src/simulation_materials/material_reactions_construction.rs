@@ -121,16 +121,7 @@ impl MaterialReactions {
                 storage(8, true),
                 storage(9, true),
                 storage(10, false),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 11,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
+                crate::simulation::uniform_bind_group_layout_entry(11),
                 storage(12, false),
                 storage(13, false),
                 storage(14, false),
@@ -138,16 +129,7 @@ impl MaterialReactions {
                 storage(16, false),
                 storage(17, true),
                 storage(18, true),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 19,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
+                crate::simulation::uniform_bind_group_layout_entry(19),
                 storage(20, false),
                 storage(21, false),
                 storage(22, false),
@@ -238,16 +220,7 @@ impl MaterialReactions {
                 storage(10, false),
                 storage(32, false),
                 storage(33, false),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 34,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
+                crate::simulation::uniform_bind_group_layout_entry(34),
             ],
         });
         let sort_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {

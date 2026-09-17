@@ -112,16 +112,7 @@ impl ThermalPhaseTransitions {
             .filter(|b| *b != 7)
             .map(|b| storage(b, !matches!(b, 8 | 9)))
             .collect();
-        entries.push(wgpu::BindGroupLayoutEntry {
-            binding: 7,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        });
+        entries.push(crate::simulation::uniform_bind_group_layout_entry(7));
         entries.push(storage(11, true));
         entries.push(storage(12, false));
         entries.push(storage(13, true));
@@ -133,16 +124,7 @@ impl ThermalPhaseTransitions {
         entries.push(storage(19, false));
         entries.push(storage(20, true));
         entries.push(storage(21, true));
-        entries.push(wgpu::BindGroupLayoutEntry {
-            binding: 10,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        });
+        entries.push(crate::simulation::uniform_bind_group_layout_entry(10));
         let layout = d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("thermal phase"),
             entries: &entries,

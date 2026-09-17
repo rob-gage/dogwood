@@ -37,6 +37,19 @@ pub(crate) fn storage_bind_group_layout_entry(
     }
 }
 
+pub(crate) fn uniform_bind_group_layout_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
 pub(crate) fn create_simulation_uniform_buffer(
     device: &wgpu::Device,
     label: &'static str,

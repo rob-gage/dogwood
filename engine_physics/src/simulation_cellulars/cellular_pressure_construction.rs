@@ -188,16 +188,7 @@ impl CellularPressure {
                     Self::storage_layout_entry(9, false),
                     Self::storage_layout_entry(10, true),
                     Self::storage_layout_entry(11, true),
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 13,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
+                    crate::simulation::uniform_bind_group_layout_entry(13),
                     Self::storage_layout_entry(14, false),
                     Self::storage_layout_entry(15, false),
                     Self::storage_layout_entry(16, false),

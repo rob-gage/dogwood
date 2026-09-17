@@ -33,16 +33,7 @@ impl CellularPhysicsBodyProxy {
                 storage(0, false),
                 storage(1, false),
                 storage(2, false),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
+                crate::simulation::uniform_bind_group_layout_entry(3),
                 storage(4, false),
                 storage(5, false),
                 storage(6, false),

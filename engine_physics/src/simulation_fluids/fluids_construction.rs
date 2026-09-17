@@ -96,16 +96,7 @@ impl Fluids {
                     storage(9, true),
                     storage(10, true),
                     storage(11, true),
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 12,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
+                    crate::simulation::uniform_bind_group_layout_entry(12),
                     storage(13, false),
                     storage(14, false),
                     storage(15, false),
@@ -120,16 +111,7 @@ impl Fluids {
                     storage(24, false),
                     storage(25, false),
                     storage(26, true),
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 27,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
+                    crate::simulation::uniform_bind_group_layout_entry(27),
                     storage(28, false),
                 ],
             });

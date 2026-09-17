@@ -108,16 +108,7 @@ impl MaterialMutations {
                 storage(17, false),
                 storage(18, false),
                 storage(19, false),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 9,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
+                crate::simulation::uniform_bind_group_layout_entry(9),
             ],
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {

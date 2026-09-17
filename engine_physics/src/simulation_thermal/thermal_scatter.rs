@@ -117,16 +117,7 @@ impl ThermalScatter {
         let mut entries: Vec<_> = (0..15)
             .map(|b| storage(b, !matches!(b, 3 | 4 | 6 | 11 | 13)))
             .collect();
-        entries.push(wgpu::BindGroupLayoutEntry {
-            binding: 15,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        });
+        entries.push(crate::simulation::uniform_bind_group_layout_entry(15));
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("thermal scatter"),
             entries: &entries,

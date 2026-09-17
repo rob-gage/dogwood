@@ -30,16 +30,7 @@ impl RigidCellStateUpload {
                 storage(1, false),
                 storage(2, false),
                 storage(3, false),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
+                crate::simulation::uniform_bind_group_layout_entry(4),
             ],
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {

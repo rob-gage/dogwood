@@ -57,16 +57,7 @@ impl ThermalEdits {
         let mut layout_entries: Vec<_> = (0..11)
             .map(|b| storage(b, matches!(b, 0 | 1 | 6 | 7)))
             .collect();
-        layout_entries.push(wgpu::BindGroupLayoutEntry {
-            binding: 11,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        });
+        layout_entries.push(crate::simulation::uniform_bind_group_layout_entry(11));
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("thermal edits"),
             entries: &layout_entries,
