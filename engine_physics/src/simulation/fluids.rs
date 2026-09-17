@@ -1325,7 +1325,7 @@ mod tests {
 
     #[test]
     fn mechanical_raster_and_scatter_pipelines_compile_on_gpu() {
-        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
         let accelerator = Accelerator::new().unwrap();
         let cells = accelerator.allocate::<u32>(64);
         let occupancy = accelerator.allocate::<u32>(64);
@@ -1368,7 +1368,7 @@ mod tests {
 
     #[test]
     fn solved_mechanical_delta_persists_in_authoritative_particle() {
-        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
         let accelerator = Accelerator::new().unwrap();
         let cells = accelerator.allocate::<u32>(64);
         let occupancy = accelerator.allocate::<u32>(64);

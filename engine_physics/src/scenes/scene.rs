@@ -5096,7 +5096,7 @@ mod tests {
 
     #[test]
     fn gas_leaves_and_returns_through_ring_streaming() {
-        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
         let accelerator: Arc<Accelerator> = Arc::new(Accelerator::new().unwrap());
         let mut materials: MaterialRegistry = MaterialRegistry::new();
         let vapor: MaterialIdentifier = materials.register(Material::Gas {
@@ -5191,7 +5191,7 @@ mod tests {
 
     #[test]
     fn cellular_indirect_dispatch_executes() {
-        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
         let accelerator: Arc<Accelerator> = Arc::new(Accelerator::new().unwrap());
         let mut materials: MaterialRegistry = MaterialRegistry::new();
         let sand: MaterialIdentifier = materials.register(Material::CellularDynamic {
@@ -5356,7 +5356,7 @@ mod tests {
 
     #[test]
     fn acid_fluid_erodes_same_cell_and_cardinal_stone_across_ticks() {
-        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
         let accelerator = Arc::new(Accelerator::new().unwrap());
         let mut materials = MaterialRegistryBuilder::new();
         let stone = materials.register(Material::CellularDynamic {
@@ -5496,7 +5496,7 @@ mod tests {
 
     #[test]
     fn acid_fluid_erodes_rigid_stone_and_removes_topology() {
-        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
         let accelerator = Arc::new(Accelerator::new().unwrap());
         let mut materials = MaterialRegistryBuilder::new();
         let stone = materials.register(Material::CellularStatic {
@@ -5594,7 +5594,7 @@ mod tests {
 
     #[test]
     fn full_screen_moving_sand_headless_tps() {
-        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
         let accelerator: Arc<Accelerator> = Arc::new(Accelerator::new().unwrap());
         let mut materials = MaterialRegistry::new();
         let sand = materials.register(Material::CellularDynamic {
@@ -5676,7 +5676,7 @@ mod tests {
 
     #[test]
     fn disconnected_static_component_becomes_one_falling_rigid_body() {
-        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
         let accelerator: Arc<Accelerator> = Arc::new(Accelerator::new().unwrap());
         let mut materials: MaterialRegistry = MaterialRegistry::new();
         let stone: MaterialIdentifier = materials.register(Material::CellularStatic {
@@ -5785,7 +5785,7 @@ mod tests {
 
     #[test]
     fn gpu_phase_static_cells_resolve_to_debris_or_rigid_body() {
-        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
         let accelerator = Arc::new(Accelerator::new().unwrap());
         let mut builder = MaterialRegistryBuilder::new();
         let debris = builder.register(Material::CellularDynamic {
@@ -5924,7 +5924,7 @@ mod tests {
 
     #[test]
     fn queued_authored_rigid_body_is_atomic_and_body_local() {
-        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
         let accelerator = Arc::new(Accelerator::new().unwrap());
         let mut materials = MaterialRegistry::new();
         let stone = materials.register(Material::CellularStatic {

@@ -658,7 +658,7 @@ mod tests {
 
     #[test]
     fn axis_aligned_rigid_block_raster_has_every_cell_once() {
-        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
         let accelerator = Accelerator::new().unwrap();
         let material = MaterialIdentifier::new(MaterialForm::CellularStatic, 3);
         let body = RigidCellularBody {

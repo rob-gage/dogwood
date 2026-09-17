@@ -312,7 +312,7 @@ mod tests {
 
     #[test]
     fn dispatch_applies_one_delta_to_a_multi_claim_rigid_state() {
-        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
         let accelerator = engine_compute::Accelerator::new().unwrap();
         let materials = accelerator.allocate::<u32>(2);
         let temperatures = accelerator.allocate::<f32>(2);

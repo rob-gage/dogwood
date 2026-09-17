@@ -746,7 +746,7 @@ mod tests {
 
     #[test]
     fn gas_obstacles_displace_without_destroying_inventory() {
-        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
         let accelerator = Accelerator::new().unwrap();
         let mut materials = MaterialRegistry::new();
         let vapor = materials.register(Material::Gas {
@@ -886,7 +886,7 @@ mod tests {
 
     #[test]
     fn coexisting_species_remain_spread_inside_a_circular_enclosure_for_one_minute() {
-        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
         let accelerator: Accelerator = Accelerator::new().unwrap();
         let mut materials: MaterialRegistry = MaterialRegistry::new();
         let vapor: MaterialIdentifier = materials.register(Material::Gas {
@@ -1075,7 +1075,7 @@ mod tests {
     #[test]
     #[ignore = "full-size GPU performance smoke"]
     fn full_demo_sized_gas_field_runs_sixty_ticks() {
-        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
         let accelerator: Accelerator = Accelerator::new().unwrap();
         eprintln!(
             "gas performance adapter: {:?}",

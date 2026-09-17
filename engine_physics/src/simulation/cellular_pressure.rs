@@ -1303,7 +1303,7 @@ mod tests {
 
     #[test]
     fn colored_face_pipelines_compile_on_gpu() {
-        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
         let accelerator = Accelerator::new().unwrap();
         let materials = MaterialRegistry::new();
         let cells = accelerator.allocate::<u32>(64);
@@ -1347,7 +1347,7 @@ mod tests {
 
     #[test]
     fn falling_cell_transfers_momentum_into_anchored_cell_without_pressure_kick() {
-        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
         let accelerator = Accelerator::new().unwrap();
         let mut materials = MaterialRegistry::new();
         let stone = materials.register(Material::CellularStatic {
@@ -1482,7 +1482,7 @@ mod tests {
 
     #[test]
     fn rigid_static_overlap_uses_one_coherent_reaction_per_tick_under_readback_backlog() {
-        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
         let accelerator = Accelerator::new().unwrap();
         let mut materials = MaterialRegistry::new();
         let stone = materials.register(Material::CellularStatic {

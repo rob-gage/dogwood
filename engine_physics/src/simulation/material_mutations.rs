@@ -417,7 +417,7 @@ mod tests {
 
     #[test]
     fn resolver_pipeline_compiles() {
-        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
         let accelerator = Accelerator::new().unwrap();
         let cells = accelerator.allocate::<u32>(64);
         let appearances = accelerator.allocate::<u32>(64);
@@ -458,7 +458,7 @@ mod tests {
 
     #[test]
     fn indirect_resolver_replaces_and_deletes_cells() {
-        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
         let accelerator = Accelerator::new().unwrap();
         let mut materials = MaterialRegistry::new();
         let static_material = materials.register(Material::CellularStatic {
@@ -601,7 +601,7 @@ mod tests {
 
     #[test]
     fn gas_condensation_aggregates_a_tile_into_unit_particles() {
-        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
         let accelerator = Accelerator::new().unwrap();
         let cells = accelerator.allocate::<u32>(64);
         let appearances = accelerator.allocate::<u32>(64);

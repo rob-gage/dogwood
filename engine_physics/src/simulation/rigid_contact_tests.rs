@@ -280,7 +280,7 @@ impl Fixture {
 
 #[test]
 fn delayed_static_support() {
-    let _lock = crate::GPU_TEST_LOCK.lock().unwrap();
+    let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
     for axis in [1, 0] {
         let mut f = Fixture::new();
         let mut gravity = [0.0; 2];
@@ -355,7 +355,7 @@ fn delayed_static_support() {
 
 #[test]
 fn granular_contact_transfers_to_sand_without_delayed_rigid_support() {
-    let _lock = crate::GPU_TEST_LOCK.lock().unwrap();
+    let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
     let mut f = Fixture::new();
     f.proxy(27);
     f.words(&f.cells, 19, &[f.sand.as_u32()]);
@@ -370,7 +370,7 @@ fn granular_contact_transfers_to_sand_without_delayed_rigid_support() {
 
 #[test]
 fn static_floor_recovery_sweep_rotation_and_gravity() {
-    let _lock = crate::GPU_TEST_LOCK.lock().unwrap();
+    let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
     let mut f = Fixture::new();
     f.words(&f.cells, 8, &[f.stone.as_u32(); 8]);
     for (angle, gravity) in [(0.0, [0.0, -9.8]), (0.12, [0.0, -9.8]), (0.0, [2.0, -9.8])] {
@@ -439,7 +439,7 @@ fn static_floor_recovery_sweep_rotation_and_gravity() {
 
 #[test]
 fn granular_material_transfer_and_actor_overlay() {
-    let _lock = crate::GPU_TEST_LOCK.lock().unwrap();
+    let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
     let mut f = Fixture::new();
     // A single bottom face, with the grain's away destination directly below it.
     f.proxy(27);
@@ -487,7 +487,7 @@ fn granular_material_transfer_and_actor_overlay() {
 
 #[test]
 fn actor_drive_kinematic_constraint_and_canonical_contact() {
-    let _lock = crate::GPU_TEST_LOCK.lock().unwrap();
+    let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
     let mut f = Fixture::new();
     f.proxy(27);
     f.words(&f.occupancy, 26, &[1]);

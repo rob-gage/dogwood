@@ -234,7 +234,7 @@ mod tests {
 
     #[test]
     fn hot_rigid_field_cell_conducts_into_cold_canonical_neighbor() {
-        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
         let accelerator = Accelerator::new().unwrap();
         let interaction = accelerator.allocate::<[f32; 4]>(64);
         let mut values: Vec<[f32; 4]> = vec![[0.0; 4]; 64];

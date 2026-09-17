@@ -31,6 +31,9 @@ mod thermal_material_table;
 mod thermal_phase_transitions;
 mod thermal_scatter;
 
+#[cfg(test)]
+pub(crate) mod tests;
+
 fn create_simulation_shader_module(
     device: &wgpu::Device,
     label: &'static str,
