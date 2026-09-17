@@ -116,6 +116,15 @@ pub struct Fluids {
     bucket_dimensions: [u32; 2],
 }
 
+/// Internal read view of the authoritative fluid spatial index.  Simulation
+/// subsystems use this instead of reimplementing particle-to-cell mapping.
+pub(crate) struct FluidAuthorityView<'a> {
+    pub(crate) particles: &'a AcceleratorBuffer,
+    pub(crate) bucket_heads: &'a AcceleratorBuffer,
+    pub(crate) next_particle: &'a AcceleratorBuffer,
+    pub(crate) parameters: &'a wgpu::Buffer,
+}
+
 impl Fluids {
     /// Creates the fixed fluid pool and its concrete GPU simulation resources
     pub fn new(
@@ -471,6 +480,15 @@ impl Fluids {
 
     pub(crate) const fn particles_buffer(&self) -> &AcceleratorBuffer {
         &self.particles
+    }
+
+    pub(crate) const fn authority_view(&self) -> FluidAuthorityView<'_> {
+        FluidAuthorityView {
+            particles: &self.particles,
+            bucket_heads: &self.bucket_heads,
+            next_particle: &self.next_particle,
+            parameters: &self.parameters,
+        }
     }
     /// Finalizes a slot reserved by an asynchronous producer.  The slot was
     /// removed from the free stack before this call, so this cannot race a

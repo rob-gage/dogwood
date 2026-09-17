@@ -5,6 +5,7 @@
 //! ordering contract explicit and independently testable.
 
 use super::ReactionMaterialTable;
+use super::fluids::FluidAuthorityView;
 use crate::materials::CompiledMaterialReaction;
 use engine_compute::{Accelerator, AcceleratorBuffer};
 use std::collections::BTreeSet;
@@ -39,6 +40,7 @@ impl MaterialReactions {
         pending_pressure: &AcceleratorBuffer,
         mutation_requests: &AcceleratorBuffer,
         mutation_request_count: &AcceleratorBuffer,
+        fluid_authority: FluidAuthorityView<'_>,
         cell_count: u32,
         gas_count: u32,
         reaction_count: u32,
@@ -101,6 +103,19 @@ impl MaterialReactions {
                 storage(13, false),
                 storage(14, false),
                 storage(15, false),
+                storage(16, true),
+                storage(17, true),
+                storage(18, true),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 19,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -126,6 +141,13 @@ impl MaterialReactions {
                 Self::binding(13, mutation_request_count),
                 Self::binding(14, &reaction_energy),
                 Self::binding(15, pending_pressure),
+                Self::binding(16, fluid_authority.particles),
+                Self::binding(17, fluid_authority.bucket_heads),
+                Self::binding(18, fluid_authority.next_particle),
+                wgpu::BindGroupEntry {
+                    binding: 19,
+                    resource: fluid_authority.parameters.as_entire_binding(),
+                },
             ],
         });
         let shader = super::create_simulation_shader_module(
@@ -395,6 +417,17 @@ mod tests {
         let request_count = accelerator.allocate::<u32>(1);
         let reaction_energy = accelerator.allocate::<f32>(64);
         let pending_pressure = accelerator.allocate::<[f32; 4]>(64);
+        let fluid_particles = accelerator.allocate::<[u32; 10]>(8);
+        let fluid_bucket_heads = accelerator.allocate::<u32>(8);
+        let fluid_next_particle = accelerator.allocate::<u32>(8);
+        let fluid_parameters = accelerator
+            .wgpu_device()
+            .create_buffer(&wgpu::BufferDescriptor {
+                label: Some("test fluid spatial parameters"),
+                size: 128,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
         let _reactions = MaterialReactions::new(
             &accelerator,
             &table,
@@ -410,6 +443,12 @@ mod tests {
             &pending_pressure,
             &requests,
             &request_count,
+            FluidAuthorityView {
+                particles: &fluid_particles,
+                bucket_heads: &fluid_bucket_heads,
+                next_particle: &fluid_next_particle,
+                parameters: &fluid_parameters,
+            },
             64,
             0,
             0,

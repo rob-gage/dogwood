@@ -36,6 +36,10 @@ pub fn create_composed_shader_module(
             include_str!("actor_collision_shape.wgsl"),
             "engine_compute/src/actor_collision_shape.wgsl",
         ),
+        (
+            include_str!("fluid_spatial.wgsl"),
+            "engine_compute/src/fluid_spatial.wgsl",
+        ),
     ] {
         composer
             .add_composable_module(ComposableModuleDescriptor {

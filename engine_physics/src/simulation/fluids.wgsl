@@ -22,6 +22,7 @@
 #import utility::material_identifier::material_dense_index
 #import utility::thermal_material::{ThermalMaterialRecord, ThermalMaterialParameters, thermal_material_conductivity, thermal_material_specific_heat_capacity}
 #import utility::tile_ring::{INVALID_PHYSICAL_CELL_INDEX, physical_cell_index_from_world_cell}
+#import utility::fluid_spatial::{fluid_bucket_coordinates_from_position, fluid_bucket_index_from_coordinates, fluid_particle_belongs_to_cell}
 
 struct Particle {
     material_identifier: u32,
@@ -521,8 +522,8 @@ fn gather_fluid_particle_sample_for_cell(center: vec2<f32>) -> DerivedFluidCellS
                     chain_length++) {
                 let particle: Particle = particles[particle_index];
                 if particle.material_identifier != EMPTY_MATERIAL_IDENTIFIER &&
-                        particle.is_active != 0u && all(vec2<i32>(floor(
-                            particle.position * CELLS_PER_TILE_FLOAT)) == vec2<i32>(floor(center))) {
+                        particle.is_active != 0u && fluid_particle_belongs_to_cell(
+                            particle.position, vec2<i32>(floor(center)), CELLS_PER_TILE_FLOAT) {
                     let particle_mass: f32 = fluid_physical_properties_from_identifier(
                         particle.material_identifier).x;
                     mechanical_mass += particle_mass;
@@ -939,9 +940,10 @@ fn fluid_position_is_inside_active_padding(padding: f32, position: vec2<f32>) ->
 
 // Converts continuous tile-space position into fluid spatial-bucket coordinates
 fn fluid_spatial_bucket_coordinates_from_position(position: vec2<f32>) -> vec2<i32> {
-    let origin: vec2<f32> = vec2<f32>(parameters.buffered_origin);
-    let bucket_size: f32 = parameters.support_radius_cells / CELLS_PER_TILE_FLOAT;
-    return vec2<i32>(floor((position - origin) / bucket_size));
+    return fluid_bucket_coordinates_from_position(
+        position, parameters.buffered_origin, parameters.support_radius_cells,
+        CELLS_PER_TILE_FLOAT,
+    );
 }
 
 // Converts continuous tile-space position into a fluid spatial-bucket index
@@ -953,13 +955,9 @@ fn fluid_spatial_bucket_index_from_position(position: vec2<f32>) -> u32 {
 
 // Converts bounded fluid bucket coordinates into row-major storage
 fn fluid_spatial_bucket_index_from_coordinates(bucket_coordinates: vec2<i32>) -> u32 {
-    if any(bucket_coordinates < vec2<i32>(0)) ||
-            bucket_coordinates.x >= i32(parameters.bucket_dimensions.x) ||
-            bucket_coordinates.y >= i32(parameters.bucket_dimensions.y) {
-        return INVALID_FLUID_BUCKET_INDEX;
-    }
-    return u32(bucket_coordinates.y) * parameters.bucket_dimensions.x +
-        u32(bucket_coordinates.x);
+    return fluid_bucket_index_from_coordinates(
+        bucket_coordinates, parameters.bucket_dimensions, INVALID_FLUID_BUCKET_INDEX,
+    );
 }
 
 // Maps a world cell through the fluid solver's current physical tile ring

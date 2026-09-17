@@ -1,6 +1,7 @@
 // Copyright Rob Gage 2026
 #define_import_path compute::material_reactions
 #import utility::material_identifier::{EMPTY_MATERIAL_IDENTIFIER, CELLULAR_STATIC_MATERIAL_FORM, CELLULAR_DYNAMIC_MATERIAL_FORM, GAS_MATERIAL_FORM, material_form_from_identifier, material_index_from_identifier}
+#import utility::fluid_spatial::{fluid_particle_world_cell, fluid_bucket_coordinates_from_position, fluid_bucket_index_from_coordinates, fluid_particle_belongs_to_cell}
 
 // This is the fixed 27-word representation written by ReactionMaterialTable.
 struct Reaction { words: array<u32, 27>, }
@@ -23,6 +24,24 @@ struct Parameters { cell_count: u32, gas_count: u32, reaction_count: u32, cell_w
 @group(0) @binding(13) var<storage, read_write> mutation_request_count: array<atomic<u32>>;
 @group(0) @binding(14) var<storage, read_write> reaction_energy: array<f32>;
 @group(0) @binding(15) var<storage, read_write> pending_pressure: array<vec4<f32>>;
+// Read-only authoritative fluid bridge; discovery will use the shared spatial
+// utility and these chains in the fluid-reaction pass.
+struct FluidParticleAuthority { material_identifier: u32, is_active: u32, position: vec2<f32>, velocity: vec2<f32>, prediction_collision_displacement: vec2<f32>, amount: f32, temperature: f32, }
+@group(0) @binding(16) var<storage, read> fluid_particles: array<FluidParticleAuthority>;
+@group(0) @binding(17) var<storage, read> fluid_bucket_heads: array<u32>;
+@group(0) @binding(18) var<storage, read> fluid_next_particle: array<u32>;
+struct FluidSpatialParameters {
+  buffered_origin: vec2<i32>, buffered_tile_size: vec2<u32>,
+  active_origin: vec2<i32>, active_tile_size: vec2<u32>,
+  ring_offset: vec2<u32>, bucket_dimensions: vec2<u32>,
+  streaming_origin: vec2<i32>, streaming_tile_size: vec2<u32>,
+  gravity: vec2<f32>, delta_time: f32, particle_capacity: u32,
+  buffered_cell_count: u32, bucket_count: u32, support_radius_cells: f32,
+  particle_radius_cells: f32, maximum_movement_cells: u32, padding_0: u32,
+  sample_center: vec2<f32>, sample_shape_parameters: vec2<f32>,
+  sample_shape_kind: u32, padding_1: u32,
+}
+@group(0) @binding(19) var<uniform> fluid_spatial_parameters: FluidSpatialParameters;
 
 fn matches_selector(rule: Reaction, reactant: u32, material: u32) -> bool {
   let base = reactant * 4u;

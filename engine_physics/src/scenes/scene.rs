@@ -564,6 +564,7 @@ impl Scene {
             cellular_pressure.pending_pressure(),
             material_mutations.requests_buffer(),
             material_mutations.request_count_buffer(),
+            fluids.authority_view(),
             buffered_cell_count as u32,
             gases.gas_count(),
             data.materials().reactions().len() as u32,

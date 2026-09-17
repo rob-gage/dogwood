@@ -1,5 +1,7 @@
 #define_import_path compute::thermal_edits
 #import utility::tile_ring::{physical_cell_index_from_world_cell, INVALID_PHYSICAL_CELL_INDEX}
+#import utility::cell_coordinates::CELLS_PER_TILE_FLOAT
+#import utility::fluid_spatial::fluid_particle_world_cell
 
 // 48 bytes: six 8-byte vectors followed by six scalar u32/f32 words.
 struct Parameters { ring_origin: vec2<i32>, ring_tiles: vec2<u32>, ring_offset: vec2<u32>, capacity: u32, request_count: u32, generation: u32, padding_0: u32, padding_1: u32, padding_2: u32 }
@@ -41,7 +43,7 @@ fn apply_thermal_requests(@builtin(global_invocation_id) id: vec3<u32>) {
 @compute @workgroup_size(64)
 fn apply_thermal_fluid(@builtin(global_invocation_id) id: vec3<u32>) {
     if (id.x >= arrayLength(&particles) || particles[id.x].is_active == 0u) { return; }
-    let p = particles[id.x]; let cell = vec2<i32>(floor(p.position * 8.0));
+    let p = particles[id.x]; let cell = fluid_particle_world_cell(p.position, CELLS_PER_TILE_FLOAT);
     let index = physical_cell_index_from_world_cell(cell, parameters.ring_origin, parameters.ring_tiles, parameters.ring_offset);
     if (index != INVALID_PHYSICAL_CELL_INDEX && index < parameters.capacity && deltas[index].y == parameters.generation) { particles[id.x].temperature = max(0.0, p.temperature + bitcast<f32>(deltas[index].x)); }
 }
