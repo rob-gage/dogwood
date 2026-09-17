@@ -1,9 +1,8 @@
 // Copyright Rob Gage 2026
 
-use crate::{
-    materials::{Material, MaterialForm, MaterialIdentifier, MaterialRegistry},
-    tiles::CellularAppearance,
-};
+use super::DormantRigidCell;
+use crate::materials::{Material, MaterialForm, MaterialIdentifier, MaterialRegistry};
+use crate::tiles::CellularAppearance;
 use std::{collections::HashSet, io};
 
 /// Authoritative, handle-free state for a rigid body outside simulation residency.
@@ -20,16 +19,6 @@ pub(crate) struct DormantRigidBody {
     pub(crate) angular_velocity: f32,
     pub(crate) sleeping: bool,
     pub(crate) cells: Vec<DormantRigidCell>,
-}
-
-#[derive(Clone)]
-pub(crate) struct DormantRigidCell {
-    pub(crate) local: [i32; 2],
-    pub(crate) material: MaterialIdentifier,
-    pub(crate) appearance: CellularAppearance,
-    pub(crate) integrity: f32,
-    pub(crate) amount: f32,
-    pub(crate) temperature: f32,
 }
 
 pub(crate) fn append_record(
