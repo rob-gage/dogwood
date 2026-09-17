@@ -344,10 +344,10 @@ impl MaterialRegistry {
                 return Err("Invalid thermal transition".into());
             }
         }
-        if let (Some(cold), Some(hot)) = (&properties.cold_transition, &properties.hot_transition) {
-            if cold.threshold_temperature >= hot.threshold_temperature {
-                return Err("Cold transition must precede hot transition".into());
-            }
+        if let (Some(cold), Some(hot)) = (&properties.cold_transition, &properties.hot_transition)
+            && cold.threshold_temperature >= hot.threshold_temperature
+        {
+            return Err("Cold transition must precede hot transition".into());
         }
         Ok(())
     }
