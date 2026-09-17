@@ -270,6 +270,7 @@ impl Scene {
             .unwrap_or(self.ambient_temperature)
     }
 
+    #[cfg(test)]
     pub(crate) const fn rigid_cell_amounts_buffer(&self) -> &AcceleratorBuffer {
         &self.rigid_cell_amounts
     }
