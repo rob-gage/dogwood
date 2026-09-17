@@ -74,18 +74,6 @@ impl DemoGame {
             friction: 0.8,
             restitution: 0.02,
         });
-        materials
-            .set_thermal(
-                stone,
-                MaterialThermalProperties {
-                    conductivity: 1.4,
-                    specific_heat_capacity: 0.88,
-                    default_temperature: Some(293.15),
-                    cold_transition: None,
-                    hot_transition: None,
-                },
-            )
-            .map_err(std::io::Error::other)?;
         let water = materials.register(Material::Fluid {
             name: "Water".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(45, 125, 210)),
@@ -117,19 +105,76 @@ impl DemoGame {
             dissipation: 0.0001,
             compressibility: 0.1,
         });
+        let slush = materials.register(Material::CellularDynamic {
+            name: "Slush".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(130, 185, 215)),
+            mass: 1.0,
+            pressure_transmission: 0.4,
+            friction: 0.35,
+            restitution: 0.0,
+        });
         let ice = materials.register(Material::CellularStatic {
             name: "Ice".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(180, 220, 245)),
             mass: 1.0,
             pressure_ignore_threshold: 1.0,
             default_integrity: 1.0,
-            minimum_rigid_body_cell_count: 12,
-            debris_material: None,
-            debris_yield_rate: 0.0,
+            minimum_rigid_body_cell_count: 32,
+            debris_material: Some(slush),
+            debris_yield_rate: 0.75,
             pressure_transmission: 0.5,
             friction: 0.2,
             restitution: 0.0,
         });
+        let lava = materials.register(Material::Fluid {
+            name: "Lava".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(220, 70, 20)),
+            pressure_transmission: 0.92,
+            friction: 0.18,
+            restitution: 0.0,
+            rest_density: 1.15,
+            artificial_pressure: 0.02,
+            xsph_smoothing: 0.06,
+            body_push_speed: 4.0,
+            density: 2.4,
+            viscosity: 12.0,
+        });
+        let molten_glass = materials.register(Material::Fluid {
+            name: "Molten Glass".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(245, 125, 40)),
+            pressure_transmission: 0.9,
+            friction: 0.2,
+            restitution: 0.0,
+            rest_density: 1.2,
+            artificial_pressure: 0.02,
+            xsph_smoothing: 0.05,
+            body_push_speed: 3.0,
+            density: 2.2,
+            viscosity: 18.0,
+        });
+        let broken_glass = materials.register(Material::CellularDynamic {
+            name: "Broken Glass".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(170, 200, 215)),
+            mass: 2.0,
+            pressure_transmission: 0.45,
+            friction: 0.5,
+            restitution: 0.08,
+        });
+        let glass = materials.register(Material::CellularStatic {
+            name: "Glass".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(190, 215, 225)),
+            mass: 2.0,
+            pressure_ignore_threshold: 5.0,
+            default_integrity: 12.0,
+            minimum_rigid_body_cell_count: 24,
+            debris_material: Some(broken_glass),
+            debris_yield_rate: 0.65,
+            pressure_transmission: 0.65,
+            friction: 0.35,
+            restitution: 0.04,
+        });
+        // All identifiers now exist, so transition metadata can be compiled
+        // without relying on registration order.
         materials
             .set_thermal(
                 ice,
@@ -143,6 +188,142 @@ impl DemoGame {
                         target: water,
                         yield_rate: 1.0,
                         latent_energy: 20.0,
+                    }),
+                },
+            )
+            .map_err(std::io::Error::other)?;
+        materials
+            .set_thermal(
+                slush,
+                MaterialThermalProperties {
+                    conductivity: 1.6,
+                    specific_heat_capacity: 2.1,
+                    default_temperature: Some(268.15),
+                    cold_transition: None,
+                    hot_transition: Some(MaterialThermalTransition {
+                        threshold_temperature: 273.15,
+                        target: water,
+                        yield_rate: 1.0,
+                        latent_energy: 20.0,
+                    }),
+                },
+            )
+            .map_err(std::io::Error::other)?;
+        materials
+            .set_thermal(
+                stone,
+                MaterialThermalProperties {
+                    conductivity: 1.4,
+                    specific_heat_capacity: 0.88,
+                    default_temperature: Some(293.15),
+                    cold_transition: None,
+                    hot_transition: Some(MaterialThermalTransition {
+                        threshold_temperature: 1473.15,
+                        target: lava,
+                        yield_rate: 1.0,
+                        latent_energy: 120.0,
+                    }),
+                },
+            )
+            .map_err(std::io::Error::other)?;
+        materials
+            .set_thermal(
+                stone_debris,
+                MaterialThermalProperties {
+                    conductivity: 1.2,
+                    specific_heat_capacity: 0.88,
+                    default_temperature: Some(293.15),
+                    cold_transition: None,
+                    hot_transition: Some(MaterialThermalTransition {
+                        threshold_temperature: 1473.15,
+                        target: lava,
+                        yield_rate: 1.0,
+                        latent_energy: 120.0,
+                    }),
+                },
+            )
+            .map_err(std::io::Error::other)?;
+        materials
+            .set_thermal(
+                lava,
+                MaterialThermalProperties {
+                    conductivity: 1.0,
+                    specific_heat_capacity: 1.1,
+                    default_temperature: Some(1573.15),
+                    cold_transition: Some(MaterialThermalTransition {
+                        threshold_temperature: 1473.15,
+                        target: stone,
+                        yield_rate: 1.0,
+                        latent_energy: 120.0,
+                    }),
+                    hot_transition: None,
+                },
+            )
+            .map_err(std::io::Error::other)?;
+        materials
+            .set_thermal(
+                sand,
+                MaterialThermalProperties {
+                    conductivity: 0.8,
+                    specific_heat_capacity: 0.83,
+                    default_temperature: Some(293.15),
+                    cold_transition: None,
+                    hot_transition: Some(MaterialThermalTransition {
+                        threshold_temperature: 1700.0,
+                        target: molten_glass,
+                        yield_rate: 1.0,
+                        latent_energy: 80.0,
+                    }),
+                },
+            )
+            .map_err(std::io::Error::other)?;
+        materials
+            .set_thermal(
+                molten_glass,
+                MaterialThermalProperties {
+                    conductivity: 0.7,
+                    specific_heat_capacity: 1.0,
+                    default_temperature: Some(1800.0),
+                    cold_transition: Some(MaterialThermalTransition {
+                        threshold_temperature: 1400.0,
+                        target: glass,
+                        yield_rate: 1.0,
+                        latent_energy: 80.0,
+                    }),
+                    hot_transition: None,
+                },
+            )
+            .map_err(std::io::Error::other)?;
+        materials
+            .set_thermal(
+                glass,
+                MaterialThermalProperties {
+                    conductivity: 0.9,
+                    specific_heat_capacity: 0.84,
+                    default_temperature: Some(293.15),
+                    cold_transition: None,
+                    hot_transition: Some(MaterialThermalTransition {
+                        threshold_temperature: 1400.0,
+                        target: molten_glass,
+                        yield_rate: 1.0,
+                        latent_energy: 80.0,
+                    }),
+                },
+            )
+            .map_err(std::io::Error::other)?;
+        materials
+            .set_thermal(
+                broken_glass,
+                MaterialThermalProperties {
+                    conductivity: 0.8,
+                    specific_heat_capacity: 0.84,
+                    default_temperature: Some(293.15),
+                    cold_transition: None,
+                    hot_transition: Some(MaterialThermalTransition {
+                        threshold_temperature: 1400.0,
+                        target: molten_glass,
+                        yield_rate: 1.0,
+                        latent_energy: 80.0,
                     }),
                 },
             )
@@ -290,5 +471,97 @@ impl Game for DemoGame {
 
     fn user_interface_context(&mut self) -> &mut UserInterfaceContext {
         &mut self.user_interface_context
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn material_id(scene: &Scene, name: &str) -> MaterialIdentifier {
+        scene
+            .materials()
+            .iter()
+            .find_map(|(id, material)| (material.name() == name).then_some(id))
+            .unwrap_or_else(|| panic!("missing demo material {name}"))
+    }
+
+    fn transition_target(scene: &Scene, source: &str, hot: bool) -> Option<String> {
+        let properties = scene
+            .materials()
+            .thermal_properties(material_id(scene, source))
+            .unwrap();
+        let transition = if hot {
+            properties.hot_transition.as_ref()
+        } else {
+            properties.cold_transition.as_ref()
+        }?;
+        Some(
+            scene
+                .materials()
+                .get(transition.target)
+                .unwrap()
+                .name()
+                .to_owned(),
+        )
+    }
+
+    #[test]
+    fn demo_material_graph_and_rigid_thresholds_are_declarative() {
+        let accelerator = Arc::new(Accelerator::new().unwrap());
+        let game = DemoGame::new(&accelerator).unwrap();
+        let scene = game.scene.as_ref().unwrap();
+        for (source, target) in [
+            ("Ice", "Water"),
+            ("Slush", "Water"),
+            ("Stone", "Lava"),
+            ("Stone Debris", "Lava"),
+            ("Sand", "Molten Glass"),
+            ("Glass", "Molten Glass"),
+            ("Broken Glass", "Molten Glass"),
+        ] {
+            assert_eq!(
+                transition_target(scene, source, true).as_deref(),
+                Some(target)
+            );
+        }
+        for (source, target) in [("Lava", "Stone"), ("Molten Glass", "Glass")] {
+            assert_eq!(
+                transition_target(scene, source, false).as_deref(),
+                Some(target)
+            );
+        }
+        for source in ["Slush", "Stone Debris", "Broken Glass"] {
+            assert_eq!(transition_target(scene, source, false), None);
+        }
+        for source in ["Lava", "Molten Glass"] {
+            assert_eq!(transition_target(scene, source, true), None);
+        }
+        for (source, minimum) in [("Stone", 12), ("Ice", 32), ("Glass", 24)] {
+            match scene.materials().get(material_id(scene, source)).unwrap() {
+                Material::CellularStatic {
+                    minimum_rigid_body_cell_count,
+                    ..
+                } => {
+                    assert_eq!(*minimum_rigid_body_cell_count, minimum)
+                }
+                _ => panic!("{source} is not static"),
+            }
+        }
+        for (source, target) in [
+            ("Stone", "Stone Debris"),
+            ("Ice", "Slush"),
+            ("Glass", "Broken Glass"),
+        ] {
+            match scene.materials().get(material_id(scene, source)).unwrap() {
+                Material::CellularStatic {
+                    debris_material, ..
+                } => {
+                    let debris = debris_material.and_then(|id| scene.materials().get(id));
+                    assert_eq!(debris.map(Material::name), Some(target));
+                }
+                _ => panic!("{source} is not static"),
+            }
+        }
     }
 }
