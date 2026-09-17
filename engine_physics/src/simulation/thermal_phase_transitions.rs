@@ -8,6 +8,11 @@ fn rigid_phase_readback_len(rigid_count: u32) -> u64 {
     RIGID_PHASE_CANDIDATES_OFFSET + u64::from(rigid_count) * RIGID_PHASE_CANDIDATE_SIZE
 }
 
+#[cfg(test)]
+pub(crate) fn test_rigid_phase_readback_len(rigid_count: u32) -> u64 {
+    rigid_phase_readback_len(rigid_count)
+}
+
 /// Evaluates declarative phase metadata after scatter; mutation application remains shared.
 pub(crate) struct ThermalPhaseTransitions {
     parameters: wgpu::Buffer,
@@ -475,76 +480,5 @@ impl Drop for ThermalPhaseTransitions {
         self.rigid_phase_readback.destroy();
         self.rollback_slots.free();
         self.rollback_count.free();
-    }
-}
-
-#[cfg(test)]
-fn transitioned_temperature(
-    amount: f32,
-    source_cp: f32,
-    target_cp: f32,
-    threshold: f32,
-    latent: f32,
-    temperature: f32,
-    hot: bool,
-) -> Option<f32> {
-    let sensible = amount
-        * source_cp
-        * if hot {
-            (temperature - threshold).max(0.0)
-        } else {
-            (threshold - temperature).max(0.0)
-        };
-    let required = amount * latent.max(0.0);
-    if amount <= 0.0 || target_cp <= 0.0 || (latent > 0.0 && sensible < required) {
-        return None;
-    }
-    Some(
-        (threshold
-            + if hot { 1.0 } else { -1.0 } * (sensible - required).max(0.0) / (amount * target_cp))
-            .max(0.0),
-    )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{rigid_phase_readback_len, transitioned_temperature};
-
-    #[test]
-    fn rigid_readback_size_scales_with_submitted_rigid_count() {
-        assert_eq!(rigid_phase_readback_len(0), 256);
-        assert_eq!(rigid_phase_readback_len(128), 256 + 128 * 40);
-        assert!(rigid_phase_readback_len(128) < rigid_phase_readback_len(100_000));
-    }
-    #[test]
-    fn latent_arithmetic_is_symmetric() {
-        assert_eq!(
-            transitioned_temperature(1.0, 2.0, 4.0, 10.0, 3.0, 11.0, true),
-            None
-        );
-        assert_eq!(
-            transitioned_temperature(1.0, 2.0, 4.0, 10.0, 3.0, 11.5, true),
-            Some(10.0)
-        );
-        assert_eq!(
-            transitioned_temperature(1.0, 2.0, 4.0, 10.0, 3.0, 13.5, true),
-            Some(11.0)
-        );
-        assert_eq!(
-            transitioned_temperature(1.0, 2.0, 4.0, 10.0, 3.0, 9.0, false),
-            None
-        );
-        assert_eq!(
-            transitioned_temperature(1.0, 2.0, 4.0, 10.0, 3.0, 8.5, false),
-            Some(10.0)
-        );
-        assert_eq!(
-            transitioned_temperature(1.0, 2.0, 4.0, 10.0, 3.0, 6.5, false),
-            Some(9.0)
-        );
-        assert_eq!(
-            transitioned_temperature(1.0, 2.0, 4.0, 10.0, 0.0, 11.0, true),
-            Some(10.5)
-        );
     }
 }
