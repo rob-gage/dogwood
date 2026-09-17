@@ -291,7 +291,11 @@ impl CellularPressure {
         let shader: wgpu::ShaderModule = crate::simulation::create_simulation_shader_module(
             device,
             "cellular pressure shader",
-            include_str!("cellular_pressure.wgsl"),
+            concat!(
+                include_str!("cellular_pressure_shader_header.wgsl"),
+                include_str!("cellular_pressure_shader_contacts.wgsl"),
+                include_str!("cellular_pressure_shader_propagation.wgsl"),
+            ),
             "engine_physics/src/simulation/cellular_pressure.wgsl",
         );
         let pipeline_layout: wgpu::PipelineLayout =
