@@ -187,7 +187,11 @@ impl Fluids {
         let shader: wgpu::ShaderModule = crate::simulation::create_simulation_shader_module(
             device,
             "fluid simulation shader",
-            include_str!("fluids.wgsl"),
+            concat!(
+                include_str!("fluids_shader_header.wgsl"),
+                include_str!("fluids_shader_particle_operations.wgsl"),
+                include_str!("fluids_shader_cellular_operations.wgsl"),
+            ),
             "engine_physics/src/simulation/fluids.wgsl",
         );
         let pipeline_layout: wgpu::PipelineLayout =
