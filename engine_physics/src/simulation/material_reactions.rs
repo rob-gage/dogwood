@@ -18,6 +18,11 @@ const RIGID_REMOVAL_EVENTS_OFFSET: u64 = 256;
 /// separate stage so no product becomes an input until the next chemistry tick.
 pub(crate) struct MaterialReactions {
     candidates: AcceleratorBuffer,
+    candidate_indices: AcceleratorBuffer,
+    candidate_count: AcceleratorBuffer,
+    sort_steps: AcceleratorBuffer,
+    sort_indirect: wgpu::Buffer,
+    sort_parameters: wgpu::Buffer,
     fluid_reservations: AcceleratorBuffer,
     gas_reservations: AcceleratorBuffer,
     gas_output_reservations: AcceleratorBuffer,
@@ -35,10 +40,15 @@ pub(crate) struct MaterialReactions {
     bind_group: wgpu::BindGroup,
     clear_pipeline: wgpu::ComputePipeline,
     discover_pipeline: wgpu::ComputePipeline,
+    compact_pipeline: wgpu::ComputePipeline,
+    prepare_sort_pipeline: wgpu::ComputePipeline,
+    sort_pipeline: wgpu::ComputePipeline,
     reserve_pipeline: wgpu::ComputePipeline,
     apply_pipeline: wgpu::ComputePipeline,
     cell_count: u32,
     clear_count: u32,
+    sort_capacity: u32,
+    sort_step_count: usize,
     reaction_count: u32,
 }
 
@@ -69,6 +79,38 @@ impl MaterialReactions {
     ) -> Self {
         let device = accelerator.wgpu_device();
         let candidates = accelerator.allocate::<[u32; 32]>(cell_count as usize);
+        let sort_capacity = cell_count.max(1).next_power_of_two();
+        let candidate_indices = accelerator.allocate::<u32>(sort_capacity as usize);
+        let candidate_count = accelerator.allocate::<u32>(1);
+        let sort_step_values: Vec<[u32; 2]> = (1..=sort_capacity.trailing_zeros())
+            .flat_map(|level| {
+                let k = 1u32 << level;
+                (0..level).rev().map(move |j| [k, 1u32 << j])
+            })
+            .collect();
+        let sort_steps = accelerator.allocate::<[u32; 2]>(sort_step_values.len().max(1));
+        let sort_indirect = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("chemistry sort indirect dispatch"),
+            size: 12,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
+            mapped_at_creation: false,
+        });
+        if !sort_step_values.is_empty() {
+            accelerator.wgpu_queue().write_buffer(
+                sort_steps.wgpu_buffer(),
+                0,
+                &sort_step_values
+                    .iter()
+                    .flat_map(|step| step.iter().flat_map(|v| v.to_le_bytes()))
+                    .collect::<Vec<_>>(),
+            );
+        }
+        let sort_parameters = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("chemistry sort parameters"),
+            size: 8,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let fluid_reservations =
             accelerator.allocate::<u32>(fluid_authority.particle_capacity as usize);
         let gas_reservations =
@@ -172,6 +214,20 @@ impl MaterialReactions {
                 storage(29, false),
                 storage(30, false),
                 storage(31, false),
+                storage(32, false),
+                storage(33, false),
+                storage(35, true),
+                storage(36, false),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 34,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -216,6 +272,17 @@ impl MaterialReactions {
                 Self::binding(29, &rigid_reservations),
                 Self::binding(30, &rigid_removal_events),
                 Self::binding(31, &rigid_removal_count),
+                Self::binding(32, &candidate_indices),
+                Self::binding(33, &candidate_count),
+                Self::binding(35, &sort_steps),
+                wgpu::BindGroupEntry {
+                    binding: 36,
+                    resource: sort_indirect.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 34,
+                    resource: sort_parameters.as_entire_binding(),
+                },
             ],
         });
         let shader = super::create_simulation_shader_module(
@@ -241,6 +308,11 @@ impl MaterialReactions {
         };
         Self {
             candidates,
+            candidate_indices,
+            candidate_count,
+            sort_steps,
+            sort_indirect,
+            sort_parameters,
             fluid_reservations,
             gas_reservations,
             gas_output_reservations,
@@ -264,6 +336,15 @@ impl MaterialReactions {
                 "discover_canonical",
                 "material reaction discovery pipeline",
             ),
+            compact_pipeline: pipeline(
+                "compact_candidates",
+                "chemistry candidate compaction pipeline",
+            ),
+            prepare_sort_pipeline: pipeline(
+                "prepare_sort_dispatch",
+                "chemistry sort dispatch preparation pipeline",
+            ),
+            sort_pipeline: pipeline("sort_candidates", "chemistry candidate sort pipeline"),
             reserve_pipeline: pipeline(
                 "reserve_fluid_authority",
                 "material reaction fluid reservation pipeline",
@@ -275,7 +356,10 @@ impl MaterialReactions {
             cell_count,
             clear_count: fluid_authority
                 .particle_capacity
-                .max(cell_count.saturating_mul(gas_count.max(1))),
+                .max(cell_count.saturating_mul(gas_count.max(1)))
+                .max(sort_capacity),
+            sort_capacity,
+            sort_step_count: sort_step_values.len(),
             reaction_count,
         }
     }
@@ -283,18 +367,51 @@ impl MaterialReactions {
         if self.reaction_count == 0 {
             return;
         }
-        let mut pass = accelerator.begin_compute_pass(encoder, "chemistry discover canonical");
+        let mut pass = accelerator.begin_compute_pass(encoder, "chemistry clear");
         pass.set_pipeline(&self.clear_pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.dispatch_workgroups(self.clear_count.div_ceil(64), 1, 1);
+        drop(pass);
+        let mut pass = accelerator.begin_compute_pass(encoder, "chemistry discovery");
         pass.set_pipeline(&self.discover_pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+        drop(pass);
+        let mut pass = accelerator.begin_compute_pass(encoder, "chemistry candidate compaction");
+        pass.set_pipeline(&self.compact_pipeline);
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+        drop(pass);
+        let mut pass =
+            accelerator.begin_compute_pass(encoder, "chemistry sort dispatch preparation");
+        pass.set_pipeline(&self.prepare_sort_pipeline);
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.dispatch_workgroups(1, 1, 1);
+        drop(pass);
+        for step in 0..self.sort_step_count {
+            encoder.copy_buffer_to_buffer(
+                self.sort_steps.wgpu_buffer(),
+                step as u64 * 8,
+                &self.sort_parameters,
+                0,
+                8,
+            );
+            let mut pass = accelerator.begin_compute_pass(encoder, "chemistry candidate sort");
+            pass.set_pipeline(&self.sort_pipeline);
+            pass.set_bind_group(0, &self.bind_group, &[]);
+            pass.dispatch_workgroups_indirect(&self.sort_indirect, 0);
+            drop(pass);
+        }
+        let mut pass = accelerator.begin_compute_pass(encoder, "chemistry arbitration");
         pass.set_pipeline(&self.reserve_pipeline);
+        pass.set_bind_group(0, &self.bind_group, &[]);
         // One invocation performs the ordered arbitration. It is intentionally
         // serialized: reservation order is a correctness rule, not a race.
         pass.dispatch_workgroups(1, 1, 1);
+        drop(pass);
+        let mut pass = accelerator.begin_compute_pass(encoder, "chemistry apply");
         pass.set_pipeline(&self.apply_pipeline);
+        pass.set_bind_group(0, &self.bind_group, &[]);
         pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
     }
     pub(crate) const fn candidates_buffer(&self) -> &AcceleratorBuffer {
@@ -410,6 +527,12 @@ impl MaterialReactions {
 
 impl Drop for MaterialReactions {
     fn drop(&mut self) {
+        self.candidates.free();
+        self.candidate_indices.free();
+        self.candidate_count.free();
+        self.sort_steps.free();
+        self.sort_indirect.destroy();
+        self.sort_parameters.destroy();
         self.rigid_reservations.free();
         self.rigid_removal_events.free();
         self.rigid_removal_count.free();

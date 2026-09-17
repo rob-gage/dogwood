@@ -63,6 +63,12 @@ struct FluidSpatialParameters {
 @group(0) @binding(29) var<storage, read_write> rigid_reservations: array<atomic<u32>>;
 @group(0) @binding(30) var<storage, read_write> rigid_removal_events: array<vec4<u32>>;
 @group(0) @binding(31) var<storage, read_write> rigid_removal_count: array<atomic<u32>>;
+@group(0) @binding(32) var<storage, read_write> candidate_indices: array<u32>;
+@group(0) @binding(33) var<storage, read_write> candidate_count: array<atomic<u32>>;
+struct SortParameters { k:u32, j:u32, }
+@group(0) @binding(34) var<uniform> sort_parameters: SortParameters;
+@group(0) @binding(35) var<storage, read> sort_steps: array<vec2<u32>>;
+@group(0) @binding(36) var<storage, read_write> sort_indirect: array<u32>;
 const RESERVATION_SCALE: f32 = 1000000.0;
 const RESERVATION_SCALE_U32: u32 = 1000000u;
 
@@ -378,6 +384,50 @@ fn clear_transaction_state(@builtin(global_invocation_id) id: vec3<u32>) {
   if (index < arrayLength(&canonical_reservations)) { atomicStore(&canonical_reservations[index], 0u); }
   if (index < arrayLength(&rigid_reservations)) { atomicStore(&rigid_reservations[index], 0u); }
   if (index == 0u) { atomicStore(&rigid_removal_count[0], 0u); }
+  if (index < arrayLength(&candidate_indices)) { candidate_indices[index] = 0xffffffffu; }
+  if (index == 0u) { atomicStore(&candidate_count[0], 0u); }
+}
+
+@compute @workgroup_size(64)
+fn compact_candidates(@builtin(global_invocation_id) id: vec3<u32>) {
+  let cell = id.x;
+  if (cell >= arrayLength(&candidates)) { return; }
+  let candidate = candidates[cell];
+  if (candidate.reaction != 0xffffffffu && candidate.extent > 0.000001) {
+    let index = atomicAdd(&candidate_count[0], 1u);
+    if (index < arrayLength(&candidate_indices)) { candidate_indices[index] = cell; }
+  }
+}
+
+@compute @workgroup_size(1)
+fn prepare_sort_dispatch(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (id.x == 0u) {
+    sort_indirect[0] = (min(atomicLoad(&candidate_count[0]), arrayLength(&candidate_indices)) + 63u) / 64u;
+    sort_indirect[1] = 1u;
+    sort_indirect[2] = 1u;
+  }
+}
+
+fn candidate_before(a: u32, b: u32) -> bool {
+  if (a == 0xffffffffu) { return false; }
+  if (b == 0xffffffffu) { return true; }
+  return candidate_better(candidates[a], candidates[b]);
+}
+
+@compute @workgroup_size(64)
+fn sort_candidates(@builtin(global_invocation_id) id: vec3<u32>) {
+  let index = id.x;
+  let count = min(atomicLoad(&candidate_count[0]), arrayLength(&candidate_indices));
+  if (index >= count) { return; }
+  let partner = index ^ sort_parameters.j;
+  if (partner <= index || partner >= arrayLength(&candidate_indices)) { return; }
+  let a = candidate_indices[index];
+  let b = candidate_indices[partner];
+  let ascending = (index & sort_parameters.k) == 0u;
+  if ((ascending && candidate_before(b, a)) || (!ascending && candidate_before(a, b))) {
+    candidate_indices[index] = b;
+    candidate_indices[partner] = a;
+  }
 }
 
 fn rigid_source_candidate(candidate: Candidate, reactant: u32) -> bool {
@@ -576,26 +626,21 @@ fn consume_rigid(claim: u32, demand: f32) {
   }
 }
 
-// Deterministic global arbitration: each candidate is attempted once in the
-// total order, and a failed full reservation is discarded before the next.
+// Deterministic global arbitration walks the compact, GPU-sorted candidate list.
 @compute @workgroup_size(1)
 fn reserve_fluid_authority(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x != 0u) { return; }
-  for (var processed = 0u; processed < parameters.cell_count; processed += 1u) {
-    var best = 0xffffffffu;
-    for (var cell = 0u; cell < parameters.cell_count && cell < arrayLength(&candidates); cell += 1u) {
-      let candidate = candidates[cell];
-      if (candidate.padding0 != 0u || candidate.reaction == 0xffffffffu || candidate.extent <= 0.000001) { continue; }
-      if (best == 0xffffffffu || candidate_better(candidate, candidates[best])) { best = cell; }
-    }
-    if (best == 0xffffffffu) { return; }
-    candidates[best].padding0 = 2u;
+  let count = min(atomicLoad(&candidate_count[0]), arrayLength(&candidate_indices));
+  for (var processed = 0u; processed < count; processed += 1u) {
+    let best = candidate_indices[processed];
+    if (best == 0xffffffffu || best >= arrayLength(&candidates)) { continue; }
     let candidate = candidates[best];
+    candidates[best].padding0 = 2u;
     if (reserve_candidate_canonical(candidate)) {
       reserve_candidate(best);
-      if (candidates[best].padding0 == 0u) { release_candidate_canonical(candidate); }
-    } else {
-      candidates[best].padding0 = 0u;
+      if (candidates[best].padding0 == 0u) {
+        release_candidate_canonical(candidate);
+      }
     }
   }
 }
@@ -623,7 +668,7 @@ fn spawn_fluid_product(slot: u32, material: u32, amount: f32, cell: u32, tempera
 @compute @workgroup_size(64)
 fn apply_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
   let cell = id.x; if (cell >= parameters.cell_count || cell >= arrayLength(&candidates)) { return; }
-  let candidate = candidates[cell]; if (candidate.reaction == 0xffffffffu || candidate.reaction >= arrayLength(&reactions) || candidate.extent <= 0.000001 || candidate.padding0 == 0u) { return; }
+  let candidate = candidates[cell]; if (candidate.reaction == 0xffffffffu || candidate.reaction >= arrayLength(&reactions) || candidate.extent <= 0.000001 || candidate.padding0 != 1u) { return; }
   let rule = reactions[candidate.reaction];
   let first_present = rule.words[3] != 0u; let second_present = rule.words[7] != 0u;
   let source0 = Source(cell, candidate.material0, 0.0, first_present && candidate.material0 != EMPTY_MATERIAL_IDENTIFIER, candidate.rigid_claims.x);
