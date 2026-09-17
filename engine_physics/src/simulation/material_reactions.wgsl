@@ -291,6 +291,22 @@ fn reserve_fluid_authority(@builtin(global_invocation_id) id: vec3<u32>) {
     if (product == 0u) { output_slots.x = slot; } else { output_slots.y = slot; }
   }
   candidates[cell].product_slots = output_slots;
+  var request_count = 0u;
+  if (candidate.material0 != EMPTY_MATERIAL_IDENTIFIER &&
+      material_form_from_identifier(candidate.material0) != GAS_MATERIAL_FORM &&
+      material_form_from_identifier(candidate.material0) != FLUID_MATERIAL_FORM) { request_count += 1u; }
+  if (candidate.material1 != EMPTY_MATERIAL_IDENTIFIER &&
+      material_form_from_identifier(candidate.material1) != GAS_MATERIAL_FORM &&
+      material_form_from_identifier(candidate.material1) != FLUID_MATERIAL_FORM) { request_count += 1u; }
+  let request_base = atomicAdd(&mutation_request_count[0], request_count);
+  if (request_base + request_count > arrayLength(&mutation_requests)) {
+    if (material_form_from_identifier(candidate.material0) == FLUID_MATERIAL_FORM) { rollback_fluid_plan(cell, 0u); }
+    if (material_form_from_identifier(candidate.material1) == FLUID_MATERIAL_FORM) { rollback_fluid_plan(cell, 1u); }
+    release_fluid_slot(output_slots.x); release_fluid_slot(output_slots.y);
+    candidates[cell].padding0 = 0u;
+    return;
+  }
+  candidates[cell].padding1 = request_base;
 }
 
 fn release_fluid_slot(slot: u32) {
@@ -363,15 +379,13 @@ fn apply_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
   let source0_fluid = first_present && material_form_from_identifier(source0.material) == FLUID_MATERIAL_FORM;
   let source1_fluid = second_present && material_form_from_identifier(source1.material) == FLUID_MATERIAL_FORM;
   if (first_present && material_form_from_identifier(source0.material) != GAS_MATERIAL_FORM && !source0_fluid) {
-    let slot = atomicAdd(&mutation_request_count[0], 1u);
-    if (slot >= arrayLength(&mutation_requests)) { return; }
+    let slot = candidate.padding1;
     let replacement = select(select(source0.material, cellular_product, cellular_product != EMPTY_MATERIAL_IDENTIFIER), EMPTY_MATERIAL_IDENTIFIER, remaining <= 0.00001 && cellular_product == EMPTY_MATERIAL_IDENTIFIER);
     let result_amount = select(remaining, cellular_amount, cellular_product != EMPTY_MATERIAL_IDENTIFIER);
     mutation_requests[slot] = Request(cell, 0u, cell, source0.material, replacement, bitcast<u32>(result_amount), bitcast<u32>(temperatures[cell]), 0u, 0u);
   }
   if (second_present && material_form_from_identifier(source1.material) != GAS_MATERIAL_FORM && !source1_fluid) {
-    let slot = atomicAdd(&mutation_request_count[0], 1u);
-    if (slot >= arrayLength(&mutation_requests)) { return; }
+    let slot = candidate.padding1 + select(0u, 1u, first_present && !source0_fluid && material_form_from_identifier(source0.material) != GAS_MATERIAL_FORM);
     mutation_requests[slot] = Request(source1.cell, 0u, source1.cell, source1.material, EMPTY_MATERIAL_IDENTIFIER, 0u, bitcast<u32>(temperatures[source1.cell]), 0u, 0u);
   }
   if (first_present && material_form_from_identifier(source0.material) == GAS_MATERIAL_FORM) { gas_concentrations[material_index_from_identifier(source0.material) * parameters.cell_count + cell] = max(source0.amount - coefficient0 * candidate.extent, 0.0); }
