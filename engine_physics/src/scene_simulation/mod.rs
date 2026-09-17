@@ -4,6 +4,8 @@
 
 mod scene_simulation_actor_movement;
 mod scene_simulation_configuration;
+mod scene_simulation_position;
+mod scene_simulation_swimming;
 
 pub use scene_simulation_actor_movement::SceneSimulation;
 pub use scene_simulation_configuration::SceneSimulationConfiguration;
