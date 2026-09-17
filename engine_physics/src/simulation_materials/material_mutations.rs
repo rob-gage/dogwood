@@ -408,8 +408,10 @@ mod tests {
             .slice(..)
             .get_mapped_range()
             .unwrap()
-            .chunks_exact(4)
-            .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|bytes| u32::from_le_bytes(*bytes))
             .collect();
         buffer.unmap();
         result
@@ -692,14 +694,18 @@ mod tests {
             let particle_words = read_u32(&accelerator, &particles, 40);
             assert_eq!(
                 particle_words
-                    .chunks_exact(10)
+                    .as_chunks::<10>()
+                    .0
+                    .iter()
                     .filter(|particle| particle[1] != 0)
                     .count(),
                 tick
             );
             assert!(
                 particle_words
-                    .chunks_exact(10)
+                    .as_chunks::<10>()
+                    .0
+                    .iter()
                     .filter(|particle| particle[1] != 0)
                     .all(|particle| particle[8] == 1.0f32.to_bits())
             );

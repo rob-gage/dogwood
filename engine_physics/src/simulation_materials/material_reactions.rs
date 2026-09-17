@@ -567,12 +567,14 @@ impl MaterialReactions {
             return None;
         }
         let events = bytes[usize::try_from(RIGID_REMOVAL_EVENTS_OFFSET).unwrap()..]
-            .chunks_exact(32)
+            .as_chunks::<32>()
+            .0
+            .iter()
             .take(count)
             .map(|b| {
                 let mut event = [0; 6];
-                for (word, value) in event.iter_mut().zip(b.chunks_exact(4)) {
-                    *word = u32::from_le_bytes(value.try_into().unwrap());
+                for (word, value) in event.iter_mut().zip(b.as_chunks::<4>().0) {
+                    *word = u32::from_le_bytes(*value);
                 }
                 event
             })

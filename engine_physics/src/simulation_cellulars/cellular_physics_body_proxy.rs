@@ -776,8 +776,10 @@ mod tests {
         }
         let mapped = readback.slice(..).get_mapped_range().unwrap();
         let actual: Vec<u32> = mapped
-            .chunks_exact(4)
-            .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|bytes| u32::from_le_bytes(*bytes))
             .collect();
         drop(mapped);
         readback.unmap();

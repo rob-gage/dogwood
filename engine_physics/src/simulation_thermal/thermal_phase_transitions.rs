@@ -369,12 +369,14 @@ impl ThermalPhaseTransitions {
             return Some(Vec::new());
         }
         let records = bytes[usize::try_from(RIGID_PHASE_CANDIDATES_OFFSET).unwrap()..]
-            .chunks_exact(40)
+            .as_chunks::<40>()
+            .0
+            .iter()
             .take(count)
             .map(|b| {
                 let mut record = [0u32; 10];
-                for (word, value) in record.iter_mut().zip(b.chunks_exact(4)) {
-                    *word = u32::from_le_bytes(value.try_into().unwrap());
+                for (word, value) in record.iter_mut().zip(b.as_chunks::<4>().0) {
+                    *word = u32::from_le_bytes(*value);
                 }
                 record
             })
