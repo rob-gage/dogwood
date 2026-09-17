@@ -1,5 +1,13 @@
 // Copyright Rob Gage 2026
 
+use super::scene_pending_rigid_dormancy::PendingRigidDormancy;
+use super::scene_pending_static_detachment::PendingStaticDetachment;
+use super::scene_rigid_cell_removal_cause::RigidCellRemovalCause;
+use super::scene_rigid_dormancy_batch::RigidDormancyBatch;
+use super::scene_rigid_io_job::RigidIoJob;
+use super::scene_rigid_owner_load::RigidOwnerLoad;
+use super::scene_rigid_persistence_request::RigidPersistenceRequest;
+use super::scene_rigid_streaming_response::RigidStreamingResponse;
 use crate::scenes::{
     FluidDownload, FluidUpload, GasDownload, GasUpload, SceneData, SceneEdit, SceneEditBatch,
     SceneEditCellPlacement, SceneGenerator, ScenePosition, SceneVelocity, TileDownload, TileUpload,
@@ -38,68 +46,6 @@ const RIGID_IO_MAX_IN_FLIGHT: usize = 1;
 const RIGID_IO_QUEUE_CAPACITY: usize = 64;
 const RIGID_DORMANCY_READBACK_SLOTS: usize = 2;
 
-struct RigidPersistenceRequest {
-    record: crate::scenes::DormantRigidBody,
-    slots: Vec<u32>,
-}
-
-enum RigidIoJob {
-    Persist(RigidPersistenceRequest),
-    Claim {
-        owner: TileCoordinates,
-        original: Vec<crate::scenes::DormantRigidBody>,
-        restored_ids: Vec<u64>,
-    },
-}
-
-enum RigidStreamingResponse {
-    Loaded {
-        owner: TileCoordinates,
-        generation: u64,
-        result: Result<Vec<crate::scenes::DormantRigidBody>, io::Error>,
-    },
-    Saved {
-        request: RigidPersistenceRequest,
-        result: Result<(), io::Error>,
-    },
-    Claimed {
-        owner: TileCoordinates,
-        original: Vec<crate::scenes::DormantRigidBody>,
-        restored_ids: Vec<u64>,
-        result: Result<Vec<crate::scenes::DormantRigidBody>, io::Error>,
-    },
-}
-
-enum RigidOwnerLoad {
-    Loading,
-    Ready(Vec<crate::scenes::DormantRigidBody>),
-    Claiming,
-}
-
-struct PendingRigidDormancy {
-    id: u64,
-    position: [f32; 2],
-    rotation: f32,
-    linear_velocity: [f32; 2],
-    angular_velocity: f32,
-    sleeping: bool,
-    cells: Vec<RigidCellularBodyCell>,
-}
-
-struct RigidDormancyBatch {
-    bodies: Vec<PendingRigidDormancy>,
-    readback_slot: usize,
-    state_count: usize,
-    result: Receiver<Result<(), wgpu::BufferAsyncError>>,
-}
-
-struct PendingStaticDetachment {
-    components: Vec<Vec<CellCoordinates>>,
-    indices: Vec<u32>,
-    generation: u64,
-    ring_offset: (u16, u16),
-}
-
 /// The capacity of the chunk streaming queue
 pub const CHUNK_STREAMING_QUEUE_CAPACITY: usize = 64;
 
@@ -108,17 +54,6 @@ const TICK_RATE: u32 = 60;
 const MAX_CATCH_UP_TICKS: u32 = 4;
 
 const RIGID_DETACHMENT_MAXIMUM_CELLS: usize = 1024;
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum RigidCellRemovalCause {
-    Erase,
-    Fracture,
-    /// A cell was converted into a different material form.  In particular this
-    /// must never take the fracture debris path: its inventory belongs to the
-    /// phase-transition product.
-    PhaseTransition,
-    Chemistry,
-}
 
 /// A scene that can be simulated by the engine
 pub struct Scene {
