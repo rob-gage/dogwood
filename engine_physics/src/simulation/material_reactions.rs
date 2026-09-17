@@ -42,9 +42,10 @@ impl MaterialReactions {
         cell_count: u32,
         gas_count: u32,
         reaction_count: u32,
+        cell_width: u32,
     ) -> Self {
         let device = accelerator.wgpu_device();
-        let candidates = accelerator.allocate::<[u32; 4]>(cell_count as usize);
+        let candidates = accelerator.allocate::<[u32; 8]>(cell_count as usize);
         let parameters = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("material reaction parameters"),
             size: 16,
@@ -58,7 +59,7 @@ impl MaterialReactions {
                 cell_count.to_le_bytes(),
                 gas_count.to_le_bytes(),
                 reaction_count.to_le_bytes(),
-                0u32.to_le_bytes(),
+                cell_width.to_le_bytes(),
             ]
             .concat(),
         );
@@ -412,6 +413,7 @@ mod tests {
             64,
             0,
             0,
+            8,
         );
     }
 }

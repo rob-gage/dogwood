@@ -208,7 +208,9 @@ impl Widget for EditorInterface {
                 egui::CollapsingHeader::new("Pressure").show(ui, |ui| {
                     let response = ui.add_sized(
                         [(ui.available_width() - 22.0).max(0.0), 24.0],
-                        egui::Slider::new(&mut self.impulse_rate, 1.0..=1000.0).text("Pressure/s"),
+                        egui::Slider::new(&mut self.impulse_rate, 1.0..=1000.0)
+                            .text("P/s")
+                            .show_value(false),
                     );
                     if response.changed() {
                         self.impulse_rate_requested.set(Some(self.impulse_rate));
@@ -220,7 +222,9 @@ impl Widget for EditorInterface {
                 egui::CollapsingHeader::new("Thermal").show(ui, |ui| {
                     let response = ui.add_sized(
                         [(ui.available_width() - 22.0).max(0.0), 24.0],
-                        egui::Slider::new(&mut self.thermal_rate, 1.0..=1000.0).text("K/s"),
+                        egui::Slider::new(&mut self.thermal_rate, 1.0..=1000.0)
+                            .text("K/s")
+                            .show_value(false),
                     );
                     if response.changed() {
                         self.thermal_rate_requested.set(Some(self.thermal_rate));
