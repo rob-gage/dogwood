@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+//! Scene, material, actor, and cellular simulation systems for Dogwood.
+
 extern crate dogwood_engine_compute as engine_compute;
 extern crate dogwood_engine_graphics as engine_graphics;
 extern crate dogwood_engine_input as engine_input;

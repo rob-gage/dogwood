@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+//! Reusable user-interface state, widgets, and rendering context types.
+
 extern crate dogwood_engine_graphics as engine_graphics;
 
 mod user_interface;

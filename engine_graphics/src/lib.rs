@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+//! Rendering-facing material, camera, and scene resource types.
+
 pub(crate) use dogwood_engine_compute as engine_compute;
 
 mod camera;

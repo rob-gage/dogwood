@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+//! Public facade for the Dogwood engine runtime and its major subsystems.
+
 extern crate dogwood_engine_compute as engine_compute;
 extern crate dogwood_engine_graphics as engine_graphics;
 extern crate dogwood_engine_input as engine_input;

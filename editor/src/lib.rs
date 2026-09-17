@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+//! Dogwood editor application, tools, and viewport integration.
+
 extern crate dogwood_engine as engine;
 extern crate dogwood_engine_compute as engine_compute;
 extern crate dogwood_engine_graphics as engine_graphics;

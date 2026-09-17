@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+//! Declarative material set shared by the template project and tests.
+
 extern crate dogwood_engine as engine;
 
 use engine::{

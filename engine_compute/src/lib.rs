@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+//! Shared Accelerator resources and composable shader construction.
+
 mod accelerator;
 mod accelerator_buffer;
 mod accelerator_timing;
