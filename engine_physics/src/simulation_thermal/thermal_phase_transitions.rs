@@ -41,7 +41,7 @@ impl ThermalPhaseTransitions {
         if self.rigid_phase_readback_result.is_none() {
             self.clear_rigid_candidates(accelerator);
         }
-        let v = [
+        let parameter_values = [
             origin[0] as u32,
             origin[1] as u32,
             tiles[0],
@@ -58,7 +58,10 @@ impl ThermalPhaseTransitions {
         accelerator.wgpu_queue().write_buffer(
             &self.parameters,
             0,
-            &v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<_>>(),
+            &parameter_values
+                .iter()
+                .flat_map(|value| value.to_le_bytes())
+                .collect::<Vec<_>>(),
         );
         self.tick = self.tick.wrapping_add(1);
         let mut pass = accelerator.begin_compute_pass(encoder, "thermal phase transitions");
@@ -344,9 +347,9 @@ impl ThermalPhaseTransitions {
             .0
             .iter()
             .take(count)
-            .map(|b| {
+            .map(|record_bytes| {
                 let mut record = [0u32; 10];
-                for (word, value) in record.iter_mut().zip(b.as_chunks::<4>().0) {
+                for (word, value) in record.iter_mut().zip(record_bytes.as_chunks::<4>().0) {
                     *word = u32::from_le_bytes(*value);
                 }
                 record
@@ -366,7 +369,7 @@ impl ThermalPhaseTransitions {
             0,
             &slots[..count as usize]
                 .iter()
-                .flat_map(|v| v.to_le_bytes())
+                .flat_map(|value| value.to_le_bytes())
                 .collect::<Vec<_>>(),
         );
         accelerator.wgpu_queue().write_buffer(
@@ -399,7 +402,7 @@ impl ThermalPhaseTransitions {
         if self.rigid_phase_readback_result.is_none() {
             self.clear_rigid_candidates(accelerator);
         }
-        let v = [
+        let parameter_values = [
             origin[0] as u32,
             origin[1] as u32,
             tiles[0],
@@ -416,7 +419,10 @@ impl ThermalPhaseTransitions {
         accelerator.wgpu_queue().write_buffer(
             &self.parameters,
             0,
-            &v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<_>>(),
+            &parameter_values
+                .iter()
+                .flat_map(|value| value.to_le_bytes())
+                .collect::<Vec<_>>(),
         );
         self.tick = self.tick.wrapping_add(1);
         let mut e =
