@@ -734,12 +734,14 @@ fn process_cellular_face(
     return;
   }
   if
-    mechanical_fluid_cells[first].mass > 0.0 && second_form == CELLULAR_STATIC_MATERIAL_FORM || mechanical_fluid_cells[first].mass > 0.0 && second_form == CELLULAR_DYNAMIC_MATERIAL_FORM
+    (mechanical_fluid_cells[first].mass > 0.0 && second_form == CELLULAR_STATIC_MATERIAL_FORM)
+      || (mechanical_fluid_cells[first].mass > 0.0 && second_form == CELLULAR_DYNAMIC_MATERIAL_FORM)
   {
     resolve_fluid_cellular_face(first, second, vec2<f32>(direction));
   }
   if
-    mechanical_fluid_cells[second].mass > 0.0 && first_form == CELLULAR_STATIC_MATERIAL_FORM || mechanical_fluid_cells[second].mass > 0.0 && first_form == CELLULAR_DYNAMIC_MATERIAL_FORM
+    (mechanical_fluid_cells[second].mass > 0.0 && first_form == CELLULAR_STATIC_MATERIAL_FORM)
+      || (mechanical_fluid_cells[second].mass > 0.0 && first_form == CELLULAR_DYNAMIC_MATERIAL_FORM)
   {
     resolve_fluid_cellular_face(second, first, -vec2<f32>(direction));
   }
