@@ -164,7 +164,7 @@ impl SceneData {
                     "dormant rigid is in the wrong owner file",
                 ));
             }
-            if !ids.insert(record.id) {
+            if !ids.insert(record.identifier) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "duplicate dormant rigid identity",
@@ -249,7 +249,7 @@ impl SceneData {
                 } else {
                     DormantRigidBody::deserialize(&mut file, self.materials())?
                 };
-                next = next.max(record.id.checked_add(1).ok_or_else(|| {
+                next = next.max(record.identifier.checked_add(1).ok_or_else(|| {
                     io::Error::new(io::ErrorKind::InvalidData, "rigid identity overflow")
                 })?);
             }

@@ -213,7 +213,7 @@ impl Scene {
             request.record.linear_velocity,
             request.record.angular_velocity,
         );
-        body.id = request.record.id;
+        body.id = request.record.identifier;
         if request.record.sleeping {
             self.physics_world.sleep_rigid_cellular_body(&body);
         }
@@ -299,7 +299,7 @@ impl Scene {
             if self
                 .rigid_cellular_bodies
                 .iter()
-                .any(|body| body.id == record.id)
+                .any(|body| body.id == record.identifier)
             {
                 self.rigid_owner_loads
                     .insert(owner, RigidOwnerLoad::Ready(original));
@@ -341,7 +341,7 @@ impl Scene {
                 record.linear_velocity,
                 record.angular_velocity,
             );
-            body.id = record.id;
+            body.id = record.identifier;
             if record.sleeping {
                 self.rigid_sleeping_pending.insert(body.id);
             }
@@ -351,7 +351,7 @@ impl Scene {
             ids.push(body.id);
             self.rigid_cellular_body_id_next =
                 self.rigid_cellular_body_id_next
-                    .max(record.id.checked_add(1).ok_or_else(|| {
+                    .max(record.identifier.checked_add(1).ok_or_else(|| {
                         io::Error::new(io::ErrorKind::InvalidData, "rigid identity overflow")
                     })?);
             self.rigid_cellular_bodies.push(body);

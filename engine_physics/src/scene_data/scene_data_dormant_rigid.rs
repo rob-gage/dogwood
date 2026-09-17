@@ -12,7 +12,7 @@ use std::{collections::HashSet, io};
 /// they never own copies.
 #[derive(Clone)]
 pub(crate) struct DormantRigidBody {
-    pub(crate) id: u64,
+    pub(crate) identifier: u64,
     pub(crate) position: [f32; 2],
     pub(crate) rotation: f32,
     pub(crate) linear_velocity: [f32; 2],
@@ -25,8 +25,8 @@ pub(crate) fn append_record(
     records: &mut Vec<DormantRigidBody>,
     record: DormantRigidBody,
 ) -> Result<(), io::Error> {
-    let mut before: HashSet<u64> = records.iter().map(|record| record.id).collect();
-    if !before.insert(record.id) {
+    let mut before: HashSet<u64> = records.iter().map(|record| record.identifier).collect();
+    if !before.insert(record.identifier) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "duplicate dormant rigid identity",
@@ -36,7 +36,7 @@ pub(crate) fn append_record(
     debug_assert_eq!(
         records
             .iter()
-            .map(|record| record.id)
+            .map(|record| record.identifier)
             .collect::<HashSet<_>>(),
         before
     );
@@ -44,10 +44,10 @@ pub(crate) fn append_record(
 }
 
 pub(crate) fn remove_ids(records: &mut Vec<DormantRigidBody>, ids: &[u64]) {
-    let before: HashSet<u64> = records.iter().map(|record| record.id).collect();
+    let before: HashSet<u64> = records.iter().map(|record| record.identifier).collect();
     let claimed: HashSet<u64> = ids.iter().copied().collect();
-    records.retain(|record| !claimed.contains(&record.id));
-    let after: HashSet<u64> = records.iter().map(|record| record.id).collect();
+    records.retain(|record| !claimed.contains(&record.identifier));
+    let after: HashSet<u64> = records.iter().map(|record| record.identifier).collect();
     debug_assert_eq!(
         after,
         before.difference(&claimed).copied().collect::<HashSet<_>>()
@@ -115,7 +115,7 @@ impl DormantRigidBody {
     const MAX_CELLS: usize = 1 << 20;
 
     pub(crate) fn validate(&self, materials: &MaterialRegistry) -> Result<(), io::Error> {
-        if self.id == 0
+        if self.identifier == 0
             || self.cells.is_empty()
             || self.cells.len() > Self::MAX_CELLS
             || !self
@@ -160,7 +160,7 @@ impl DormantRigidBody {
         materials: &MaterialRegistry,
     ) -> Result<(), io::Error> {
         self.validate(materials)?;
-        writer.write_all(&self.id.to_le_bytes())?;
+        writer.write_all(&self.identifier.to_le_bytes())?;
         for value in self
             .position
             .into_iter()
@@ -213,8 +213,8 @@ impl DormantRigidBody {
             reader.read_exact(&mut b)?;
             Ok(u32::from_le_bytes(b))
         };
-        let mut id = [0; 8];
-        reader.read_exact(&mut id)?;
+        let mut identifier_bytes = [0; 8];
+        reader.read_exact(&mut identifier_bytes)?;
         let position = [f32::from_bits(u32(reader)?), f32::from_bits(u32(reader)?)];
         let rotation = f32::from_bits(u32(reader)?);
         let linear_velocity = [f32::from_bits(u32(reader)?), f32::from_bits(u32(reader)?)];
@@ -266,7 +266,7 @@ impl DormantRigidBody {
             });
         }
         let body = Self {
-            id: u64::from_le_bytes(id),
+            identifier: u64::from_le_bytes(identifier_bytes),
             position,
             rotation,
             linear_velocity,

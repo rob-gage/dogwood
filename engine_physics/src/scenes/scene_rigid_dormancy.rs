@@ -166,7 +166,7 @@ impl Scene {
             while let Some(body) = bodies.next() {
                 let end = cursor + body.cells.len();
                 let record = crate::scenes::DormantRigidBody {
-                    id: body.id,
+                    identifier: body.id,
                     position: body.position,
                     rotation: body.rotation,
                     linear_velocity: body.linear_velocity,

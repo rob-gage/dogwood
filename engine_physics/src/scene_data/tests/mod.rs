@@ -28,7 +28,7 @@ fn test_materials() -> (MaterialRegistry, MaterialIdentifier) {
 fn test_dormant_rigid_serialization_preserves_authoritative_state() {
     let (materials, material) = test_materials();
     let body = DormantRigidBody {
-        id: 9,
+        identifier: 9,
         position: [1.25, -2.5],
         rotation: 0.75,
         linear_velocity: [3.0, -4.0],
@@ -56,7 +56,7 @@ fn test_dormant_rigid_serialization_preserves_authoritative_state() {
     let mut bytes = Vec::new();
     body.serialize(&mut bytes, &materials).unwrap();
     let loaded = DormantRigidBody::deserialize(&mut bytes.as_slice(), &materials).unwrap();
-    assert_eq!(loaded.id, body.id);
+    assert_eq!(loaded.identifier, body.identifier);
     assert_eq!(
         loaded.position.map(f32::to_bits),
         body.position.map(f32::to_bits)
@@ -82,7 +82,7 @@ fn test_dormant_rigid_serialization_preserves_authoritative_state() {
 fn test_malformed_dormant_rigid_is_rejected() {
     let (materials, material) = test_materials();
     let body = DormantRigidBody {
-        id: 1,
+        identifier: 1,
         position: [0.0, 0.0],
         rotation: 0.0,
         linear_velocity: [0.0; 2],
@@ -114,8 +114,8 @@ fn test_rotated_geometry_bounds_drive_owner() {
 #[test]
 fn test_owner_mutations_preserve_current_records() {
     let (materials, material) = test_materials();
-    let record = |id| DormantRigidBody {
-        id,
+    let record = |identifier| DormantRigidBody {
+        identifier,
         position: [0.0, 0.0],
         rotation: 0.0,
         linear_velocity: [0.0; 2],
@@ -136,7 +136,7 @@ fn test_owner_mutations_preserve_current_records() {
     assert_eq!(
         records
             .iter()
-            .map(|record| record.id)
+            .map(|record| record.identifier)
             .collect::<HashSet<_>>(),
         [2, 3].into_iter().collect()
     );
