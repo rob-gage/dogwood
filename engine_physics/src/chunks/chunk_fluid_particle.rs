@@ -20,7 +20,7 @@ pub struct ChunkFluidParticle {
 }
 
 impl ChunkFluidParticle {
-    /// The aligned size of the matching GPU particle record
+    /// The aligned size of the matching Accelerator particle record
     pub const GPU_SIZE: usize = 40;
     pub const SERIALIZED_SIZE: usize = 28;
 
@@ -83,7 +83,7 @@ impl ChunkFluidParticle {
         Ok(particle)
     }
 
-    /// Reads one aligned GPU particle record
+    /// Reads one aligned Accelerator particle record
     pub fn deserialize_gpu(bytes: &[u8]) -> Result<Self, io::Error> {
         if bytes.len() != Self::GPU_SIZE {
             return Err(io::Error::new(
@@ -120,7 +120,7 @@ impl ChunkFluidParticle {
         Ok(())
     }
 
-    /// Appends one aligned GPU particle record
+    /// Appends one aligned Accelerator particle record
     pub fn serialize_gpu(&self, bytes: &mut Vec<u8>) -> Result<(), io::Error> {
         self.validate()?;
         bytes.extend_from_slice(&self.material_identifier.as_u32().to_le_bytes());

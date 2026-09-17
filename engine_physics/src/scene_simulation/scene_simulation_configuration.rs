@@ -19,7 +19,7 @@ pub struct SceneSimulationConfiguration {
     pub width: u16,
     /// The height of the active simulation area in tiles
     pub height: u16,
-    /// The size of the GPU-resident buffer around the active area
+    /// The size of the Accelerator-resident buffer around the active area
     pub buffer_size: u8,
     /// The required batch size when streaming tiles into and out of the scene
     pub streaming_batch_size: u8,

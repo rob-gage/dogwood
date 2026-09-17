@@ -137,7 +137,7 @@ impl TileData {
         self.cell_temperatures[y][x]
     }
 
-    /// Restores explicit state from GPU streaming or a modern chunk record.
+    /// Restores explicit state from Accelerator streaming or a modern chunk record.
     pub(crate) fn set_cell_state(&mut self, x: usize, y: usize, amount: f32, temperature: f32) {
         self.cell_amounts[y][x] = amount;
         self.cell_temperatures[y][x] = temperature;
@@ -160,7 +160,7 @@ impl TileData {
         }
     }
 
-    /// Writes material identifiers in row-major GPU order
+    /// Writes material identifiers in row-major Accelerator order
     pub fn serialize_material_identifiers<W: io::Write>(
         &self,
         writer: &mut W,
@@ -183,7 +183,7 @@ impl TileData {
         Ok(())
     }
 
-    /// Writes persistent integrity in row-major GPU order
+    /// Writes persistent integrity in row-major Accelerator order
     pub fn serialize_integrities<W: io::Write>(&self, writer: &mut W) -> Result<(), io::Error> {
         for row in &self.cell_integrities {
             for integrity in row {
@@ -193,7 +193,7 @@ impl TileData {
         Ok(())
     }
 
-    /// Writes material inventories in row-major GPU order.
+    /// Writes material inventories in row-major Accelerator order.
     pub fn serialize_amounts<W: io::Write>(&self, writer: &mut W) -> Result<(), io::Error> {
         for row in &self.cell_amounts {
             for amount in row {
@@ -203,7 +203,7 @@ impl TileData {
         Ok(())
     }
 
-    /// Writes material temperatures in row-major GPU order.
+    /// Writes material temperatures in row-major Accelerator order.
     pub fn serialize_temperatures<W: io::Write>(&self, writer: &mut W) -> Result<(), io::Error> {
         for row in &self.cell_temperatures {
             for temperature in row {

@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-//! Shared deterministic reaction eligibility and arbitration rules. GPU discovery
+//! Shared deterministic reaction eligibility and arbitration rules. Accelerator discovery
 //! emits the same compact candidate shape; keeping arbitration here makes the
 //! ordering contract explicit and independently testable.
 
@@ -11,7 +11,7 @@ use engine_compute::{Accelerator, AcceleratorBuffer};
 use std::collections::BTreeSet;
 use std::sync::mpsc::{Receiver, sync_channel};
 
-/// Immutable-snapshot GPU reaction discovery. Application is intentionally a
+/// Immutable-snapshot Accelerator reaction discovery. Application is intentionally a
 /// separate stage so no product becomes an input until the next chemistry tick.
 pub(crate) struct MaterialReactions {
     candidates: AcceleratorBuffer,
@@ -647,7 +647,7 @@ pub(crate) struct ReactionCandidate {
 }
 
 /// Sort by explicit priority, stable authoring order, then anchor. Accepted
-/// candidates reserve every authority as an all-or-nothing set, so neither GPU
+/// candidates reserve every authority as an all-or-nothing set, so neither Accelerator
 /// invocation order nor overlapping raster claims can double-consume matter.
 pub(crate) fn resolve_contention(mut candidates: Vec<ReactionCandidate>) -> Vec<ReactionCandidate> {
     candidates.sort_by_key(candidate_order_key);

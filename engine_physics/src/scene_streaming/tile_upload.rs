@@ -8,15 +8,15 @@ use std::{io, task::Waker};
 pub struct TileUpload {
     /// The world tile being uploaded
     pub coordinates: TileCoordinates,
-    /// Material identifiers in GPU cell order
+    /// Material identifiers in Accelerator cell order
     pub material_identifiers: Vec<u8>,
-    /// Persistent appearances in matching GPU cell order
+    /// Persistent appearances in matching Accelerator cell order
     pub appearances: Vec<u8>,
-    /// Persistent integrities in matching GPU cell order
+    /// Persistent integrities in matching Accelerator cell order
     pub integrities: Vec<u8>,
-    /// Persistent normalized material inventories in matching GPU cell order
+    /// Persistent normalized material inventories in matching Accelerator cell order
     pub amounts: Vec<u8>,
-    /// Persistent material temperatures in matching GPU cell order
+    /// Persistent material temperatures in matching Accelerator cell order
     pub temperatures: Vec<u8>,
     /// Whether the upload has completed
     pub is_complete: bool,
@@ -63,7 +63,7 @@ impl TileUpload {
         }
     }
 
-    /// Resolves legacy dormant temperatures immediately before GPU upload.
+    /// Resolves legacy dormant temperatures immediately before Accelerator upload.
     pub fn resolve_uninitialized_state(
         &mut self,
         initial_temperature: impl Fn(MaterialIdentifier) -> f32,

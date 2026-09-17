@@ -7,7 +7,7 @@ use crate::{
 };
 use std::io;
 
-/// Owns dormant gas records while they are restored to GPU residency
+/// Owns dormant gas records while they are restored to Accelerator residency
 pub struct GasUpload {
     /// The incoming world-tile area represented by this transfer
     pub area: TileArea,

@@ -4,13 +4,13 @@ use crate::{chunks::ChunkFluidParticle, tiles::TileArea};
 use engine_compute::Accelerator;
 use std::io;
 
-/// Tracks one nonblocking export of fluid leaving GPU residency
+/// Tracks one nonblocking export of fluid leaving Accelerator residency
 pub struct FluidDownload {
     /// The outgoing world-tile strip owned by this transfer
     pub area: TileArea,
-    /// Staging storage containing an aligned count followed by GPU particle records
+    /// Staging storage containing an aligned count followed by Accelerator particle records
     pub buffer: wgpu::Buffer,
-    /// Whether GPU compaction and readback have been submitted
+    /// Whether Accelerator compaction and readback have been submitted
     pub is_started: bool,
     /// Completed persistent records or a readback failure
     pub result: Option<Result<Vec<ChunkFluidParticle>, io::Error>>,
@@ -41,7 +41,7 @@ impl FluidDownload {
         self.result = None;
     }
 
-    /// Decodes compacted GPU records from mapped staging storage
+    /// Decodes compacted Accelerator records from mapped staging storage
     pub fn deserialize(
         bytes: &[u8],
         particle_capacity: u32,

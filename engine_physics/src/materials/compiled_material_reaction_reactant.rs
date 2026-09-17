@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-/// Numeric selector consumed by GPU reaction passes. Exact selectors have one
+/// Numeric selector consumed by Accelerator reaction passes. Exact selectors have one
 /// member; tag selectors point into `MaterialRegistry::reaction_selector_members`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

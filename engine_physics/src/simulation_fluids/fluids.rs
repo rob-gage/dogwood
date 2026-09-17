@@ -22,7 +22,7 @@ pub struct Fluids {
     edit_cells: AcceleratorBuffer,
     edit_amounts: AcceleratorBuffer,
     edit_temperatures: AcceleratorBuffer,
-    /// Set by GPU producers when `edit_cells` contains one or more edits.
+    /// Set by Accelerator producers when `edit_cells` contains one or more edits.
     gpu_edits_pending: AcceleratorBuffer,
     /// Atomic head of each support-radius-sized spatial bucket
     bucket_heads: AcceleratorBuffer,
@@ -122,7 +122,7 @@ pub(crate) struct FluidAuthorityView<'a> {
 }
 
 impl Fluids {
-    /// Creates the fixed fluid pool and its concrete GPU simulation resources
+    /// Creates the fixed fluid pool and its concrete Accelerator simulation resources
     pub fn new(
         accelerator: &Accelerator,
         cellular_material_identifiers: &AcceleratorBuffer,
@@ -153,7 +153,7 @@ impl Fluids {
         let edit_temperatures = accelerator.allocate::<f32>(buffered_cell_count as usize);
         let gpu_edits_pending: AcceleratorBuffer = accelerator.allocate::<u32>(1);
         let gpu_edit_dispatch = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("GPU fluid edit indirect dispatch"),
+            label: Some("Accelerator fluid edit indirect dispatch"),
             size: 72,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
             mapped_at_creation: false,
@@ -318,11 +318,11 @@ impl Fluids {
             });
         let gpu_edit_prepare_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("GPU fluid edit preparation layout"),
+                label: Some("Accelerator fluid edit preparation layout"),
                 entries: &[storage(0, false)],
             });
         let gpu_edit_prepare_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("GPU fluid edit preparation"),
+            label: Some("Accelerator fluid edit preparation"),
             layout: &gpu_edit_prepare_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
@@ -331,7 +331,7 @@ impl Fluids {
         });
         let gpu_edit_prepare_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("GPU fluid edit preparation"),
+                label: Some("Accelerator fluid edit preparation"),
                 bind_group_layouts: &[Some(&layout), Some(&gpu_edit_prepare_layout)],
                 immediate_size: 0,
             });
@@ -347,7 +347,7 @@ impl Fluids {
         };
         let prepare_gpu_edits_pipeline =
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("GPU fluid edit preparation pipeline"),
+                label: Some("Accelerator fluid edit preparation pipeline"),
                 layout: Some(&gpu_edit_prepare_pipeline_layout),
                 module: &shader,
                 entry_point: Some("prepare_gpu_fluid_edits"),
@@ -547,7 +547,7 @@ impl Fluids {
         &self.gpu_edits_pending
     }
 
-    /// Consumes edits written by another GPU subsystem using the same authoritative pool.
+    /// Consumes edits written by another Accelerator subsystem using the same authoritative pool.
     pub(crate) fn consume_gpu_edits(
         &self,
         accelerator: &Accelerator,
@@ -579,10 +579,11 @@ impl Fluids {
             accelerator
                 .wgpu_device()
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("GPU fluid edits"),
+                    label: Some("Accelerator fluid edits"),
                 });
         {
-            let mut pass = accelerator.begin_compute_pass(&mut encoder, "prepare GPU fluid edits");
+            let mut pass =
+                accelerator.begin_compute_pass(&mut encoder, "prepare Accelerator fluid edits");
             pass.set_pipeline(&self.prepare_gpu_edits_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.set_bind_group(1, &self.gpu_edit_prepare_bind_group, &[]);
@@ -593,21 +594,21 @@ impl Fluids {
             &mut encoder,
             &self.edit_remove_pipeline,
             0,
-            "remove GPU edited fluid particles",
+            "remove Accelerator edited fluid particles",
         );
         self.dispatch_indirect(
             accelerator,
             &mut encoder,
             &self.edit_spawn_pipeline,
             12,
-            "spawn GPU edited fluid particles",
+            "spawn Accelerator edited fluid particles",
         );
         self.dispatch_indirect(
             accelerator,
             &mut encoder,
             &self.edit_clear_pipeline,
             24,
-            "clear GPU fluid edits",
+            "clear Accelerator fluid edits",
         );
         self.encode_rebuild_indirect(accelerator, &mut encoder);
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
@@ -1155,21 +1156,21 @@ impl Fluids {
             encoder,
             &self.clear_buckets_pipeline,
             36,
-            "clear GPU edited fluid buckets",
+            "clear Accelerator edited fluid buckets",
         );
         self.dispatch_indirect(
             accelerator,
             encoder,
             &self.insert_buckets_pipeline,
             48,
-            "insert GPU edited fluid particles",
+            "insert Accelerator edited fluid particles",
         );
         self.dispatch_indirect(
             accelerator,
             encoder,
             &self.raster_pipeline,
             60,
-            "rasterize GPU edited fluid cells",
+            "rasterize Accelerator edited fluid cells",
         );
     }
 
@@ -1222,7 +1223,7 @@ impl Fluids {
         let streaming_dimensions: [u16; 2] = streaming_area.map_or([0, 0], TileArea::dimensions);
         let (sample_center, sample_kind, sample_parameters) =
             sample.map_or(([0.0; 2], 0, [0.0; 2]), |(center, shape)| {
-                let (kind, parameters) = shape.gpu_parameters();
+                let (kind, parameters) = shape.accelerator_parameters();
                 (center, kind, parameters)
             });
         let values: [u32; 32] = [

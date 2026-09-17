@@ -4,7 +4,7 @@ use super::MaterialReactionProduct;
 use super::MaterialReactionReactant;
 
 /// Declarative, form-independent reaction rule. A reaction is deliberately
-/// limited to two inputs and two outputs so its compiled GPU representation is
+/// limited to two inputs and two outputs so its compiled Accelerator representation is
 /// fixed stride.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MaterialReaction {

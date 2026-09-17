@@ -28,7 +28,7 @@ pub struct CellularPressure {
     active_tiles: AcceleratorBuffer,
     /// Dense logical indices of the currently active pressure tiles
     active_tile_indices: AcceleratorBuffer,
-    /// GPU-written indirect dispatch record for active pressure tiles
+    /// Accelerator-written indirect dispatch record for active pressure tiles
     indirect_dispatch: wgpu::Buffer,
     rigid_contact_statistics: AcceleratorBuffer,
     rigid_reactions: AcceleratorBuffer,
@@ -198,7 +198,7 @@ impl CellularPressure {
         }
         let buffered_cell_count: u32 = buffered_cell_count
             .try_into()
-            .expect("Cellular pressure buffer exceeds GPU indexing range");
+            .expect("Cellular pressure buffer exceeds Accelerator indexing range");
         let buffered_tile_count: u32 = buffered_cell_count / 64;
         let pending_impulses: AcceleratorBuffer =
             accelerator.allocate::<[f32; 4]>(buffered_cell_count as usize);
@@ -637,10 +637,10 @@ impl CellularPressure {
         self.ensure_rigid_body_capacity(accelerator, rigid_body_count);
         let rigid_body_count: u32 = rigid_body_count
             .try_into()
-            .map_err(|_| io::Error::other("Rigid body count exceeds GPU indexing range"))?;
+            .map_err(|_| io::Error::other("Rigid body count exceeds Accelerator indexing range"))?;
         let rigid_cell_count: u32 = rigid_cell_count
             .try_into()
-            .map_err(|_| io::Error::other("Rigid cell count exceeds GPU indexing range"))?;
+            .map_err(|_| io::Error::other("Rigid cell count exceeds Accelerator indexing range"))?;
         self.write_parameters(
             accelerator,
             origin,

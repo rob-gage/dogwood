@@ -132,7 +132,7 @@ impl MaterialRegistry {
     pub fn tag_members(&self, tag: &str) -> Option<&[MaterialIdentifier]> {
         self.tags.get(tag).map(Vec::as_slice)
     }
-    /// Fixed-stride, GPU-ready reaction metadata in stable authoring order.
+    /// Fixed-stride, Accelerator-ready reaction metadata in stable authoring order.
     pub fn reactions(&self) -> &[CompiledMaterialReaction] {
         &self.reactions
     }
@@ -1047,7 +1047,7 @@ impl MaterialRegistry {
             })?;
             writer.write_all(&name_length.to_le_bytes())?;
             writer.write_all(name)?;
-            // preserve the appearance's exact packed GPU values.
+            // preserve the appearance's exact packed Accelerator values.
             let graphics: MaterialAppearance = *material.appearance();
             for value in graphics.accelerator_data()[..4].iter() {
                 writer.write_all(&value.to_le_bytes())?;

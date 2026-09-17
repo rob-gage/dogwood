@@ -4,7 +4,7 @@ use super::CollisionOccupancySnapshot;
 
 /// The lifecycle of one collision occupancy readback slot
 pub enum CollisionReadbackStatus {
-    /// The slot can accept a new GPU copy
+    /// The slot can accept a new Accelerator copy
     Available,
     /// A submitted copy is awaiting asynchronous mapping completion
     Mapping,

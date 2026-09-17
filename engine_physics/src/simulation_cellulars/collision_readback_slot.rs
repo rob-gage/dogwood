@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 /// One reusable collision staging buffer and its asynchronous mapping state
 pub struct CollisionReadbackSlot {
-    /// The GPU-to-CPU staging buffer
+    /// The Accelerator-to-CPU staging buffer
     pub buffer: wgpu::Buffer,
     /// State shared with the asynchronous mapping callback
     pub status: Arc<Mutex<CollisionReadbackStatus>>,

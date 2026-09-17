@@ -4,7 +4,7 @@ use crate::{chunks::ChunkFluidParticle, tiles::TileArea};
 use engine_compute::Accelerator;
 use std::io;
 
-/// Tracks one nonblocking transfer of dormant fluid into GPU residency
+/// Tracks one nonblocking transfer of dormant fluid into Accelerator residency
 pub struct FluidUpload {
     /// The incoming world-tile strip owned by this transfer
     pub area: TileArea,
@@ -12,9 +12,9 @@ pub struct FluidUpload {
     pub particles: Vec<ChunkFluidParticle>,
     /// Staging storage receiving one success flag per record
     pub buffer: wgpu::Buffer,
-    /// Whether GPU reconstruction and readback have been submitted
+    /// Whether Accelerator reconstruction and readback have been submitted
     pub is_started: bool,
-    /// Records the GPU pool could not accept, or a readback failure
+    /// Records the Accelerator pool could not accept, or a readback failure
     pub result: Option<Result<Vec<ChunkFluidParticle>, io::Error>>,
 }
 
@@ -41,7 +41,7 @@ impl FluidUpload {
         }
     }
 
-    /// Returns records whose GPU free-slot claim failed
+    /// Returns records whose Accelerator free-slot claim failed
     pub fn failed_particles(&self, bytes: &[u8]) -> Result<Vec<ChunkFluidParticle>, io::Error> {
         if bytes.len() != self.particles.len() * 4 {
             return Err(io::Error::new(

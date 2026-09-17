@@ -422,7 +422,7 @@ impl CellularPhysicsBodyProxy {
         let actor_bytes: Vec<u8> = actors
             .iter()
             .flat_map(|actor| {
-                let (kind, shape) = actor.shape.gpu_parameters();
+                let (kind, shape) = actor.shape.accelerator_parameters();
                 [
                     actor.center[0].to_bits(),
                     actor.center[1].to_bits(),

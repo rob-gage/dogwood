@@ -10,13 +10,13 @@ use std::io;
 
 const STREAMING_CONCENTRATION_EPSILON: f32 = 0.0001;
 
-/// Tracks one nonblocking export of gas leaving GPU residency
+/// Tracks one nonblocking export of gas leaving Accelerator residency
 pub struct GasDownload {
     /// The outgoing world-tile strip owned by this transfer
     pub area: TileArea,
     /// Dense staging records for every outgoing world cell
     pub buffer: wgpu::Buffer,
-    /// Whether GPU extraction and readback have been submitted
+    /// Whether Accelerator extraction and readback have been submitted
     pub is_started: bool,
     /// Completed sparse persistent cells or a readback failure
     pub result: Option<Result<Vec<ChunkGasCell>, io::Error>>,
@@ -52,7 +52,7 @@ impl GasDownload {
         self.result = None;
     }
 
-    /// Decodes fixed GPU records and drops negligible concentration tails
+    /// Decodes fixed Accelerator records and drops negligible concentration tails
     pub fn deserialize(
         bytes: &[u8],
         area: TileArea,

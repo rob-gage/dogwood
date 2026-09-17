@@ -1,6 +1,6 @@
 use engine_compute::{Accelerator, AcceleratorBuffer};
 
-/// Reusable GPU gather for sparse rigid state slots.  One dispatch and one
+/// Reusable Accelerator gather for sparse rigid state slots.  One dispatch and one
 /// contiguous copy replace three tiny copy commands per rigid cell.
 pub(crate) struct RigidCellStateGather {
     descriptors: AcceleratorBuffer,

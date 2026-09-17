@@ -26,7 +26,7 @@ impl ActorCollisionShape {
         }
     }
 
-    pub(crate) fn gpu_parameters(self) -> (u32, [f32; 2]) {
+    pub(crate) fn accelerator_parameters(self) -> (u32, [f32; 2]) {
         match self {
             Self::Circle { radius } => (0, [radius, 0.0]),
             Self::Capsule { radius, height } => (1, [radius, height * 0.5 - radius]),

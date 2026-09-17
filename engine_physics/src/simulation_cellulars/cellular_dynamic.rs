@@ -38,7 +38,7 @@ impl CellularDynamic {
         &self.kinematics
     }
 
-    /// Creates the private cellular dynamic solver and its fixed-size GPU state
+    /// Creates the private cellular dynamic solver and its fixed-size Accelerator state
     pub fn new(
         accelerator: &Accelerator,
         cellular_material_identifiers: &AcceleratorBuffer,
@@ -53,7 +53,7 @@ impl CellularDynamic {
         let buffered_cell_count: u32 = u32::from(buffered_width)
             .checked_mul(u32::from(buffered_height))
             .and_then(|count| count.checked_mul(64))
-            .expect("Cellular dynamic buffer exceeds GPU indexing range");
+            .expect("Cellular dynamic buffer exceeds Accelerator indexing range");
         assert!(buffered_cell_count <= u32::MAX / 2);
         let device: &wgpu::Device = accelerator.wgpu_device();
         // allocate persistent motion state and separate per-tick output/scratch storage
@@ -406,7 +406,7 @@ impl CellularDynamic {
 }
 
 impl Drop for CellularDynamic {
-    /// Releases every GPU allocation owned exclusively by cellular dynamic simulation
+    /// Releases every Accelerator allocation owned exclusively by cellular dynamic simulation
     fn drop(&mut self) {
         self.kinematics.free();
         self.material_identifiers_output.free();

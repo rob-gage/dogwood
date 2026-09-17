@@ -13,9 +13,9 @@ pub struct Chunk {
     pub tile_coordinates: TileCoordinates,
     /// The tiles in this `Chunk`,
     tiles: Box<[TileData]>,
-    /// Sparse authoritative fluid particles outside GPU residency
+    /// Sparse authoritative fluid particles outside Accelerator residency
     dormant_fluid_particles: Vec<ChunkFluidParticle>,
-    /// Sparse authoritative gas cells outside GPU residency
+    /// Sparse authoritative gas cells outside Accelerator residency
     dormant_gas_cells: Vec<ChunkGasCell>,
 }
 

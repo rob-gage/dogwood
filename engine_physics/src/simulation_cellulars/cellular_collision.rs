@@ -10,9 +10,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-/// Derives compact collision occupancy from the authoritative GPU cellular state
+/// Derives compact collision occupancy from the authoritative Accelerator cellular state
 pub struct CellularCollision {
-    /// The GPU buffer containing static and dynamic occupancy words per logical buffered tile
+    /// The Accelerator buffer containing static and dynamic occupancy words per logical buffered tile
     occupancy: AcceleratorBuffer,
     /// The buffered dimensions and tile-ring offsets used by the compute shader
     parameters: wgpu::Buffer,
@@ -313,7 +313,7 @@ impl CellularCollision {
 }
 
 impl Drop for CellularCollision {
-    /// Destroys the GPU buffers owned by this collision bridge
+    /// Destroys the Accelerator buffers owned by this collision bridge
     fn drop(&mut self) {
         self.occupancy.free();
         self.parameters.destroy();

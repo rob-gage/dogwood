@@ -12,7 +12,7 @@ pub struct TileDownload {
     pub physical_tile: Tile,
     /// The staging buffer receiving both parallel tile fields
     pub buffer: wgpu::Buffer,
-    /// Whether the GPU copy has been submitted
+    /// Whether the Accelerator copy has been submitted
     pub is_started: bool,
     /// Whether the download callback has completed
     pub is_complete: bool,

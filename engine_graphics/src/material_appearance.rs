@@ -94,7 +94,7 @@ impl MaterialAppearance {
         self.color_freezing
     }
 
-    /// Returns this material's GPU representation
+    /// Returns this material's Accelerator representation
     pub fn accelerator_data(self) -> [u32; 16] {
         // WGSL MaterialAppearance is four packed colors followed by these three
         // vec4<f32> fields, for a 64-byte storage-buffer element.

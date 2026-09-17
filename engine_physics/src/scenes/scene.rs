@@ -148,7 +148,7 @@ pub struct Scene {
     simulation_width: u16,
     /// The height of the active tile area
     simulation_height: u16,
-    /// The size of the GPU tile buffer outside the active area
+    /// The size of the Accelerator tile buffer outside the active area
     simulation_buffer_size: u8,
     /// The `TilePosition` of the tile in `tiles` that is furthest to the left and bottom
     origin: TileCoordinates,
@@ -156,7 +156,7 @@ pub struct Scene {
     origin_target: TileCoordinates,
     /// An explicit area-follow request to apply before automatic pawn following
     area_request: Option<TileCoordinates>,
-    /// The current GPU-resident tiles in this `Scene`
+    /// The current Accelerator-resident tiles in this `Scene`
     tiles: Box<[Tile]>,
     /// The streaming batch size for tiles
     tile_streaming_batch_size: u8,
@@ -174,7 +174,7 @@ pub struct Scene {
     gas_download_pool: Vec<Arc<Mutex<GasDownload>>>,
     /// The tile uploads pending processing by `tick`
     tile_uploads: Mutex<Vec<Arc<Mutex<TileUpload>>>>,
-    /// Fluid imports that own dormant records until GPU reconstruction is confirmed
+    /// Fluid imports that own dormant records until Accelerator reconstruction is confirmed
     fluid_uploads: Vec<Arc<Mutex<FluidUpload>>>,
     /// Fixed staging storage for the possessed pawn's asynchronous derived-fluid sample
     fluid_sample_buffer: wgpu::Buffer,
@@ -186,7 +186,7 @@ pub struct Scene {
     tiles_ring_offset_x: u16,
     /// The physical Y slot containing the buffered area's bottommost tile
     tiles_ring_offset_y: u16,
-    /// The buffer containing `MaterialIdentifier`s for GPU-resident tiles
+    /// The buffer containing `MaterialIdentifier`s for Accelerator-resident tiles
     cellular_material_identifiers: AcceleratorBuffer,
     /// The parallel buffer containing persistent cell appearance samples
     cellular_appearances: AcceleratorBuffer,
@@ -209,12 +209,12 @@ pub struct Scene {
     cellular_physics_body_proxy: CellularPhysicsBodyProxy,
     /// Authoritative body-local cellular matter paired with Rapier bodies
     rigid_cellular_bodies: Vec<RigidCellularBody>,
-    /// Monotonic scene identity; never derived from vector or GPU allocation order.
+    /// Monotonic scene identity; never derived from vector or Accelerator allocation order.
     rigid_cellular_body_id_next: u64,
     /// Generation protects a delayed raster result from a recycled slot.
     rigid_cell_state_generations: Vec<u32>,
     rigid_cell_state_free: Vec<u32>,
-    /// Bodies awaiting one batched authoritative GPU state capture.
+    /// Bodies awaiting one batched authoritative Accelerator state capture.
     rigid_dormancy_batches: Vec<RigidDormancyBatch>,
     rigid_dormancy_readbacks: Vec<wgpu::Buffer>,
     rigid_dormancy_readback_free: Vec<usize>,
@@ -248,11 +248,11 @@ pub struct Scene {
     static_detachment_generation: u64,
     static_detachment_visit_stamps: Vec<u32>,
     static_detachment_visit_generation: u32,
-    /// GPU-authoritative fluid particles and their transient cellular representation
+    /// Accelerator-authoritative fluid particles and their transient cellular representation
     fluids: Fluids,
-    /// GPU-authoritative shared gas velocity and per-species concentrations
+    /// Accelerator-authoritative shared gas velocity and per-species concentrations
     gases: Gases,
-    /// GPU-resident cross-form material replacement requests.
+    /// Accelerator-resident cross-form material replacement requests.
     material_mutations: MaterialMutations,
     thermal_edits: ThermalEdits,
     material_table: MaterialTable,
@@ -261,11 +261,11 @@ pub struct Scene {
     thermal_conduction: ThermalConduction,
     thermal_scatter: ThermalScatter,
     thermal_phase_transitions: ThermalPhaseTransitions,
-    /// GPU simulation of dynamic cells in the canonical cellular buffers
+    /// Accelerator simulation of dynamic cells in the canonical cellular buffers
     cellular_dynamic: CellularDynamic,
-    /// GPU impulse, pressure, integrity, and fracture subsystem
+    /// Accelerator impulse, pressure, integrity, and fracture subsystem
     cellular_pressure: CellularPressure,
-    /// Compact CPU-readable occupancy derived from the authoritative cellular GPU buffer
+    /// Compact CPU-readable occupancy derived from the authoritative cellular Accelerator buffer
     cellular_collision: CellularCollision,
     /// Whether cellular data or its ring mapping needs a replacement collision extraction
     cellular_collision_dirty: bool,
@@ -276,10 +276,10 @@ pub struct Scene {
 }
 
 impl Scene {
-    /// Creates a temporary `Scene`, its buffered GPU storage, and every initial chunk.
+    /// Creates a temporary `Scene`, its buffered Accelerator storage, and every initial chunk.
     ///
     /// The initial streaming area is synchronously loaded from disk or generated so the returned
-    /// scene has data for its active area and its non-simulated GPU buffer. Tile uploads are
+    /// scene has data for its active area and its non-simulated Accelerator buffer. Tile uploads are
     /// queued here and submitted by the first `tick`.
     pub fn new(
         accelerator: &Arc<Accelerator>,
@@ -843,7 +843,7 @@ impl Scene {
         });
     }
 
-    /// Returns whether a world position is currently resident in the GPU tile buffer
+    /// Returns whether a world position is currently resident in the Accelerator tile buffer
     pub fn is_position_resident(&self, position: ScenePosition) -> bool {
         self.area_buffered().contains(position.tile_coordinates)
     }
@@ -1026,7 +1026,7 @@ impl Scene {
         if !thermal_edits.is_empty() {
             let physical_indices: Vec<u32> =
                 thermal_edits.keys().map(|&index| index as u32).collect();
-            // The current GPU request format has one delta per request; aggregate same-cell
+            // The current Accelerator request format has one delta per request; aggregate same-cell
             // edits on the CPU so this flush submits exactly once.
             self.thermal_edits.apply(
                 self.accelerator.as_ref(),
@@ -1154,7 +1154,7 @@ impl Scene {
         Ok(())
     }
 
-    /// Applies one GPU radial cellular impulse without moving cells immediately.
+    /// Applies one Accelerator radial cellular impulse without moving cells immediately.
     pub fn apply_cellular_radial_impulse(
         &mut self,
         center: CellCoordinates,
@@ -1254,7 +1254,7 @@ impl Scene {
         (self.tick_time.as_secs_f32() * TICK_RATE as f32).clamp(0.0, 1.0)
     }
 
-    /// Applies every compatible completed GPU reaction in submission order
+    /// Applies every compatible completed Accelerator reaction in submission order
     fn apply_completed_rigid_cellular_reactions(&mut self) -> Result<(), io::Error> {
         let mut chemistry_removals: HashMap<usize, HashSet<[i32; 2]>> = HashMap::new();
         for event in self
@@ -1388,7 +1388,7 @@ impl Scene {
     }
 
     /// Freezes outgoing bodies while current support is still valid, then
-    /// gathers every selected cell through one compact GPU batch.
+    /// gathers every selected cell through one compact Accelerator batch.
     fn rigid_dormancy_begin(&mut self, future_buffered: TileArea) -> Result<bool, io::Error> {
         let current_buffered = self.area_buffered();
         let mut selected = Vec::new();
@@ -1594,7 +1594,7 @@ impl Scene {
         Ok(())
     }
 
-    /// A failed map leaves the live GPU slots untouched, so reinserting the
+    /// A failed map leaves the live Accelerator slots untouched, so reinserting the
     /// frozen CPU snapshot restores the only authoritative resident body.
     fn restore_aborted_rigid_dormancy(&mut self, pending: Vec<PendingRigidDormancy>) {
         for pending in pending {
@@ -2763,7 +2763,7 @@ impl Scene {
         })
     }
 
-    /// Applies GPU-detected rigid phase candidates after their bounded async
+    /// Applies Accelerator-detected rigid phase candidates after their bounded async
     /// readback.  Every candidate is rechecked against authoritative body
     /// state before its already-reserved PBF slot is committed.
     fn apply_completed_rigid_thermal_transitions(&mut self) {
@@ -3222,7 +3222,7 @@ impl Scene {
         id
     }
 
-    /// Resolves one world cell to a resident physical GPU cell
+    /// Resolves one world cell to a resident physical Accelerator cell
     fn cell_edit_index(&self, coordinates: CellCoordinates) -> Option<usize> {
         let tile_coordinates: TileCoordinates = coordinates.tile_coordinates();
         let tile: Tile = self.tile_at(tile_coordinates)?;
@@ -3236,7 +3236,7 @@ impl Scene {
         Some(tile.0 as usize * 64 + y * 8 + x)
     }
 
-    /// Writes final contiguous cellular edits to the two authoritative GPU buffers
+    /// Writes final contiguous cellular edits to the two authoritative Accelerator buffers
     fn write_cell_edits(
         &self,
         edits: &[(
@@ -3346,7 +3346,7 @@ impl Scene {
             .expanded(padding, padding, padding, padding)
     }
 
-    /// Returns the tile area resident on the GPU
+    /// Returns the tile area resident on the Accelerator
     fn area_buffered(&self) -> TileArea {
         let buffer_size: i32 = i32::from(self.simulation_buffer_size);
         let dimensions: u16 = u16::from(self.simulation_buffer_size) * 2;
@@ -3360,7 +3360,7 @@ impl Scene {
         )
     }
 
-    /// Returns the chunk-aligned area required by the current GPU buffer
+    /// Returns the chunk-aligned area required by the current Accelerator buffer
     fn area_streaming(&self) -> TileArea {
         self.area_buffered().chunk_area()
     }
@@ -3725,7 +3725,7 @@ impl Scene {
 
     /// Moves the origin, remaps ring slots, and streams tiles
     fn shift_to(&mut self, new_origin: TileCoordinates) -> Result<(), io::Error> {
-        // verify the incoming CPU state before reserving outgoing GPU state
+        // verify the incoming CPU state before reserving outgoing Accelerator state
         let buffer_size: i32 = i32::from(self.simulation_buffer_size);
         let dimensions: u16 = u16::from(self.simulation_buffer_size) * 2;
         let width: u16 = self.simulation_width + dimensions;
@@ -3981,7 +3981,7 @@ impl Scene {
         );
     }
 
-    /// Moves dormant sparse gas from CPU chunks into dense resident GPU fields
+    /// Moves dormant sparse gas from CPU chunks into dense resident Accelerator fields
     fn gas_upload_area(&mut self, area: TileArea) -> Result<(), io::Error> {
         if self.gases.gas_count() == 0 {
             return Ok(());
@@ -4030,7 +4030,7 @@ impl Scene {
         let Some(physical_indices) = physical_indices else {
             self.gas_cells_restore(upload.cells)?;
             return Err(io::Error::other(
-                "Incoming dormant gas cell is outside GPU residency",
+                "Incoming dormant gas cell is outside Accelerator residency",
             ));
         };
         self.gases
@@ -4239,7 +4239,7 @@ impl Scene {
         Ok(false)
     }
 
-    /// Removes incoming dormant records from chunks into a pending GPU transfer
+    /// Removes incoming dormant records from chunks into a pending Accelerator transfer
     fn fluid_uploads_queue(&mut self, area: TileArea) -> Result<(), io::Error> {
         let chunk_coordinates: Vec<TileCoordinates> =
             area.chunk_area().iterate_chunk_coordinates().collect();
@@ -4275,7 +4275,7 @@ impl Scene {
                 chunk.insert_dormant_fluid_particle(particle).unwrap();
             }
             return Err(io::Error::other(
-                "Incoming dormant fluid exceeds the GPU particle pool capacity",
+                "Incoming dormant fluid exceeds the Accelerator particle pool capacity",
             ));
         }
         for particle in &mut particles {
@@ -4404,7 +4404,7 @@ impl Scene {
             self.fluid_uploads.swap_remove(index);
             if !failed.is_empty() {
                 return Err(io::Error::other(format!(
-                    "GPU fluid pool rejected {} dormant particles",
+                    "Accelerator fluid pool rejected {} dormant particles",
                     failed.len(),
                 )));
             }
@@ -4747,14 +4747,14 @@ impl Scene {
         })
     }
 
-    /// Queues mandatory downloads for tiles leaving GPU residency
+    /// Queues mandatory downloads for tiles leaving Accelerator residency
     fn tile_downloads_queue(&mut self, area: TileArea) -> Result<(), io::Error> {
         // bind every world coordinate to its physical slot under the old ring mapping
         let mut downloads: Vec<Arc<Mutex<TileDownload>>> = Vec::new();
         for coordinates in area.iterate_tile_coordinates() {
-            let tile: Tile = self
-                .tile_at(coordinates)
-                .ok_or_else(|| io::Error::other("Outgoing tile is outside the old GPU buffer"))?;
+            let tile: Tile = self.tile_at(coordinates).ok_or_else(|| {
+                io::Error::other("Outgoing tile is outside the old Accelerator buffer")
+            })?;
             downloads.push(Arc::new(Mutex::new(TileDownload::new(
                 self.accelerator.as_ref(),
                 coordinates,
@@ -4846,7 +4846,7 @@ impl Scene {
         Ok(())
     }
 
-    /// Submits queued GPU tile downloads
+    /// Submits queued Accelerator tile downloads
     fn tile_downloads_submit(&self) -> Result<(), io::Error> {
         // acquire the download queue
         let mut downloads_started: Vec<(Arc<Mutex<TileDownload>>, wgpu::Buffer)> = Vec::new();
@@ -4971,7 +4971,7 @@ impl Scene {
         Ok(())
     }
 
-    /// Removes completed GPU tile downloads
+    /// Removes completed Accelerator tile downloads
     fn tile_downloads_clean(&self) -> Result<(), io::Error> {
         self.tile_downloads
             .lock()
@@ -4980,7 +4980,7 @@ impl Scene {
         Ok(())
     }
 
-    /// Submits queued GPU tile uploads
+    /// Submits queued Accelerator tile uploads
     fn tile_uploads_submit(&self) -> Result<(), io::Error> {
         // acquire the pending upload queue
         let uploads = self
@@ -4996,7 +4996,7 @@ impl Scene {
             let Some(tile) = self.tile_at(state.coordinates) else {
                 state.result = Some(Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    "Tile is outside the GPU buffer",
+                    "Tile is outside the Accelerator buffer",
                 )));
                 state.is_complete = true;
                 if let Some(waker) = state.waker.take() {
@@ -5048,7 +5048,7 @@ impl Scene {
         Ok(())
     }
 
-    /// Removes completed GPU tile uploads
+    /// Removes completed Accelerator tile uploads
     fn tile_uploads_clean(&self) -> Result<(), io::Error> {
         self.tile_uploads
             .lock()

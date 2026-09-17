@@ -3,7 +3,7 @@
 use crate::materials::{Material, MaterialRegistry};
 use engine_compute::{Accelerator, AcceleratorBuffer};
 
-/// GPU-resident replacements requested by simulation passes.  The queue is deliberately
+/// Accelerator-resident replacements requested by simulation passes.  The queue is deliberately
 /// source-form agnostic so future chemistry may consume fluid and gas as well as cells.
 pub struct MaterialMutations {
     requests: AcceleratorBuffer,

@@ -199,7 +199,7 @@ impl ActorRegistry {
             .collect()
     }
 
-    /// Returns the possessed swimming-capable pawn shape to sample on the GPU
+    /// Returns the possessed swimming-capable pawn shape to sample on the Accelerator
     pub fn swimming_pawn_sample(
         &self,
         identifier: Actor,

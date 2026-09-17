@@ -4,7 +4,7 @@ use super::CompiledMaterialReactionProduct;
 use super::CompiledMaterialReactionReactant;
 use super::MaterialIdentifier;
 
-/// Fixed-stride numeric record. Optional bounds use NaN as an internal GPU-only
+/// Fixed-stride numeric record. Optional bounds use NaN as an internal Accelerator-only
 /// sentinel; authoring validation rejects all non-finite authored values.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -30,7 +30,7 @@ impl CompiledMaterialReaction {
 }
 
 /// Returns whether a compiled selector slot matches `material`. This mirrors
-/// the bounded linear GPU selector scan; authoring tags are never matched by
+/// the bounded linear Accelerator selector scan; authoring tags are never matched by
 /// string after registry compilation.
 pub fn compiled_selector_matches(
     reactant: CompiledMaterialReactionReactant,

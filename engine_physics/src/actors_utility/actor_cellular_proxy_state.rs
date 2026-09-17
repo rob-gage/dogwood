@@ -2,7 +2,7 @@
 
 use super::actor_collision_shape::ActorCollisionShape;
 
-/// CPU-gathered state used to derive one transient GPU actor proxy
+/// CPU-gathered state used to derive one transient Accelerator actor proxy
 pub(crate) struct ActorCellularProxyState {
     pub center: [f32; 2],
     pub velocity: [f32; 2],

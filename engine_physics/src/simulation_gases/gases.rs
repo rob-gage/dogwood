@@ -65,22 +65,22 @@ impl Gases {
         let device: &wgpu::Device = accelerator.wgpu_device();
         let buffered_cell_count: u32 = buffered_cell_count
             .try_into()
-            .expect("Gas buffer exceeds GPU indexing range");
+            .expect("Gas buffer exceeds Accelerator indexing range");
         let gas_count: u32 = materials
             .iter()
             .filter(|(_, material)| matches!(material, Material::Gas { .. }))
             .count()
             .try_into()
-            .expect("Gas species count exceeds GPU indexing range");
+            .expect("Gas species count exceeds Accelerator indexing range");
         let concentration_count: u32 = buffered_cell_count
             .checked_mul(gas_count)
-            .expect("Gas concentration buffer exceeds GPU indexing range");
+            .expect("Gas concentration buffer exceeds Accelerator indexing range");
         let streaming_value_count: u32 = buffered_cell_count
             .checked_mul(
                 5u32.checked_add(gas_count)
                     .expect("Gas streaming record is too large"),
             )
-            .expect("Gas streaming buffer exceeds GPU indexing range");
+            .expect("Gas streaming buffer exceeds Accelerator indexing range");
         let velocity: AcceleratorBuffer =
             accelerator.allocate::<[f32; 2]>(buffered_cell_count as usize);
         let velocity_scratch: AcceleratorBuffer =
@@ -1066,7 +1066,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "full-size GPU performance smoke"]
+    #[ignore = "full-size Accelerator performance smoke"]
     fn full_demo_sized_gas_field_runs_sixty_ticks() {
         let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
         let accelerator: Accelerator = Accelerator::new().unwrap();
@@ -1128,7 +1128,7 @@ mod tests {
             .poll(wgpu::PollType::wait_indefinitely())
             .unwrap();
         let elapsed: Duration = started.elapsed();
-        eprintln!("full demo-sized gas 60-tick GPU smoke: {elapsed:?}");
+        eprintln!("full demo-sized gas 60-tick Accelerator smoke: {elapsed:?}");
         assert!(elapsed < Duration::from_secs(30));
         cellular.free();
         body.free();

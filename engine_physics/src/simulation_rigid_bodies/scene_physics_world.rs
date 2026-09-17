@@ -140,7 +140,7 @@ impl ScenePhysicsWorld {
             !rigid_body
                 .locked_axes()
                 .intersects(LockedAxes::TRANSLATION_LOCKED_X | LockedAxes::TRANSLATION_LOCKED_Y,),
-            "Rigid cellular GPU contact requires unlocked translation axes"
+            "Rigid cellular Accelerator contact requires unlocked translation axes"
         );
         let position = rigid_body.position();
         let center = rigid_body.center_of_mass();
@@ -619,7 +619,7 @@ impl ScenePhysicsWorld {
         );
     }
 
-    /// Applies one already-integrated GPU impulse batch to its authoritative body
+    /// Applies one already-integrated Accelerator impulse batch to its authoritative body
     pub(crate) fn apply_rigid_constraint(
         &mut self,
         body: &RigidCellularBody,
@@ -636,7 +636,7 @@ impl ScenePhysicsWorld {
         if effective <= 1e-12 {
             return self.apply_rigid_cellular_body_reaction(body, [0.0; 2], 0.0, 0.0, wake);
         }
-        // The GPU impulse defines a velocity target along its generalized contact direction.
+        // The Accelerator impulse defines a velocity target along its generalized contact direction.
         // Re-evaluate that target against current motion instead of replaying stale stopping work.
         let target = source[0] * constraint[0]
             + source[1] * constraint[1]
@@ -722,7 +722,7 @@ impl ScenePhysicsWorld {
         true
     }
 
-    /// Applies one already-integrated GPU impulse batch to its authoritative body
+    /// Applies one already-integrated Accelerator impulse batch to its authoritative body
     pub(crate) fn apply_rigid_cellular_body_reaction(
         &mut self,
         body: &RigidCellularBody,
