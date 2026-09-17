@@ -35,35 +35,35 @@ impl ChunkFluidParticle {
     /// Reads one persistent dormant particle record
     pub fn deserialize<R: io::Read>(reader: &mut R) -> Result<Self, io::Error> {
         let material_identifier: MaterialIdentifier =
-            MaterialIdentifier::from_u32(Self::read_u32(reader)?);
+            MaterialIdentifier::from_u32(super::read_u32(reader)?);
         let particle: Self = Self {
             material_identifier,
             position: [
-                f32::from_bits(Self::read_u32(reader)?),
-                f32::from_bits(Self::read_u32(reader)?),
+                f32::from_bits(super::read_u32(reader)?),
+                f32::from_bits(super::read_u32(reader)?),
             ],
             velocity: [
-                f32::from_bits(Self::read_u32(reader)?),
-                f32::from_bits(Self::read_u32(reader)?),
+                f32::from_bits(super::read_u32(reader)?),
+                f32::from_bits(super::read_u32(reader)?),
             ],
-            amount: f32::from_bits(Self::read_u32(reader)?),
-            temperature: f32::from_bits(Self::read_u32(reader)?),
+            amount: f32::from_bits(super::read_u32(reader)?),
+            temperature: f32::from_bits(super::read_u32(reader)?),
         };
         particle.validate()?;
         Ok(particle)
     }
 
     pub fn deserialize_legacy<R: io::Read>(reader: &mut R) -> Result<Self, io::Error> {
-        let material_identifier = MaterialIdentifier::from_u32(Self::read_u32(reader)?);
+        let material_identifier = MaterialIdentifier::from_u32(super::read_u32(reader)?);
         let particle = Self {
             material_identifier,
             position: [
-                f32::from_bits(Self::read_u32(reader)?),
-                f32::from_bits(Self::read_u32(reader)?),
+                f32::from_bits(super::read_u32(reader)?),
+                f32::from_bits(super::read_u32(reader)?),
             ],
             velocity: [
-                f32::from_bits(Self::read_u32(reader)?),
-                f32::from_bits(Self::read_u32(reader)?),
+                f32::from_bits(super::read_u32(reader)?),
+                f32::from_bits(super::read_u32(reader)?),
             ],
             amount: 1.0,
             temperature: f32::NAN,
@@ -134,12 +134,6 @@ impl ChunkFluidParticle {
         bytes.extend_from_slice(&self.temperature.to_bits().to_le_bytes());
         debug_assert_eq!(bytes.len() % Self::GPU_SIZE, 0);
         Ok(())
-    }
-
-    fn read_u32<R: io::Read>(reader: &mut R) -> Result<u32, io::Error> {
-        let mut bytes: [u8; 4] = [0; 4];
-        reader.read_exact(&mut bytes)?;
-        Ok(u32::from_le_bytes(bytes))
     }
 
     fn u32_at(bytes: &[u8], offset: usize) -> u32 {
