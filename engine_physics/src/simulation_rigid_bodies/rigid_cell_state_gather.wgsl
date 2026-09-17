@@ -6,7 +6,7 @@
 @group(0) @binding(5) var<uniform> count: u32;
 @compute @workgroup_size(64)
 fn gather(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    if (invocation.x >= count) {
+    if (invocation.x >= count ){
         return;
     }
     let slot = descriptors[invocation.x];

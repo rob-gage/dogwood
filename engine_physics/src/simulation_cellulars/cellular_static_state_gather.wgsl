@@ -9,7 +9,7 @@
 
 @compute @workgroup_size(64)
 fn gather(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    if (invocation.x >= count) { return; }
+    if (invocation.x >= count ){ return; }
     let index = descriptors[invocation.x];
     output[invocation.x * 2u] = vec4<u32>(
         material_identifiers[index], appearances[index],

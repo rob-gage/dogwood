@@ -105,258 +105,215 @@
 }
 
 fn matches_selector(rule: Reaction, reactant: u32, material: u32) -> bool {
-  let base = reactant * 4u;
-  if (rule.words[base + 3u] == 0u) {
-    return true;
-  }
-  let offset = rule.words[base];
-  let count = rule.words[base + 1u];
-  for (var i = 0u; i < count; i += 1u) {
-    if
-      (offset + i < arrayLength(
-        &selector_members) && selector_members[offset + i] == material)
-    {
-      return true;
+    let base = reactant * 4u;
+    if (rule.words[base + 3u] == 0u ){
+        return true;
     }
-  }
-  return false;
+    let offset = rule.words[base];
+    let count = rule.words[base + 1u];
+    for (var i = 0u; i < count; i   += 1u) {
+        if (offset + i < arrayLength(
+        &selector_members) && selector_members[offset + i] == material ){
+            return true;
+        }
+    }
+    return false;
 }
 
 struct Source {
-  cell: u32,
-  material: u32,
-  amount: f32,
-  found: bool,
-  rigid_claim: u32,}
+    cell: u32,
+    material: u32,
+    amount: f32,
+    found: bool,
+    rigid_claim: u32,
+}
 
 fn source_amount(source: Source) -> f32 {
-  if
-    (source.rigid_claim != 0xffffffffu && source.rigid_claim < arrayLength(
-      &rigid_cells))
-  {
-    let rigid = rigid_cells[source.rigid_claim];
-    if (rigid.state_slot < arrayLength(&rigid_amounts)) {
-      return rigid_amounts[rigid.state_slot];
+    if (source.rigid_claim != 0xffffffffu && source.rigid_claim < arrayLength(
+      &rigid_cells) ){
+        let rigid = rigid_cells[source.rigid_claim];
+        if (rigid.state_slot < arrayLength(&rigid_amounts) ){
+            return rigid_amounts[rigid.state_slot];
+        }
     }
-  }
-  if (source.cell < arrayLength(&amounts)) {
-    return amounts[source.cell];
-  }
-  return 0.0;
+    if (source.cell < arrayLength(&amounts) ){
+        return amounts[source.cell];
+    }
+    return 0.0;
 }
 
 fn rigid_source(cell: u32, reactant: u32, rule: Reaction) -> Source {
-  if (cell >= arrayLength(&rigid_claims)) {
-    return Source(cell, EMPTY_MATERIAL_IDENTIFIER, 0.0, false, 0xffffffffu);
-  }
-  let claim = atomicLoad(&rigid_claims[cell]);
-  if (claim == 0xffffffffu || claim >= arrayLength(&rigid_cells)) {
-    return Source(cell, EMPTY_MATERIAL_IDENTIFIER, 0.0, false, 0xffffffffu);
-  }
-  let rigid = rigid_cells[claim];
-  if
-    (rigid.state_slot >= arrayLength(&rigid_amounts) || !matches_selector(
+    if (cell >= arrayLength(&rigid_claims) ){
+        return Source(cell, EMPTY_MATERIAL_IDENTIFIER, 0.0, false, 0xffffffffu);
+    }
+    let claim = atomicLoad(&rigid_claims[cell]);
+    if (claim == 0xffffffffu || claim >= arrayLength(&rigid_cells) ){
+        return Source(cell, EMPTY_MATERIAL_IDENTIFIER, 0.0, false, 0xffffffffu);
+    }
+    let rigid = rigid_cells[claim];
+    if (rigid.state_slot >= arrayLength(&rigid_amounts) || !matches_selector(
       rule,
       reactant,
-      rigid.material_identifier))
-  {
-    return Source(cell, EMPTY_MATERIAL_IDENTIFIER, 0.0, false, 0xffffffffu);
-  }
-  let amount = rigid_amounts[rigid.state_slot];
-  return
+      rigid.material_identifier) ){
+        return Source(cell, EMPTY_MATERIAL_IDENTIFIER, 0.0, false, 0xffffffffu);
+    }
+    let amount = rigid_amounts[rigid.state_slot];
+    return
     Source(cell, rigid.material_identifier, amount, amount > 0.000001, claim);
 }
 
 fn gas_source(cell: u32, reactant: u32, rule: Reaction) -> Source {
-  for (var species = 0u; species < parameters.gas_count; species += 1u) {
-    let material = species + 1u;
-    let concentration =
-      gas_concentrations[species * parameters.cell_count + cell];
-    if
-      (concentration > 0.000001 && matches_selector(rule, reactant, material))
-    {
-      return Source(cell, material, concentration, true, 0xffffffffu);
+    for (var species = 0u; species < parameters.gas_count; species   += 1u) {
+        let material = species + 1u;
+        let concentration = gas_concentrations[species * parameters.cell_count + cell];
+        if (concentration > 0.000001 && matches_selector(rule, reactant, material) ){
+            return Source(cell, material, concentration, true, 0xffffffffu);
+        }
     }
-  }
-  return Source(cell, EMPTY_MATERIAL_IDENTIFIER, 0.0, false, 0xffffffffu);
+    return Source(cell, EMPTY_MATERIAL_IDENTIFIER, 0.0, false, 0xffffffffu);
 }
 
 fn fluid_temperature(cell: u32, reactant: u32, rule: Reaction) -> f32 {
-  let world =
-    world_cell_from_physical_tile_ring_index(
+    let world = world_cell_from_physical_tile_ring_index(
       cell,
       fluid_spatial_parameters.buffered_origin,
       fluid_spatial_parameters.buffered_tile_size,
       fluid_spatial_parameters.ring_offset);
-  let center = (vec2<f32>(world) + vec2<f32>(0.5)) / CELLS_PER_TILE_FLOAT;
-  let base =
-    fluid_bucket_coordinates_from_position(
+    let center = (vec2<f32>(world) + vec2<f32>(0.5)) / CELLS_PER_TILE_FLOAT;
+    let base = fluid_bucket_coordinates_from_position(
       center,
       fluid_spatial_parameters.buffered_origin,
       fluid_spatial_parameters.support_radius_cells,
       CELLS_PER_TILE_FLOAT);
-  var chosen = 0xffffffffu;
-  var temperature = temperatures[cell];
-  for (var y: i32 = -1; y <= 1; y += 1) {
-    for (var x: i32 = -1; x <= 1; x += 1) {
-      let bucket =
-        fluid_bucket_index_from_coordinates(
+    var chosen = 0xffffffffu;
+    var temperature = temperatures[cell];
+    for (var y: i32 = -1; y <= 1; y   += 1) {
+        for (var x: i32 = -1; x <= 1; x   += 1) {
+            let bucket = fluid_bucket_index_from_coordinates(
           base + vec2<i32>(x, y),
           fluid_spatial_parameters.bucket_dimensions,
           0xffffffffu);
-      if (bucket == 0xffffffffu) {
-        continue;
-      }
-      var p = atomicLoad(&fluid_bucket_heads[bucket]);
-      for (
-        var n: u32 = 0u;
-        p != 0xffffffffu && n < fluid_spatial_parameters.particle_capacity;
-        n += 1u
+            if (bucket == 0xffffffffu ){
+                continue;
+            }
+            var p = atomicLoad(&fluid_bucket_heads[bucket]);
+            for (var n: u32 = 0u; p != 0xffffffffu && n < fluid_spatial_parameters.particle_capacity; n   += 1u
       ) {
-        let particle = fluid_particles[p];
-        if
-          (particle.is_active != 0u
-            && p < chosen
-            && material_form_from_identifier(
-              particle.material_identifier) == FLUID_MATERIAL_FORM
-            && fluid_particle_belongs_to_cell(
+                let particle = fluid_particles[p];
+                if (particle.is_active != 0u && p < chosen && material_form_from_identifier(
+              particle.material_identifier) == FLUID_MATERIAL_FORM && fluid_particle_belongs_to_cell(
               particle.position,
               world,
-              CELLS_PER_TILE_FLOAT)
-            && particle.amount > 0.000001
-            && matches_selector(rule, reactant, particle.material_identifier))
-        {
-          chosen = p;
-          temperature = particle.temperature;
+              CELLS_PER_TILE_FLOAT) && particle.amount > 0.000001 && matches_selector(rule, reactant, particle.material_identifier) ){
+                    chosen = p;
+                    temperature = particle.temperature;
+                }
+                p = fluid_next_particle[p];
+            }
         }
-        p = fluid_next_particle[p];
-      }
     }
-  }
-  return temperature;
+    return temperature;
 }
 
 fn authority_temperature(source: Source, rule: Reaction, reactant: u32) -> f32 {
-  if
-    (source.rigid_claim != 0xffffffffu && source.rigid_claim < arrayLength(
-      &rigid_cells))
-  {
-    let slot = rigid_cells[source.rigid_claim].state_slot;
-    if (slot < arrayLength(&rigid_temperatures)) {
-      return rigid_temperatures[slot];
+    if (source.rigid_claim != 0xffffffffu && source.rigid_claim < arrayLength(
+      &rigid_cells) ){
+        let slot = rigid_cells[source.rigid_claim].state_slot;
+        if (slot < arrayLength(&rigid_temperatures) ){
+            return rigid_temperatures[slot];
+        }
     }
-  }
-  let form = material_form_from_identifier(source.material);
-  if
-    (form == GAS_MATERIAL_FORM && source.cell < arrayLength(&gas_temperatures))
-  {
-    return gas_temperatures[source.cell];
-  }
-  if (form == FLUID_MATERIAL_FORM) {
-    return fluid_temperature(source.cell, reactant, rule);
-  }
-  return temperatures[source.cell];
+    let form = material_form_from_identifier(source.material);
+    if (form == GAS_MATERIAL_FORM && source.cell < arrayLength(&gas_temperatures) ){
+        return gas_temperatures[source.cell];
+    }
+    if (form == FLUID_MATERIAL_FORM ){
+        return fluid_temperature(source.cell, reactant, rule);
+    }
+    return temperatures[source.cell];
 }
 
 fn fluid_source(cell: u32, reactant: u32, rule: Reaction) -> Source {
-  let world =
-    world_cell_from_physical_tile_ring_index(
+    let world = world_cell_from_physical_tile_ring_index(
       cell,
       fluid_spatial_parameters.buffered_origin,
       fluid_spatial_parameters.buffered_tile_size,
       fluid_spatial_parameters.ring_offset);
-  let center = (vec2<f32>(world) + vec2<f32>(0.5)) / CELLS_PER_TILE_FLOAT;
-  let base =
-    fluid_bucket_coordinates_from_position(
+    let center = (vec2<f32>(world) + vec2<f32>(0.5)) / CELLS_PER_TILE_FLOAT;
+    let base = fluid_bucket_coordinates_from_position(
       center,
       fluid_spatial_parameters.buffered_origin,
       fluid_spatial_parameters.support_radius_cells,
       CELLS_PER_TILE_FLOAT);
-  var total = 0.0;
-  var chosen = EMPTY_MATERIAL_IDENTIFIER;
-  var chosen_index = 0xffffffffu;
-  for (var y: i32 = -1; y <= 1; y += 1) {
-    for (var x: i32 = -1; x <= 1; x += 1) {
-      let bucket =
-        fluid_bucket_index_from_coordinates(
+    var total = 0.0;
+    var chosen = EMPTY_MATERIAL_IDENTIFIER;
+    var chosen_index = 0xffffffffu;
+    for (var y: i32 = -1; y <= 1; y   += 1) {
+        for (var x: i32 = -1; x <= 1; x   += 1) {
+            let bucket = fluid_bucket_index_from_coordinates(
           base + vec2<i32>(x, y),
           fluid_spatial_parameters.bucket_dimensions,
           0xffffffffu);
-      if (bucket == 0xffffffffu) {
-        continue;
-      }
-      var p = atomicLoad(&fluid_bucket_heads[bucket]);
-      for (
-        var n: u32 = 0u;
-        p != 0xffffffffu && n < fluid_spatial_parameters.particle_capacity;
-        n += 1u
+            if (bucket == 0xffffffffu ){
+                continue;
+            }
+            var p = atomicLoad(&fluid_bucket_heads[bucket]);
+            for (var n: u32 = 0u; p != 0xffffffffu && n < fluid_spatial_parameters.particle_capacity; n   += 1u
       ) {
-        let particle = fluid_particles[p];
-        if
-          (particle.is_active != 0u
-            && particle.material_identifier != EMPTY_MATERIAL_IDENTIFIER
-            && material_form_from_identifier(
-              particle.material_identifier) == FLUID_MATERIAL_FORM
-            && fluid_particle_belongs_to_cell(
+                let particle = fluid_particles[p];
+                if (particle.is_active != 0u && particle.material_identifier != EMPTY_MATERIAL_IDENTIFIER && material_form_from_identifier(
+              particle.material_identifier) == FLUID_MATERIAL_FORM && fluid_particle_belongs_to_cell(
               particle.position,
               world,
-              CELLS_PER_TILE_FLOAT)
-            && particle.amount > 0.000001
-            && matches_selector(rule, reactant, particle.material_identifier))
-        {
-          total += max(particle.amount, 0.0);
-          if (p < chosen_index) {
-            chosen_index = p;
-            chosen = particle.material_identifier;
-          }
+              CELLS_PER_TILE_FLOAT) && particle.amount > 0.000001 && matches_selector(rule, reactant, particle.material_identifier) ){
+                    total   += max(particle.amount, 0.0);
+                    if (p < chosen_index ){
+                        chosen_index = p;
+                        chosen = particle.material_identifier;
+                    }
+                }
+                p = fluid_next_particle[p];
+            }
         }
-        p = fluid_next_particle[p];
-      }
     }
-  }
-  return Source(cell, chosen, total, total > 0.000001, 0xffffffffu);
+    return Source(cell, chosen, total, total > 0.000001, 0xffffffffu);
 }
 
 fn source_for(cell: u32, reactant: u32, rule: Reaction) -> Source {
-  let rigid = rigid_source(cell, reactant, rule);
-  if (rigid.found) {
-    return rigid;
-  }
-  let material = material_identifiers[cell];
-  if
-    (material != EMPTY_MATERIAL_IDENTIFIER && matches_selector(
+    let rigid = rigid_source(cell, reactant, rule);
+    if (rigid.found ){
+        return rigid;
+    }
+    let material = material_identifiers[cell];
+    if (material != EMPTY_MATERIAL_IDENTIFIER && matches_selector(
       rule,
       reactant,
-      material))
-  {
-    return
+      material) ){
+        return
       Source(
         cell,
         material,
         amounts[cell],
         amounts[cell] > 0.000001,
         0xffffffffu);
-  }
-  let gas = gas_source(cell, reactant, rule);
-  if (gas.found) {
-    return gas;
-  }
-  return fluid_source(cell, reactant, rule);
+    }
+    let gas = gas_source(cell, reactant, rule);
+    if (gas.found ){
+        return gas;
+    }
+    return fluid_source(cell, reactant, rule);
 }
 
 fn local_air(cell: u32) -> f32 {
-  if (cell == INVALID_PHYSICAL_CELL_INDEX || cell >= parameters.cell_count) {
-    return 1.0;
-  }
-  var gas = 0.0;
-  for (var species = 0u; species < parameters.gas_count; species += 1u) {
-    gas += max(gas_concentrations[species * parameters.cell_count + cell], 0.0);
-  }
-  let blocked =
-    material_identifiers[cell] != EMPTY_MATERIAL_IDENTIFIER
-      || external_occupancy[cell] != 0u
-      || atomicLoad(&rigid_claims[cell]) != 0xffffffffu;
-  return
+    if (cell == INVALID_PHYSICAL_CELL_INDEX || cell >= parameters.cell_count ){
+        return 1.0;
+    }
+    var gas = 0.0;
+    for (var species = 0u; species < parameters.gas_count; species   += 1u) {
+        gas   += max(gas_concentrations[species * parameters.cell_count + cell], 0.0);
+    }
+    let blocked = material_identifiers[cell] != EMPTY_MATERIAL_IDENTIFIER || external_occupancy[cell] != 0u || atomicLoad(&rigid_claims[cell]) != 0xffffffffu;
+    return
     select(
       clamp(1.0 - clamp(fluid_coverage[cell], 0.0, 1.0) - gas, 0.0, 1.0),
       0.0,
@@ -364,30 +321,27 @@ fn local_air(cell: u32) -> f32 {
 }
 
 fn neighbor(anchor: u32, direction: u32) -> u32 {
-  if
-    (anchor == INVALID_PHYSICAL_CELL_INDEX || anchor >= parameters.cell_count)
-  {
-    return INVALID_PHYSICAL_CELL_INDEX;
-  }
-  let world =
-    world_cell_from_physical_tile_ring_index(
+    if (anchor == INVALID_PHYSICAL_CELL_INDEX || anchor >= parameters.cell_count ){
+        return INVALID_PHYSICAL_CELL_INDEX;
+    }
+    let world = world_cell_from_physical_tile_ring_index(
       anchor,
       fluid_spatial_parameters.buffered_origin,
       fluid_spatial_parameters.buffered_tile_size,
       fluid_spatial_parameters.ring_offset);
-  var offset = vec2<i32>(0);
-  if (direction == 1u) {
-    offset = vec2<i32>(0, -1);
-  } else if (direction == 2u) {
-    offset = vec2<i32>(1, 0);
-  } else if (direction == 3u) {
-    offset = vec2<i32>(0, 1);
-  } else if (direction == 4u) {
-    offset = vec2<i32>(-1, 0);
-  } else {
-    return INVALID_PHYSICAL_CELL_INDEX;
-  }
-  return
+    var offset = vec2<i32>(0);
+    if (direction == 1u ){
+        offset = vec2<i32>(0, -1);
+    } else if (direction == 2u ){
+        offset = vec2<i32>(1, 0);
+    } else if (direction == 3u ){
+        offset = vec2<i32>(0, 1);
+    } else if (direction == 4u ){
+        offset = vec2<i32>(-1, 0);
+    } else {
+        return INVALID_PHYSICAL_CELL_INDEX;
+    }
+    return
     physical_cell_index_from_world_cell(
       world + offset,
       fluid_spatial_parameters.buffered_origin,
@@ -396,142 +350,136 @@ fn neighbor(anchor: u32, direction: u32) -> u32 {
 }
 
 fn find_partner(anchor: u32, rule: Reaction) -> Source {
-  let same = source_for(anchor, 1u, rule);
-  if (same.found) {
-    return same;
-  }
-  for (var direction = 1u; direction <= 4u; direction += 1u) {
-    let cell = neighbor(anchor, direction);
-    if (cell == 0xffffffffu) {
-      continue;
+    let same = source_for(anchor, 1u, rule);
+    if (same.found ){
+        return same;
     }
-    let source = source_for(cell, 1u, rule);
-    if (source.found) {
-      return source;
+    for (var direction = 1u; direction <= 4u; direction   += 1u) {
+        let cell = neighbor(anchor, direction);
+        if (cell == 0xffffffffu ){
+            continue;
+        }
+        let source = source_for(cell, 1u, rule);
+        if (source.found ){
+            return source;
+        }
     }
-  }
-  return Source(0u, EMPTY_MATERIAL_IDENTIFIER, 0.0, false, 0xffffffffu);
+    return Source(0u, EMPTY_MATERIAL_IDENTIFIER, 0.0, false, 0xffffffffu);
 }
 
 fn gas_total(cell: u32) -> f32 {
-  var total = 0.0;
-  for (var species = 0u; species < parameters.gas_count; species += 1u) {
-    total +=
+    var total = 0.0;
+    for (var species = 0u; species < parameters.gas_count; species   += 1u) {
+        total   +=
       max(gas_concentrations[species * parameters.cell_count + cell], 0.0);
-  }
-  return total;
+    }
+    return total;
 }
 
 fn reserve_gas(cell: u32, material: u32, amount: f32) -> bool {
-  let species = material_index_from_identifier(material);
-  let index = species * parameters.cell_count + cell;
-  if (index >= arrayLength(&gas_reservations)) {
+    let species = material_index_from_identifier(material);
+    let index = species * parameters.cell_count + cell;
+    if (index >= arrayLength(&gas_reservations) ){
+        return false;
+    }
+    let required = u32(max(amount, 0.0) * RESERVATION_SCALE);
+    let available = u32(max(gas_concentrations[index], 0.0) * RESERVATION_SCALE);
+    var old = atomicLoad(&gas_reservations[index]);
+        loop {
+            if (old + required > available ){
+                return false;
+            }
+            let result = atomicCompareExchangeWeak(&gas_reservations[index], old, old + required);
+            if (result.exchanged ){
+                return true;
+            }
+            old = result.old_value;
+        }
     return false;
-  }
-  let required = u32(max(amount, 0.0) * RESERVATION_SCALE);
-  let available = u32(max(gas_concentrations[index], 0.0) * RESERVATION_SCALE);
-  var old = atomicLoad(&gas_reservations[index]);
-  loop {
-    if (old + required > available) {
-      return false;
-    }
-    let result =
-      atomicCompareExchangeWeak(&gas_reservations[index], old, old + required);
-    if (result.exchanged) {
-      return true;
-    }
-    old = result.old_value;
-  }
-  return false;
 }
 
 fn reserve_gas_output(cell: u32, material: u32, amount: f32) -> bool {
-  let species = material_index_from_identifier(material);
-  let index = species * parameters.cell_count + cell;
-  if (index >= arrayLength(&gas_output_reservations)) {
-    return false;
-  }
-  let required = u32(max(amount, 0.0) * RESERVATION_SCALE);
-  let current = u32(max(gas_concentrations[index], 0.0) * RESERVATION_SCALE);
-  let inputs = atomicLoad(&gas_reservations[index]);
-  let old = atomicLoad(&gas_output_reservations[index]);
-  let net_current =
-    select(current, current - min(current, inputs), inputs > 0u);
-  var output_reserved = old;
-  loop {
-    if (net_current + output_reserved + required > RESERVATION_SCALE_U32) {
-      return false;
+    let species = material_index_from_identifier(material);
+    let index = species * parameters.cell_count + cell;
+    if (index >= arrayLength(&gas_output_reservations) ){
+        return false;
     }
-    let result =
-      atomicCompareExchangeWeak(
+    let required = u32(max(amount, 0.0) * RESERVATION_SCALE);
+    let current = u32(max(gas_concentrations[index], 0.0) * RESERVATION_SCALE);
+    let inputs = atomicLoad(&gas_reservations[index]);
+    let old = atomicLoad(&gas_output_reservations[index]);
+    let net_current = select(current, current - min(current, inputs), inputs > 0u);
+    var output_reserved = old;
+        loop {
+            if (net_current + output_reserved + required > RESERVATION_SCALE_U32 ){
+                return false;
+            }
+            let result = atomicCompareExchangeWeak(
         &gas_output_reservations[index],
         output_reserved,
         output_reserved + required);
-    if (result.exchanged) {
-      return true;
-    }
-    output_reserved = result.old_value;
-  }
-  return false;
+            if (result.exchanged ){
+                return true;
+            }
+            output_reserved = result.old_value;
+        }
+    return false;
 }
 
 fn release_gas_reservation(cell: u32, material: u32, amount: f32) {
-  let index =
-    material_index_from_identifier(material) * parameters.cell_count + cell;
-  if (index < arrayLength(&gas_reservations)) {
-    atomicSub(
+    let index = material_index_from_identifier(material) * parameters.cell_count + cell;
+    if (index < arrayLength(&gas_reservations) ){
+        atomicSub(
       &gas_reservations[index],
       u32(max(amount, 0.0) * RESERVATION_SCALE));
-  }
+    }
 }
 
 fn release_gas_output_reservation(cell: u32, material: u32, amount: f32) {
-  let index =
-    material_index_from_identifier(material) * parameters.cell_count + cell;
-  if (index < arrayLength(&gas_output_reservations)) {
-    atomicSub(
+    let index = material_index_from_identifier(material) * parameters.cell_count + cell;
+    if (index < arrayLength(&gas_output_reservations) ){
+        atomicSub(
       &gas_output_reservations[index],
       u32(max(amount, 0.0) * RESERVATION_SCALE));
-  }
+    }
 }
 
 fn reserve_mutation_requests(count: u32) -> u32 {
-  if (count == 0u) {
-    return 0u;
-  }
-  var base = atomicLoad(&mutation_request_count[0]);
-  loop {
-    if (base + count > arrayLength(&mutation_requests)) {
-      return 0xffffffffu;
+    if (count == 0u ){
+        return 0u;
     }
-    let result =
-      atomicCompareExchangeWeak(&mutation_request_count[0], base, base + count);
-    if (result.exchanged) {
-      return base;
-    }
-    base = result.old_value;
-  }
-  return 0xffffffffu;
+    var base = atomicLoad(&mutation_request_count[0]);
+        loop {
+            if (base + count > arrayLength(&mutation_requests) ){
+                return 0xffffffffu;
+            }
+            let result = atomicCompareExchangeWeak(&mutation_request_count[0], base, base + count);
+            if (result.exchanged ){
+                return base;
+            }
+            base = result.old_value;
+        }
+    return 0xffffffffu;
 }
 
 fn reserve_canonical_authority(cell: u32) -> bool {
-  if (cell >= arrayLength(&canonical_reservations)) {
-    return false;
-  }
-  return
+    if (cell >= arrayLength(&canonical_reservations) ){
+        return false;
+    }
+    return
     atomicCompareExchangeWeak(&canonical_reservations[cell], 0u, 1u).exchanged;
 }
 
 fn release_canonical_authority(cell: u32) {
-  if (cell < arrayLength(&canonical_reservations)) {
-    atomicStore(&canonical_reservations[cell], 0u);
-  }
+    if (cell < arrayLength(&canonical_reservations) ){
+        atomicStore(&canonical_reservations[cell], 0u);
+    }
 }
 
 fn candidate_better(a: Candidate, b: Candidate) -> bool {
-  let ap = bitcast<i32>(reactions[a.reaction].words[25]);
-  let bp = bitcast<i32>(reactions[b.reaction].words[25]);
-  return
+    let ap = bitcast<i32>(reactions[a.reaction].words[25]);
+    let bp = bitcast<i32>(reactions[b.reaction].words[25]);
+    return
     ap > bp || (ap == bp && (reactions[a.reaction].words[26] < reactions
       [b.reaction]
       .words[26] || (reactions[a.reaction].words[26] == reactions
@@ -542,185 +490,159 @@ fn candidate_better(a: Candidate, b: Candidate) -> bool {
 // Reserves fluid inventory without touching authoritative particles. The
 // Retains the complete contributor plan in per-particle reservation state.
 fn reserve_fluid_plan(
-  record: u32,
-  cell: u32,
-  reactant: u32,
-  rule: Reaction,
-  required: f32) -> bool {
-  var remaining = required;
-  let world =
-    world_cell_from_physical_tile_ring_index(
+    record: u32,
+    cell: u32,
+    reactant: u32,
+    rule: Reaction,
+    required: f32
+) -> bool {
+    var remaining = required;
+    let world = world_cell_from_physical_tile_ring_index(
       cell,
       fluid_spatial_parameters.buffered_origin,
       fluid_spatial_parameters.buffered_tile_size,
       fluid_spatial_parameters.ring_offset);
-  let center = (vec2<f32>(world) + vec2<f32>(0.5)) / CELLS_PER_TILE_FLOAT;
-  let base =
-    fluid_bucket_coordinates_from_position(
+    let center = (vec2<f32>(world) + vec2<f32>(0.5)) / CELLS_PER_TILE_FLOAT;
+    let base = fluid_bucket_coordinates_from_position(
       center,
       fluid_spatial_parameters.buffered_origin,
       fluid_spatial_parameters.support_radius_cells,
       CELLS_PER_TILE_FLOAT);
-  for (
-    var iteration: u32 = 0u;
-    iteration < fluid_spatial_parameters.particle_capacity && remaining > 0.000001;
-    iteration += 1u
+    for (var iteration: u32 = 0u; iteration < fluid_spatial_parameters.particle_capacity && remaining > 0.000001; iteration   += 1u
   ) {
-    var selected = 0xffffffffu;
-    for (var y: i32 = -1; y <= 1; y += 1) {
-      for (var x: i32 = -1; x <= 1; x += 1) {
-        let bucket =
-          fluid_bucket_index_from_coordinates(
+        var selected = 0xffffffffu;
+        for (var y: i32 = -1; y <= 1; y   += 1) {
+            for (var x: i32 = -1; x <= 1; x   += 1) {
+                let bucket = fluid_bucket_index_from_coordinates(
             base + vec2<i32>(x, y),
             fluid_spatial_parameters.bucket_dimensions,
             0xffffffffu);
-        if (bucket == 0xffffffffu) {
-          continue;
-        }
-        var p = atomicLoad(&fluid_bucket_heads[bucket]);
-        for (
-          var n: u32 = 0u;
-          p != 0xffffffffu && n < fluid_spatial_parameters.particle_capacity;
-          n += 1u
+                if (bucket == 0xffffffffu ){
+                    continue;
+                }
+                var p = atomicLoad(&fluid_bucket_heads[bucket]);
+                for (var n: u32 = 0u; p != 0xffffffffu && n < fluid_spatial_parameters.particle_capacity; n   += 1u
         ) {
-          let particle = fluid_particles[p];
-          if (p >= selected && selected != 0xffffffffu) {
-            p = fluid_next_particle[p];
-            continue;
-          }
-          if
-            (particle.is_active != 0u
-              && material_form_from_identifier(
-                particle.material_identifier) == FLUID_MATERIAL_FORM
-              && fluid_particle_belongs_to_cell(
+                    let particle = fluid_particles[p];
+                    if (p >= selected && selected != 0xffffffffu ){
+                        p = fluid_next_particle[p];
+                        continue;
+                    }
+                    if (particle.is_active != 0u && material_form_from_identifier(
+                particle.material_identifier) == FLUID_MATERIAL_FORM && fluid_particle_belongs_to_cell(
                 particle.position,
                 world,
-                CELLS_PER_TILE_FLOAT)
-              && particle.amount > 0.000001
-              && matches_selector(rule, reactant, particle.material_identifier)
-              && atomicLoad(&fluid_reservations[p]) < u32(
-                max(particle.amount, 0.0) * RESERVATION_SCALE))
-          {
-            selected = p;
-          }
-          p = fluid_next_particle[p];
+                CELLS_PER_TILE_FLOAT) && particle.amount > 0.000001 && matches_selector(rule, reactant, particle.material_identifier) && atomicLoad(&fluid_reservations[p]) < u32(
+                max(particle.amount, 0.0) * RESERVATION_SCALE) ){
+                        selected = p;
+                    }
+                    p = fluid_next_particle[p];
+                }
+            }
         }
-      }
-    }
-    if (selected == 0xffffffffu) {
-      rollback_fluid_plan(cell, reactant);
-      return false;
-    }
-    let particle = fluid_particles[selected];
-    let already =
-      f32(atomicLoad(&fluid_reservations[selected])) / RESERVATION_SCALE;
-    let available = max(particle.amount - already, 0.0);
-    let take = min(remaining, available);
-    let units = u32(max(take, 0.0) * RESERVATION_SCALE);
-    let old = atomicLoad(&fluid_reservations[selected]);
-    let result =
-      atomicCompareExchangeWeak(
+        if (selected == 0xffffffffu ){
+            rollback_fluid_plan(cell, reactant);
+            return false;
+        }
+        let particle = fluid_particles[selected];
+        let already = f32(atomicLoad(&fluid_reservations[selected])) / RESERVATION_SCALE;
+        let available = max(particle.amount - already, 0.0);
+        let take = min(remaining, available);
+        let units = u32(max(take, 0.0) * RESERVATION_SCALE);
+        let old = atomicLoad(&fluid_reservations[selected]);
+        let result = atomicCompareExchangeWeak(
         &fluid_reservations[selected],
         old,
         old + units);
-    if (result.exchanged) {
-      atomicStore(&fluid_reservation_owners[selected], record);
-      remaining -= take;
+        if (result.exchanged ){
+            atomicStore(&fluid_reservation_owners[selected], record);
+            remaining   -= take;
+        }
     }
-  }
-  if (remaining > 0.00001) {
-    rollback_fluid_plan(cell, reactant);
-    return false;
-  }
-  return true;
+    if (remaining > 0.00001 ){
+        rollback_fluid_plan(cell, reactant);
+        return false;
+    }
+    return true;
 }
 
 fn reserve_fluid_slot() -> u32 {
-  var count = atomicLoad(&fluid_free_count[0]);
-  loop {
-    if (count == 0u) {
-      return 0xffffffffu;
-    }
-    let result =
-      atomicCompareExchangeWeak(&fluid_free_count[0], count, count - 1u);
-    if (result.exchanged) {
-      return fluid_free_indices[count - 1u];
-    }
-    count = result.old_value;
-  }
-  return 0xffffffffu;
+    var count = atomicLoad(&fluid_free_count[0]);
+        loop {
+            if (count == 0u ){
+                return 0xffffffffu;
+            }
+            let result = atomicCompareExchangeWeak(&fluid_free_count[0], count, count - 1u);
+            if (result.exchanged ){
+                return fluid_free_indices[count - 1u];
+            }
+            count = result.old_value;
+        }
+    return 0xffffffffu;
 }
 
 fn fluid_source_cell(cell: u32, source_cell: u32, commit: bool) {
-  let world =
-    world_cell_from_physical_tile_ring_index(
+    let world = world_cell_from_physical_tile_ring_index(
       source_cell,
       fluid_spatial_parameters.buffered_origin,
       fluid_spatial_parameters.buffered_tile_size,
       fluid_spatial_parameters.ring_offset);
-  let center = (vec2<f32>(world) + vec2<f32>(0.5)) / CELLS_PER_TILE_FLOAT;
-  let base =
-    fluid_bucket_coordinates_from_position(
+    let center = (vec2<f32>(world) + vec2<f32>(0.5)) / CELLS_PER_TILE_FLOAT;
+    let base = fluid_bucket_coordinates_from_position(
       center,
       fluid_spatial_parameters.buffered_origin,
       fluid_spatial_parameters.support_radius_cells,
       CELLS_PER_TILE_FLOAT);
-  for (var y: i32 = -1; y <= 1; y += 1) {
-    for (var x: i32 = -1; x <= 1; x += 1) {
-      let bucket =
-        fluid_bucket_index_from_coordinates(
+    for (var y: i32 = -1; y <= 1; y   += 1) {
+        for (var x: i32 = -1; x <= 1; x   += 1) {
+            let bucket = fluid_bucket_index_from_coordinates(
           base + vec2<i32>(x, y),
           fluid_spatial_parameters.bucket_dimensions,
           0xffffffffu);
-      if (bucket == 0xffffffffu) {
-        continue;
-      }
-      var index = atomicLoad(&fluid_bucket_heads[bucket]);
-      for (
-        var n = 0u;
-        index != 0xffffffffu && n < fluid_spatial_parameters.particle_capacity;
-        n += 1u
-      ) {
-        if (atomicLoad(&fluid_reservation_owners[index]) == cell) {
-          if (commit) {
-            let amount =
-              f32(atomicLoad(&fluid_reservations[index])) / RESERVATION_SCALE;
-            let next_amount = max(fluid_particles[index].amount - amount, 0.0);
-            fluid_particles[index].amount = next_amount;
-            atomicStore(&fluid_reservations[index], 0u);
-            atomicStore(&fluid_reservation_owners[index], 0xffffffffu);
-            if (next_amount <= 0.000001) {
-              fluid_particles[index].material_identifier =
-                EMPTY_MATERIAL_IDENTIFIER;
-              fluid_particles[index].is_active = 0u;
-              let free = atomicAdd(&fluid_free_count[0], 1u);
-              if (free < arrayLength(&fluid_free_indices)) {
-                fluid_free_indices[free] = index;
-              }
+            if (bucket == 0xffffffffu ){
+                continue;
             }
-          } else {
-            atomicStore(&fluid_reservations[index], 0u);
-            atomicStore(&fluid_reservation_owners[index], 0xffffffffu);
-          }
+            var index = atomicLoad(&fluid_bucket_heads[bucket]);
+            for (var n = 0u; index != 0xffffffffu && n < fluid_spatial_parameters.particle_capacity; n   += 1u
+      ) {
+                if (atomicLoad(&fluid_reservation_owners[index]) == cell ){
+                    if (commit ){
+                        let amount = f32(atomicLoad(&fluid_reservations[index])) / RESERVATION_SCALE;
+                        let next_amount = max(fluid_particles[index].amount - amount, 0.0);
+                        fluid_particles[index].amount = next_amount;
+                        atomicStore(&fluid_reservations[index], 0u);
+                        atomicStore(&fluid_reservation_owners[index], 0xffffffffu);
+                        if (next_amount <= 0.000001 ){
+                            fluid_particles[index].material_identifier = EMPTY_MATERIAL_IDENTIFIER;
+                            fluid_particles[index].is_active = 0u;
+                            let free = atomicAdd(&fluid_free_count[0], 1u);
+                            if (free < arrayLength(&fluid_free_indices) ){
+                                fluid_free_indices[free] = index;
+                            }
+                        }
+                    } else {
+                        atomicStore(&fluid_reservations[index], 0u);
+                        atomicStore(&fluid_reservation_owners[index], 0xffffffffu);
+                    }
+                }
+                index = fluid_next_particle[index];
+            }
         }
-        index = fluid_next_particle[index];
-      }
     }
-  }
 }
 
 fn apply_fluid_plan(cell: u32, reactant: u32) {
-  let candidate = candidates[cell];
-  fluid_source_cell(cell, candidate.anchor, true);
-  if (candidate.partner != candidate.anchor) {
-    fluid_source_cell(cell, candidate.partner, true);
-  }
+    let candidate = candidates[cell];
+    fluid_source_cell(cell, candidate.anchor, true);
+    if (candidate.partner != candidate.anchor ){
+        fluid_source_cell(cell, candidate.partner, true);
+    }
 }
 
 fn rollback_fluid_plan(cell: u32, reactant: u32) {
-  let candidate = candidates[cell];
-  let source_cell = select(candidate.anchor, candidate.partner, reactant == 1u);
-  fluid_source_cell(cell, source_cell, false);
+    let candidate = candidates[cell];
+    let source_cell = select(candidate.anchor, candidate.partner, reactant == 1u);
+    fluid_source_cell(cell, source_cell, false);
 }
 
 @compute @workgroup_size(64)
