@@ -214,6 +214,8 @@ pub struct Scene {
 mod scene_actor_control;
 #[path = "scene_cell_editing.rs"]
 mod scene_cell_editing;
+#[path = "scene_chunk_navigation.rs"]
+mod scene_chunk_navigation;
 #[path = "scene_chunk_streaming.rs"]
 mod scene_chunk_streaming;
 #[path = "scene_construction.rs"]
