@@ -32,7 +32,7 @@ fn phase_rigid(@builtin(global_invocation_id) id: vec3<u32>) {
   let source = rigid.material_identifier;
   if (!(amount >= 0.999 && amount <= 1.001) || !(temperature == temperature)) {
     return;
-  } // TODO fractional rigid inventory needs a non-PBF product representation.
+  } // TODO fractional rigid inventory needs a non-particle-fluid product representation.
   let dense = material_dense_index(source, thermal.offsets, thermal.counts);
   if (dense == 0xffffffffu || dense >= arrayLength(&properties)) {
     return;
@@ -266,4 +266,3 @@ fn phase_gases(
         bitcast<u32>(position.y));
   }
 }
-

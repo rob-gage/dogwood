@@ -101,7 +101,7 @@ struct Particle {
   atomic<u32>
 >;
 
-// Gas is continuous inventory; PBF particles are discrete unit inventory.
+// Gas is continuous inventory; fluid particles are discrete unit inventory.
 // Continuous→discrete conversion must aggregate a full particle quantum before spawning.
 struct GasFluidCandidate {
   replacement: u32,

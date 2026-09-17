@@ -57,7 +57,7 @@ pub enum Material {
         friction: f32,
         /// Normal velocity retained as bounce at solid contacts
         restitution: f32,
-        /// PBF rest density in normalized particle units
+        /// Fluid rest density in normalized particle units
         rest_density: f32,
         /// Tensile-instability correction strength
         artificial_pressure: f32,

@@ -5,7 +5,7 @@ use super::*;
 impl Scene {
     /// Applies Accelerator-detected rigid phase candidates after their bounded async
     /// readback.  Every candidate is rechecked against authoritative body
-    /// state before its already-reserved PBF slot is committed.
+    /// state before its already-reserved fluid-particle slot is committed.
     pub(super) fn apply_completed_rigid_thermal_transitions(&mut self) {
         let Some(candidates) = self.thermal_phase_transitions.take_rigid_candidates() else {
             return;

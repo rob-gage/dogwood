@@ -162,7 +162,7 @@ impl Fluids {
         &self.derived_thermal
     }
 
-    /// Returns the tile buffer required by active movement and PBF support
+    /// Returns the tile buffer required by active movement and particle-fluid support
     pub fn minimum_buffer_tiles() -> u8 {
         let predicted_movement: f32 = MAXIMUM_MOVEMENT_CELLS as f32 / PBF_SUBSTEP_COUNT as f32
             + MAXIMUM_CORRECTION_CELLS * PBF_CONSTRAINT_ITERATION_COUNT as f32;

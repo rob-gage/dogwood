@@ -158,7 +158,7 @@ fn gather_fluid_particle_sample_for_cell(
         }
         let distance_cells: f32 =
           length(particle.position * CELLS_PER_TILE_FLOAT - center,);
-        // Support radius is for PBF; one particle renders as about one cell
+        // Support radius is for particle-based fluid simulation; one particle renders as about one cell
         let particle_diameter: f32 = 1.2;
         let weight: f32 = max(0.0, 1.0 - distance_cells / particle_diameter);
         if weight > 0.0 {
@@ -272,7 +272,7 @@ fn gather_derived_fluid_sample_inside_actor(
       viscosity_sum,);
 }
 
-// Calculates one XSPH velocity correction from committed neighbors
+// Calculates one neighbor-velocity-smoothing correction from committed neighbors
 fn calculate_fluid_particle_velocity_smoothing(
   particle_index: u32,
   particle: Particle,) -> vec2<f32> {
@@ -313,7 +313,7 @@ fn calculate_fluid_particle_velocity_smoothing(
       / max(weight_sum, 0.000001);
 }
 
-// Calculates one PBF density constraint multiplier from predicted neighbors
+// Calculates one particle-fluid density constraint multiplier from predicted neighbors
 fn calculate_fluid_density_constraint_lambda(
   particle_index: u32,
   position: vec2<f32>,
@@ -358,7 +358,7 @@ fn calculate_fluid_density_constraint_lambda(
   return -constraint / (gradient_squared_sum + CONSTRAINT_EPSILON);
 }
 
-// Gathers one race-free PBF position correction from immutable neighbor state
+// Gathers one race-free particle-fluid position correction from immutable neighbor state
 fn calculate_fluid_particle_position_correction_cells(
   particle_index: u32,
   position: vec2<f32>,) -> vec2<f32> {
@@ -404,7 +404,7 @@ fn calculate_fluid_particle_position_correction_cells(
   return correction_cells;
 }
 
-// Evaluates the two-dimensional PBF poly6 density kernel
+// Evaluates the two-dimensional particle-fluid poly6 density kernel
 fn fluid_poly6_kernel_weight(distance: f32) -> f32 {
   let h: f32 = parameters.support_radius_cells;
   if distance >= h {
@@ -419,7 +419,7 @@ fn fluid_poly6_kernel_weight(distance: f32) -> f32 {
       / (PI * h * h * h * h * h * h * h * h);
 }
 
-// Evaluates the two-dimensional PBF spiky-kernel gradient
+// Evaluates the two-dimensional particle-fluid spiky-kernel gradient
 fn fluid_spiky_kernel_gradient(separation: vec2<f32>, distance: f32) -> vec2<
   f32
 > {
@@ -681,4 +681,3 @@ fn world_cell_from_fluid_logical_index(logical_index: u32) -> vec2<i32> {
       parameters.buffered_origin,
       parameters.buffered_tile_size,);
 }
-

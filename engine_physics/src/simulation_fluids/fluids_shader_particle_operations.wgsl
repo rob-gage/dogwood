@@ -118,7 +118,7 @@ fn classify_active_fluid_particles(
         particles[particle_index].position),);
 }
 
-// Predicts one PBF substep while retaining the previous authoritative position for velocity reconstruction
+// Predicts one particle-fluid substep while retaining the previous authoritative position for velocity reconstruction
 @compute @workgroup_size(64)
 fn predict_fluid_particles(
   @builtin(global_invocation_id) invocation: vec3<u32>) {
@@ -222,7 +222,7 @@ fn insert_predicted_fluid_particles_into_spatial_buckets(
     atomicExchange(&bucket_heads[bucket_index], particle_index,);
 }
 
-// Calculates the standard PBF density constraint and lambda from immutable predicted positions
+// Calculates the standard particle-fluid density constraint and multiplier from immutable predicted positions
 @compute @workgroup_size(64)
 fn calculate_fluid_density_constraint_lambdas(
   @builtin(global_invocation_id) invocation: vec3<u32>) {
@@ -322,7 +322,7 @@ fn commit_fluid_particles(
   particles[particle_index].velocity = velocity;
 }
 
-// Calculates one final XSPH correction from committed neighbors to quiet constraint noise
+// Calculates one final neighbor-velocity-smoothing correction from committed neighbors to quiet constraint noise
 @compute @workgroup_size(64)
 fn calculate_fluid_velocity_smoothing(
   @builtin(global_invocation_id) invocation: vec3<u32>) {
@@ -340,7 +340,7 @@ fn calculate_fluid_velocity_smoothing(
     calculate_fluid_particle_velocity_smoothing(particle_index, particle);
 }
 
-// Applies the race-free XSPH correction calculated from committed neighbors
+// Applies the race-free neighbor-velocity-smoothing correction calculated from committed neighbors
 @compute @workgroup_size(64)
 fn apply_fluid_velocity_smoothing(
   @builtin(global_invocation_id) invocation: vec3<u32>) {
@@ -356,7 +356,7 @@ fn apply_fluid_velocity_smoothing(
   particles[particle_index].velocity += position_corrections[particle_index];
 }
 
-// Resolves hard contact and soft swimmer entrainment after final XSPH smoothing
+// Resolves hard contact and soft swimmer entrainment after final neighbor velocity smoothing
 @compute @workgroup_size(64)
 fn resolve_fluid_cellular_contact_velocity(
   @builtin(global_invocation_id) invocation: vec3<u32>) {
@@ -431,4 +431,3 @@ fn apply_fluid_cellular_contact_velocity_to_particles(
 
 // Transfers exact authoritative records out before their world tiles leave residency
 @compute @workgroup_size(64)
-
