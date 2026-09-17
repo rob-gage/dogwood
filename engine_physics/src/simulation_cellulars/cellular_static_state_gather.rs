@@ -1,13 +1,6 @@
+use super::CellularStaticState;
 use engine_compute::{Accelerator, AcceleratorBuffer};
 use std::sync::{Arc, Mutex};
-
-pub(crate) struct CellularStaticState {
-    pub material: u32,
-    pub appearance: u32,
-    pub integrity: f32,
-    pub amount: f32,
-    pub temperature: f32,
-}
 
 pub(crate) struct CellularStaticStateGather {
     descriptors: AcceleratorBuffer,

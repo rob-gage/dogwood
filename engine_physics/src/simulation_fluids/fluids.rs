@@ -1,5 +1,6 @@
 // Copyright Rob Gage 2026
 
+use super::FluidAuthorityView;
 use crate::scenes::{FluidDownload, FluidUpload};
 use crate::simulation::simulation_constants::*;
 use crate::{
@@ -107,18 +108,6 @@ pub struct Fluids {
     bucket_count: u32,
     /// Fluid spatial-grid dimensions, independent from tile dimensions
     bucket_dimensions: [u32; 2],
-}
-
-/// Internal read view of the authoritative fluid spatial index.  Simulation
-/// subsystems use this instead of reimplementing particle-to-cell mapping.
-pub(crate) struct FluidAuthorityView<'a> {
-    pub(crate) particles: &'a AcceleratorBuffer,
-    pub(crate) particle_capacity: u32,
-    pub(crate) free_indices: &'a AcceleratorBuffer,
-    pub(crate) free_count: &'a AcceleratorBuffer,
-    pub(crate) bucket_heads: &'a AcceleratorBuffer,
-    pub(crate) next_particle: &'a AcceleratorBuffer,
-    pub(crate) parameters: &'a wgpu::Buffer,
 }
 
 impl Fluids {

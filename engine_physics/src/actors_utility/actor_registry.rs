@@ -1,7 +1,8 @@
 // Copyright Rob Gage 2026
 
 use super::{
-    actor_cellular_proxy_state::ActorCellularProxyState, actor_collision_shape::ActorCollisionShape,
+    actor_cellular_proxy_state::ActorCellularProxyState,
+    actor_collision_shape::ActorCollisionShape, actor_physics_proxy_state::ActorPhysicsProxyState,
 };
 use crate::{
     actors::{
@@ -11,12 +12,6 @@ use crate::{
     scenes::{Scene, ScenePosition, SceneVelocity},
     simulation::{ScenePhysicsWorld, SceneSimulation},
 };
-pub(crate) struct ActorPhysicsProxyState {
-    pub actor: Actor,
-    pub center: [f32; 2],
-    pub shape: ActorCollisionShape,
-}
-
 /// Owns the ECS world and provides the engine's actor-facing API
 pub struct ActorRegistry {
     world: bevy_ecs::world::World,
