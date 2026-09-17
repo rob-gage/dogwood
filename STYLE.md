@@ -43,3 +43,8 @@ line after the last item before the closing brace.
 
 ## WGSL
 - Shader code should be formatted in a manner similar to Rust where applicable.
+
+## Source sizes
+- Keep Rust and WGSL source files below 500 lines where cohesion permits.
+- Review files above 1000 lines before adding more implementation to them.
+- Run `bash scripts/check_source_sizes.sh --strict` when enforcing the size limit.
