@@ -1,5 +1,6 @@
 // Copyright Rob Gage 2026
 
+mod scene_test_accelerator;
 mod scene_test_configuration;
 pub(crate) mod scene_test_readback;
 
@@ -41,18 +42,17 @@ use crate::scenes::tests::scene_test_readback::{read_amount, read_cell_state, re
 use crate::scenes::{Scene, SceneData, SceneEditBatch, SceneEditCellPlacement};
 use crate::simulation::CollisionOccupancySnapshot;
 use crate::tiles::CellularAppearance;
-use engine_compute::Accelerator;
 use engine_graphics::{Color, MaterialAppearance};
+use scene_test_accelerator::new_scene_test_accelerator;
 use scene_test_configuration::scene_test_configuration;
 use std::{
-    sync::{Arc, mpsc},
+    sync::mpsc,
     time::{Duration, Instant},
 };
 
 #[test]
 fn test_gas_leaves_and_returns_through_ring_streaming() {
-    let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
-    let accelerator: Arc<Accelerator> = Arc::new(Accelerator::new().unwrap());
+    let (_accelerator_test_lock, accelerator) = new_scene_test_accelerator();
     let mut materials: MaterialRegistry = MaterialRegistry::new();
     let vapor: MaterialIdentifier = materials.register(Material::Gas {
         name: "Vapor".into(),
@@ -123,8 +123,7 @@ fn test_gas_leaves_and_returns_through_ring_streaming() {
 
 #[test]
 fn test_cellular_indirect_dispatch_executes() {
-    let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
-    let accelerator: Arc<Accelerator> = Arc::new(Accelerator::new().unwrap());
+    let (_accelerator_test_lock, accelerator) = new_scene_test_accelerator();
     let mut materials: MaterialRegistry = MaterialRegistry::new();
     let sand: MaterialIdentifier = materials.register(Material::CellularDynamic {
         name: "Sand".into(),
@@ -153,8 +152,7 @@ fn test_cellular_indirect_dispatch_executes() {
 
 #[test]
 fn test_acid_fluid_erodes_same_cell_and_cardinal_stone_across_ticks() {
-    let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
-    let accelerator = Arc::new(Accelerator::new().unwrap());
+    let (_accelerator_test_lock, accelerator) = new_scene_test_accelerator();
     let mut materials = MaterialRegistryBuilder::new();
     let stone = materials.register(Material::CellularDynamic {
         name: "Stone".into(),
@@ -284,8 +282,7 @@ fn test_acid_fluid_erodes_same_cell_and_cardinal_stone_across_ticks() {
 
 #[test]
 fn test_acid_fluid_erodes_rigid_stone_and_removes_topology() {
-    let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
-    let accelerator = Arc::new(Accelerator::new().unwrap());
+    let (_accelerator_test_lock, accelerator) = new_scene_test_accelerator();
     let mut materials = MaterialRegistryBuilder::new();
     let stone = materials.register(Material::CellularStatic {
         name: "Stone".into(),
@@ -372,8 +369,7 @@ fn test_acid_fluid_erodes_rigid_stone_and_removes_topology() {
 
 #[test]
 fn test_full_screen_moving_sand_headless_tps() {
-    let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
-    let accelerator: Arc<Accelerator> = Arc::new(Accelerator::new().unwrap());
+    let (_accelerator_test_lock, accelerator) = new_scene_test_accelerator();
     let mut materials = MaterialRegistry::new();
     let sand = materials.register(Material::CellularDynamic {
         name: "Sand".into(),
@@ -444,8 +440,7 @@ fn test_full_screen_moving_sand_headless_tps() {
 
 #[test]
 fn test_disconnected_static_component_becomes_one_falling_rigid_body() {
-    let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
-    let accelerator: Arc<Accelerator> = Arc::new(Accelerator::new().unwrap());
+    let (_accelerator_test_lock, accelerator) = new_scene_test_accelerator();
     let mut materials: MaterialRegistry = MaterialRegistry::new();
     let stone: MaterialIdentifier = materials.register(Material::CellularStatic {
         name: "Stone".into(),
@@ -525,8 +520,7 @@ fn test_disconnected_static_component_becomes_one_falling_rigid_body() {
 
 #[test]
 fn test_accelerator_phase_static_cells_resolve_to_debris_or_rigid_body() {
-    let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
-    let accelerator = Arc::new(Accelerator::new().unwrap());
+    let (_accelerator_test_lock, accelerator) = new_scene_test_accelerator();
     let mut builder = MaterialRegistryBuilder::new();
     let debris = builder.register(Material::CellularDynamic {
         name: "Debris".into(),
@@ -656,8 +650,7 @@ fn test_accelerator_phase_static_cells_resolve_to_debris_or_rigid_body() {
 
 #[test]
 fn test_queued_authored_rigid_body_is_atomic_and_body_local() {
-    let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
-    let accelerator = Arc::new(Accelerator::new().unwrap());
+    let (_accelerator_test_lock, accelerator) = new_scene_test_accelerator();
     let mut materials = MaterialRegistry::new();
     let stone = materials.register(Material::CellularStatic {
         name: "Stone".into(),
