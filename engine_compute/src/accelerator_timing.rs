@@ -15,7 +15,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Debug-only WGPU timestamp-query state shared by an accelerator.
+/// Debug-only Accelerator timestamp-query state.
 pub(crate) struct AcceleratorTiming {
     #[cfg(debug_assertions)]
     query_set: Option<wgpu::QuerySet>,

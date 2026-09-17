@@ -3,7 +3,7 @@
 use super::{AcceleratorBuffer, accelerator_timing::AcceleratorTiming};
 use std::{error::Error, mem::size_of};
 
-/// A WGPU accelerator shared by graphics and compute workloads.
+/// An Accelerator shared by graphics and compute workloads.
 pub struct Accelerator {
     /// The `Accelerator`'s `wgpu::Instance`
     wgpu_instance: wgpu::Instance,

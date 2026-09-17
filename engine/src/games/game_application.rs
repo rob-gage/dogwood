@@ -22,9 +22,9 @@ pub struct GameApplication<G: Game> {
     title: String,
     /// The `winit` window used by this `GameApplication`
     window: Option<Arc<winit::window::Window>>,
-    /// The shared WGPU accelerator used for graphics and compute
+    /// The shared Accelerator used for graphics and compute
     accelerator: Arc<Accelerator>,
-    /// The WGPU surface used to render the window
+    /// The rendering surface used to render the window
     surface: Option<wgpu::Surface<'static>>,
     /// The current configuration of the window surface
     surface_configuration: Option<wgpu::SurfaceConfiguration>,
