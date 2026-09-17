@@ -1,6 +1,4 @@
 // Copyright Rob Gage 2026
-#define_import_path compute::material_reactions_resources
-
 // This is the fixed reaction metadata representation written by ReactionMaterialTable.
 struct Reaction {
     words: array<u32, 27>,
@@ -151,4 +149,3 @@ struct SortParameters {
 @group(0) @binding(36) var<storage, read_write> sort_indirect: array<u32>;
 @group(0) @binding(37) var<storage, read> gas_temperatures: array<f32>;
 @group(0) @binding(38) var<storage, read> rigid_temperatures: array<f32>;
-

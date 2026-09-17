@@ -285,6 +285,7 @@ impl MaterialReactions {
                 include_str!("material_reactions_shader_candidate_reservation.wgsl"),
                 include_str!("material_reactions_shader_fluid_authority.wgsl"),
                 include_str!("material_reactions_shader_application.wgsl"),
+                include_str!("material_reactions_resources.wgsl"),
             ),
             file!(),
         );

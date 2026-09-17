@@ -21,7 +21,7 @@ pub(crate) fn create_simulation_shader_module(
     )
 }
 
-const PHYSICS_SHADER_UTILITIES: [engine_compute::ComposableShaderUtility; 9] = [
+const PHYSICS_SHADER_UTILITIES: [engine_compute::ComposableShaderUtility; 8] = [
     engine_compute::ComposableShaderUtility {
         source: include_str!("simulation_constants.wgsl"),
         file_path: "engine_physics/src/simulation/simulation_constants.wgsl",
@@ -53,10 +53,6 @@ const PHYSICS_SHADER_UTILITIES: [engine_compute::ComposableShaderUtility; 9] = [
     engine_compute::ComposableShaderUtility {
         source: include_str!("../simulation_utility/tile_ring.wgsl"),
         file_path: "engine_physics/src/simulation_utility/tile_ring.wgsl",
-    },
-    engine_compute::ComposableShaderUtility {
-        source: include_str!("../simulation_materials/material_reactions_resources.wgsl"),
-        file_path: "engine_physics/src/simulation_materials/material_reactions_resources.wgsl",
     },
 ];
 

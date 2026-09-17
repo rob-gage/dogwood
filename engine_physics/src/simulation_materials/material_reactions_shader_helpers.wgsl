@@ -54,56 +54,6 @@
     world_cell_from_physical_tile_ring_index
 }
 
-#import compute::material_reactions_resources::{
-    Reaction,
-    Candidate,
-    Request,
-    Parameters,
-    RigidCell,
-    reactions,
-    selector_members,
-    material_identifiers,
-    amounts,
-    temperatures,
-    retained_pressure,
-    fluid_coverage,
-    gas_concentrations,
-    external_occupancy,
-    rigid_claims,
-    candidates,
-    parameters,
-    mutation_requests,
-    mutation_request_count,
-    reaction_energy,
-    pending_pressure,
-    FluidParticleAuthority,
-    fluid_particles,
-    fluid_bucket_heads,
-    fluid_next_particle,
-    FluidSpatialParameters,
-    fluid_spatial_parameters,
-    fluid_free_indices,
-    fluid_free_count,
-    fluid_reservations,
-    gas_reservations,
-    gas_output_reservations,
-    canonical_reservations,
-    fluid_reservation_owners,
-    rigid_cells,
-    rigid_amounts,
-    rigid_reservations,
-    rigid_removal_events,
-    rigid_removal_count,
-    candidate_indices,
-    candidate_count,
-    SortParameters,
-    sort_parameters,
-    sort_steps,
-    sort_indirect,
-    gas_temperatures,
-    rigid_temperatures
-}
-
 fn matches_selector(rule: Reaction, reactant: u32, material: u32) -> bool {
     let base = reactant * 4u;
     if (rule.words[base + 3u] == 0u ){
@@ -486,4 +436,3 @@ fn candidate_better(a: Candidate, b: Candidate) -> bool {
       [b.reaction]
       .words[26] && (a.anchor < b.anchor || (a.anchor == b.anchor && a.reaction < b.reaction)))));
 }
-
