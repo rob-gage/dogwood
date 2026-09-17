@@ -1,11 +1,18 @@
 // Copyright Rob Gage 2026
 #define_import_path compute::material_reactions
-#import utility::material_identifier::{EMPTY_MATERIAL_IDENTIFIER, CELLULAR_STATIC_MATERIAL_FORM, CELLULAR_DYNAMIC_MATERIAL_FORM, GAS_MATERIAL_FORM, material_form_from_identifier, material_index_from_identifier}
+#import utility::material_identifier::{EMPTY_MATERIAL_IDENTIFIER, CELLULAR_STATIC_MATERIAL_FORM, CELLULAR_DYNAMIC_MATERIAL_FORM, FLUID_MATERIAL_FORM, GAS_MATERIAL_FORM, material_form_from_identifier, material_index_from_identifier}
 #import utility::fluid_spatial::{fluid_particle_world_cell, fluid_bucket_coordinates_from_position, fluid_bucket_index_from_coordinates, fluid_particle_belongs_to_cell}
+#import utility::cell_coordinates::CELLS_PER_TILE_FLOAT
+#import utility::tile_ring::world_cell_from_physical_tile_ring_index
 
 // This is the fixed 27-word representation written by ReactionMaterialTable.
 struct Reaction { words: array<u32, 27>, }
-struct Candidate { reaction: u32, anchor: u32, extent: f32, partner: u32, material0: u32, material1: u32, padding0: u32, padding1: u32, }
+struct Candidate {
+  reaction: u32, anchor: u32, extent: f32, partner: u32,
+  material0: u32, material1: u32, padding0: u32, padding1: u32,
+  fluid0_indices: vec4<u32>, fluid0_amounts: vec4<f32>,
+  fluid1_indices: vec4<u32>, fluid1_amounts: vec4<f32>,
+}
 struct Request { cell:u32, kind:u32, locator:u32, expected_source:u32, replacement:u32, amount:u32, temperature:u32, world_x:u32, world_y:u32, }
 struct Parameters { cell_count: u32, gas_count: u32, reaction_count: u32, cell_width: u32, }
 @group(0) @binding(0) var<storage, read> reactions: array<Reaction>;
@@ -27,8 +34,8 @@ struct Parameters { cell_count: u32, gas_count: u32, reaction_count: u32, cell_w
 // Read-only authoritative fluid bridge; discovery will use the shared spatial
 // utility and these chains in the fluid-reaction pass.
 struct FluidParticleAuthority { material_identifier: u32, is_active: u32, position: vec2<f32>, velocity: vec2<f32>, prediction_collision_displacement: vec2<f32>, amount: f32, temperature: f32, }
-@group(0) @binding(16) var<storage, read> fluid_particles: array<FluidParticleAuthority>;
-@group(0) @binding(17) var<storage, read> fluid_bucket_heads: array<u32>;
+@group(0) @binding(16) var<storage, read_write> fluid_particles: array<FluidParticleAuthority>;
+@group(0) @binding(17) var<storage, read> fluid_bucket_heads: array<atomic<u32>>;
 @group(0) @binding(18) var<storage, read> fluid_next_particle: array<u32>;
 struct FluidSpatialParameters {
   buffered_origin: vec2<i32>, buffered_tile_size: vec2<u32>,
@@ -42,6 +49,9 @@ struct FluidSpatialParameters {
   sample_shape_kind: u32, padding_1: u32,
 }
 @group(0) @binding(19) var<uniform> fluid_spatial_parameters: FluidSpatialParameters;
+@group(0) @binding(20) var<storage, read_write> fluid_free_indices: array<u32>;
+@group(0) @binding(21) var<storage, read_write> fluid_free_count: array<atomic<u32>>;
+@group(0) @binding(22) var<storage, read_write> fluid_reservations: array<atomic<u32>>;
 
 fn matches_selector(rule: Reaction, reactant: u32, material: u32) -> bool {
   let base = reactant * 4u;
@@ -66,12 +76,45 @@ fn gas_source(cell: u32, reactant: u32, rule: Reaction) -> Source {
   return Source(cell, EMPTY_MATERIAL_IDENTIFIER, 0.0, false);
 }
 
+fn fluid_source(cell: u32, reactant: u32, rule: Reaction) -> Source {
+  let world = world_cell_from_physical_tile_ring_index(cell,
+    fluid_spatial_parameters.buffered_origin, fluid_spatial_parameters.buffered_tile_size,
+    fluid_spatial_parameters.ring_offset);
+  let center = (vec2<f32>(world) + vec2<f32>(0.5)) / CELLS_PER_TILE_FLOAT;
+  let base = fluid_bucket_coordinates_from_position(center,
+    fluid_spatial_parameters.buffered_origin, fluid_spatial_parameters.support_radius_cells,
+    CELLS_PER_TILE_FLOAT);
+  var total = 0.0; var chosen = EMPTY_MATERIAL_IDENTIFIER; var chosen_index = 0xffffffffu;
+  for (var y: i32 = -1; y <= 1; y += 1) {
+    for (var x: i32 = -1; x <= 1; x += 1) {
+      let bucket = fluid_bucket_index_from_coordinates(base + vec2<i32>(x, y),
+        fluid_spatial_parameters.bucket_dimensions, 0xffffffffu);
+      if (bucket == 0xffffffffu) { continue; }
+      var p = atomicLoad(&fluid_bucket_heads[bucket]);
+      for (var n: u32 = 0u; p != 0xffffffffu && n < fluid_spatial_parameters.particle_capacity; n += 1u) {
+        let particle = fluid_particles[p];
+        if (particle.is_active != 0u && particle.material_identifier != EMPTY_MATERIAL_IDENTIFIER &&
+            material_form_from_identifier(particle.material_identifier) == FLUID_MATERIAL_FORM &&
+            fluid_particle_belongs_to_cell(particle.position, world, CELLS_PER_TILE_FLOAT) &&
+            particle.amount > 0.000001 && matches_selector(rule, reactant, particle.material_identifier)) {
+          total += max(particle.amount, 0.0);
+          if (p < chosen_index) { chosen_index = p; chosen = particle.material_identifier; }
+        }
+        p = fluid_next_particle[p];
+      }
+    }
+  }
+  return Source(cell, chosen, total, total > 0.000001);
+}
+
 fn source_for(cell: u32, reactant: u32, rule: Reaction) -> Source {
   let material = material_identifiers[cell];
   if (material != EMPTY_MATERIAL_IDENTIFIER && matches_selector(rule, reactant, material)) {
     return Source(cell, material, amounts[cell], amounts[cell] > 0.000001);
   }
-  return gas_source(cell, reactant, rule);
+  let gas = gas_source(cell, reactant, rule);
+  if (gas.found) { return gas; }
+  return fluid_source(cell, reactant, rule);
 }
 
 fn neighbor(anchor: u32, direction: u32) -> u32 {
@@ -106,6 +149,81 @@ fn gas_total(cell: u32) -> f32 {
   return total;
 }
 
+fn consume_fluid(cell: u32, reactant: u32, rule: Reaction, required: f32) -> bool {
+  var remaining = required;
+  let world = world_cell_from_physical_tile_ring_index(cell,
+    fluid_spatial_parameters.buffered_origin, fluid_spatial_parameters.buffered_tile_size,
+    fluid_spatial_parameters.ring_offset);
+  let center = (vec2<f32>(world) + vec2<f32>(0.5)) / CELLS_PER_TILE_FLOAT;
+  let base = fluid_bucket_coordinates_from_position(center,
+    fluid_spatial_parameters.buffered_origin, fluid_spatial_parameters.support_radius_cells,
+    CELLS_PER_TILE_FLOAT);
+  for (var iteration: u32 = 0u; iteration < fluid_spatial_parameters.particle_capacity && remaining > 0.000001; iteration += 1u) {
+    var selected = 0xffffffffu;
+    for (var y: i32 = -1; y <= 1; y += 1) {
+      for (var x: i32 = -1; x <= 1; x += 1) {
+        let bucket = fluid_bucket_index_from_coordinates(base + vec2<i32>(x, y), fluid_spatial_parameters.bucket_dimensions, 0xffffffffu);
+        if (bucket == 0xffffffffu) { continue; }
+        var p = atomicLoad(&fluid_bucket_heads[bucket]);
+        for (var n: u32 = 0u; p != 0xffffffffu && n < fluid_spatial_parameters.particle_capacity; n += 1u) {
+          let particle = fluid_particles[p];
+          if (p >= selected && selected != 0xffffffffu) { p = fluid_next_particle[p]; continue; }
+          if (particle.is_active != 0u && material_form_from_identifier(particle.material_identifier) == FLUID_MATERIAL_FORM &&
+              fluid_particle_belongs_to_cell(particle.position, world, CELLS_PER_TILE_FLOAT) &&
+              particle.amount > 0.000001 && matches_selector(rule, reactant, particle.material_identifier) &&
+              atomicLoad(&fluid_reservations[p]) < u32(max(particle.amount, 0.0) * 1000000.0)) { selected = p; }
+          p = fluid_next_particle[p];
+        }
+      }
+    }
+    if (selected == 0xffffffffu) { return false; }
+    let particle = fluid_particles[selected];
+    let already = f32(atomicLoad(&fluid_reservations[selected])) / 1000000.0;
+    let available = max(particle.amount - already, 0.0);
+    let take = min(remaining, available);
+    let units = u32(max(take, 0.0) * 1000000.0);
+    let old = atomicLoad(&fluid_reservations[selected]);
+    let result = atomicCompareExchangeWeak(&fluid_reservations[selected], old, old + units);
+    if (result.exchanged) {
+      fluid_particles[selected].amount = max(particle.amount - f32(old + units) / 1000000.0, 0.0);
+      if (fluid_particles[selected].amount <= 0.000001) {
+        fluid_particles[selected].material_identifier = EMPTY_MATERIAL_IDENTIFIER;
+        fluid_particles[selected].is_active = 0u;
+        let free = atomicAdd(&fluid_free_count[0], 1u);
+        if (free < arrayLength(&fluid_free_indices)) { fluid_free_indices[free] = selected; }
+      }
+      remaining -= take;
+    }
+  }
+  return remaining <= 0.00001;
+}
+
+fn reserve_fluid_slot() -> u32 {
+  var count = atomicLoad(&fluid_free_count[0]);
+  loop {
+    if (count == 0u) { return 0xffffffffu; }
+    let result = atomicCompareExchangeWeak(&fluid_free_count[0], count, count - 1u);
+    if (result.exchanged) { return fluid_free_indices[count - 1u]; }
+    count = result.old_value;
+  }
+  return 0xffffffffu;
+}
+
+fn release_fluid_slot(slot: u32) {
+  if (slot == 0xffffffffu) { return; }
+  let count = atomicAdd(&fluid_free_count[0], 1u);
+  if (count < arrayLength(&fluid_free_indices)) { fluid_free_indices[count] = slot; }
+}
+
+fn spawn_fluid_product(slot: u32, material: u32, amount: f32, cell: u32, temperature: f32) {
+  let world = world_cell_from_physical_tile_ring_index(cell,
+    fluid_spatial_parameters.buffered_origin, fluid_spatial_parameters.buffered_tile_size,
+    fluid_spatial_parameters.ring_offset);
+  fluid_particles[slot] = FluidParticleAuthority(material, 1u,
+    (vec2<f32>(world) + vec2<f32>(0.5)) / CELLS_PER_TILE_FLOAT,
+    vec2<f32>(0.0), vec2<f32>(0.0), amount, temperature);
+}
+
 // Applies only representations which can be reserved deterministically in the
 // current pass: source canonical inventory plus zero/two gas outputs, or one
 // cellular output in a source cell completely vacated by the reaction. Other
@@ -124,6 +242,7 @@ fn apply_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
     source1 = Source(candidate.partner, candidate.material1, 0.0, candidate.partner != 0xffffffffu);
     if (source1.cell == cell) { source1.amount = source_for(cell, 1u, rule).amount; }
     else if (source1.found && material_form_from_identifier(source1.material) == GAS_MATERIAL_FORM) { source1.amount = gas_concentrations[material_index_from_identifier(source1.material) * parameters.cell_count + source1.cell]; }
+    else if (source1.found && material_form_from_identifier(source1.material) == FLUID_MATERIAL_FORM) { source1.amount = fluid_source(source1.cell, 1u, rule).amount; }
     else if (source1.found) { source1.amount = amounts[source1.cell]; }
     if (!source1.found || source1.amount <= 0.000001) { return; }
   }
@@ -133,28 +252,51 @@ fn apply_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
   if (second_present && source1.amount + 0.00001 < coefficient1 * candidate.extent) { return; }
   let remaining = select(0.0, max(amounts[cell] - coefficient0 * candidate.extent, 0.0), first_present && material_form_from_identifier(source0.material) != GAS_MATERIAL_FORM);
   var cellular_product = EMPTY_MATERIAL_IDENTIFIER; var cellular_amount = 0.0;
+  var fluid_product_slots = vec2<u32>(0xffffffffu);
   for (var product = 0u; product < 2u; product += 1u) {
     let base = 8u + product * 4u; if (rule.words[base + 2u] == 0u) { continue; }
     let replacement = rule.words[base]; let amount = bitcast<f32>(rule.words[base + 1u]) * candidate.extent;
     let form = material_form_from_identifier(replacement);
     if (form == GAS_MATERIAL_FORM) { continue; }
-    if ((form != CELLULAR_STATIC_MATERIAL_FORM && form != CELLULAR_DYNAMIC_MATERIAL_FORM) || cellular_product != EMPTY_MATERIAL_IDENTIFIER || remaining > 0.00001 || !(amount > 0.000001)) { return; }
+    if (form == FLUID_MATERIAL_FORM) {
+      let product_index = product;
+      let slot = reserve_fluid_slot();
+      if (slot == 0xffffffffu) { release_fluid_slot(fluid_product_slots.x); return; }
+      if (product_index == 0u) { fluid_product_slots.x = slot; } else { fluid_product_slots.y = slot; }
+      continue;
+    }
+    if ((form != CELLULAR_STATIC_MATERIAL_FORM && form != CELLULAR_DYNAMIC_MATERIAL_FORM) || cellular_product != EMPTY_MATERIAL_IDENTIFIER || remaining > 0.00001 || !(amount > 0.000001)) {
+      release_fluid_slot(fluid_product_slots.x); release_fluid_slot(fluid_product_slots.y); return;
+    }
     cellular_product = replacement; cellular_amount = amount;
   }
-  if (first_present && material_form_from_identifier(source0.material) != GAS_MATERIAL_FORM) {
+  let source0_fluid = first_present && material_form_from_identifier(source0.material) == FLUID_MATERIAL_FORM;
+  let source1_fluid = second_present && material_form_from_identifier(source1.material) == FLUID_MATERIAL_FORM;
+  if (source0_fluid && !consume_fluid(cell, 0u, rule, coefficient0 * candidate.extent)) { release_fluid_slot(fluid_product_slots.x); release_fluid_slot(fluid_product_slots.y); return; }
+  if (source1_fluid && !consume_fluid(source1.cell, 1u, rule, coefficient1 * candidate.extent)) { release_fluid_slot(fluid_product_slots.x); release_fluid_slot(fluid_product_slots.y); return; }
+  if (first_present && material_form_from_identifier(source0.material) != GAS_MATERIAL_FORM && !source0_fluid) {
     let slot = atomicAdd(&mutation_request_count[0], 1u);
     if (slot >= arrayLength(&mutation_requests)) { return; }
     let replacement = select(select(source0.material, cellular_product, cellular_product != EMPTY_MATERIAL_IDENTIFIER), EMPTY_MATERIAL_IDENTIFIER, remaining <= 0.00001 && cellular_product == EMPTY_MATERIAL_IDENTIFIER);
     let result_amount = select(remaining, cellular_amount, cellular_product != EMPTY_MATERIAL_IDENTIFIER);
     mutation_requests[slot] = Request(cell, 0u, cell, source0.material, replacement, bitcast<u32>(result_amount), bitcast<u32>(temperatures[cell]), 0u, 0u);
   }
-  if (second_present && material_form_from_identifier(source1.material) != GAS_MATERIAL_FORM) {
+  if (second_present && material_form_from_identifier(source1.material) != GAS_MATERIAL_FORM && !source1_fluid) {
     let slot = atomicAdd(&mutation_request_count[0], 1u);
     if (slot >= arrayLength(&mutation_requests)) { return; }
     mutation_requests[slot] = Request(source1.cell, 0u, source1.cell, source1.material, EMPTY_MATERIAL_IDENTIFIER, 0u, bitcast<u32>(temperatures[source1.cell]), 0u, 0u);
   }
   if (first_present && material_form_from_identifier(source0.material) == GAS_MATERIAL_FORM) { gas_concentrations[material_index_from_identifier(source0.material) * parameters.cell_count + cell] = max(source0.amount - coefficient0 * candidate.extent, 0.0); }
   if (second_present && material_form_from_identifier(source1.material) == GAS_MATERIAL_FORM) { gas_concentrations[material_index_from_identifier(source1.material) * parameters.cell_count + source1.cell] = max(source1.amount - coefficient1 * candidate.extent, 0.0); }
+  for (var product = 0u; product < 2u; product += 1u) {
+    let base = 8u + product * 4u; if (rule.words[base + 2u] == 0u) { continue; }
+    let replacement = rule.words[base];
+    if (material_form_from_identifier(replacement) == FLUID_MATERIAL_FORM) {
+      let slot = select(fluid_product_slots.x, fluid_product_slots.y, product == 1u);
+      spawn_fluid_product(slot, replacement, bitcast<f32>(rule.words[base + 1u]) * candidate.extent,
+        cell, temperatures[cell]);
+    }
+  }
   reaction_energy[cell] += bitcast<f32>(rule.words[23]) * candidate.extent;
   let pressure_output = bitcast<f32>(rule.words[24]) * candidate.extent;
   pending_pressure[cell] += vec4<f32>(pressure_output);
@@ -195,8 +337,10 @@ fn environment_matches(rule: Reaction, cell: u32, air: f32) -> bool {
 @compute @workgroup_size(64)
 fn discover_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
   let cell = id.x;
+  if (cell < arrayLength(&fluid_reservations)) { atomicStore(&fluid_reservations[cell], 0u); }
   if (cell >= parameters.cell_count || cell >= arrayLength(&candidates)) { return; }
-  candidates[cell] = Candidate(0xffffffffu, cell, 0.0, 0xffffffffu, 0u, 0u, 0u, 0u);
+  candidates[cell] = Candidate(0xffffffffu, cell, 0.0, 0xffffffffu, 0u, 0u, 0u, 0u,
+    vec4<u32>(0xffffffffu), vec4<f32>(0.0), vec4<u32>(0xffffffffu), vec4<f32>(0.0));
   reaction_energy[cell] = 0.0;
   if (atomicLoad(&rigid_claims[cell]) != 0xffffffffu) { return; }
   let material = material_identifiers[cell];
@@ -243,6 +387,7 @@ fn discover_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
     if (rule.words[7] != 0u) { source1 = find_partner(cell, rule); }
     let extent0 = select(1.0, source0.amount / max(bitcast<f32>(rule.words[2]), 0.000001), rule.words[3] != 0u);
     let extent1 = select(1.0, source1.amount / max(bitcast<f32>(rule.words[6]), 0.000001), rule.words[7] != 0u);
-    candidates[cell] = Candidate(winner, cell, winner_extent, source1.cell, source0.material, source1.material, 0u, 0u);
+    candidates[cell] = Candidate(winner, cell, winner_extent, source1.cell, source0.material, source1.material, 0u, 0u,
+      vec4<u32>(0xffffffffu), vec4<f32>(0.0), vec4<u32>(0xffffffffu), vec4<f32>(0.0));
   }
 }

@@ -14,6 +14,7 @@ use std::collections::BTreeSet;
 /// separate stage so no product becomes an input until the next chemistry tick.
 pub(crate) struct MaterialReactions {
     candidates: AcceleratorBuffer,
+    fluid_reservations: AcceleratorBuffer,
     reaction_energy: AcceleratorBuffer,
     parameters: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
@@ -47,7 +48,8 @@ impl MaterialReactions {
         cell_width: u32,
     ) -> Self {
         let device = accelerator.wgpu_device();
-        let candidates = accelerator.allocate::<[u32; 8]>(cell_count as usize);
+        let candidates = accelerator.allocate::<[u32; 24]>(cell_count as usize);
+        let fluid_reservations = accelerator.allocate::<u32>(cell_count as usize);
         let parameters = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("material reaction parameters"),
             size: 16,
@@ -103,7 +105,7 @@ impl MaterialReactions {
                 storage(13, false),
                 storage(14, false),
                 storage(15, false),
-                storage(16, true),
+                storage(16, false),
                 storage(17, true),
                 storage(18, true),
                 wgpu::BindGroupLayoutEntry {
@@ -116,6 +118,9 @@ impl MaterialReactions {
                     },
                     count: None,
                 },
+                storage(20, false),
+                storage(21, false),
+                storage(22, false),
             ],
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -148,6 +153,9 @@ impl MaterialReactions {
                     binding: 19,
                     resource: fluid_authority.parameters.as_entire_binding(),
                 },
+                Self::binding(20, fluid_authority.free_indices),
+                Self::binding(21, fluid_authority.free_count),
+                Self::binding(22, &fluid_reservations),
             ],
         });
         let shader = super::create_simulation_shader_module(
@@ -173,6 +181,7 @@ impl MaterialReactions {
         };
         Self {
             candidates,
+            fluid_reservations,
             reaction_energy,
             parameters,
             bind_group,
@@ -445,6 +454,8 @@ mod tests {
             &request_count,
             FluidAuthorityView {
                 particles: &fluid_particles,
+                free_indices: &fluid_next_particle,
+                free_count: &fluid_bucket_heads,
                 bucket_heads: &fluid_bucket_heads,
                 next_particle: &fluid_next_particle,
                 parameters: &fluid_parameters,

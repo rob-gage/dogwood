@@ -120,6 +120,8 @@ pub struct Fluids {
 /// subsystems use this instead of reimplementing particle-to-cell mapping.
 pub(crate) struct FluidAuthorityView<'a> {
     pub(crate) particles: &'a AcceleratorBuffer,
+    pub(crate) free_indices: &'a AcceleratorBuffer,
+    pub(crate) free_count: &'a AcceleratorBuffer,
     pub(crate) bucket_heads: &'a AcceleratorBuffer,
     pub(crate) next_particle: &'a AcceleratorBuffer,
     pub(crate) parameters: &'a wgpu::Buffer,
@@ -485,6 +487,8 @@ impl Fluids {
     pub(crate) const fn authority_view(&self) -> FluidAuthorityView<'_> {
         FluidAuthorityView {
             particles: &self.particles,
+            free_indices: &self.free_indices,
+            free_count: &self.free_count,
             bucket_heads: &self.bucket_heads,
             next_particle: &self.next_particle,
             parameters: &self.parameters,
