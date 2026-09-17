@@ -38,6 +38,8 @@ pub(crate) struct MaterialReactions {
     reaction_energy: AcceleratorBuffer,
     parameters: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
+    prepare_sort_bind_group: wgpu::BindGroup,
+    sort_bind_group: wgpu::BindGroup,
     clear_pipeline: wgpu::ComputePipeline,
     discover_pipeline: wgpu::ComputePipeline,
     compact_pipeline: wgpu::ComputePipeline,
@@ -216,18 +218,6 @@ impl MaterialReactions {
                 storage(31, false),
                 storage(32, false),
                 storage(33, false),
-                storage(35, true),
-                storage(36, false),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 34,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
             ],
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -274,11 +264,52 @@ impl MaterialReactions {
                 Self::binding(31, &rigid_removal_count),
                 Self::binding(32, &candidate_indices),
                 Self::binding(33, &candidate_count),
-                Self::binding(35, &sort_steps),
+            ],
+        });
+        let prepare_sort_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("chemistry sort preparation layout"),
+                entries: &[storage(32, false), storage(33, false), storage(36, false)],
+            });
+        let prepare_sort_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("chemistry sort preparation"),
+            layout: &prepare_sort_layout,
+            entries: &[
+                Self::binding(32, &candidate_indices),
+                Self::binding(33, &candidate_count),
                 wgpu::BindGroupEntry {
                     binding: 36,
                     resource: sort_indirect.as_entire_binding(),
                 },
+            ],
+        });
+        let sort_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("chemistry candidate sort layout"),
+            entries: &[
+                storage(0, true),
+                storage(10, false),
+                storage(32, false),
+                storage(33, false),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 34,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let sort_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("chemistry candidate sort"),
+            layout: &sort_layout,
+            entries: &[
+                Self::binding(0, table.records_buffer()),
+                Self::binding(10, &candidates),
+                Self::binding(32, &candidate_indices),
+                Self::binding(33, &candidate_count),
                 wgpu::BindGroupEntry {
                     binding: 34,
                     resource: sort_parameters.as_entire_binding(),
@@ -306,6 +337,35 @@ impl MaterialReactions {
                 cache: None,
             })
         };
+        let prepare_sort_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("chemistry sort dispatch preparation pipeline"),
+                layout: Some(
+                    &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: Some("chemistry sort preparation pipeline layout"),
+                        bind_group_layouts: &[Some(&prepare_sort_layout)],
+                        immediate_size: 0,
+                    }),
+                ),
+                module: &shader,
+                entry_point: Some("prepare_sort_dispatch"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+        let sort_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("chemistry candidate sort pipeline"),
+            layout: Some(
+                &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("chemistry candidate sort pipeline layout"),
+                    bind_group_layouts: &[Some(&sort_layout)],
+                    immediate_size: 0,
+                }),
+            ),
+            module: &shader,
+            entry_point: Some("sort_candidates"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
         Self {
             candidates,
             candidate_indices,
@@ -328,6 +388,8 @@ impl MaterialReactions {
             reaction_energy,
             parameters,
             bind_group,
+            prepare_sort_bind_group,
+            sort_bind_group,
             clear_pipeline: pipeline(
                 "clear_transaction_state",
                 "material reaction transaction clear pipeline",
@@ -340,11 +402,8 @@ impl MaterialReactions {
                 "compact_candidates",
                 "chemistry candidate compaction pipeline",
             ),
-            prepare_sort_pipeline: pipeline(
-                "prepare_sort_dispatch",
-                "chemistry sort dispatch preparation pipeline",
-            ),
-            sort_pipeline: pipeline("sort_candidates", "chemistry candidate sort pipeline"),
+            prepare_sort_pipeline,
+            sort_pipeline,
             reserve_pipeline: pipeline(
                 "reserve_fluid_authority",
                 "material reaction fluid reservation pipeline",
@@ -385,7 +444,7 @@ impl MaterialReactions {
         let mut pass =
             accelerator.begin_compute_pass(encoder, "chemistry sort dispatch preparation");
         pass.set_pipeline(&self.prepare_sort_pipeline);
-        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.set_bind_group(0, &self.prepare_sort_bind_group, &[]);
         pass.dispatch_workgroups(1, 1, 1);
         drop(pass);
         for step in 0..self.sort_step_count {
@@ -398,7 +457,7 @@ impl MaterialReactions {
             );
             let mut pass = accelerator.begin_compute_pass(encoder, "chemistry candidate sort");
             pass.set_pipeline(&self.sort_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
+            pass.set_bind_group(0, &self.sort_bind_group, &[]);
             pass.dispatch_workgroups_indirect(&self.sort_indirect, 0);
             drop(pass);
         }
