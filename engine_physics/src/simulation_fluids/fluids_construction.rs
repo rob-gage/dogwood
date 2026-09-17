@@ -190,7 +190,10 @@ impl Fluids {
             concat!(
                 include_str!("fluids_shader_header.wgsl"),
                 include_str!("fluids_shader_particle_operations.wgsl"),
-                include_str!("fluids_shader_cellular_operations.wgsl"),
+                include_str!("fluids_shader_streaming.wgsl"),
+                include_str!("fluids_shader_sampling.wgsl"),
+                include_str!("fluids_shader_collision.wgsl"),
+                include_str!("fluids_shader_residency.wgsl"),
             ),
             "engine_physics/src/simulation/fluids.wgsl",
         );
