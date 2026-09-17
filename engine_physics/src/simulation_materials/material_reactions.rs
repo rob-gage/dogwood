@@ -700,13 +700,15 @@ mod tests {
 
     #[test]
     fn environment_bounds_are_independent() {
-        let mut rule = CompiledMaterialReaction::default();
-        rule.minimum_temperature = 10.0;
-        rule.maximum_temperature = 20.0;
-        rule.minimum_pressure = 2.0;
-        rule.maximum_pressure = 4.0;
-        rule.minimum_air = 0.25;
-        rule.maximum_air = 0.75;
+        let rule = CompiledMaterialReaction {
+            minimum_temperature: 10.0,
+            maximum_temperature: 20.0,
+            minimum_pressure: 2.0,
+            maximum_pressure: 4.0,
+            minimum_air: 0.25,
+            maximum_air: 0.75,
+            ..Default::default()
+        };
         assert!(environment_matches(
             &rule,
             ReactionEnvironment {

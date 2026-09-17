@@ -5866,7 +5866,7 @@ mod tests {
         .unwrap();
         scene.update(Duration::from_secs(1) / 60, true).unwrap();
         let isolated = CellCoordinates { x: 8, y: 8 };
-        let rigid_cells = vec![
+        let rigid_cells = [
             CellCoordinates { x: 16, y: 8 },
             CellCoordinates { x: 17, y: 8 },
             CellCoordinates { x: 16, y: 9 },
