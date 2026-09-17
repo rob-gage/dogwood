@@ -16,6 +16,9 @@ mod actor_possessable;
 mod actor_previous_position;
 mod actor_registry;
 
+#[cfg(test)]
+pub(crate) mod tests;
+
 pub use actor::Actor;
 pub(crate) use actor_cellular_proxy_state::ActorCellularProxyState;
 pub use actor_collision_shape::ActorCollisionShape;
