@@ -9,6 +9,12 @@ pub struct KeyboardInputState {
     pressed_keys: HashSet<Key>,
 }
 
+impl Default for KeyboardInputState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl KeyboardInputState {
     /// Creates an empty keyboard input state
     pub fn new() -> Self {

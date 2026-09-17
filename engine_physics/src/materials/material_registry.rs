@@ -25,6 +25,12 @@ pub struct MaterialRegistry {
     reaction_selector_members: Vec<MaterialIdentifier>,
 }
 
+impl Default for MaterialRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MaterialRegistry {
     /// Creates a new empty `MaterialRegistry`
     pub const fn new() -> Self {

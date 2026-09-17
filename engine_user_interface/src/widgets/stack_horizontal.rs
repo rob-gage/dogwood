@@ -15,6 +15,12 @@ pub struct StackHorizontal {
     height: Option<f32>,
 }
 
+impl Default for StackHorizontal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StackHorizontal {
     /// Creates an empty `StackHorizontal`
     pub const fn new() -> Self {
@@ -76,7 +82,7 @@ impl Widget for StackHorizontal {
         let mut response: egui::Response =
             user_interface.allocate_rect(available, egui::Sense::hover());
         for child in &mut self.children {
-            let width: f32 = child.desired_width().map_or(flexible_width, |size| size);
+            let width: f32 = child.desired_width().unwrap_or(flexible_width);
             let rect: egui::Rect = egui::Rect::from_min_max(
                 egui::pos2(x, available.min.y),
                 egui::pos2(x + width, available.max.y),

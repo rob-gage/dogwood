@@ -2,8 +2,8 @@
 
 //! Fixed-rate actor movement simulation and its configuration.
 
-mod scene_simulation;
+mod scene_simulation_actor_movement;
 mod scene_simulation_configuration;
 
-pub use scene_simulation::SceneSimulation;
+pub use scene_simulation_actor_movement::SceneSimulation;
 pub use scene_simulation_configuration::SceneSimulationConfiguration;

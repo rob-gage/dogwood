@@ -11,6 +11,12 @@ pub struct SceneEditBatch {
     edits: Vec<SceneEdit>,
 }
 
+impl Default for SceneEditBatch {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SceneEditBatch {
     /// Creates an empty `SceneEditBatch`
     pub const fn new() -> Self {

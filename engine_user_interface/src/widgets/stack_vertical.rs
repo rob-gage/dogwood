@@ -15,6 +15,12 @@ pub struct StackVertical {
     width: Option<f32>,
 }
 
+impl Default for StackVertical {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StackVertical {
     /// Creates an empty `StackVertical`
     pub const fn new() -> Self {
@@ -76,7 +82,7 @@ impl Widget for StackVertical {
         let mut response: egui::Response =
             user_interface.allocate_rect(available, egui::Sense::hover());
         for child in &mut self.children {
-            let height: f32 = child.desired_height().map_or(flexible_height, |size| size);
+            let height: f32 = child.desired_height().unwrap_or(flexible_height);
             let rect: egui::Rect = egui::Rect::from_min_max(
                 egui::pos2(available.min.x, y),
                 egui::pos2(available.max.x, y + height),

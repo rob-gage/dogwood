@@ -11,6 +11,12 @@ pub struct UserInterfaceContext {
     output: RefCell<egui::FullOutput>,
 }
 
+impl Default for UserInterfaceContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl UserInterfaceContext {
     /// Creates an empty `UserInterfaceContext`
     pub fn new() -> Self {

@@ -22,6 +22,12 @@ pub struct ActorRegistry {
     world: bevy_ecs::world::World,
 }
 
+impl Default for ActorRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ActorRegistry {
     /// Creates an empty `ActorRegistry`
     pub fn new() -> Self {

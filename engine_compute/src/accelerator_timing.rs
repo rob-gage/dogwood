@@ -332,12 +332,10 @@ impl AcceleratorTiming {
                     .get_mapped_range(0..byte_count)
                     .expect("mapped Accelerator timestamp readback must remain accessible");
                 let timestamps: Vec<u64> = mapped
-                    .chunks_exact(8)
-                    .map(|bytes| {
-                        u64::from_le_bytes(
-                            bytes.try_into().expect("timestamp occupies eight bytes"),
-                        )
-                    })
+                    .as_chunks::<8>()
+                    .0
+                    .iter()
+                    .map(|bytes| u64::from_le_bytes(*bytes))
                     .collect();
                 drop(mapped);
                 readback.buffer.unmap();

@@ -74,6 +74,12 @@ pub struct ScenePhysicsWorld {
     pawn_proxies: HashMap<Actor, ActorPhysicsProxy>,
 }
 
+impl Default for ScenePhysicsWorld {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ScenePhysicsWorld {
     /// Creates an empty scene collision world
     pub fn new() -> Self {

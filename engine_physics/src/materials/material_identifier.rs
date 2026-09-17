@@ -11,16 +11,16 @@ impl MaterialIdentifier {
     pub const NULL: MaterialIdentifier = MaterialIdentifier(0);
 
     /// The 2-bit tag used to identify `Gas` `MaterialIdentifier`s
-    const GAS_TAG: u32 = 0b000000_00;
+    const GAS_TAG: u32 = 0b0000_0000;
 
     /// The 2-bit tag used to identify `CellularStatic` `MaterialIdentifier`s
-    const CELLULAR_STATIC_TAG: u32 = 0b000000_01;
+    const CELLULAR_STATIC_TAG: u32 = 0b0000_0001;
 
     /// The 2-bit tag used to identify `CellularDynamic` `MaterialIdentifier`s
-    const CELLULAR_DYNAMIC_TAG: u32 = 0b000000_10;
+    const CELLULAR_DYNAMIC_TAG: u32 = 0b0000_0010;
 
     /// The 2-bit tag used to identify `Fluid` `MaterialIdentifier`s
-    const FLUID_TAG: u32 = 0b000000_11;
+    const FLUID_TAG: u32 = 0b0000_0011;
 
     /// Creates a new `MaterialIdentifier` from a `MaterialForm` and an index
     pub const fn new(form: MaterialForm, index: u32) -> Self {

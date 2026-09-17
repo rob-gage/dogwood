@@ -13,6 +13,12 @@ pub struct MaterialRegistryBuilder {
     reactions: Vec<MaterialReaction>,
 }
 
+impl Default for MaterialRegistryBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MaterialRegistryBuilder {
     pub const fn new() -> Self {
         Self {

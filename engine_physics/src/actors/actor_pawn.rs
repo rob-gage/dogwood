@@ -25,6 +25,12 @@ pub struct ActorPawn {
     pub simulate_when_paused: bool,
 }
 
+impl Default for ActorPawn {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ActorPawn {
     /// Creates a pawn with no movement capabilities or active movement
     pub const fn new() -> Self {

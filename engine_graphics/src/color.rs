@@ -44,8 +44,13 @@ impl Color {
     }
 }
 
-impl Into<egui::Color32> for &Color {
-    fn into(self) -> egui::Color32 {
-        egui::Color32::from_rgba_unmultiplied(self.red(), self.green(), self.blue(), self.alpha())
+impl From<&Color> for egui::Color32 {
+    fn from(color: &Color) -> Self {
+        egui::Color32::from_rgba_unmultiplied(
+            color.red(),
+            color.green(),
+            color.blue(),
+            color.alpha(),
+        )
     }
 }
