@@ -3,7 +3,7 @@
 #import utility::material_identifier::{EMPTY_MATERIAL_IDENTIFIER, CELLULAR_STATIC_MATERIAL_FORM, CELLULAR_DYNAMIC_MATERIAL_FORM, FLUID_MATERIAL_FORM, GAS_MATERIAL_FORM, material_form_from_identifier, material_index_from_identifier}
 #import utility::fluid_spatial::{fluid_particle_world_cell, fluid_bucket_coordinates_from_position, fluid_bucket_index_from_coordinates, fluid_particle_belongs_to_cell}
 #import utility::cell_coordinates::CELLS_PER_TILE_FLOAT
-#import utility::tile_ring::world_cell_from_physical_tile_ring_index
+#import utility::tile_ring::{INVALID_PHYSICAL_CELL_INDEX, physical_cell_index_from_world_cell, world_cell_from_physical_tile_ring_index}
 
 // This is the fixed reaction metadata representation written by ReactionMaterialTable.
 struct Reaction { words: array<u32, 27>, }
@@ -15,7 +15,7 @@ struct Candidate {
   product_slots: vec2<u32>, rigid_claims: vec2<u32>, rigid_padding: vec2<u32>,
 }
 struct Request { cell:u32, kind:u32, locator:u32, expected_source:u32, replacement:u32, amount:u32, temperature:u32, world_x:u32, world_y:u32, }
-struct Parameters { cell_count: u32, gas_count: u32, reaction_count: u32, cell_width: u32, }
+struct Parameters { cell_count: u32, gas_count: u32, reaction_count: u32, padding: u32, }
 struct RigidCell { local:vec2<i32>, body:u32, material_identifier:u32, appearance:u32, state_slot:u32, state_generation:u32, padding:u32 }
 @group(0) @binding(0) var<storage, read> reactions: array<Reaction>;
 @group(0) @binding(1) var<storage, read> selector_members: array<u32>;
@@ -157,21 +157,36 @@ fn source_for(cell: u32, reactant: u32, rule: Reaction) -> Source {
   return fluid_source(cell, reactant, rule);
 }
 
+fn local_air(cell: u32) -> f32 {
+  if (cell == INVALID_PHYSICAL_CELL_INDEX || cell >= parameters.cell_count) { return 1.0; }
+  var gas = 0.0;
+  for (var species = 0u; species < parameters.gas_count; species += 1u) {
+    gas += max(gas_concentrations[species * parameters.cell_count + cell], 0.0);
+  }
+  let blocked = material_identifiers[cell] != EMPTY_MATERIAL_IDENTIFIER ||
+    external_occupancy[cell] != 0u || atomicLoad(&rigid_claims[cell]) != 0xffffffffu;
+  return select(clamp(1.0 - clamp(fluid_coverage[cell], 0.0, 1.0) - gas, 0.0, 1.0), 0.0, blocked);
+}
+
 fn neighbor(anchor: u32, direction: u32) -> u32 {
-  let width = parameters.cell_width;
-  let height = parameters.cell_count / width;
-  let x = anchor % width;
-  let y = anchor / width;
-  if (direction == 1u) { if (y == 0u) { return 0xffffffffu; } return anchor - width; }
-  if (direction == 2u) { if (x + 1u >= width) { return 0xffffffffu; } return anchor + 1u; }
-  if (direction == 3u) { if (y + 1u >= height) { return 0xffffffffu; } return anchor + width; }
-  if (x == 0u) { return 0xffffffffu; }
-  return anchor - 1u;
+  if (anchor == INVALID_PHYSICAL_CELL_INDEX || anchor >= parameters.cell_count) { return INVALID_PHYSICAL_CELL_INDEX; }
+  let world = world_cell_from_physical_tile_ring_index(anchor,
+    fluid_spatial_parameters.buffered_origin, fluid_spatial_parameters.buffered_tile_size,
+    fluid_spatial_parameters.ring_offset);
+  var offset = vec2<i32>(0);
+  if (direction == 1u) { offset = vec2<i32>(0, -1); }
+  else if (direction == 2u) { offset = vec2<i32>(1, 0); }
+  else if (direction == 3u) { offset = vec2<i32>(0, 1); }
+  else if (direction == 4u) { offset = vec2<i32>(-1, 0); }
+  else { return INVALID_PHYSICAL_CELL_INDEX; }
+  return physical_cell_index_from_world_cell(world + offset,
+    fluid_spatial_parameters.buffered_origin, fluid_spatial_parameters.buffered_tile_size,
+    fluid_spatial_parameters.ring_offset);
 }
 
 fn find_partner(anchor: u32, rule: Reaction) -> Source {
   let same = source_for(anchor, 1u, rule);
-  if (same.found && (same.rigid_claim != 0xffffffffu || material_form_from_identifier(material_identifiers[anchor]) != material_form_from_identifier(same.material) || material_identifiers[anchor] == EMPTY_MATERIAL_IDENTIFIER)) { return same; }
+  if (same.found) { return same; }
   for (var direction = 1u; direction <= 4u; direction += 1u) {
     let cell = neighbor(anchor, direction);
     if (cell == 0xffffffffu) { continue; }
@@ -680,7 +695,13 @@ fn apply_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
   // All capacity and authority checks happened in reserve_fluid_authority.
   // Apply is deliberately a commit-only pass and never re-discovers sources.
   let source0_amount = source_amount(source0);
-  let remaining = select(0.0, max(source0_amount - coefficient0 * candidate.extent, 0.0), first_present && source0_form != GAS_MATERIAL_FORM && source0_form != FLUID_MATERIAL_FORM);
+  let source0_canonical = first_present && source0_form != GAS_MATERIAL_FORM && source0_form != FLUID_MATERIAL_FORM && source0.rigid_claim == 0xffffffffu;
+  let source1_canonical = second_present && source1_form != GAS_MATERIAL_FORM && source1_form != FLUID_MATERIAL_FORM && source1.rigid_claim == 0xffffffffu;
+  let same_canonical = source0_canonical && source1_canonical && source0.cell == source1.cell && source0.material == source1.material;
+  let source0_demand = coefficient0 + select(0.0, coefficient1, same_canonical);
+  let remaining = select(0.0, max(source0_amount - source0_demand * candidate.extent, 0.0), source0_canonical);
+  let source1_amount = source_amount(source1);
+  let remaining1 = select(0.0, max(source1_amount - coefficient1 * candidate.extent, 0.0), source1_canonical);
   var cellular_product = EMPTY_MATERIAL_IDENTIFIER; var cellular_amount = 0.0;
   let fluid_product_slots = candidate.product_slots;
   for (var product = 0u; product < 2u; product += 1u) {
@@ -698,8 +719,6 @@ fn apply_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   let source0_fluid = first_present && source0_form == FLUID_MATERIAL_FORM;
   let source1_fluid = second_present && source1_form == FLUID_MATERIAL_FORM;
-  let source0_canonical = first_present && source0_form != GAS_MATERIAL_FORM && !source0_fluid && source0.rigid_claim == 0xffffffffu;
-  let source1_canonical = second_present && source1_form != GAS_MATERIAL_FORM && !source1_fluid && source1.rigid_claim == 0xffffffffu;
   if (source0.rigid_claim != 0xffffffffu) {
     let demand = coefficient0 * candidate.extent + select(0.0, coefficient1 * candidate.extent,
       source1.rigid_claim == source0.rigid_claim);
@@ -714,9 +733,10 @@ fn apply_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
     let result_amount = select(remaining, cellular_amount, cellular_product != EMPTY_MATERIAL_IDENTIFIER);
     mutation_requests[slot] = Request(cell, 0u, cell, source0.material, replacement, bitcast<u32>(result_amount), bitcast<u32>(temperatures[cell]), 0u, 0u);
   }
-  if (source1_canonical) {
+  if (source1_canonical && !same_canonical) {
     let slot = candidate.padding1 + select(0u, 1u, source0_canonical);
-    mutation_requests[slot] = Request(source1.cell, 0u, source1.cell, source1.material, EMPTY_MATERIAL_IDENTIFIER, 0u, bitcast<u32>(temperatures[source1.cell]), 0u, 0u);
+    let replacement = select(source1.material, EMPTY_MATERIAL_IDENTIFIER, remaining1 <= 0.00001);
+    mutation_requests[slot] = Request(source1.cell, 0u, source1.cell, source1.material, replacement, bitcast<u32>(remaining1), bitcast<u32>(temperatures[source1.cell]), 0u, 0u);
   }
   if (first_present && source0_form == GAS_MATERIAL_FORM) {
     let gas_index = material_index_from_identifier(source0.material) * parameters.cell_count + source0.cell;
@@ -786,11 +806,12 @@ fn discover_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
   reaction_energy[cell] = 0.0;
   let material = material_identifiers[cell];
   let blocked = material != EMPTY_MATERIAL_IDENTIFIER || external_occupancy[cell] != 0u || atomicLoad(&rigid_claims[cell]) != 0xffffffffu;
-  var gas = 0.0;
-  for (var species = 0u; species < parameters.gas_count; species += 1u) {
-    gas += max(gas_concentrations[species * parameters.cell_count + cell], 0.0);
+  var air = local_air(cell);
+  if (blocked) {
+    for (var direction = 1u; direction <= 4u; direction += 1u) {
+      air = max(air, local_air(neighbor(cell, direction)));
+    }
   }
-  let air = select(clamp(1.0 - clamp(fluid_coverage[cell], 0.0, 1.0) - gas, 0.0, 1.0), 0.0, blocked);
   var winner = 0xffffffffu; var winner_extent = 0.0; var winner_priority = -2147483647i; var winner_order = 0xffffffffu;
   for (var reaction_index = 0u; reaction_index < parameters.reaction_count && reaction_index < arrayLength(&reactions); reaction_index += 1u) {
     let rule = reactions[reaction_index];
@@ -802,7 +823,7 @@ fn discover_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
     var source1 = Source(cell, EMPTY_MATERIAL_IDENTIFIER, 0.0, false, 0xffffffffu);
     if (second_present) {
       source1 = find_partner(cell, rule);
-      if (!source1.found || (source1.cell != cell && cell > source1.cell)) { continue; }
+      if (!source1.found) { continue; }
     }
     let extent0 = select(1.0, source0.amount / max(bitcast<f32>(rule.words[2]), 0.000001), first_present);
     let extent1 = select(1.0, source1.amount / max(bitcast<f32>(rule.words[6]), 0.000001), second_present);

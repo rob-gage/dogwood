@@ -571,7 +571,6 @@ impl Scene {
             buffered_cell_count as u32,
             gases.gas_count(),
             data.materials().reactions().len() as u32,
-            u32::from(simulation.width + buffer_size) * 8,
         );
         let cellular_collision: CellularCollision = CellularCollision::new(
             accelerator.as_ref(),

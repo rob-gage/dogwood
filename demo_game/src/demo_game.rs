@@ -106,6 +106,15 @@ impl DemoGame {
             dissipation: 0.0001,
             compressibility: 0.1,
         });
+        let fire: MaterialIdentifier = materials.register(Material::Gas {
+            name: "Fire".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(255, 145, 24)),
+            density: 0.12,
+            diffusivity: 0.85,
+            extinction: 0.2,
+            dissipation: 0.002,
+            compressibility: 0.08,
+        });
         let slush = materials.register(Material::CellularDynamic {
             name: "Slush".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(130, 185, 215)),
@@ -264,7 +273,7 @@ impl DemoGame {
         };
         materials.register_reaction(MaterialReaction {
             reactants: [tag("flammable", 1.0), None],
-            products: [product(smoke, 0.18), None],
+            products: [product(fire, 0.08), product(smoke, 0.12)],
             minimum_temperature: Some(520.0),
             minimum_air: Some(0.02),
             maximum_extent_per_tick: 0.035,
@@ -274,7 +283,7 @@ impl DemoGame {
         });
         materials.register_reaction(MaterialReaction {
             reactants: [exact(natural_gas, 1.0), None],
-            products: [product(smoke, 0.35), None],
+            products: [product(fire, 0.18), product(smoke, 0.25)],
             minimum_temperature: Some(430.0),
             minimum_air: Some(0.02),
             maximum_extent_per_tick: 0.35,
@@ -285,7 +294,7 @@ impl DemoGame {
         });
         materials.register_reaction(MaterialReaction {
             reactants: [exact(blasting_powder, 1.0), None],
-            products: [product(smoke, 0.3), None],
+            products: [product(fire, 0.2), product(smoke, 0.2)],
             minimum_temperature: Some(420.0),
             maximum_extent_per_tick: 0.8,
             thermal_energy: 160.0,
@@ -295,7 +304,7 @@ impl DemoGame {
         });
         materials.register_reaction(MaterialReaction {
             reactants: [exact(blasting_powder, 1.0), None],
-            products: [product(smoke, 0.3), None],
+            products: [product(fire, 0.2), product(smoke, 0.2)],
             minimum_pressure: Some(12.0),
             maximum_extent_per_tick: 0.8,
             thermal_energy: 180.0,
@@ -576,6 +585,18 @@ impl DemoGame {
                         yield_rate: 1.0,
                         latent_energy: 35.0,
                     }),
+                    hot_transition: None,
+                },
+            )
+            .map_err(std::io::Error::other)?;
+        materials
+            .set_thermal(
+                fire,
+                MaterialThermalProperties {
+                    conductivity: 0.04,
+                    specific_heat_capacity: 1.2,
+                    default_temperature: Some(1050.0),
+                    cold_transition: None,
                     hot_transition: None,
                 },
             )
