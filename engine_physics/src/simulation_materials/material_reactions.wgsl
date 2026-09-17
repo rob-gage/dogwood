@@ -1438,7 +1438,7 @@ fn consume_rigid(claim: u32, demand: f32) {
   }
 }
 
-// Deterministic global arbitration walks the compact, GPU-sorted candidate list.
+// Deterministic global arbitration walks the compact, Accelerator-sorted candidate list.
 @compute @workgroup_size(1)
 fn reserve_fluid_authority(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x != 0u) {

@@ -1294,7 +1294,7 @@ mod tests {
     };
 
     #[test]
-    fn colored_face_pipelines_compile_on_gpu() {
+    fn colored_face_pipelines_compile_on_accelerator() {
         let _accelerator_test_lock = crate::simulation::tests::acquire_accelerator_test_lock();
         let accelerator = Accelerator::new().unwrap();
         let materials = MaterialRegistry::new();
