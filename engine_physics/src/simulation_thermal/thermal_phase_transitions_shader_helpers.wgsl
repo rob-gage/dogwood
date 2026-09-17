@@ -201,11 +201,11 @@ fn release_reserved_fluid_particle(slot: u32) {
 }
 
 @compute @workgroup_size(64)
-fn rollback_rigid_reservations(@builtin(global_invocation_id) id: vec3<u32>) {
-  if (id.x >= rollback_count[0] || id.x >= arrayLength(&rollback_slots)) {
+fn rollback_rigid_reservations(@builtin(global_invocation_id) invocation: vec3<u32>) {
+  if (invocation.x >= rollback_count[0] || invocation.x >= arrayLength(&rollback_slots)) {
     return;
   }
-  release_reserved_fluid_particle(rollback_slots[id.x]);
+  release_reserved_fluid_particle(rollback_slots[invocation.x]);
 }
 
 fn should_yield(rate: f32, cell: u32, source: u32) -> bool {
@@ -316,4 +316,3 @@ fn transition(
 }
 
 @compute @workgroup_size(64)
-

@@ -2,7 +2,7 @@
 #import utility::tile_ring::physical_cell_index_from_world_cell
 #import utility::cell_coordinates::world_cell_from_logical_tile_major_index
 struct Parameters {
-  dt: f32,
+  delta_time: f32,
   cell_count: u32,
   origin: vec2<i32>,
   tiles: vec2<u32>,
@@ -40,17 +40,17 @@ fn base(a: u32, b: u32) -> f32 {
   {
     return 0.0;
   }
-  return (2.0 * A.z * B.z / (A.z + B.z)) * parameters.dt;
+  return (2.0 * A.z * B.z / (A.z + B.z)) * parameters.delta_time;
 }
 
 @compute @workgroup_size(64)
-fn calculate_thermal_face_flux(@builtin(global_invocation_id) id: vec3<u32>) {
-  if (id.x >= parameters.cell_count) {
+fn calculate_thermal_face_flux(@builtin(global_invocation_id) invocation: vec3<u32>) {
+  if (invocation.x >= parameters.cell_count) {
     return;
   }
   let c =
     world_cell_from_logical_tile_major_index(
-      id.x,
+      invocation.x,
       parameters.origin,
       parameters.tiles);
   let i = index(c);
@@ -67,13 +67,13 @@ fn calculate_thermal_face_flux(@builtin(global_invocation_id) id: vec3<u32>) {
 
 @compute @workgroup_size(64)
 fn calculate_thermal_conductance_sum(
-  @builtin(global_invocation_id) id: vec3<u32>) {
-  if (id.x >= parameters.cell_count) {
+  @builtin(global_invocation_id) invocation: vec3<u32>) {
+  if (invocation.x >= parameters.cell_count) {
     return;
   }
   let c =
     world_cell_from_logical_tile_major_index(
-      id.x,
+      invocation.x,
       parameters.origin,
       parameters.tiles);
   let i = index(c);
@@ -88,13 +88,13 @@ fn calculate_thermal_conductance_sum(
 }
 
 @compute @workgroup_size(64)
-fn calculate_thermal_actual_flux(@builtin(global_invocation_id) id: vec3<u32>) {
-  if (id.x >= parameters.cell_count) {
+fn calculate_thermal_actual_flux(@builtin(global_invocation_id) invocation: vec3<u32>) {
+  if (invocation.x >= parameters.cell_count) {
     return;
   }
   let c =
     world_cell_from_logical_tile_major_index(
-      id.x,
+      invocation.x,
       parameters.origin,
       parameters.tiles);
   let i = index(c);
@@ -130,13 +130,13 @@ fn calculate_thermal_actual_flux(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 @compute @workgroup_size(64)
-fn resolve_thermal_conduction(@builtin(global_invocation_id) id: vec3<u32>) {
-  if (id.x >= parameters.cell_count) {
+fn resolve_thermal_conduction(@builtin(global_invocation_id) invocation: vec3<u32>) {
+  if (invocation.x >= parameters.cell_count) {
     return;
   }
   let c =
     world_cell_from_logical_tile_major_index(
-      id.x,
+      invocation.x,
       parameters.origin,
       parameters.tiles);
   let i = index(c);

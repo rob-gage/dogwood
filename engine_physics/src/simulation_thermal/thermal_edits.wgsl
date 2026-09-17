@@ -90,11 +90,11 @@ struct RigidCell {
 @group(0) @binding(11) var<uniform> parameters: Parameters;
 
 @compute @workgroup_size(64)
-fn apply_thermal_requests(@builtin(global_invocation_id) id: vec3<u32>) {
-  if (id.x >= min(request_count[0], parameters.capacity)) {
+fn apply_thermal_requests(@builtin(global_invocation_id) invocation: vec3<u32>) {
+  if (invocation.x >= min(request_count[0], parameters.capacity)) {
     return;
   }
-  let request = requests[id.x];
+  let request = requests[invocation.x];
   let cell = request.x;
   let delta = bitcast<f32>(request.y);
   if (cell >= parameters.capacity) {
@@ -117,11 +117,11 @@ fn apply_thermal_requests(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 @compute @workgroup_size(64)
-fn apply_thermal_fluid(@builtin(global_invocation_id) id: vec3<u32>) {
-  if (id.x >= arrayLength(&particles) || particles[id.x].is_active == 0u) {
+fn apply_thermal_fluid(@builtin(global_invocation_id) invocation: vec3<u32>) {
+  if (invocation.x >= arrayLength(&particles) || particles[invocation.x].is_active == 0u) {
     return;
   }
-  let p = particles[id.x];
+  let p = particles[invocation.x];
   let cell = fluid_particle_world_cell(p.position, CELLS_PER_TILE_FLOAT);
   let index =
     physical_cell_index_from_world_cell(
@@ -134,24 +134,24 @@ fn apply_thermal_fluid(@builtin(global_invocation_id) id: vec3<u32>) {
       && index < parameters.capacity
       && deltas[index].y == parameters.generation)
   {
-    particles[id.x].temperature =
+    particles[invocation.x].temperature =
       max(0.0, p.temperature + bitcast<f32>(deltas[index].x));
   }
 }
 
 @compute @workgroup_size(64)
-fn apply_thermal_rigid(@builtin(global_invocation_id) id: vec3<u32>) {
-  if (id.x >= arrayLength(&rigid_temperatures)) {
+fn apply_thermal_rigid(@builtin(global_invocation_id) invocation: vec3<u32>) {
+  if (invocation.x >= arrayLength(&rigid_temperatures)) {
     return;
   }
-  let cell = atomicLoad(&rigid_flags[id.x]);
+  let cell = atomicLoad(&rigid_flags[invocation.x]);
   if
     (cell != 0xffffffffu
       && cell < parameters.capacity
       && deltas[cell].y == parameters.generation)
   {
-    rigid_temperatures[id.x] =
-      max(0.0, rigid_temperatures[id.x] + bitcast<f32>(deltas[cell].x));
+    rigid_temperatures[invocation.x] =
+      max(0.0, rigid_temperatures[invocation.x] + bitcast<f32>(deltas[cell].x));
   }
-  atomicStore(&rigid_flags[id.x], 0xffffffffu);
+  atomicStore(&rigid_flags[invocation.x], 0xffffffffu);
 }

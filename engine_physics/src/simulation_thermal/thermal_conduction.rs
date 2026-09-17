@@ -22,10 +22,10 @@ impl ThermalConduction {
         origin: [i32; 2],
         tiles: [u32; 2],
         ring: [u32; 2],
-        dt: f32,
+        delta_time: f32,
     ) {
         let values = [
-            dt.to_bits(),
+            delta_time.to_bits(),
             self.cell_count,
             origin[0] as u32,
             origin[1] as u32,
@@ -171,10 +171,10 @@ impl ThermalConduction {
         origin: [i32; 2],
         tiles: [u32; 2],
         ring: [u32; 2],
-        dt: f32,
+        delta_time: f32,
     ) {
         let values = [
-            dt.to_bits(),
+            delta_time.to_bits(),
             self.cell_count,
             origin[0] as u32,
             origin[1] as u32,

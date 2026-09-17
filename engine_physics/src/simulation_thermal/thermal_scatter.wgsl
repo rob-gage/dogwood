@@ -128,8 +128,8 @@ fn atomic_add_f32(index: u32, v: f32) {
 }
 
 @compute @workgroup_size(64)
-fn scatter_cellular_gas(@builtin(global_invocation_id) id: vec3<u32>) {
-  let logical = id.x;
+fn scatter_cellular_gas(@builtin(global_invocation_id) invocation: vec3<u32>) {
+  let logical = invocation.x;
   if (logical >= parameters.cell_count) {
     return;
   }
@@ -160,8 +160,8 @@ fn scatter_cellular_gas(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 @compute @workgroup_size(64)
-fn scatter_fluid_particles(@builtin(global_invocation_id) id: vec3<u32>) {
-  let i = id.x;
+fn scatter_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>) {
+  let i = invocation.x;
   if
     (i >= parameters.particle_capacity
       || particles[i].is_active == 0u
@@ -179,16 +179,16 @@ fn scatter_fluid_particles(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 @compute @workgroup_size(64)
-fn clear_rigid_temperature_sums(@builtin(global_invocation_id) id: vec3<u32>) {
-  if (id.x < parameters.rigid_capacity) {
-    atomicStore(&rigid_temperature_sum[id.x], bitcast<u32>(0.0));
+fn clear_rigid_temperature_sums(@builtin(global_invocation_id) invocation: vec3<u32>) {
+  if (invocation.x < parameters.rigid_capacity) {
+    atomicStore(&rigid_temperature_sum[invocation.x], bitcast<u32>(0.0));
   }
 }
 
 @compute @workgroup_size(64)
 fn accumulate_rigid_temperature_sums(
-  @builtin(global_invocation_id) id: vec3<u32>) {
-  let logical = id.x;
+  @builtin(global_invocation_id) invocation: vec3<u32>) {
+  let logical = invocation.x;
   if (logical >= parameters.cell_count) {
     return;
   }
@@ -212,8 +212,8 @@ fn accumulate_rigid_temperature_sums(
 }
 
 @compute @workgroup_size(64)
-fn apply_rigid_temperatures(@builtin(global_invocation_id) id: vec3<u32>) {
-  let i = id.x;
+fn apply_rigid_temperatures(@builtin(global_invocation_id) invocation: vec3<u32>) {
+  let i = invocation.x;
   if (i >= parameters.rigid_capacity) {
     return;
   }

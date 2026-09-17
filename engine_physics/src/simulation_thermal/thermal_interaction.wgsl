@@ -95,20 +95,20 @@ struct RigidCell {
 @group(0) @binding(17) var<storage, read_write> reaction_energy: array<f32>;
 
 @compute @workgroup_size(64)
-fn clear_rigid_claim_counts(@builtin(global_invocation_id) id: vec3<u32>) {
-  if (id.x < arrayLength(&rigid_raster_claim_counts)) {
-    atomicStore(&rigid_raster_claim_counts[id.x], 0u);
+fn clear_rigid_claim_counts(@builtin(global_invocation_id) invocation: vec3<u32>) {
+  if (invocation.x < arrayLength(&rigid_raster_claim_counts)) {
+    atomicStore(&rigid_raster_claim_counts[invocation.x], 0u);
   }
 }
 
 @compute @workgroup_size(64)
-fn count_rigid_claims(@builtin(global_invocation_id) id: vec3<u32>) {
-  if (id.x >= parameters.cell_count) {
+fn count_rigid_claims(@builtin(global_invocation_id) invocation: vec3<u32>) {
+  if (invocation.x >= parameters.cell_count) {
     return;
   }
   let cell =
     world_cell_from_logical_tile_major_index(
-      id.x,
+      invocation.x,
       parameters.buffered_origin,
       parameters.buffered_tiles);
   let index =
@@ -128,13 +128,13 @@ fn count_rigid_claims(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 @compute @workgroup_size(64)
-fn gather_thermal_interaction(@builtin(global_invocation_id) id: vec3<u32>) {
-  if (id.x >= parameters.cell_count) {
+fn gather_thermal_interaction(@builtin(global_invocation_id) invocation: vec3<u32>) {
+  if (invocation.x >= parameters.cell_count) {
     return;
   }
   let cell =
     world_cell_from_logical_tile_major_index(
-      id.x,
+      invocation.x,
       parameters.buffered_origin,
       parameters.buffered_tiles);
   let index =

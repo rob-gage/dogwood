@@ -1,25 +1,25 @@
-fn phase_cells(@builtin(global_invocation_id) id: vec3<u32>) {
+fn phase_cells(@builtin(global_invocation_id) invocation: vec3<u32>) {
   if
-    (id.x >= parameters.cell_count || atomicLoad(
-      &rigid_claims[id.x]) != 0xffffffffu)
+    (invocation.x >= parameters.cell_count || atomicLoad(
+      &rigid_claims[invocation.x]) != 0xffffffffu)
   {
     return;
   }
   let w =
     world_cell_from_physical_tile_ring_index(
-      id.x,
+      invocation.x,
       parameters.origin,
       parameters.tiles,
       parameters.ring);
-  transition(cells[id.x], amounts[id.x], temperatures[id.x], id.x, 0u, id.x, w);
+  transition(cells[invocation.x], amounts[invocation.x], temperatures[invocation.x], invocation.x, 0u, invocation.x, w);
 }
 
 @compute @workgroup_size(64)
-fn phase_rigid(@builtin(global_invocation_id) id: vec3<u32>) {
-  if (id.x >= parameters.rigid_count || id.x >= arrayLength(&rigid_cells)) {
+fn phase_rigid(@builtin(global_invocation_id) invocation: vec3<u32>) {
+  if (invocation.x >= parameters.rigid_count || invocation.x >= arrayLength(&rigid_cells)) {
     return;
   }
-  let rigid = rigid_cells[id.x];
+  let rigid = rigid_cells[invocation.x];
   let slot = rigid.state_slot;
   if
     (slot >= arrayLength(&rigid_amounts) || slot >= arrayLength(
@@ -115,11 +115,11 @@ fn phase_rigid(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 @compute @workgroup_size(64)
-fn phase_particles(@builtin(global_invocation_id) id: vec3<u32>) {
-  if (id.x >= parameters.particle_count) {
+fn phase_particles(@builtin(global_invocation_id) invocation: vec3<u32>) {
+  if (invocation.x >= parameters.particle_count) {
     return;
   }
-  let p = particles[id.x];
+  let p = particles[invocation.x];
   if (p.is_active == 0u || p.material_identifier == EMPTY_MATERIAL_IDENTIFIER) {
     return;
   }
@@ -139,7 +139,7 @@ fn phase_particles(@builtin(global_invocation_id) id: vec3<u32>) {
     p.temperature,
     cell,
     1u,
-    id.x,
+    invocation.x,
     world);
 }
 
