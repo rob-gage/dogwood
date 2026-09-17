@@ -55,6 +55,8 @@ struct FluidSpatialParameters {
 @group(0) @binding(22) var<storage, read_write> fluid_reservations: array<atomic<u32>>;
 @group(0) @binding(23) var<storage, read_write> gas_reservations: array<atomic<u32>>;
 @group(0) @binding(24) var<storage, read_write> gas_output_reservations: array<atomic<u32>>;
+@group(0) @binding(25) var<storage, read_write> canonical_reservations: array<atomic<u32>>;
+@group(0) @binding(26) var<storage, read_write> fluid_reservation_owners: array<atomic<u32>>;
 const RESERVATION_SCALE: f32 = 1000000.0;
 const RESERVATION_SCALE_U32: u32 = 1000000u;
 
@@ -209,6 +211,15 @@ fn reserve_mutation_requests(count: u32) -> u32 {
   return 0xffffffffu;
 }
 
+fn reserve_canonical_authority(cell: u32) -> bool {
+  if (cell >= arrayLength(&canonical_reservations)) { return false; }
+  return atomicCompareExchangeWeak(&canonical_reservations[cell], 0u, 1u).exchanged;
+}
+
+fn release_canonical_authority(cell: u32) {
+  if (cell < arrayLength(&canonical_reservations)) { atomicStore(&canonical_reservations[cell], 0u); }
+}
+
 fn candidate_better(a: Candidate, b: Candidate) -> bool {
   let ap = bitcast<i32>(reactions[a.reaction].words[25]);
   let bp = bitcast<i32>(reactions[b.reaction].words[25]);
@@ -217,35 +228,8 @@ fn candidate_better(a: Candidate, b: Candidate) -> bool {
       (a.anchor < b.anchor || (a.anchor == b.anchor && a.reaction < b.reaction)))));
 }
 
-fn candidate_shares_authority(a: Candidate, b: Candidate) -> bool {
-  if (a.material0 != EMPTY_MATERIAL_IDENTIFIER && a.material0 == b.material0 && a.anchor == b.anchor) { return true; }
-  if (a.material0 != EMPTY_MATERIAL_IDENTIFIER && a.material0 == b.material1 && a.anchor == b.partner) { return true; }
-  if (a.material1 != EMPTY_MATERIAL_IDENTIFIER && a.material1 == b.material0 && a.partner == b.anchor) { return true; }
-  return a.material1 != EMPTY_MATERIAL_IDENTIFIER && a.material1 == b.material1 && a.partner == b.partner;
-}
-
-fn cells_near(a: u32, b: u32) -> bool {
-  if (a == 0xffffffffu || b == 0xffffffffu) { return false; }
-  return a == b || a == neighbor(b, 1u) || a == neighbor(b, 2u) ||
-    a == neighbor(b, 3u) || a == neighbor(b, 4u);
-}
-
-fn candidate_shares_gas_output(a: Candidate, b: Candidate) -> bool {
-  for (var pa = 0u; pa < 2u; pa += 1u) {
-    let ba = 8u + pa * 4u;
-    if (reactions[a.reaction].words[ba + 2u] == 0u || material_form_from_identifier(reactions[a.reaction].words[ba]) != GAS_MATERIAL_FORM) { continue; }
-    for (var pb = 0u; pb < 2u; pb += 1u) {
-      let bb = 8u + pb * 4u;
-      if (reactions[b.reaction].words[bb + 2u] != 0u && reactions[a.reaction].words[ba] == reactions[b.reaction].words[bb] &&
-          (cells_near(a.anchor, b.anchor) || cells_near(a.anchor, b.partner) ||
-           cells_near(a.partner, b.anchor) || cells_near(a.partner, b.partner))) { return true; }
-    }
-  }
-  return false;
-}
-
 // Reserves fluid inventory without touching authoritative particles. The
-// bounded four-contributor plan is retained on the candidate for apply.
+// Retains the complete contributor plan in per-particle reservation state.
 fn reserve_fluid_plan(record: u32, cell: u32, reactant: u32, rule: Reaction, required: f32) -> bool {
   var remaining = required;
   let world = world_cell_from_physical_tile_ring_index(cell,
@@ -255,7 +239,6 @@ fn reserve_fluid_plan(record: u32, cell: u32, reactant: u32, rule: Reaction, req
   let base = fluid_bucket_coordinates_from_position(center,
     fluid_spatial_parameters.buffered_origin, fluid_spatial_parameters.support_radius_cells,
     CELLS_PER_TILE_FLOAT);
-  var contributor = 0u;
   for (var iteration: u32 = 0u; iteration < fluid_spatial_parameters.particle_capacity && remaining > 0.000001; iteration += 1u) {
     var selected = 0xffffffffu;
     for (var y: i32 = -1; y <= 1; y += 1) {
@@ -274,12 +257,8 @@ fn reserve_fluid_plan(record: u32, cell: u32, reactant: u32, rule: Reaction, req
         }
       }
     }
-    if (selected == 0xffffffffu || contributor >= 4u) {
-      for (var rollback = 0u; rollback < contributor; rollback += 1u) {
-        let index = select(candidates[record].fluid0_indices[rollback], candidates[record].fluid1_indices[rollback], reactant == 1u);
-        let amount = select(candidates[record].fluid0_amounts[rollback], candidates[record].fluid1_amounts[rollback], reactant == 1u);
-        atomicSub(&fluid_reservations[index], u32(amount * RESERVATION_SCALE));
-      }
+    if (selected == 0xffffffffu) {
+      rollback_fluid_plan(cell, reactant);
       return false;
     }
     let particle = fluid_particles[selected];
@@ -290,23 +269,12 @@ fn reserve_fluid_plan(record: u32, cell: u32, reactant: u32, rule: Reaction, req
     let old = atomicLoad(&fluid_reservations[selected]);
     let result = atomicCompareExchangeWeak(&fluid_reservations[selected], old, old + units);
     if (result.exchanged) {
-      if (reactant == 0u) {
-        candidates[record].fluid0_indices[contributor] = selected;
-        candidates[record].fluid0_amounts[contributor] = f32(units) / RESERVATION_SCALE;
-      } else {
-        candidates[record].fluid1_indices[contributor] = selected;
-        candidates[record].fluid1_amounts[contributor] = f32(units) / RESERVATION_SCALE;
-      }
-      contributor += 1u;
+      atomicStore(&fluid_reservation_owners[selected], record);
       remaining -= take;
     }
   }
   if (remaining > 0.00001) {
-    for (var rollback = 0u; rollback < contributor; rollback += 1u) {
-      let index = select(candidates[record].fluid0_indices[rollback], candidates[record].fluid1_indices[rollback], reactant == 1u);
-      let amount = select(candidates[record].fluid0_amounts[rollback], candidates[record].fluid1_amounts[rollback], reactant == 1u);
-      atomicSub(&fluid_reservations[index], u32(amount * RESERVATION_SCALE));
-    }
+    rollback_fluid_plan(cell, reactant);
     return false;
   }
   return true;
@@ -323,59 +291,69 @@ fn reserve_fluid_slot() -> u32 {
   return 0xffffffffu;
 }
 
-fn apply_fluid_plan(cell: u32, reactant: u32) {
-  for (var i = 0u; i < 4u; i += 1u) {
-    let index = select(candidates[cell].fluid0_indices[i], candidates[cell].fluid1_indices[i], reactant == 1u);
-    let amount = select(candidates[cell].fluid0_amounts[i], candidates[cell].fluid1_amounts[i], reactant == 1u);
-    if (index == 0xffffffffu || amount <= 0.0) { continue; }
-    let particle = fluid_particles[index];
-    let next_amount = max(particle.amount - amount, 0.0);
-    fluid_particles[index].amount = next_amount;
-    atomicStore(&fluid_reservations[index], 0u);
-    if (next_amount <= 0.000001) {
-      fluid_particles[index].material_identifier = EMPTY_MATERIAL_IDENTIFIER;
-      fluid_particles[index].is_active = 0u;
-      let free = atomicAdd(&fluid_free_count[0], 1u);
-      if (free < arrayLength(&fluid_free_indices)) { fluid_free_indices[free] = index; }
+fn fluid_source_cell(cell: u32, source_cell: u32, commit: bool) {
+  let world = world_cell_from_physical_tile_ring_index(source_cell,
+    fluid_spatial_parameters.buffered_origin, fluid_spatial_parameters.buffered_tile_size,
+    fluid_spatial_parameters.ring_offset);
+  let center = (vec2<f32>(world) + vec2<f32>(0.5)) / CELLS_PER_TILE_FLOAT;
+  let base = fluid_bucket_coordinates_from_position(center,
+    fluid_spatial_parameters.buffered_origin, fluid_spatial_parameters.support_radius_cells,
+    CELLS_PER_TILE_FLOAT);
+  for (var y: i32 = -1; y <= 1; y += 1) {
+    for (var x: i32 = -1; x <= 1; x += 1) {
+      let bucket = fluid_bucket_index_from_coordinates(base + vec2<i32>(x, y), fluid_spatial_parameters.bucket_dimensions, 0xffffffffu);
+      if (bucket == 0xffffffffu) { continue; }
+      var index = atomicLoad(&fluid_bucket_heads[bucket]);
+      for (var n = 0u; index != 0xffffffffu && n < fluid_spatial_parameters.particle_capacity; n += 1u) {
+        if (atomicLoad(&fluid_reservation_owners[index]) == cell) {
+          if (commit) {
+            let amount = f32(atomicLoad(&fluid_reservations[index])) / RESERVATION_SCALE;
+            let next_amount = max(fluid_particles[index].amount - amount, 0.0);
+            fluid_particles[index].amount = next_amount;
+            atomicStore(&fluid_reservations[index], 0u);
+            atomicStore(&fluid_reservation_owners[index], 0xffffffffu);
+            if (next_amount <= 0.000001) {
+              fluid_particles[index].material_identifier = EMPTY_MATERIAL_IDENTIFIER;
+              fluid_particles[index].is_active = 0u;
+              let free = atomicAdd(&fluid_free_count[0], 1u);
+              if (free < arrayLength(&fluid_free_indices)) { fluid_free_indices[free] = index; }
+            }
+          } else {
+            atomicStore(&fluid_reservations[index], 0u);
+            atomicStore(&fluid_reservation_owners[index], 0xffffffffu);
+          }
+        }
+        index = fluid_next_particle[index];
+      }
     }
   }
 }
 
+fn apply_fluid_plan(cell: u32, reactant: u32) {
+  let candidate = candidates[cell];
+  fluid_source_cell(cell, candidate.anchor, true);
+  if (candidate.partner != candidate.anchor) { fluid_source_cell(cell, candidate.partner, true); }
+}
+
 fn rollback_fluid_plan(cell: u32, reactant: u32) {
-  for (var i = 0u; i < 4u; i += 1u) {
-    let index = select(candidates[cell].fluid0_indices[i], candidates[cell].fluid1_indices[i], reactant == 1u);
-    let amount = select(candidates[cell].fluid0_amounts[i], candidates[cell].fluid1_amounts[i], reactant == 1u);
-    if (index != 0xffffffffu && amount > 0.0) { atomicSub(&fluid_reservations[index], u32(amount * RESERVATION_SCALE)); }
-  }
+  let candidate = candidates[cell];
+  let source_cell = select(candidate.anchor, candidate.partner, reactant == 1u);
+  fluid_source_cell(cell, source_cell, false);
 }
 
 @compute @workgroup_size(64)
 fn clear_transaction_state(@builtin(global_invocation_id) id: vec3<u32>) {
   let index = id.x;
   if (index < arrayLength(&fluid_reservations)) { atomicStore(&fluid_reservations[index], 0u); }
+  if (index < arrayLength(&fluid_reservation_owners)) { atomicStore(&fluid_reservation_owners[index], 0xffffffffu); }
   if (index < arrayLength(&gas_reservations)) { atomicStore(&gas_reservations[index], 0u); }
   if (index < arrayLength(&gas_output_reservations)) { atomicStore(&gas_output_reservations[index], 0u); }
+  if (index < arrayLength(&canonical_reservations)) { atomicStore(&canonical_reservations[index], 0u); }
 }
 
-@compute @workgroup_size(64)
-fn reserve_fluid_authority(@builtin(global_invocation_id) id: vec3<u32>) {
-  let cell = id.x;
-  if (cell >= parameters.cell_count || cell >= arrayLength(&candidates)) { return; }
+fn reserve_candidate(cell: u32) {
   let candidate = candidates[cell];
   if (candidate.reaction == 0xffffffffu || candidate.extent <= 0.000001) { return; }
-  // A candidate can only share an authority with anchors at the same cell or
-  // one cardinal neighbor. Reject a lower ordered contender before it can
-  // reserve any input/output budget.
-  for (var direction = 0u; direction <= 4u; direction += 1u) {
-    let other_cell = select(cell, neighbor(cell, direction), direction != 0u);
-    if (other_cell == 0xffffffffu || other_cell == cell || other_cell >= arrayLength(&candidates)) { continue; }
-    let other = candidates[other_cell];
-    if (other.reaction != 0xffffffffu && candidate_better(other, candidate) &&
-        (candidate_shares_authority(other, candidate) || candidate_shares_gas_output(other, candidate))) {
-      candidates[cell].padding0 = 0u;
-      return;
-    }
-  }
   candidates[cell].padding0 = 1u;
   // Reject product layouts that the commit pass cannot represent.  Keeping
   // this check in planning means apply never has to discover a late failure
@@ -496,6 +474,52 @@ fn reserve_fluid_authority(@builtin(global_invocation_id) id: vec3<u32>) {
     return;
   }
   candidates[cell].padding1 = request_base;
+}
+
+fn canonical_source(material: u32) -> bool {
+  return material != EMPTY_MATERIAL_IDENTIFIER &&
+    material_form_from_identifier(material) != GAS_MATERIAL_FORM &&
+    material_form_from_identifier(material) != FLUID_MATERIAL_FORM;
+}
+
+fn reserve_candidate_canonical(candidate: Candidate) -> bool {
+  let first = canonical_source(candidate.material0);
+  let second = canonical_source(candidate.material1);
+  if (first && !reserve_canonical_authority(candidate.anchor)) { return false; }
+  if (second && candidate.partner != candidate.anchor && !reserve_canonical_authority(candidate.partner)) {
+    if (first) { release_canonical_authority(candidate.anchor); }
+    return false;
+  }
+  return true;
+}
+
+fn release_candidate_canonical(candidate: Candidate) {
+  if (canonical_source(candidate.material0)) { release_canonical_authority(candidate.anchor); }
+  if (canonical_source(candidate.material1) && candidate.partner != candidate.anchor) {
+    release_canonical_authority(candidate.partner);
+  }
+}
+
+// Deterministic global arbitration: each candidate is attempted once in the
+// total order, and a failed full reservation is discarded before the next.
+@compute @workgroup_size(1)
+fn reserve_fluid_authority(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (id.x != 0u) { return; }
+  for (var processed = 0u; processed < parameters.cell_count; processed += 1u) {
+    var best = 0xffffffffu;
+    for (var cell = 0u; cell < parameters.cell_count && cell < arrayLength(&candidates); cell += 1u) {
+      let candidate = candidates[cell];
+      if (candidate.padding0 != 0u || candidate.reaction == 0xffffffffu || candidate.extent <= 0.000001) { continue; }
+      if (best == 0xffffffffu || candidate_better(candidate, candidates[best])) { best = cell; }
+    }
+    if (best == 0xffffffffu) { return; }
+    candidates[best].padding0 = 2u;
+    let candidate = candidates[best];
+    if (reserve_candidate_canonical(candidate)) {
+      reserve_candidate(best);
+      if (candidates[best].padding0 == 0u) { release_candidate_canonical(candidate); }
+    }
+  }
 }
 
 fn release_fluid_slot(slot: u32) {

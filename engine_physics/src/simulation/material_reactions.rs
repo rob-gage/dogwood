@@ -17,6 +17,8 @@ pub(crate) struct MaterialReactions {
     fluid_reservations: AcceleratorBuffer,
     gas_reservations: AcceleratorBuffer,
     gas_output_reservations: AcceleratorBuffer,
+    canonical_reservations: AcceleratorBuffer,
+    fluid_reservation_owners: AcceleratorBuffer,
     reaction_energy: AcceleratorBuffer,
     parameters: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
@@ -60,6 +62,9 @@ impl MaterialReactions {
             accelerator.allocate::<u32>((cell_count * gas_count.max(1)) as usize);
         let gas_output_reservations =
             accelerator.allocate::<u32>((cell_count * gas_count.max(1)) as usize);
+        let canonical_reservations = accelerator.allocate::<u32>(cell_count as usize);
+        let fluid_reservation_owners =
+            accelerator.allocate::<u32>(fluid_authority.particle_capacity as usize);
         let parameters = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("material reaction parameters"),
             size: 16,
@@ -133,6 +138,8 @@ impl MaterialReactions {
                 storage(22, false),
                 storage(23, false),
                 storage(24, false),
+                storage(25, false),
+                storage(26, false),
             ],
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -170,6 +177,8 @@ impl MaterialReactions {
                 Self::binding(22, &fluid_reservations),
                 Self::binding(23, &gas_reservations),
                 Self::binding(24, &gas_output_reservations),
+                Self::binding(25, &canonical_reservations),
+                Self::binding(26, &fluid_reservation_owners),
             ],
         });
         let shader = super::create_simulation_shader_module(
@@ -198,6 +207,8 @@ impl MaterialReactions {
             fluid_reservations,
             gas_reservations,
             gas_output_reservations,
+            canonical_reservations,
+            fluid_reservation_owners,
             reaction_energy,
             parameters,
             bind_group,
@@ -236,7 +247,9 @@ impl MaterialReactions {
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
         pass.set_pipeline(&self.reserve_pipeline);
-        pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+        // One invocation performs the ordered arbitration. It is intentionally
+        // serialized: reservation order is a correctness rule, not a race.
+        pass.dispatch_workgroups(1, 1, 1);
         pass.set_pipeline(&self.apply_pipeline);
         pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
     }
