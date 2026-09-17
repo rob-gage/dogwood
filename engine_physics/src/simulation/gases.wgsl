@@ -192,7 +192,9 @@ fn advect_gas_concentrations(@builtin(global_invocation_id) invocation: vec3<u32
     let output_index: u32 =
         gas_concentration_storage_index_from_species_and_physical_cell(species, index);
     if world_cell_is_gas_obstacle(cell) {
-        concentration_scratch[output_index] = 0.0;
+        let remaining: f32 = exp(-max(gas_properties[species * 2u].w, 0.0) * parameters.delta_time);
+        concentration_scratch[output_index] = select(concentrations[output_index] * remaining, 0.0,
+            gas_open_neighbor_count(cell) > 0u);
         return;
     }
     let current: f32 = concentrations[output_index];
@@ -213,9 +215,43 @@ fn advect_gas_concentrations(@builtin(global_invocation_id) invocation: vec3<u32
         gas_concentration_at_world_cell(species, cell + vec2<i32>(1, 0), current) +
         gas_concentration_at_world_cell(species, cell + vec2<i32>(0, -1), current) +
         gas_concentration_at_world_cell(species, cell + vec2<i32>(0, 1), current) - 4.0 * current
-    );
+    ) + gas_displaced_into_open_cell(species, cell);
     let remaining: f32 = exp(-max(properties.w, 0.0) * parameters.delta_time);
     concentration_scratch[output_index] = max(0.0, mixed) * remaining;
+}
+
+fn gas_open_neighbor_count(cell: vec2<i32>) -> u32 {
+    var count = 0u;
+    for (var direction = 0u; direction < 4u; direction += 1u) {
+        let offset = select(
+            select(vec2<i32>(0, -1), vec2<i32>(0, 1), direction == 3u),
+            select(vec2<i32>(-1, 0), vec2<i32>(1, 0), direction == 1u),
+            direction < 2u,
+        );
+        if !world_cell_is_gas_obstacle(cell + offset) { count += 1u; }
+    }
+    return count;
+}
+
+fn gas_displaced_into_open_cell(species: u32, cell: vec2<i32>) -> f32 {
+    var displaced = 0.0;
+    for (var direction = 0u; direction < 4u; direction += 1u) {
+        let offset = select(
+            select(vec2<i32>(0, -1), vec2<i32>(0, 1), direction == 3u),
+            select(vec2<i32>(-1, 0), vec2<i32>(1, 0), direction == 1u),
+            direction < 2u,
+        );
+        let source = cell + offset;
+        if !world_cell_is_gas_obstacle(source) { continue; }
+        let source_index = gas_physical_cell_index_from_world_cell(source);
+        let open_neighbors = gas_open_neighbor_count(source);
+        if source_index != INVALID_PHYSICAL_CELL_INDEX && open_neighbors > 0u {
+            displaced += concentrations[
+                gas_concentration_storage_index_from_species_and_physical_cell(species, source_index)
+            ] / f32(open_neighbors);
+        }
+    }
+    return displaced;
 }
 
 // Clears authoritative gas state after a physical ring slot is reassigned

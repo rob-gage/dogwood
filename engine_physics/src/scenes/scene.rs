@@ -6,11 +6,11 @@ use super::{
 };
 use crate::simulation::{
     CellularCollision, CellularDynamic, CellularPhysicsBodyProxy, CellularPressure,
-    CollisionOccupancySnapshot, Fluids, Gases, MaterialMutations, MaterialReactions,
-    ReactionMaterialTable, RigidCellStateGather, RigidCellStateUpload, RigidCellularBody,
-    RigidCellularBodyCell, RigidCellularBodyState, ScenePhysicsWorld, SceneSimulationConfiguration,
-    ThermalConduction, ThermalEdits, ThermalInteraction, ThermalMaterialTable,
-    ThermalPhaseTransitions, ThermalScatter,
+    CellularStaticStateGather, CollisionOccupancySnapshot, Fluids, Gases, MaterialMutations,
+    MaterialReactions, ReactionMaterialTable, RigidCellStateGather, RigidCellStateUpload,
+    RigidCellularBody, RigidCellularBodyCell, RigidCellularBodyState, ScenePhysicsWorld,
+    SceneSimulationConfiguration, ThermalConduction, ThermalEdits, ThermalInteraction,
+    ThermalMaterialTable, ThermalPhaseTransitions, ThermalScatter,
 };
 use crate::{
     actors::{Actor, ActorRegistry},
@@ -92,6 +92,11 @@ struct RigidDormancyBatch {
     readback_slot: usize,
     state_count: usize,
     result: Receiver<Result<(), wgpu::BufferAsyncError>>,
+}
+
+struct PendingStaticDetachment {
+    components: Vec<Vec<CellCoordinates>>,
+    indices: Vec<u32>,
 }
 
 /// The capacity of the chunk streaming queue
@@ -200,6 +205,7 @@ pub struct Scene {
     rigid_cell_temperatures: AcceleratorBuffer,
     rigid_cell_state_upload: RigidCellStateUpload,
     rigid_cell_state_gather: RigidCellStateGather,
+    cellular_static_state_gather: CellularStaticStateGather,
     /// Transient rasterized possessed-pawn interaction geometry
     cellular_physics_body_proxy: CellularPhysicsBodyProxy,
     /// Authoritative body-local cellular matter paired with Rapier bodies
@@ -238,6 +244,7 @@ pub struct Scene {
     rigid_granular_contact_active: Vec<bool>,
     /// Prior static snapshot used to ignore initial islands and detect topology changes
     rigid_detachment_snapshot: Option<CollisionOccupancySnapshot>,
+    pending_static_detachment: Option<PendingStaticDetachment>,
     /// GPU-authoritative fluid particles and their transient cellular representation
     fluids: Fluids,
     /// GPU-authoritative shared gas velocity and per-species concentrations
@@ -477,6 +484,15 @@ impl Scene {
             &rigid_cell_temperatures,
             buffered_cell_count,
         );
+        let cellular_static_state_gather = CellularStaticStateGather::new(
+            accelerator.as_ref(),
+            &cellular_material_identifiers,
+            &cellular_appearances,
+            &cellular_integrities,
+            &cellular_amounts,
+            &cellular_temperatures,
+            buffered_cell_count,
+        );
         let rigid_dormancy_readbacks = (0..RIGID_DORMANCY_READBACK_SLOTS)
             .map(|index| {
                 accelerator
@@ -656,6 +672,7 @@ impl Scene {
             rigid_cell_temperatures,
             rigid_cell_state_upload,
             rigid_cell_state_gather,
+            cellular_static_state_gather,
             cellular_physics_body_proxy,
             rigid_cellular_bodies: Vec::new(),
             rigid_cellular_body_id_next: 1,
@@ -681,6 +698,7 @@ impl Scene {
             rigid_cellular_recovery: Vec::new(),
             rigid_granular_contact_active: Vec::new(),
             rigid_detachment_snapshot: None,
+            pending_static_detachment: None,
             fluids,
             gases,
             material_mutations,
@@ -1223,6 +1241,7 @@ impl Scene {
                 .poll()
                 .map_err(|error| io::Error::other(error.to_string()))?;
             self.apply_completed_rigid_cellular_reactions()?;
+            self.apply_completed_static_detachment()?;
             self.tick(is_simulation_active)?;
             self.tick_time -= tick_time;
             ticks = ticks.saturating_add(1);
@@ -2290,6 +2309,137 @@ impl Scene {
     }
 
     /// Transfers newly disconnected static components into authoritative body-local matter
+    fn apply_completed_static_detachment(&mut self) -> Result<(), io::Error> {
+        let Some(result) = self.cellular_static_state_gather.take_completed() else {
+            return Ok(());
+        };
+        let Some(pending) = self.pending_static_detachment.take() else {
+            return Ok(());
+        };
+        let states = match result {
+            Ok(states) if states.len() == pending.indices.len() => states,
+            _ => {
+                self.pending_static_detachment = Some(pending);
+                return Ok(());
+            }
+        };
+        let current_indices: Option<Vec<u32>> = pending
+            .components
+            .iter()
+            .flatten()
+            .map(|coordinates| self.cell_edit_index(*coordinates).map(|index| index as u32))
+            .collect();
+        if current_indices.as_deref() != Some(&pending.indices) {
+            self.pending_static_detachment =
+                current_indices.map(|indices| PendingStaticDetachment {
+                    components: pending.components,
+                    indices,
+                });
+            return Ok(());
+        }
+        let mut offset = 0;
+        for component in pending.components {
+            let end = offset + component.len();
+            let component_states = &states[offset..end];
+            offset = end;
+            if component_states.iter().any(|state| {
+                state.amount <= 0.000001
+                    || !matches!(
+                        self.data
+                            .materials()
+                            .get(MaterialIdentifier::from_u32(state.material)),
+                        Some(Material::CellularStatic { .. })
+                    )
+            }) {
+                continue;
+            }
+            let minimum_x = component.iter().map(|cell| cell.x).min().unwrap();
+            let minimum_y = component.iter().map(|cell| cell.y).min().unwrap();
+            let mut cells = Vec::with_capacity(component.len());
+            let mut integrities = Vec::with_capacity(component.len());
+            let mut amounts = Vec::with_capacity(component.len());
+            let mut temperatures = Vec::with_capacity(component.len());
+            let mut friction = 0.0;
+            let mut restitution = 0.0;
+            for (coordinates, state) in component.iter().zip(component_states) {
+                let material_identifier = MaterialIdentifier::from_u32(state.material);
+                let Some(Material::CellularStatic {
+                    friction: cell_friction,
+                    restitution: cell_restitution,
+                    ..
+                }) = self.data.materials().get(material_identifier)
+                else {
+                    cells.clear();
+                    break;
+                };
+                friction += *cell_friction;
+                restitution += *cell_restitution;
+                cells.push(RigidCellularBodyCell {
+                    local: [coordinates.x - minimum_x, coordinates.y - minimum_y],
+                    material: material_identifier,
+                    appearance: CellularAppearance(state.appearance),
+                    state_slot: u32::MAX,
+                    state_generation: 0,
+                });
+                integrities.push(state.integrity);
+                amounts.push(state.amount);
+                temperatures.push(state.temperature);
+            }
+            if cells.len() != component.len() {
+                continue;
+            }
+            if cells.len() < self.rigid_component_minimum(&cells) {
+                let debris = cells
+                    .iter()
+                    .filter_map(|cell| match self.data.materials().get(cell.material) {
+                        Some(Material::CellularStatic {
+                            debris_material: Some(material_identifier),
+                            debris_yield_rate,
+                            ..
+                        }) if (((cell.local[0].wrapping_mul(31).wrapping_add(cell.local[1])) as u32
+                            % 10_000) as f32)
+                            < *debris_yield_rate * 10_000.0 =>
+                        {
+                            Some(SceneEditCellPlacement {
+                                coordinates: CellCoordinates {
+                                    x: minimum_x + cell.local[0],
+                                    y: minimum_y + cell.local[1],
+                                },
+                                material_identifier: *material_identifier,
+                                appearance: cell.appearance,
+                            })
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                let mut edits = SceneEditBatch::new();
+                edits.erase(component.clone());
+                edits.place_cells(debris);
+                self.apply_edits_immediate(&mut edits)?;
+                continue;
+            }
+            let divisor = cells.len() as f32;
+            let mut edits = SceneEditBatch::new();
+            edits.erase(component.clone());
+            self.apply_edits_immediate(&mut edits)?;
+            self.insert_rigid_cellular_body(
+                [minimum_x as f32 / 8.0, minimum_y as f32 / 8.0],
+                cells,
+                friction / divisor,
+                restitution / divisor,
+                Some(
+                    &integrities
+                        .iter()
+                        .copied()
+                        .zip(amounts.iter().copied().zip(temperatures.iter().copied()))
+                        .map(|(integrity, (amount, temperature))| (integrity, amount, temperature))
+                        .collect::<Vec<_>>(),
+                ),
+            );
+        }
+        Ok(())
+    }
+
     fn detach_unanchored_static_components(
         &mut self,
         snapshot: &mut CollisionOccupancySnapshot,
@@ -2366,114 +2516,47 @@ impl Scene {
                 }
             }
         }
-        let capacity: usize = usize::from(snapshot.width) * usize::from(snapshot.height) * 64;
+        if let Some(pending) = self.pending_static_detachment.as_ref() {
+            self.cellular_static_state_gather
+                .submit(self.accelerator.as_ref(), &pending.indices);
+            self.rigid_detachment_snapshot = Some(snapshot.clone());
+            return Ok(());
+        }
+        if candidates.is_empty() {
+            self.rigid_detachment_snapshot = Some(snapshot.clone());
+            return Ok(());
+        }
+        let mut indices = Vec::new();
+        let mut valid_components = Vec::new();
+        let capacity = usize::from(snapshot.width) * usize::from(snapshot.height) * 64;
+        let mut represented: usize = self
+            .rigid_cellular_bodies
+            .iter()
+            .map(|body| body.cells.len())
+            .sum();
         for component in candidates {
-            let represented: usize = self
-                .rigid_cellular_bodies
-                .iter()
-                .map(|body| body.cells.len())
-                .sum();
             if represented + component.len() > capacity {
                 continue;
             }
-            let minimum_x: i32 = component.iter().map(|cell| cell.x).min().unwrap();
-            let minimum_y: i32 = component.iter().map(|cell| cell.y).min().unwrap();
-            let mut cells = Vec::with_capacity(component.len());
-            let mut integrities = Vec::with_capacity(component.len());
-            let mut amounts = Vec::with_capacity(component.len());
-            let mut temperatures = Vec::with_capacity(component.len());
-            let mut friction: f32 = 0.0;
-            let mut restitution: f32 = 0.0;
-            for coordinates in &component {
-                let tile_coordinates: TileCoordinates = coordinates.tile_coordinates();
-                let [x, y] = coordinates.local_tile_coordinates();
-                let Some(ChunkEntry::Active { chunk, .. }) =
-                    self.chunks.get(&tile_coordinates.chunk_coordinates())
-                else {
-                    continue;
-                };
-                let Ok(tile) = chunk.get_tile(tile_coordinates) else {
-                    continue;
-                };
-                let material_identifier = tile.cell_material_identifier(x, y);
-                let Some(Material::CellularStatic {
-                    friction: cell_friction,
-                    restitution: cell_restitution,
-                    ..
-                }) = self.data.materials().get(material_identifier)
-                else {
-                    continue;
-                };
-                friction += *cell_friction;
-                restitution += *cell_restitution;
-                cells.push(RigidCellularBodyCell {
-                    local: [coordinates.x - minimum_x, coordinates.y - minimum_y],
-                    material: material_identifier,
-                    appearance: tile.cell_appearance(x, y),
-                    state_slot: u32::MAX,
-                    state_generation: 0,
-                });
-                integrities.push(tile.cell_integrity(x, y));
-                amounts.push(tile.cell_amount(x, y));
-                temperatures.push(tile.cell_temperature(x, y));
-            }
-            if cells.len() != component.len() {
+            let Some(component_indices) = component
+                .iter()
+                .map(|coordinates| self.cell_edit_index(*coordinates).map(|index| index as u32))
+                .collect::<Option<Vec<_>>>()
+            else {
                 continue;
-            }
-            if cells.len() < self.rigid_component_minimum(&cells) {
-                let debris = cells
-                    .iter()
-                    .filter_map(|cell| match self.data.materials().get(cell.material) {
-                        Some(Material::CellularStatic {
-                            debris_material: Some(material_identifier),
-                            debris_yield_rate,
-                            ..
-                        }) if (((cell.local[0].wrapping_mul(31).wrapping_add(cell.local[1])) as u32
-                            % 10_000) as f32)
-                            < *debris_yield_rate * 10_000.0 =>
-                        {
-                            Some(SceneEditCellPlacement {
-                                coordinates: CellCoordinates {
-                                    x: minimum_x + cell.local[0],
-                                    y: minimum_y + cell.local[1],
-                                },
-                                material_identifier: *material_identifier,
-                                appearance: cell.appearance,
-                            })
-                        }
-                        _ => None,
-                    })
-                    .collect();
-                let mut edits = SceneEditBatch::new();
-                edits.erase(component.clone());
-                edits.place_cells(debris);
-                self.apply_edits_immediate(&mut edits)?;
-                for coordinates in &component {
-                    snapshot.clear_static_cell(coordinates.x, coordinates.y);
-                }
-                continue;
-            }
-            let divisor: f32 = cells.len() as f32;
-            let mut edits = SceneEditBatch::new();
-            edits.erase(component.clone());
-            self.apply_edits_immediate(&mut edits)?;
-            for coordinates in &component {
-                snapshot.clear_static_cell(coordinates.x, coordinates.y);
-            }
-            self.insert_rigid_cellular_body(
-                [minimum_x as f32 / 8.0, minimum_y as f32 / 8.0],
-                cells,
-                friction / divisor,
-                restitution / divisor,
-                Some(
-                    &integrities
-                        .iter()
-                        .copied()
-                        .zip(amounts.iter().copied().zip(temperatures.iter().copied()))
-                        .map(|(i, (a, t))| (i, a, t))
-                        .collect::<Vec<_>>(),
-                ),
-            );
+            };
+            indices.extend(component_indices);
+            represented += component.len();
+            valid_components.push(component);
+        }
+        if self
+            .cellular_static_state_gather
+            .submit(self.accelerator.as_ref(), &indices)
+        {
+            self.pending_static_detachment = Some(PendingStaticDetachment {
+                components: valid_components,
+                indices,
+            });
         }
         self.rigid_detachment_snapshot = Some(snapshot.clone());
         Ok(())
@@ -4830,6 +4913,7 @@ mod tests {
     use super::*;
     use crate::materials::{
         MaterialReaction, MaterialReactionReactant, MaterialRegistryBuilder, MaterialSelector,
+        MaterialThermalProperties, MaterialThermalTransition,
     };
     use engine_graphics::{Color, MaterialAppearance};
     use std::{sync::mpsc, time::Instant};
@@ -5481,6 +5565,14 @@ mod tests {
         scene
             .detach_unanchored_static_components(&mut separated)
             .unwrap();
+        for _ in 0..20 {
+            accelerator.poll().unwrap();
+            scene.apply_completed_static_detachment().unwrap();
+            if scene.rigid_cellular_bodies.len() == 1 {
+                break;
+            }
+            std::thread::yield_now();
+        }
         assert!(scene.rigid_cellular_bodies.len() == 1);
         assert!(scene.rigid_cellular_bodies[0].cells.len() == 8);
         let initial_y = scene
@@ -5513,6 +5605,145 @@ mod tests {
             scene.rigid_cellular_topology_revision,
         );
         accelerator.poll().unwrap();
+    }
+
+    #[test]
+    fn gpu_phase_static_cells_resolve_to_debris_or_rigid_body() {
+        let _gpu_test = crate::GPU_TEST_LOCK.lock().unwrap();
+        let accelerator = Arc::new(Accelerator::new().unwrap());
+        let mut builder = MaterialRegistryBuilder::new();
+        let debris = builder.register(Material::CellularDynamic {
+            name: "Debris".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(150, 120, 90)),
+            mass: 1.0,
+            pressure_transmission: 1.0,
+            friction: 0.5,
+            restitution: 0.0,
+        });
+        let stone = builder.register(Material::CellularStatic {
+            name: "Frozen Stone".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(110, 105, 100)),
+            mass: 1.0,
+            pressure_ignore_threshold: 1.0,
+            default_integrity: 1.0,
+            minimum_rigid_body_cell_count: 3,
+            debris_material: Some(debris),
+            debris_yield_rate: 1.0,
+            pressure_transmission: 0.5,
+            friction: 0.7,
+            restitution: 0.05,
+        });
+        let fluid = builder.register(Material::Fluid {
+            name: "Freezing Fluid".into(),
+            graphics: MaterialAppearance::from_color(Color::new_rgb(90, 180, 230)),
+            pressure_transmission: 1.0,
+            friction: 0.0,
+            restitution: 0.0,
+            rest_density: 1.0,
+            artificial_pressure: 0.0,
+            xsph_smoothing: 0.0,
+            body_push_speed: 0.0,
+            density: 1.0,
+            viscosity: 1.0,
+        });
+        builder
+            .set_thermal(
+                debris,
+                MaterialThermalProperties {
+                    conductivity: 0.1,
+                    specific_heat_capacity: 1.0,
+                    default_temperature: Some(293.15),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        builder
+            .set_thermal(
+                stone,
+                MaterialThermalProperties {
+                    conductivity: 0.1,
+                    specific_heat_capacity: 1.0,
+                    default_temperature: Some(293.15),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        builder
+            .set_thermal(
+                fluid,
+                MaterialThermalProperties {
+                    conductivity: 0.1,
+                    specific_heat_capacity: 1.0,
+                    default_temperature: Some(400.0),
+                    hot_transition: Some(MaterialThermalTransition {
+                        threshold_temperature: 300.0,
+                        target: stone,
+                        yield_rate: 1.0,
+                        latent_energy: 0.0,
+                    }),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let mut scene = Scene::new(
+            &accelerator,
+            builder.compile().unwrap(),
+            SceneSimulationConfiguration {
+                gravity: [0.0, 0.0],
+                ambient_temperature: 293.15,
+                empty_space_thermal_conductivity: 0.0,
+                empty_space_heat_capacity: 1.0,
+                maximum_gas_concentration: 4.0,
+                width: 4,
+                height: 4,
+                buffer_size: 2,
+                streaming_batch_size: 1,
+            },
+        )
+        .unwrap();
+        scene.update(Duration::from_secs(1) / 60, true).unwrap();
+        let isolated = CellCoordinates { x: 8, y: 8 };
+        let rigid_cells = vec![
+            CellCoordinates { x: 16, y: 8 },
+            CellCoordinates { x: 17, y: 8 },
+            CellCoordinates { x: 16, y: 9 },
+        ];
+        let mut edits = SceneEditBatch::new();
+        edits.place_material(
+            fluid,
+            CellularAppearance::NEUTRAL,
+            std::iter::once(isolated)
+                .chain(rigid_cells.iter().copied())
+                .collect(),
+        );
+        scene.queue_edits(edits);
+        scene.update(Duration::ZERO, false).unwrap();
+        scene.update(Duration::ZERO, false).unwrap();
+        for _ in 0..40 {
+            scene.update(Duration::from_secs(1) / 60, true).unwrap();
+            scene.update(Duration::ZERO, false).unwrap();
+            if scene.rigid_cellular_bodies.len() == 1
+                && read_cell_state(
+                    accelerator.as_ref(),
+                    &scene,
+                    scene.cell_edit_index(isolated).unwrap(),
+                )
+                .0 == debris.as_u32()
+            {
+                break;
+            }
+        }
+        let isolated_state = read_cell_state(
+            accelerator.as_ref(),
+            &scene,
+            scene.cell_edit_index(isolated).unwrap(),
+        );
+        assert_eq!(isolated_state.0, debris.as_u32());
+        assert_eq!(scene.rigid_cellular_bodies.len(), 1);
+        assert_eq!(scene.rigid_cellular_bodies[0].cells.len(), 3);
+        assert!(scene.rigid_cellular_bodies[0].cells.iter().all(
+            |cell| cell.material == stone && cell.appearance.0 == CellularAppearance::NEUTRAL.0
+        ));
     }
 
     #[test]
