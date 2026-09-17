@@ -119,23 +119,15 @@ impl Scene {
                 SceneEdit::Erase { cells } => {
                     for coordinates in cells {
                         if let Some(physical_index) = self.cell_edit_index(coordinates) {
-                            rigid_destroy_indices.push(physical_index);
-                            cell_edits.insert(
+                            self.queue_resident_cell_clear(
+                                coordinates,
                                 physical_index,
-                                (
-                                    coordinates,
-                                    MaterialIdentifier::NULL,
-                                    CellularAppearance::NEUTRAL,
-                                    0.0,
-                                ),
+                                &mut rigid_destroy_indices,
+                                &mut cell_edits,
+                                &mut fluid_edits,
+                                &mut gas_clear_cells,
+                                &mut gas_edits,
                             );
-                            fluid_edits.insert(physical_index, Fluids::erase_edit());
-                            if self.gases.gas_count() != 0 {
-                                gas_clear_cells.insert(physical_index);
-                                for species in 0..self.gases.gas_count() {
-                                    gas_edits.remove(&(physical_index, species));
-                                }
-                            }
                         } else {
                             deferred.erase(vec![coordinates]);
                         }
@@ -144,23 +136,15 @@ impl Scene {
                 SceneEdit::DestroyCells { cells } => {
                     for coordinates in cells {
                         if let Some(physical_index) = self.cell_edit_index(coordinates) {
-                            rigid_destroy_indices.push(physical_index);
-                            cell_edits.insert(
+                            self.queue_resident_cell_clear(
+                                coordinates,
                                 physical_index,
-                                (
-                                    coordinates,
-                                    MaterialIdentifier::NULL,
-                                    CellularAppearance::NEUTRAL,
-                                    0.0,
-                                ),
+                                &mut rigid_destroy_indices,
+                                &mut cell_edits,
+                                &mut fluid_edits,
+                                &mut gas_clear_cells,
+                                &mut gas_edits,
                             );
-                            fluid_edits.insert(physical_index, Fluids::erase_edit());
-                            if self.gases.gas_count() != 0 {
-                                gas_clear_cells.insert(physical_index);
-                                for species in 0..self.gases.gas_count() {
-                                    gas_edits.remove(&(physical_index, species));
-                                }
-                            }
                         } else {
                             deferred.destroy_cells(vec![coordinates]);
                         }

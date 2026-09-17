@@ -3,6 +3,38 @@
 use super::*;
 
 impl Scene {
+    pub(super) fn queue_resident_cell_clear(
+        &self,
+        coordinates: CellCoordinates,
+        physical_index: usize,
+        rigid_destroy_indices: &mut Vec<usize>,
+        cell_edits: &mut HashMap<
+            usize,
+            (CellCoordinates, MaterialIdentifier, CellularAppearance, f32),
+        >,
+        fluid_edits: &mut HashMap<usize, u32>,
+        gas_clear_cells: &mut HashSet<usize>,
+        gas_edits: &mut BTreeMap<(usize, u32), f32>,
+    ) {
+        rigid_destroy_indices.push(physical_index);
+        cell_edits.insert(
+            physical_index,
+            (
+                coordinates,
+                MaterialIdentifier::NULL,
+                CellularAppearance::NEUTRAL,
+                0.0,
+            ),
+        );
+        fluid_edits.insert(physical_index, Fluids::erase_edit());
+        if self.gases.gas_count() != 0 {
+            gas_clear_cells.insert(physical_index);
+            for species in 0..self.gases.gas_count() {
+                gas_edits.remove(&(physical_index, species));
+            }
+        }
+    }
+
     pub(super) fn apply_completed_rigid_cellular_reactions(&mut self) -> Result<(), io::Error> {
         let mut chemistry_removals: HashMap<usize, HashSet<[i32; 2]>> = HashMap::new();
         for event in self
