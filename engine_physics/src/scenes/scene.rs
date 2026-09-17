@@ -97,6 +97,8 @@ struct RigidDormancyBatch {
 struct PendingStaticDetachment {
     components: Vec<Vec<CellCoordinates>>,
     indices: Vec<u32>,
+    generation: u64,
+    ring_offset: (u16, u16),
 }
 
 /// The capacity of the chunk streaming queue
@@ -245,6 +247,10 @@ pub struct Scene {
     /// Prior static snapshot used to ignore initial islands and detect topology changes
     rigid_detachment_snapshot: Option<CollisionOccupancySnapshot>,
     pending_static_detachment: Option<PendingStaticDetachment>,
+    static_detachment_in_flight_generation: Option<u64>,
+    static_detachment_generation: u64,
+    static_detachment_visit_stamps: Vec<u32>,
+    static_detachment_visit_generation: u32,
     /// GPU-authoritative fluid particles and their transient cellular representation
     fluids: Fluids,
     /// GPU-authoritative shared gas velocity and per-species concentrations
@@ -699,6 +705,10 @@ impl Scene {
             rigid_granular_contact_active: Vec::new(),
             rigid_detachment_snapshot: None,
             pending_static_detachment: None,
+            static_detachment_in_flight_generation: None,
+            static_detachment_generation: 0,
+            static_detachment_visit_stamps: Vec::new(),
+            static_detachment_visit_generation: 0,
             fluids,
             gases,
             material_mutations,
@@ -2313,9 +2323,22 @@ impl Scene {
         let Some(result) = self.cellular_static_state_gather.take_completed() else {
             return Ok(());
         };
+        let Some(in_flight_generation) = self.static_detachment_in_flight_generation.take() else {
+            return Ok(());
+        };
         let Some(pending) = self.pending_static_detachment.take() else {
             return Ok(());
         };
+        if pending.generation != in_flight_generation {
+            #[cfg(debug_assertions)]
+            tracing::trace!(
+                target: "engine_physics::static_detachment",
+                generation = in_flight_generation,
+                "discarded stale static detachment gather"
+            );
+            self.pending_static_detachment = Some(pending);
+            return Ok(());
+        }
         let states = match result {
             Ok(states) if states.len() == pending.indices.len() => states,
             _ => {
@@ -2330,14 +2353,29 @@ impl Scene {
             .map(|coordinates| self.cell_edit_index(*coordinates).map(|index| index as u32))
             .collect();
         if current_indices.as_deref() != Some(&pending.indices) {
+            self.static_detachment_generation = self.static_detachment_generation.wrapping_add(1);
             self.pending_static_detachment =
                 current_indices.map(|indices| PendingStaticDetachment {
                     components: pending.components,
                     indices,
+                    generation: self.static_detachment_generation,
+                    ring_offset: (self.tiles_ring_offset_x, self.tiles_ring_offset_y),
                 });
             return Ok(());
         }
+        if pending.ring_offset != (self.tiles_ring_offset_x, self.tiles_ring_offset_y) {
+            self.static_detachment_generation = self.static_detachment_generation.wrapping_add(1);
+            self.pending_static_detachment = Some(PendingStaticDetachment {
+                components: pending.components,
+                indices: current_indices.unwrap_or_default(),
+                generation: self.static_detachment_generation,
+                ring_offset: (self.tiles_ring_offset_x, self.tiles_ring_offset_y),
+            });
+            return Ok(());
+        }
         let mut offset = 0;
+        let mut edits = SceneEditBatch::new();
+        let mut rigid_insertions = Vec::new();
         for component in pending.components {
             let end = offset + component.len();
             let component_states = &states[offset..end];
@@ -2412,32 +2450,61 @@ impl Scene {
                         _ => None,
                     })
                     .collect();
-                let mut edits = SceneEditBatch::new();
                 edits.erase(component.clone());
                 edits.place_cells(debris);
-                self.apply_edits_immediate(&mut edits)?;
                 continue;
             }
             let divisor = cells.len() as f32;
-            let mut edits = SceneEditBatch::new();
             edits.erase(component.clone());
-            self.apply_edits_immediate(&mut edits)?;
-            self.insert_rigid_cellular_body(
+            rigid_insertions.push((
                 [minimum_x as f32 / 8.0, minimum_y as f32 / 8.0],
                 cells,
                 friction / divisor,
                 restitution / divisor,
-                Some(
-                    &integrities
-                        .iter()
-                        .copied()
-                        .zip(amounts.iter().copied().zip(temperatures.iter().copied()))
-                        .map(|(integrity, (amount, temperature))| (integrity, amount, temperature))
-                        .collect::<Vec<_>>(),
-                ),
+                integrities
+                    .iter()
+                    .copied()
+                    .zip(amounts.iter().copied().zip(temperatures.iter().copied()))
+                    .map(|(integrity, (amount, temperature))| (integrity, amount, temperature))
+                    .collect::<Vec<_>>(),
+            ));
+        }
+        if !edits.is_empty() {
+            self.apply_edits_immediate(&mut edits)?;
+        }
+        for (position, cells, friction, restitution, state) in rigid_insertions {
+            self.insert_rigid_cellular_body(position, cells, friction, restitution, Some(&state));
+        }
+        #[cfg(debug_assertions)]
+        tracing::trace!(
+            target: "engine_physics::static_detachment",
+            resolved_cells = offset,
+            edit_applied = !edits.is_empty(),
+            "resolved static detachment batch"
+        );
+        Ok(())
+    }
+
+    fn submit_pending_static_detachment(&mut self) {
+        if self.static_detachment_in_flight_generation.is_some() {
+            return;
+        }
+        let Some(pending) = self.pending_static_detachment.as_ref() else {
+            return;
+        };
+        if self
+            .cellular_static_state_gather
+            .submit(self.accelerator.as_ref(), &pending.indices)
+        {
+            self.static_detachment_in_flight_generation = Some(pending.generation);
+            #[cfg(debug_assertions)]
+            tracing::trace!(
+                target: "engine_physics::static_detachment",
+                generation = pending.generation,
+                gather_cells = pending.indices.len(),
+                "submitted static detachment gather"
             );
         }
-        Ok(())
     }
 
     fn detach_unanchored_static_components(
@@ -2453,9 +2520,29 @@ impl Scene {
             || previous.height != snapshot.height
         {
             self.rigid_detachment_snapshot = Some(snapshot.clone());
+            if let Some(pending) = self.pending_static_detachment.take() {
+                let indices = pending
+                    .components
+                    .iter()
+                    .flatten()
+                    .filter_map(|coordinates| self.cell_edit_index(*coordinates))
+                    .map(|index| index as u32)
+                    .collect::<Vec<_>>();
+                self.static_detachment_generation =
+                    self.static_detachment_generation.wrapping_add(1);
+                self.pending_static_detachment =
+                    (!indices.is_empty()).then_some(PendingStaticDetachment {
+                        components: pending.components,
+                        indices,
+                        generation: self.static_detachment_generation,
+                        ring_offset: (self.tiles_ring_offset_x, self.tiles_ring_offset_y),
+                    });
+            }
+            self.submit_pending_static_detachment();
             return Ok(());
         }
         if previous.static_masks == snapshot.static_masks {
+            self.submit_pending_static_detachment();
             self.rigid_detachment_snapshot = Some(snapshot.clone());
             return Ok(());
         }
@@ -2463,81 +2550,172 @@ impl Scene {
         let origin_y: i32 = snapshot.origin.y * 8;
         let width: i32 = i32::from(snapshot.width) * 8;
         let height: i32 = i32::from(snapshot.height) * 8;
-        let mut occupancy: Vec<u8> = vec![0; (width * height) as usize];
-        for y in origin_y..origin_y + height {
-            for x in origin_x..origin_x + width {
-                let index: usize = ((y - origin_y) * width + x - origin_x) as usize;
-                occupancy[index] = u8::from(snapshot.is_static_cell_occupied(x, y) == Some(true));
-            }
-        }
-        let mut candidates: Vec<Vec<CellCoordinates>> = Vec::new();
-        for y in origin_y..origin_y + height {
-            for x in origin_x..origin_x + width {
-                let index: usize = ((y - origin_y) * width + x - origin_x) as usize;
-                if occupancy[index] != 1 {
-                    continue;
-                }
-                let mut queue: VecDeque<[i32; 2]> = VecDeque::from([[x, y]]);
-                let mut component: Vec<CellCoordinates> = Vec::new();
-                let mut anchored: bool = false;
-                occupancy[index] = 2;
-                while let Some([cell_x, cell_y]) = queue.pop_front() {
-                    component.push(CellCoordinates {
-                        x: cell_x,
-                        y: cell_y,
-                    });
-                    anchored |= cell_x == origin_x
-                        || cell_y == origin_y
-                        || cell_x == origin_x + width - 1
-                        || cell_y == origin_y + height - 1;
-                    for neighbor in [
-                        [cell_x - 1, cell_y],
-                        [cell_x + 1, cell_y],
-                        [cell_x, cell_y - 1],
-                        [cell_x, cell_y + 1],
-                    ] {
-                        if neighbor[0] < origin_x
-                            || neighbor[1] < origin_y
-                            || neighbor[0] >= origin_x + width
-                            || neighbor[1] >= origin_y + height
-                        {
-                            continue;
-                        }
-                        let neighbor_index: usize =
-                            ((neighbor[1] - origin_y) * width + neighbor[0] - origin_x) as usize;
-                        if occupancy[neighbor_index] == 1 {
-                            occupancy[neighbor_index] = 2;
-                            queue.push_back(neighbor);
+        let mut seeds = Vec::new();
+        let mut changed_bits = 0usize;
+        for tile_y in 0..snapshot.height {
+            for tile_x in 0..snapshot.width {
+                let tile = usize::from(tile_y) * usize::from(snapshot.width) + usize::from(tile_x);
+                for word in 0..2 {
+                    let current = snapshot.static_masks[tile][word];
+                    let previous = previous.static_masks[tile][word];
+                    let added = current & !previous;
+                    let removed = previous & !current;
+                    changed_bits += (added | removed).count_ones() as usize;
+                    for mask in [added, removed] {
+                        let mut bits = mask;
+                        while bits != 0 {
+                            let bit = bits.trailing_zeros();
+                            let local = word as i32 * 32 + bit as i32;
+                            let cell = CellCoordinates {
+                                x: (snapshot.origin.x + i32::from(tile_x)) * 8 + local % 8,
+                                y: (snapshot.origin.y + i32::from(tile_y)) * 8 + local / 8,
+                            };
+                            if mask == added {
+                                seeds.push(cell);
+                            } else {
+                                for neighbor in [
+                                    CellCoordinates {
+                                        x: cell.x - 1,
+                                        y: cell.y,
+                                    },
+                                    CellCoordinates {
+                                        x: cell.x + 1,
+                                        y: cell.y,
+                                    },
+                                    CellCoordinates {
+                                        x: cell.x,
+                                        y: cell.y - 1,
+                                    },
+                                    CellCoordinates {
+                                        x: cell.x,
+                                        y: cell.y + 1,
+                                    },
+                                ] {
+                                    if snapshot.is_static_cell_occupied(neighbor.x, neighbor.y)
+                                        == Some(true)
+                                    {
+                                        seeds.push(neighbor);
+                                    }
+                                }
+                            }
+                            bits &= bits - 1;
                         }
                     }
                 }
-                if !anchored && component.len() <= RIGID_DETACHMENT_MAXIMUM_CELLS {
-                    candidates.push(component);
-                }
             }
         }
-        if let Some(pending) = self.pending_static_detachment.as_ref() {
-            self.cellular_static_state_gather
-                .submit(self.accelerator.as_ref(), &pending.indices);
-            self.rigid_detachment_snapshot = Some(snapshot.clone());
-            return Ok(());
+        seeds.sort_unstable_by_key(|cell| (cell.y, cell.x));
+        seeds.dedup();
+        let visit_count = (width * height) as usize;
+        if self.static_detachment_visit_stamps.len() != visit_count {
+            self.static_detachment_visit_stamps = vec![0; visit_count];
+            self.static_detachment_visit_generation = 0;
         }
-        if candidates.is_empty() {
+        self.static_detachment_visit_generation = self
+            .static_detachment_visit_generation
+            .wrapping_add(1)
+            .max(1);
+        let visit_generation = self.static_detachment_visit_generation;
+        let visit_index =
+            |cell: CellCoordinates| ((cell.y - origin_y) * width + cell.x - origin_x) as usize;
+        let mut candidates = Vec::new();
+        let mut visited_cells = 0usize;
+        for seed in seeds.iter().copied() {
+            if snapshot.is_static_cell_occupied(seed.x, seed.y) != Some(true)
+                || self.static_detachment_visit_stamps[visit_index(seed)] == visit_generation
+            {
+                continue;
+            }
+            let mut queue = vec![seed];
+            self.static_detachment_visit_stamps[visit_index(seed)] = visit_generation;
+            let mut component = Vec::new();
+            let mut cursor = 0;
+            let mut anchored = false;
+            while cursor < queue.len() {
+                let cell = queue[cursor];
+                cursor += 1;
+                component.push(cell);
+                visited_cells += 1;
+                anchored |= cell.x == origin_x
+                    || cell.y == origin_y
+                    || cell.x == origin_x + width - 1
+                    || cell.y == origin_y + height - 1;
+                if anchored || component.len() > RIGID_DETACHMENT_MAXIMUM_CELLS {
+                    break;
+                }
+                for neighbor in [
+                    CellCoordinates {
+                        x: cell.x - 1,
+                        y: cell.y,
+                    },
+                    CellCoordinates {
+                        x: cell.x + 1,
+                        y: cell.y,
+                    },
+                    CellCoordinates {
+                        x: cell.x,
+                        y: cell.y - 1,
+                    },
+                    CellCoordinates {
+                        x: cell.x,
+                        y: cell.y + 1,
+                    },
+                ] {
+                    if neighbor.x < origin_x
+                        || neighbor.y < origin_y
+                        || neighbor.x >= origin_x + width
+                        || neighbor.y >= origin_y + height
+                        || snapshot.is_static_cell_occupied(neighbor.x, neighbor.y) != Some(true)
+                    {
+                        continue;
+                    }
+                    let index = visit_index(neighbor);
+                    if self.static_detachment_visit_stamps[index] != visit_generation {
+                        self.static_detachment_visit_stamps[index] = visit_generation;
+                        queue.push(neighbor);
+                    }
+                }
+            }
+            if !anchored && component.len() <= RIGID_DETACHMENT_MAXIMUM_CELLS {
+                candidates.push(component);
+            }
+        }
+        #[cfg(debug_assertions)]
+        tracing::trace!(
+            target: "engine_physics::static_detachment",
+            changed_bits,
+            seed_count = seeds.len(),
+            visited_cells,
+            candidate_components = candidates.len(),
+            candidate_cells = candidates.iter().map(Vec::len).sum::<usize>(),
+            "delta-seeded static detachment"
+        );
+        let newly_discovered_cells: HashSet<_> = candidates.iter().flatten().copied().collect();
+        let mut desired_components = self
+            .pending_static_detachment
+            .take()
+            .map(|pending| {
+                pending
+                    .components
+                    .into_iter()
+                    .filter(|component| {
+                        component.iter().all(|cell| {
+                            snapshot.is_static_cell_occupied(cell.x, cell.y) == Some(true)
+                                && !newly_discovered_cells.contains(cell)
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        desired_components.extend(candidates);
+        if desired_components.is_empty() {
             self.rigid_detachment_snapshot = Some(snapshot.clone());
+            self.submit_pending_static_detachment();
             return Ok(());
         }
         let mut indices = Vec::new();
         let mut valid_components = Vec::new();
-        let capacity = usize::from(snapshot.width) * usize::from(snapshot.height) * 64;
-        let mut represented: usize = self
-            .rigid_cellular_bodies
-            .iter()
-            .map(|body| body.cells.len())
-            .sum();
-        for component in candidates {
-            if represented + component.len() > capacity {
-                continue;
-            }
+        for component in desired_components {
             let Some(component_indices) = component
                 .iter()
                 .map(|coordinates| self.cell_edit_index(*coordinates).map(|index| index as u32))
@@ -2546,18 +2724,16 @@ impl Scene {
                 continue;
             };
             indices.extend(component_indices);
-            represented += component.len();
             valid_components.push(component);
         }
-        if self
-            .cellular_static_state_gather
-            .submit(self.accelerator.as_ref(), &indices)
-        {
-            self.pending_static_detachment = Some(PendingStaticDetachment {
-                components: valid_components,
-                indices,
-            });
-        }
+        self.static_detachment_generation = self.static_detachment_generation.wrapping_add(1);
+        self.pending_static_detachment = Some(PendingStaticDetachment {
+            components: valid_components,
+            indices,
+            generation: self.static_detachment_generation,
+            ring_offset: (self.tiles_ring_offset_x, self.tiles_ring_offset_y),
+        });
+        self.submit_pending_static_detachment();
         self.rigid_detachment_snapshot = Some(snapshot.clone());
         Ok(())
     }
