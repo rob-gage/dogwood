@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-use super::{
+use crate::scenes::{
     FluidDownload, FluidUpload, GasDownload, GasUpload, SceneData, SceneEdit, SceneEditBatch,
     SceneEditCellPlacement, SceneGenerator, ScenePosition, SceneVelocity, TileDownload, TileUpload,
 };
@@ -40,7 +40,7 @@ const RIGID_IO_QUEUE_CAPACITY: usize = 64;
 const RIGID_DORMANCY_READBACK_SLOTS: usize = 2;
 
 struct RigidPersistenceRequest {
-    record: super::dormant_rigid::DormantRigidBody,
+    record: crate::scenes::DormantRigidBody,
     slots: Vec<u32>,
 }
 
@@ -48,7 +48,7 @@ enum RigidIoJob {
     Persist(RigidPersistenceRequest),
     Claim {
         owner: TileCoordinates,
-        original: Vec<super::dormant_rigid::DormantRigidBody>,
+        original: Vec<crate::scenes::DormantRigidBody>,
         restored_ids: Vec<u64>,
     },
 }
@@ -57,7 +57,7 @@ enum RigidStreamingResponse {
     Loaded {
         owner: TileCoordinates,
         generation: u64,
-        result: Result<Vec<super::dormant_rigid::DormantRigidBody>, io::Error>,
+        result: Result<Vec<crate::scenes::DormantRigidBody>, io::Error>,
     },
     Saved {
         request: RigidPersistenceRequest,
@@ -65,15 +65,15 @@ enum RigidStreamingResponse {
     },
     Claimed {
         owner: TileCoordinates,
-        original: Vec<super::dormant_rigid::DormantRigidBody>,
+        original: Vec<crate::scenes::DormantRigidBody>,
         restored_ids: Vec<u64>,
-        result: Result<Vec<super::dormant_rigid::DormantRigidBody>, io::Error>,
+        result: Result<Vec<crate::scenes::DormantRigidBody>, io::Error>,
     },
 }
 
 enum RigidOwnerLoad {
     Loading,
-    Ready(Vec<super::dormant_rigid::DormantRigidBody>),
+    Ready(Vec<crate::scenes::DormantRigidBody>),
     Claiming,
 }
 
@@ -1410,7 +1410,7 @@ impl Scene {
             let Some(state) = self.physics_world.rigid_cellular_body_state(body) else {
                 continue;
             };
-            let Some(bounds) = super::dormant_rigid::world_aabb(
+            let Some(bounds) = crate::scenes::world_aabb(
                 state.translation,
                 state.angle,
                 body.cells.iter().map(|cell| cell.local),
@@ -1418,8 +1418,8 @@ impl Scene {
                 continue;
             };
             if !body.cells.is_empty()
-                && super::dormant_rigid::intersects_area(bounds, current_buffered)
-                && !super::dormant_rigid::intersects_area(bounds, future_buffered)
+                && crate::scenes::intersects_area(bounds, current_buffered)
+                && !crate::scenes::intersects_area(bounds, future_buffered)
             {
                 state_count += body.cells.len();
                 selected.push((
@@ -1559,7 +1559,7 @@ impl Scene {
             let mut records = Vec::new();
             while let Some(body) = bodies.next() {
                 let end = cursor + body.cells.len();
-                let record = super::dormant_rigid::DormantRigidBody {
+                let record = crate::scenes::DormantRigidBody {
                     id: body.id,
                     position: body.position,
                     rotation: body.rotation,
@@ -1570,7 +1570,7 @@ impl Scene {
                         .cells
                         .iter()
                         .zip(&states[cursor..end])
-                        .map(|(cell, state)| super::dormant_rigid::DormantRigidCell {
+                        .map(|(cell, state)| crate::scenes::DormantRigidCell {
                             local: cell.local,
                             material: cell.material,
                             appearance: cell.appearance,
@@ -1676,7 +1676,7 @@ impl Scene {
             self.rigid_io_in_flight += 1;
             std::thread::spawn(move || match job {
                 RigidIoJob::Persist(request) => {
-                    let Some(owner) = super::dormant_rigid::owner_chunk(
+                    let Some(owner) = crate::scenes::owner_chunk(
                         request.record.position,
                         request.record.rotation,
                         request.record.cells.iter().map(|cell| cell.local),
@@ -1691,7 +1691,7 @@ impl Scene {
                         return;
                     };
                     let result = data.read_dormant_rigids(owner).and_then(|mut records| {
-                        super::dormant_rigid::append_record(&mut records, request.record.clone())?;
+                        crate::scenes::append_record(&mut records, request.record.clone())?;
                         data.write_dormant_rigids(owner, &records)
                     });
                     let _ = sender.send(RigidStreamingResponse::Saved { request, result });
@@ -1702,7 +1702,7 @@ impl Scene {
                     restored_ids,
                 } => {
                     let result = data.read_dormant_rigids(owner).and_then(|mut records| {
-                        super::dormant_rigid::remove_ids(&mut records, &restored_ids);
+                        crate::scenes::remove_ids(&mut records, &restored_ids);
                         data.write_dormant_rigids(owner, &records)?;
                         Ok(records)
                     });
@@ -1763,7 +1763,7 @@ impl Scene {
                 }
                 RigidStreamingResponse::Saved { request, result } => match result {
                     Ok(()) => {
-                        let owner = super::dormant_rigid::owner_chunk(
+                        let owner = crate::scenes::owner_chunk(
                             request.record.position,
                             request.record.rotation,
                             request.record.cells.iter().map(|cell| cell.local),
@@ -1910,12 +1910,12 @@ impl Scene {
         };
         let buffered = self.area_buffered();
         let (records, _retained): (Vec<_>, Vec<_>) = original.iter().cloned().partition(|record| {
-            super::dormant_rigid::world_aabb(
+            crate::scenes::world_aabb(
                 record.position,
                 record.rotation,
                 record.cells.iter().map(|cell| cell.local),
             )
-            .is_some_and(|bounds| super::dormant_rigid::intersects_area(bounds, buffered))
+            .is_some_and(|bounds| crate::scenes::intersects_area(bounds, buffered))
         });
         if records.is_empty() {
             self.rigid_owner_loads
@@ -5088,7 +5088,7 @@ mod tests {
 
     use super::*;
     use crate::materials::{
-        MaterialReaction, MaterialReactionReactant, MaterialRegistryBuilder, MaterialSelector,
+        MaterialReaction, MaterialReactionReactant, MaterialReference, MaterialRegistryBuilder,
         MaterialThermalProperties, MaterialThermalTransition,
     };
     use engine_graphics::{Color, MaterialAppearance};
@@ -5384,11 +5384,11 @@ mod tests {
         materials.register_reaction(MaterialReaction {
             reactants: [
                 Some(MaterialReactionReactant {
-                    selector: MaterialSelector::Material(acid),
+                    selector: MaterialReference::Material(acid),
                     amount: 0.2,
                 }),
                 Some(MaterialReactionReactant {
-                    selector: MaterialSelector::Tag("corrodable".into()),
+                    selector: MaterialReference::Tag("corrodable".into()),
                     amount: 1.0,
                 }),
             ],
@@ -5529,11 +5529,11 @@ mod tests {
         materials.register_reaction(MaterialReaction {
             reactants: [
                 Some(MaterialReactionReactant {
-                    selector: MaterialSelector::Material(acid),
+                    selector: MaterialReference::Material(acid),
                     amount: 0.2,
                 }),
                 Some(MaterialReactionReactant {
-                    selector: MaterialSelector::Tag("corrodable".into()),
+                    selector: MaterialReference::Tag("corrodable".into()),
                     amount: 1.0,
                 }),
             ],
