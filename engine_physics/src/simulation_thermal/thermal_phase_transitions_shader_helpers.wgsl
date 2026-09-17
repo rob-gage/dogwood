@@ -70,7 +70,7 @@ struct Particle {
     velocity: vec2<f32>,
     prediction_collision_displacement: vec2<f32>,
     amount: f32,
-    temperature: f32
+    temperature: f32,
 }
 
 struct RigidCell {
@@ -80,7 +80,7 @@ struct RigidCell {
     appearance: u32,
     state_slot: u32,
     state_generation: u32,
-    padding: u32
+    padding: u32,
 }
 
 // A request is deliberately authority-addressed: cell, kind (0 cell/1 particle/2 gas), locator,
@@ -94,7 +94,7 @@ struct Request {
     amount: u32,
     temperature: u32,
     world_x: u32,
-    world_y: u32
+    world_y: u32,
 }
 
 struct Parameters {
@@ -105,7 +105,7 @@ struct Parameters {
     particle_count: u32,
     gas_count: u32,
     tick: u32,
-    rigid_count: u32
+    rigid_count: u32,
 }
 
 @group(0) @binding(0) var<storage, read> cells: array<u32>;
@@ -114,12 +114,10 @@ struct Parameters {
 @group(0) @binding(3) var<storage, read> particles: array<Particle>;
 @group(0) @binding(4) var<storage, read> concentrations: array<f32>;
 @group(0) @binding(5) var<storage, read> gas_temperatures: array<f32>;
-@group(0) @binding(6) var<storage, read> properties: array<ThermalMaterialRecord
->;
+@group(0) @binding(6) var<storage, read> properties: array<ThermalMaterialRecord>;
 @group(0) @binding(7) var<uniform> thermal: ThermalMaterialParameters;
 @group(0) @binding(8) var<storage, read_write> requests: array<Request>;
-@group(0) @binding(9) var<storage, read_write> request_count: array<atomic<u32>
->;
+@group(0) @binding(9) var<storage, read_write> request_count: array<atomic<u32>>;
 @group(0) @binding(10) var<uniform> parameters: Parameters;
 @group(0) @binding(11) var<storage, read> rigid_claims: array<atomic<u32>>;
 
@@ -127,11 +125,10 @@ struct GasFluidCandidate {
     replacement: u32,
     amount: f32,
     temperature: f32,
-    position: vec2<f32>
+    position: vec2<f32>,
 }
 
-@group(0) @binding(12) var<storage, read_write> gas_fluid_candidates: array<GasFluidCandidate
->;
+@group(0) @binding(12) var<storage, read_write> gas_fluid_candidates: array<GasFluidCandidate>;
 
 // Rigid transitions are deliberately published separately from raster-cell
 // requests.  A descriptor is one authoritative state, not one raster claim.
@@ -147,72 +144,69 @@ struct RigidPhaseCandidate {
     body: u32,
     local_x: i32,
     local_y: i32,
-    reserved_particle: u32
+    reserved_particle: u32,
 }
 
 @group(0) @binding(13) var<storage, read> rigid_cells: array<RigidCell>;
 @group(0) @binding(14) var<storage, read> rigid_amounts: array<f32>;
 @group(0) @binding(15) var<storage, read> rigid_temperatures: array<f32>;
-@group(0) @binding(16) var<storage, read_write> rigid_phase_candidates: array<RigidPhaseCandidate
->;
-@group(0) @binding(17) var<storage, read_write> rigid_phase_count: array<atomic<u32>
->;
+@group(0) @binding(16) var<storage, read_write> rigid_phase_candidates: array<RigidPhaseCandidate>;
+@group(0) @binding(17) var<storage, read_write> rigid_phase_count: array<atomic<u32>>;
 @group(0) @binding(18) var<storage, read_write> fluid_free_indices: array<u32>;
-@group(0) @binding(19) var<storage, read_write> fluid_free_count: array<atomic<u32>
->;
+@group(0) @binding(19) var<storage, read_write> fluid_free_count: array<atomic<u32>>;
 @group(0) @binding(20) var<storage, read> rollback_slots: array<u32>;
 @group(0) @binding(21) var<storage, read> rollback_count: array<u32>;
 
 fn reserve_fluid_particle() -> u32 {
     var n = atomicLoad(&fluid_free_count[0]);
-        loop {
-            if (n == 0u || n > arrayLength(&fluid_free_indices) ){
+    loop {
+        if (n == 0u || n > arrayLength(&fluid_free_indices)) {
+            return 0xffffffffu;
+        }
+        let r = atomicCompareExchangeWeak(&fluid_free_count[0], n, n - 1u);
+        if (r.exchanged) {
+            let index = fluid_free_indices[n - 1u];
+            if (index >= arrayLength(&particles)) {
                 return 0xffffffffu;
             }
-            let r = atomicCompareExchangeWeak(&fluid_free_count[0], n, n - 1u);
-            if (r.exchanged ){
-                let index = fluid_free_indices[n - 1u];
-                if (index >= arrayLength(&particles) ){
-                    return 0xffffffffu;
-                }
-                return index;
-            }
-            n = r.old_value;
+            return index;
         }
+        n = r.old_value;
+    }
     return 0xffffffffu;
 }
 
 fn release_reserved_fluid_particle(slot: u32) {
-    if (slot >= arrayLength(&fluid_free_indices) ){
+    if (slot >= arrayLength(&fluid_free_indices)) {
         return;
     }
     var n = atomicLoad(&fluid_free_count[0]);
-        loop {
-            if (n >= arrayLength(&fluid_free_indices) ){
-                return;
-            }
-            let r = atomicCompareExchangeWeak(&fluid_free_count[0], n, n + 1u);
-            if (r.exchanged ){
-                fluid_free_indices[n] = slot;
-                return;
-            }
-            n = r.old_value;
+    loop {
+        if (n >= arrayLength(&fluid_free_indices)) {
+            return;
         }
+        let r = atomicCompareExchangeWeak(&fluid_free_count[0], n, n + 1u);
+        if (r.exchanged) {
+            fluid_free_indices[n] = slot;
+            return;
+        }
+        n = r.old_value;
+    }
 }
 
 @compute @workgroup_size(64)
 fn rollback_rigid_reservations(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    if (invocation.x >= rollback_count[0] || invocation.x >= arrayLength(&rollback_slots) ){
+    if (invocation.x >= rollback_count[0] || invocation.x >= arrayLength(&rollback_slots)) {
         return;
     }
     release_reserved_fluid_particle(rollback_slots[invocation.x]);
 }
 
 fn should_yield(rate: f32, cell: u32, source: u32) -> bool {
-    if (rate >= 1.0 ){
+    if (rate >= 1.0) {
         return true;
     }
-    if (rate <= 0.0 ){
+    if (rate <= 0.0) {
         return false;
     }
     let h = (cell * 1664525u + source * 1013904223u + parameters.tick * 747796405u);
@@ -226,18 +220,18 @@ fn transition(
     cell: u32,
     kind: u32,
     locator: u32,
-    world: vec2<i32>
+    world: vec2<i32>,
 ) {
-    if (!(amount > 0.000001) || temperature != temperature || abs(temperature) > 3.4e38 ){
+    if (!(amount > 0.000001) || temperature != temperature || abs(temperature) > 3.4e38) {
         return;
     }
     let dense = material_dense_index(source, thermal.offsets, thermal.counts);
-    if (dense == 0xffffffffu || dense >= arrayLength(&properties) ){
+    if (dense == 0xffffffffu || dense >= arrayLength(&properties)) {
         return;
     }
     let record = properties[dense];
     let cp = thermal_material_specific_heat_capacity(record);
-    if (!(cp > 0.000001) ){
+    if (!(cp > 0.000001)) {
         return;
     }
     var replacement = EMPTY_MATERIAL_IDENTIFIER;
@@ -245,15 +239,21 @@ fn transition(
     var latent = 0.0;
     var rate = 0.0;
     var signed = 0.0;
-    if (thermal_material_hot_enabled(
-      record) && temperature >= thermal_material_hot_threshold(record) ){
+    if
+        (thermal_material_hot_enabled(record) && temperature >= thermal_material_hot_threshold(
+            record,
+        ))
+    {
         replacement = thermal_material_hot_target(record);
         threshold = thermal_material_hot_threshold(record);
         latent = thermal_material_hot_latent_energy(record);
         rate = thermal_material_hot_yield(record);
         signed = 1.0;
-    } else if (thermal_material_cold_enabled(
-      record) && temperature <= thermal_material_cold_threshold(record) ){
+    } else if
+        (thermal_material_cold_enabled(record) && temperature <= thermal_material_cold_threshold(
+            record,
+        ))
+    {
         replacement = thermal_material_cold_target(record);
         threshold = thermal_material_cold_threshold(record);
         latent = thermal_material_cold_latent_energy(record);
@@ -263,39 +263,45 @@ fn transition(
         return;
     }
     let target_dense = material_dense_index(replacement, thermal.offsets, thermal.counts);
-    if (replacement == EMPTY_MATERIAL_IDENTIFIER || replacement == source || target_dense == 0xffffffffu || target_dense >= arrayLength(&properties) ){
+    if
+        (replacement == EMPTY_MATERIAL_IDENTIFIER
+            || replacement == source
+            || target_dense == 0xffffffffu
+            || target_dense >= arrayLength(&properties))
+    {
         return;
     }
     let target_cp = thermal_material_specific_heat_capacity(properties[target_dense]);
-    if (!(target_cp > 0.000001) ){
+    if (!(target_cp > 0.000001)) {
         return;
     }
     let sensible = amount * cp * max(signed * (temperature - threshold), 0.0);
     let required = amount * max(latent, 0.0);
-    if (latent > 0.0 && sensible < required ){
+    if (latent > 0.0 && sensible < required) {
         return;
     }
-    if (!should_yield(rate, cell, source) ){
+    if (!should_yield(rate, cell, source)) {
         return;
     }
-    let target_temperature = max(
-      threshold + signed * max(sensible - required, 0.0) / (amount * target_cp),
-      0.0);
+    let target_temperature =
+        max(threshold + signed * max(sensible - required, 0.0) / (amount * target_cp), 0.0);
     let n = atomicAdd(&request_count[0], 1u);
-    if (n >= arrayLength(&requests) ){
+    if (n >= arrayLength(&requests)) {
         return;
     }
     let position = (vec2<f32>(world) + vec2<f32>(0.5)) / CELLS_PER_TILE_FLOAT;
-    requests[n] = Request(
-      cell,
-      kind,
-      locator,
-      source,
-      replacement,
-      bitcast<u32>(amount),
-      bitcast<u32>(target_temperature),
-      bitcast<u32>(position.x),
-      bitcast<u32>(position.y));
+    requests[n] =
+        Request(
+            cell,
+            kind,
+            locator,
+            source,
+            replacement,
+            bitcast<u32>(amount),
+            bitcast<u32>(target_temperature),
+            bitcast<u32>(position.x),
+            bitcast<u32>(position.y),
+        );
 }
 
 @compute @workgroup_size(64)

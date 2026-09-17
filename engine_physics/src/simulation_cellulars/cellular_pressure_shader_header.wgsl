@@ -91,34 +91,23 @@ struct MechanicalFluidCell {
     velocity: vec2<f32>,
 }
 
-@group(0) @binding(0) var<storage, read_write> cellular_material_identifiers: array<u32
->;
+@group(0) @binding(0) var<storage, read_write> cellular_material_identifiers: array<u32>;
 @group(0) @binding(1) var<storage, read_write> cellular_appearances: array<u32>;
 @group(0) @binding(2) var<storage, read_write> cellular_integrities: array<f32>;
-@group(0) @binding(3) var<storage, read_write> cellular_kinematics: array<vec4<f32>
->;
-@group(0) @binding(4) var<storage, read> cellular_static_properties: array<StaticProperties
->;
-@group(0) @binding(5) var<storage, read> cellular_dynamic_properties: array<vec4<f32>
->;
-@group(0) @binding(6) var<storage, read_write> pending_pressure: array<vec4<f32>
->;
+@group(0) @binding(3) var<storage, read_write> cellular_kinematics: array<vec4<f32>>;
+@group(0) @binding(4) var<storage, read> cellular_static_properties: array<StaticProperties>;
+@group(0) @binding(5) var<storage, read> cellular_dynamic_properties: array<vec4<f32>>;
+@group(0) @binding(6) var<storage, read_write> pending_pressure: array<vec4<f32>>;
 @group(0) @binding(7) var<storage, read_write> pressure_a: array<vec4<f32>>;
 @group(0) @binding(8) var<storage, read_write> pressure_b: array<vec4<f32>>;
-@group(0) @binding(9) var<storage, read_write> retained_pressure: array<vec4<f32>
->;
+@group(0) @binding(9) var<storage, read_write> retained_pressure: array<vec4<f32>>;
 @group(0) @binding(10) var<storage, read> external_body_occupancy: array<u32>;
-@group(0) @binding(11) var<storage, read> external_body_velocity: array<vec4<f32>
->;
+@group(0) @binding(11) var<storage, read> external_body_velocity: array<vec4<f32>>;
 @group(0) @binding(13) var<uniform> parameters: Parameters;
-@group(0) @binding(14) var<storage, read_write> active_pressure_tiles: array<atomic<u32>
->;
-@group(0) @binding(15) var<storage, read_write> active_pressure_tile_indices: array<u32
->;
-@group(0) @binding(16) var<storage, read_write> mechanical_fluid_cells: array<MechanicalFluidCell
->;
-@group(0) @binding(17) var<storage, read> fluid_pressure_properties: array<vec4<f32>
->;
+@group(0) @binding(14) var<storage, read_write> active_pressure_tiles: array<atomic<u32>>;
+@group(0) @binding(15) var<storage, read_write> active_pressure_tile_indices: array<u32>;
+@group(0) @binding(16) var<storage, read_write> mechanical_fluid_cells: array<MechanicalFluidCell>;
+@group(0) @binding(17) var<storage, read> fluid_pressure_properties: array<vec4<f32>>;
 @group(0) @binding(18) var<storage, read_write> gas_velocity: array<vec2<f32>>;
 @group(0) @binding(19) var<storage, read> gas_concentrations: array<f32>;
 @group(0) @binding(20) var<storage, read> gas_properties: array<vec4<f32>>;
@@ -133,16 +122,15 @@ struct MaterialMutationRequest {
     amount: u32,
     temperature: u32,
     world_x: u32,
-    world_y: u32
+    world_y: u32,
 }
 
-@group(0) @binding(37) var<storage, read_write> material_mutation_requests: array<MaterialMutationRequest
+@group(0) @binding(37) var<storage, read_write> material_mutation_requests: array<
+    MaterialMutationRequest,
 >;
-@group(0) @binding(38) var<storage, read_write> material_mutation_request_count: array<atomic<u32>
->;
+@group(0) @binding(38) var<storage, read_write> material_mutation_request_count: array<atomic<u32>>;
 @group(0) @binding(22) var<storage, read> rigid_owners: array<u32>;
-@group(0) @binding(23) var<storage, read> rigid_material_identifiers: array<u32
->;
+@group(0) @binding(23) var<storage, read> rigid_material_identifiers: array<u32>;
 @group(0) @binding(24) var<storage, read> rigid_transforms: array<vec4<f32>>;
 
 struct RigidReaction {
@@ -186,9 +174,9 @@ struct RigidStaticContact {
     penetration: f32,
 }
 
-@group(0) @binding(27) var<storage, read_write> rigid_reactions: array<RigidReaction
->;
-@group(0) @binding(28) var<storage, read_write> rigid_contact_statistics: array<RigidContactStatistics
+@group(0) @binding(27) var<storage, read_write> rigid_reactions: array<RigidReaction>;
+@group(0) @binding(28) var<storage, read_write> rigid_contact_statistics: array<
+    RigidContactStatistics,
 >;
 @group(0) @binding(29) var<storage, read> rigid_cells: array<vec4<u32>>;
 
@@ -199,20 +187,13 @@ struct RigidPredictedMotion {
     padding: atomic<i32>,
 }
 
-@group(0) @binding(30) var<storage, read_write> rigid_predicted_motion: array<RigidPredictedMotion
->;
-@group(0) @binding(31) var<storage, read_write> rigid_cell_integrities: array<f32
->;
-@group(0) @binding(32) var<storage, read_write> rigid_damage: array<atomic<u32>
->;
+@group(0) @binding(30) var<storage, read_write> rigid_predicted_motion: array<RigidPredictedMotion>;
+@group(0) @binding(31) var<storage, read_write> rigid_cell_integrities: array<f32>;
+@group(0) @binding(32) var<storage, read_write> rigid_damage: array<atomic<u32>>;
 @group(0) @binding(33) var<storage, read> rigid_claims: array<u32>;
-@group(0) @binding(34) var<storage, read_write> rigid_fractures: array<atomic<u32>
->;
-@group(0) @binding(36) var<storage, read_write> rigid_fracture_count: atomic<u32
->;
-@group(1) @binding(0) var<storage, read_write> pressure_indirect_dispatch: array<atomic<u32>
->;
-@group(1) @binding(1) var<storage, read_write> rigid_damage_dispatch: array<atomic<u32>
->;
+@group(0) @binding(34) var<storage, read_write> rigid_fractures: array<atomic<u32>>;
+@group(0) @binding(36) var<storage, read_write> rigid_fracture_count: atomic<u32>;
+@group(1) @binding(0) var<storage, read_write> pressure_indirect_dispatch: array<atomic<u32>>;
+@group(1) @binding(1) var<storage, read_write> rigid_damage_dispatch: array<atomic<u32>>;
 
 var<workgroup> pressure_tile_has_source: atomic<u32>;
