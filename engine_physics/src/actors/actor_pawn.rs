@@ -1,9 +1,10 @@
 // Copyright Rob Gage 2026
 
 use super::{
-    ActorCollisionShape, ActorPawnFlyingConfiguration, ActorPawnMovement,
-    ActorPawnNoclipConfiguration, ActorPawnSwimmingConfiguration, ActorPawnWalkingConfiguration,
+    ActorPawnFlyingConfiguration, ActorPawnMovement, ActorPawnNoclipConfiguration,
+    ActorPawnSwimmingConfiguration, ActorPawnWalkingConfiguration,
 };
+use crate::actors_utility::ActorCollisionShape;
 
 /// Configures the movement capabilities and active movement of an actor pawn
 #[derive(bevy_ecs::component::Component)]

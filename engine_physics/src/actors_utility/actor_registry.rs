@@ -1,11 +1,14 @@
 // Copyright Rob Gage 2026
 
 use super::{
-    Actor, ActorCellularProxyState, ActorCollisionShape, ActorControlState, ActorPawn,
-    ActorPawnMovement, ActorPawnSwimmingConfiguration, ActorPawnSwimmingState,
-    ActorPawnWalkingState, ActorPossessable, ActorPreviousPosition,
+    actor_cellular_proxy_state::ActorCellularProxyState,
+    actor_collision_shape::ActorCollisionShape,
 };
 use crate::{
+    actors::{
+        Actor, ActorControlState, ActorPawn, ActorPawnMovement, ActorPawnSwimmingConfiguration,
+        ActorPawnSwimmingState, ActorPawnWalkingState, ActorPossessable, ActorPreviousPosition,
+    },
     scenes::{Scene, ScenePosition, SceneVelocity},
     simulation::{ScenePhysicsWorld, SceneSimulation},
 };

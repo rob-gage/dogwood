@@ -1,6 +1,7 @@
 // Copyright Rob Gage 2026
 
 pub mod actors;
+mod actors_utility;
 pub mod chunks;
 pub mod materials;
 mod scene_editing;

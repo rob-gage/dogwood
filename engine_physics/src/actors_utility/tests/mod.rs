@@ -1,6 +1,10 @@
 // Copyright Rob Gage 2026
 
-use super::*;
+use crate::actors::{
+    Actor, ActorPawn, ActorPawnMovement, ActorPawnSwimmingConfiguration,
+    ActorPawnWalkingConfiguration,
+};
+use crate::actors_utility::{ActorCollisionShape, ActorRegistry};
 use crate::scenes::{ScenePosition, SceneVelocity};
 use crate::tiles::TileCoordinates;
 

@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-use super::ActorCollisionShape;
+use super::actor_collision_shape::ActorCollisionShape;
 
 /// CPU-gathered state used to derive one transient GPU actor proxy
 pub(crate) struct ActorCellularProxyState {

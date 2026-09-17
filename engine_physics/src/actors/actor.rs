@@ -8,12 +8,12 @@ pub struct Actor(Entity);
 
 impl Actor {
     /// Creates an `ActorIdentifier` from an internal `bevy_ecs::entity::Entity`
-    pub(super) const fn from_bevy_entity(entity: Entity) -> Self {
+    pub(crate) const fn from_bevy_entity(entity: Entity) -> Self {
         Self(entity)
     }
 
     /// Returns the internal `bevy_ecs::entity::Entity` represented by this identifier
-    pub(super) const fn bevy_entity(self) -> Entity {
+    pub(crate) const fn bevy_entity(self) -> Entity {
         self.0
     }
 }
