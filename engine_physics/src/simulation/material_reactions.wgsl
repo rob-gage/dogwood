@@ -246,6 +246,15 @@ fn apply_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
     else if (source1.found) { source1.amount = amounts[source1.cell]; }
     if (!source1.found || source1.amount <= 0.000001) { return; }
   }
+  // Preflight the deferred canonical mutation queue before reserving any
+  // fluid output slots or consuming fluid inventory. This keeps queue-capacity
+  // failure from producing a partially applied cross-form reaction.
+  var required_requests = 0u;
+  if (first_present && material_form_from_identifier(source0.material) != GAS_MATERIAL_FORM &&
+      material_form_from_identifier(source0.material) != FLUID_MATERIAL_FORM) { required_requests += 1u; }
+  if (second_present && material_form_from_identifier(source1.material) != GAS_MATERIAL_FORM &&
+      material_form_from_identifier(source1.material) != FLUID_MATERIAL_FORM) { required_requests += 1u; }
+  if (atomicLoad(&mutation_request_count[0]) + required_requests > arrayLength(&mutation_requests)) { return; }
   let coefficient0 = select(0.0, bitcast<f32>(rule.words[2]), first_present);
   let coefficient1 = select(0.0, bitcast<f32>(rule.words[6]), second_present);
   if (first_present && source0.amount + 0.00001 < coefficient0 * candidate.extent) { return; }
