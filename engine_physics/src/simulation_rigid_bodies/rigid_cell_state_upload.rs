@@ -71,7 +71,7 @@ impl RigidCellStateUpload {
             .collect::<Vec<_>>()
             .as_slice(),
         });
-        let shader = super::create_simulation_shader_module(
+        let shader = crate::simulation::create_simulation_shader_module(
             device,
             "rigid cell state upload",
             include_str!("rigid_cell_state_upload.wgsl"),

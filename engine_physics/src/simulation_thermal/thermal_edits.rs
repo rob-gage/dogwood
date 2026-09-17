@@ -111,7 +111,7 @@ impl ThermalEdits {
             layout: &layout,
             entries: &entries,
         });
-        let shader = super::create_simulation_shader_module(
+        let shader = crate::simulation::create_simulation_shader_module(
             device,
             "thermal edits shader",
             include_str!("thermal_edits.wgsl"),

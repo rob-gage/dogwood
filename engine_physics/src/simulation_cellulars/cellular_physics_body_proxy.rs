@@ -1,7 +1,7 @@
 // Copyright Rob Gage 2026
 
-use super::{RigidCellularBody, RigidCellularBodyState};
 use crate::actors::ActorCellularProxyState;
+use crate::simulation::{RigidCellularBody, RigidCellularBodyState};
 use crate::tiles::TileCoordinates;
 use engine_compute::{Accelerator, AcceleratorBuffer};
 use std::sync::{Arc, Mutex};
@@ -163,7 +163,7 @@ impl CellularPhysicsBodyProxy {
                 },
             ],
         });
-        let shader = super::create_simulation_shader_module(
+        let shader = crate::simulation::create_simulation_shader_module(
             device,
             "cellular physics body proxy shader",
             include_str!("cellular_physics_body_proxy.wgsl"),

@@ -216,7 +216,7 @@ impl MaterialMutations {
                 },
             ],
         });
-        let shader = super::create_simulation_shader_module(
+        let shader = crate::simulation::create_simulation_shader_module(
             device,
             "material mutation shader",
             include_str!("material_mutations.wgsl"),

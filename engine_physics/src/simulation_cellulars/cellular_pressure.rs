@@ -1,8 +1,7 @@
 // Copyright Rob Gage 2026
 
-use super::{
-    RigidGranularReactionBatch, rigid_granular_readback_slot::RigidGranularReadbackSlot,
-    rigid_granular_readback_status::RigidGranularReadbackStatus,
+use crate::simulation::{
+    RigidGranularReactionBatch, RigidGranularReadbackSlot, RigidGranularReadbackStatus,
 };
 use crate::{
     materials::{Material, MaterialIdentifier, MaterialRegistry},
@@ -373,7 +372,7 @@ impl CellularPressure {
                 resource: rigid_damage_dispatch.as_entire_binding(),
             }],
         });
-        let shader: wgpu::ShaderModule = super::create_simulation_shader_module(
+        let shader: wgpu::ShaderModule = crate::simulation::create_simulation_shader_module(
             device,
             "cellular pressure shader",
             include_str!("cellular_pressure.wgsl"),
@@ -1288,7 +1287,7 @@ impl Drop for CellularPressure {
 }
 
 #[cfg(test)]
-#[path = "rigid_contact_tests.rs"]
+#[path = "../simulation/rigid_contact_tests.rs"]
 mod rigid_contact_tests;
 
 #[cfg(test)]

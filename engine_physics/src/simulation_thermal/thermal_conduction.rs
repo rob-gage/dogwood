@@ -130,7 +130,7 @@ impl ThermalConduction {
                 },
             ],
         });
-        let shader = super::create_simulation_shader_module(
+        let shader = crate::simulation::create_simulation_shader_module(
             device,
             "thermal conduction shader",
             include_str!("thermal_conduction.wgsl"),

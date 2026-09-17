@@ -252,7 +252,7 @@ impl ThermalPhaseTransitions {
             layout: &layout,
             entries: &e,
         });
-        let shader = super::create_simulation_shader_module(
+        let shader = crate::simulation::create_simulation_shader_module(
             d,
             "thermal phase shader",
             include_str!("thermal_phase_transitions.wgsl"),

@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-use super::ScenePhysicsWorld;
+use crate::simulation::ScenePhysicsWorld;
 use crate::{
     actors::{
         ActorCollisionShape, ActorControlState, ActorPawn, ActorPawnMovement,

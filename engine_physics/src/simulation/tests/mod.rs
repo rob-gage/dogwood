@@ -4,7 +4,7 @@ mod accelerator_test_lock;
 
 pub(crate) use accelerator_test_lock::acquire_accelerator_test_lock;
 
-use crate::simulation::thermal_phase_transitions::test_rigid_phase_readback_len;
+use crate::simulation::test_rigid_phase_readback_len;
 
 fn transitioned_temperature(
     amount: f32,

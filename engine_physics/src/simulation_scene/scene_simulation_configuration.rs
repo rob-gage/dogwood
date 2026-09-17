@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-use super::Fluids;
+use crate::simulation::Fluids;
 use std::io;
 
 /// Configures the active and buffered simulation area of a `Scene`

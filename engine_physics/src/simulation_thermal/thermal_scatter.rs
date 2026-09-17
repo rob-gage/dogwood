@@ -175,7 +175,7 @@ impl ThermalScatter {
             layout: &layout,
             entries: &bind_entries,
         });
-        let shader = super::create_simulation_shader_module(
+        let shader = crate::simulation::create_simulation_shader_module(
             device,
             "thermal scatter shader",
             include_str!("thermal_scatter.wgsl"),

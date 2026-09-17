@@ -1,9 +1,7 @@
 // Copyright Rob Gage 2026
 
-use super::{
-    CollisionOccupancySnapshot, collision_readback_slot::CollisionReadbackSlot,
-    collision_readback_status::CollisionReadbackStatus,
-};
+use super::{CollisionReadbackSlot, CollisionReadbackStatus};
+use crate::simulation::CollisionOccupancySnapshot;
 use crate::tiles::TileCoordinates;
 use engine_compute::{Accelerator, AcceleratorBuffer};
 use std::{
@@ -116,7 +114,7 @@ impl CellularCollision {
             ],
         });
         // build the concrete occupancy extraction pipeline
-        let shader: wgpu::ShaderModule = super::create_simulation_shader_module(
+        let shader: wgpu::ShaderModule = crate::simulation::create_simulation_shader_module(
             device,
             "cellular collision shader",
             include_str!("cellular_collision.wgsl"),

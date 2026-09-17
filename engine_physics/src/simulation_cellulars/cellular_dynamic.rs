@@ -171,7 +171,7 @@ impl CellularDynamic {
             ],
         });
         // build the three explicit pass pipelines from one cellular dynamic shader
-        let shader: wgpu::ShaderModule = super::create_simulation_shader_module(
+        let shader: wgpu::ShaderModule = crate::simulation::create_simulation_shader_module(
             device,
             "cellular dynamic shader",
             include_str!("cellular_dynamic.wgsl"),

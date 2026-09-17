@@ -311,7 +311,7 @@ impl Fluids {
                 Self::binding(28, &derived_thermal),
             ],
         });
-        let shader: wgpu::ShaderModule = super::create_simulation_shader_module(
+        let shader: wgpu::ShaderModule = crate::simulation::create_simulation_shader_module(
             device,
             "fluid simulation shader",
             include_str!("fluids.wgsl"),

@@ -4,9 +4,8 @@
 //! emits the same compact candidate shape; keeping arbitration here makes the
 //! ordering contract explicit and independently testable.
 
-use super::ReactionMaterialTable;
-use super::fluids::FluidAuthorityView;
 use crate::materials::CompiledMaterialReaction;
+use crate::{simulation::ReactionMaterialTable, simulation_fluids::FluidAuthorityView};
 use engine_compute::{Accelerator, AcceleratorBuffer};
 use std::collections::BTreeSet;
 use std::sync::mpsc::{Receiver, sync_channel};
@@ -321,7 +320,7 @@ impl MaterialReactions {
                 },
             ],
         });
-        let shader = super::create_simulation_shader_module(
+        let shader = crate::simulation::create_simulation_shader_module(
             device,
             "material reactions",
             include_str!("material_reactions.wgsl"),

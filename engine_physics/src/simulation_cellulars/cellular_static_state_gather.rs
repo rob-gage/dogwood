@@ -102,7 +102,7 @@ impl CellularStaticStateGather {
                 .collect::<Vec<_>>()
                 .as_slice(),
         });
-        let shader = super::create_simulation_shader_module(
+        let shader = crate::simulation::create_simulation_shader_module(
             device,
             "cellular static state gather",
             include_str!("cellular_static_state_gather.wgsl"),

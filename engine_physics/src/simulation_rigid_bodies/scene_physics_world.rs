@@ -1,8 +1,8 @@
 // Copyright Rob Gage 2026
 
-use super::{CollisionOccupancySnapshot, RigidCellularBody, RigidCellularBodyState};
 use crate::actors::{Actor, ActorCellularProxyState, ActorCollisionShape};
 use crate::materials::MaterialRegistry;
+use crate::simulation::{CollisionOccupancySnapshot, RigidCellularBody, RigidCellularBodyState};
 use rapier2d::parry::query::ShapeCastOptions;
 use rapier2d::prelude::{
     ColliderBuilder, ColliderHandle, Group, InteractionGroups, LockedAxes, PhysicsWorld, Pose,
@@ -102,7 +102,7 @@ impl ScenePhysicsWorld {
         position: [f32; 2],
         angle: f32,
         materials: &MaterialRegistry,
-        cells: Vec<super::rigid_cellular_body::RigidCellularBodyCell>,
+        cells: Vec<crate::simulation::RigidCellularBodyCell>,
         friction: f32,
         restitution: f32,
         linear_velocity: [f32; 2],

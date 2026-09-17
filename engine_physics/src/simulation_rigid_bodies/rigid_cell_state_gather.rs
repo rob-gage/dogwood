@@ -77,7 +77,7 @@ impl RigidCellStateGather {
             .collect::<Vec<_>>()
             .as_slice(),
         });
-        let shader = super::create_simulation_shader_module(
+        let shader = crate::simulation::create_simulation_shader_module(
             device,
             "rigid cell state gather",
             include_str!("rigid_cell_state_gather.wgsl"),

@@ -176,7 +176,7 @@ impl Gases {
                 },
             ],
         });
-        let shader: wgpu::ShaderModule = super::create_simulation_shader_module(
+        let shader: wgpu::ShaderModule = crate::simulation::create_simulation_shader_module(
             device,
             "gas simulation shader",
             include_str!("gases.wgsl"),
