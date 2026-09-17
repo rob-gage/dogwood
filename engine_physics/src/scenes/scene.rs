@@ -557,6 +557,8 @@ impl Scene {
             gases.concentrations_buffer(),
             cellular_physics_body_proxy.occupancy_buffer(),
             cellular_physics_body_proxy.rigid_claims_buffer(),
+            material_mutations.requests_buffer(),
+            material_mutations.request_count_buffer(),
             buffered_cell_count as u32,
             gases.gas_count(),
             data.materials().reactions().len() as u32,

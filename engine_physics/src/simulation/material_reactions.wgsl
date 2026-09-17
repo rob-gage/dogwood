@@ -3,10 +3,10 @@
 #import utility::material_identifier::{EMPTY_MATERIAL_IDENTIFIER, CELLULAR_STATIC_MATERIAL_FORM, CELLULAR_DYNAMIC_MATERIAL_FORM, GAS_MATERIAL_FORM, material_form_from_identifier, material_index_from_identifier}
 
 // This is the fixed 27-word representation written by ReactionMaterialTable.
-struct Reaction { words: array<u32, 27>; }
-struct Candidate { reaction: u32, anchor: u32, extent: f32, padding: u32; }
-struct Request { cell:u32, kind:u32, locator:u32, expected_source:u32, replacement:u32, amount:u32, temperature:u32, world_x:u32, world_y:u32; }
-struct Parameters { cell_count: u32, gas_count: u32, reaction_count: u32, padding: u32; }
+struct Reaction { words: array<u32, 27>, }
+struct Candidate { reaction: u32, anchor: u32, extent: f32, padding: u32, }
+struct Request { cell:u32, kind:u32, locator:u32, expected_source:u32, replacement:u32, amount:u32, temperature:u32, world_x:u32, world_y:u32, }
+struct Parameters { cell_count: u32, gas_count: u32, reaction_count: u32, padding: u32, }
 @group(0) @binding(0) var<storage, read> reactions: array<Reaction>;
 @group(0) @binding(1) var<storage, read> selector_members: array<u32>;
 @group(0) @binding(2) var<storage, read> material_identifiers: array<u32>;
@@ -53,11 +53,11 @@ fn apply_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
   var cellular_product = EMPTY_MATERIAL_IDENTIFIER; var cellular_amount = 0.0;
   for (var product = 0u; product < 2u; product += 1u) {
     let base = 8u + product * 4u; if (rule.words[base + 2u] == 0u) { continue; }
-    let target = rule.words[base]; let amount = bitcast<f32>(rule.words[base + 1u]) * candidate.extent;
-    let form = material_form_from_identifier(target);
+    let replacement = rule.words[base]; let amount = bitcast<f32>(rule.words[base + 1u]) * candidate.extent;
+    let form = material_form_from_identifier(replacement);
     if (form == GAS_MATERIAL_FORM) { continue; }
     if ((form != CELLULAR_STATIC_MATERIAL_FORM && form != CELLULAR_DYNAMIC_MATERIAL_FORM) || cellular_product != EMPTY_MATERIAL_IDENTIFIER || remaining > 0.00001 || !(amount > 0.000001)) { return; }
-    cellular_product = target; cellular_amount = amount;
+    cellular_product = replacement; cellular_amount = amount;
   }
   // Reserve the source mutation queue entry before writing any gas products.
   if (first_present) {
@@ -69,17 +69,18 @@ fn apply_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   for (var product = 0u; product < 2u; product += 1u) {
     let base = 8u + product * 4u; if (rule.words[base + 2u] == 0u) { continue; }
-    let target = rule.words[base];
-    if (material_form_from_identifier(target) == GAS_MATERIAL_FORM) {
-      let species = material_index_from_identifier(target);
+    let replacement = rule.words[base];
+    if (material_form_from_identifier(replacement) == GAS_MATERIAL_FORM) {
+      let species = material_index_from_identifier(replacement);
       if (species < parameters.gas_count) { gas_concentrations[species * parameters.cell_count + cell] += bitcast<f32>(rule.words[base + 1u]) * candidate.extent; }
     }
   }
 }
 fn has_environment(rule: Reaction) -> bool {
-  return !isNan(bitcast<f32>(rule.words[16])) || !isNan(bitcast<f32>(rule.words[17])) ||
-    !isNan(bitcast<f32>(rule.words[18])) || !isNan(bitcast<f32>(rule.words[19])) ||
-    !isNan(bitcast<f32>(rule.words[20])) || !isNan(bitcast<f32>(rule.words[21]));
+  let a = bitcast<f32>(rule.words[16]); let b = bitcast<f32>(rule.words[17]);
+  let c = bitcast<f32>(rule.words[18]); let d = bitcast<f32>(rule.words[19]);
+  let e = bitcast<f32>(rule.words[20]); let f = bitcast<f32>(rule.words[21]);
+  return a == a || b == b || c == c || d == d || e == e || f == f;
 }
 fn environment_matches(rule: Reaction, cell: u32, air: f32) -> bool {
   let temperature = temperatures[cell];
@@ -87,11 +88,11 @@ fn environment_matches(rule: Reaction, cell: u32, air: f32) -> bool {
   let min_temperature = bitcast<f32>(rule.words[16]); let max_temperature = bitcast<f32>(rule.words[17]);
   let min_pressure = bitcast<f32>(rule.words[18]); let max_pressure = bitcast<f32>(rule.words[19]);
   let min_air = bitcast<f32>(rule.words[20]); let max_air = bitcast<f32>(rule.words[21]);
-  return (isNan(min_temperature) || temperature >= min_temperature) &&
-    (isNan(max_temperature) || temperature <= max_temperature) &&
-    (isNan(min_pressure) || pressure >= min_pressure) &&
-    (isNan(max_pressure) || pressure <= max_pressure) &&
-    (isNan(min_air) || air >= min_air) && (isNan(max_air) || air <= max_air);
+  return (min_temperature != min_temperature || temperature >= min_temperature) &&
+    (max_temperature != max_temperature || temperature <= max_temperature) &&
+    (min_pressure != min_pressure || pressure >= min_pressure) &&
+    (max_pressure != max_pressure || pressure <= max_pressure) &&
+    (min_air != min_air || air >= min_air) && (max_air != max_air || air <= max_air);
 }
 
 // Discovery only reads the immutable fields for this chemistry tick. Applying
@@ -110,7 +111,7 @@ fn discover_canonical(@builtin(global_invocation_id) id: vec3<u32>) {
     gas += max(gas_concentrations[species * parameters.cell_count + cell], 0.0);
   }
   let air = select(clamp(1.0 - clamp(fluid_coverage[cell], 0.0, 1.0) - gas, 0.0, 1.0), 0.0, blocked);
-  var winner = 0xffffffffu; var winner_priority = -2147483648i; var winner_order = 0xffffffffu;
+  var winner = 0xffffffffu; var winner_priority = -2147483647i; var winner_order = 0xffffffffu;
   for (var reaction_index = 0u; reaction_index < parameters.reaction_count && reaction_index < arrayLength(&reactions); reaction_index += 1u) {
     let rule = reactions[reaction_index];
     if (!environment_matches(rule, cell, air)) { continue; }

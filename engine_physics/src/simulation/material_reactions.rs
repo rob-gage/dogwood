@@ -15,7 +15,8 @@ pub(crate) struct MaterialReactions {
     candidates: AcceleratorBuffer,
     parameters: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
-    pipeline: wgpu::ComputePipeline,
+    discover_pipeline: wgpu::ComputePipeline,
+    apply_pipeline: wgpu::ComputePipeline,
     cell_count: u32,
     reaction_count: u32,
 }
@@ -33,6 +34,8 @@ impl MaterialReactions {
         gas_concentrations: &AcceleratorBuffer,
         external_occupancy: &AcceleratorBuffer,
         rigid_claims: &AcceleratorBuffer,
+        mutation_requests: &AcceleratorBuffer,
+        mutation_request_count: &AcceleratorBuffer,
         cell_count: u32,
         gas_count: u32,
         reaction_count: u32,
@@ -76,7 +79,7 @@ impl MaterialReactions {
                 storage(4, true),
                 storage(5, true),
                 storage(6, true),
-                storage(7, true),
+                storage(7, false),
                 storage(8, true),
                 storage(9, true),
                 storage(10, false),
@@ -90,6 +93,8 @@ impl MaterialReactions {
                     },
                     count: None,
                 },
+                storage(12, false),
+                storage(13, false),
             ],
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -111,6 +116,8 @@ impl MaterialReactions {
                     binding: 11,
                     resource: parameters.as_entire_binding(),
                 },
+                Self::binding(12, mutation_requests),
+                Self::binding(13, mutation_request_count),
             ],
         });
         let shader = super::create_simulation_shader_module(
@@ -124,19 +131,28 @@ impl MaterialReactions {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("material reaction discovery pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: Some("discover_canonical"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let pipeline = |entry_point, label| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(label),
+                layout: Some(&pipeline_layout),
+                module: &shader,
+                entry_point: Some(entry_point),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
         Self {
             candidates,
             parameters,
             bind_group,
-            pipeline,
+            discover_pipeline: pipeline(
+                "discover_canonical",
+                "material reaction discovery pipeline",
+            ),
+            apply_pipeline: pipeline(
+                "apply_canonical",
+                "material reaction canonical apply pipeline",
+            ),
             cell_count,
             reaction_count,
         }
@@ -146,8 +162,10 @@ impl MaterialReactions {
             return;
         }
         let mut pass = accelerator.begin_compute_pass(encoder, "chemistry discover canonical");
-        pass.set_pipeline(&self.pipeline);
+        pass.set_pipeline(&self.discover_pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+        pass.set_pipeline(&self.apply_pipeline);
         pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
     }
     pub(crate) const fn candidates_buffer(&self) -> &AcceleratorBuffer {
@@ -251,7 +269,7 @@ pub(crate) fn extent(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::materials::CompiledMaterialReaction;
+    use crate::{materials::{CompiledMaterialReaction, MaterialRegistry}, simulation::ReactionMaterialTable};
 
     #[test]
     fn environment_bounds_are_independent() {
@@ -343,5 +361,26 @@ mod tests {
         assert_eq!(implicit_air(true, false, 0.0, 1.0), 0.0);
         assert_eq!(implicit_air(false, false, 0.0, 0.0), 0.0);
         assert_eq!(implicit_air(true, true, 0.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn canonical_discovery_and_apply_pipelines_compile() {
+        let accelerator = Accelerator::new().unwrap();
+        let registry = MaterialRegistry::new();
+        let table = ReactionMaterialTable::new(&accelerator, &registry);
+        let ids = accelerator.allocate::<u32>(64);
+        let amounts = accelerator.allocate::<f32>(64);
+        let temperatures = accelerator.allocate::<f32>(64);
+        let pressure = accelerator.allocate::<[f32; 4]>(64);
+        let coverage = accelerator.allocate::<f32>(64);
+        let gas = accelerator.allocate::<f32>(1);
+        let occupancy = accelerator.allocate::<u32>(64);
+        let claims = accelerator.allocate::<u32>(64);
+        let requests = accelerator.allocate::<[u32; 9]>(128);
+        let request_count = accelerator.allocate::<u32>(1);
+        let _reactions = MaterialReactions::new(
+            &accelerator, &table, &ids, &amounts, &temperatures, &pressure, &coverage, &gas,
+            &occupancy, &claims, &requests, &request_count, 64, 0, 0,
+        );
     }
 }
