@@ -230,6 +230,8 @@ mod scene_graphics;
 mod scene_rigid_cell_mutation;
 #[path = "scene_rigid_detachment.rs"]
 mod scene_rigid_detachment;
+#[path = "scene_rigid_dormancy.rs"]
+mod scene_rigid_dormancy;
 #[path = "scene_rigid_persistence.rs"]
 mod scene_rigid_persistence;
 #[path = "scene_tile_streaming.rs"]
