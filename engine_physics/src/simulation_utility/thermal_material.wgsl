@@ -1,5 +1,6 @@
 #define_import_path utility::thermal_material
 
+
 struct ThermalMaterialRecord {
     words: array<u32, 16>,
 }

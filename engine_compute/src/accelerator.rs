@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-use super::{AcceleratorBuffer, gpu_timing::GpuTiming};
+use super::{AcceleratorBuffer, accelerator_timing::AcceleratorTiming};
 use std::{error::Error, mem::size_of};
 
 /// A WGPU accelerator shared by graphics and compute workloads.
@@ -13,8 +13,8 @@ pub struct Accelerator {
     wgpu_device: wgpu::Device,
     /// The `Accelerator`'s wgpu::Queue`
     wgpu_queue: wgpu::Queue,
-    /// Debug-only GPU pass timestamp collection
-    gpu_timing: GpuTiming,
+    /// Debug-only Accelerator pass timestamp collection
+    accelerator_timing: AcceleratorTiming,
 }
 
 impl Accelerator {
@@ -47,12 +47,13 @@ impl Accelerator {
             }))?;
         #[cfg(not(debug_assertions))]
         let timestamp_query_supported: bool = false;
-        let gpu_timing: GpuTiming = GpuTiming::new(&device, &queue, timestamp_query_supported);
+        let accelerator_timing: AcceleratorTiming =
+            AcceleratorTiming::new(&device, &queue, timestamp_query_supported);
         #[cfg(debug_assertions)]
         tracing::info!(
             target: "dogwood_gpu",
             available = timestamp_query_supported,
-            "GPU timestamp profiling availability"
+            "Accelerator timestamp profiling availability"
         );
         tracing::debug!(
             adapter = ?adapter.get_info(),
@@ -63,7 +64,7 @@ impl Accelerator {
             wgpu_adapter: adapter,
             wgpu_device: device,
             wgpu_queue: queue,
-            gpu_timing,
+            accelerator_timing,
         })
     }
 
@@ -82,18 +83,18 @@ impl Accelerator {
     /// Polls the accelerator for completed work
     pub fn poll(&self) -> Result<(), wgpu::PollError> {
         self.wgpu_device.poll(wgpu::PollType::Poll)?;
-        self.gpu_timing.collect();
+        self.accelerator_timing.collect();
         Ok(())
     }
 
-    /// Starts a sampled application-frame GPU timing interval when requested by tracing.
+    /// Starts a sampled application-frame Accelerator timing interval when requested by tracing.
     #[inline]
-    pub fn gpu_timing_begin_sample(&self) {
+    pub fn accelerator_timing_begin_sample(&self) {
         #[cfg(debug_assertions)]
         {
             let _ = self.wgpu_device.poll(wgpu::PollType::Poll);
-            self.gpu_timing.collect();
-            self.gpu_timing.begin_sample();
+            self.accelerator_timing.collect();
+            self.accelerator_timing.begin_sample();
         }
     }
 
@@ -106,7 +107,7 @@ impl Accelerator {
     ) -> wgpu::ComputePass<'a> {
         encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some(label),
-            timestamp_writes: self.gpu_timing.compute_timestamp_writes(label),
+            timestamp_writes: self.accelerator_timing.compute_timestamp_writes(label),
         })
     }
 
@@ -116,19 +117,19 @@ impl Accelerator {
         &self,
         label: &str,
     ) -> Option<wgpu::RenderPassTimestampWrites<'_>> {
-        self.gpu_timing.render_timestamp_writes(label)
+        self.accelerator_timing.render_timestamp_writes(label)
     }
 
     /// Resolves the current timing sample after all measured passes have been encoded.
     #[inline]
-    pub fn gpu_timing_resolve_sample(&self, encoder: &mut wgpu::CommandEncoder) {
-        self.gpu_timing.resolve_sample(encoder);
+    pub fn accelerator_timing_resolve_sample(&self, encoder: &mut wgpu::CommandEncoder) {
+        self.accelerator_timing.resolve_sample(encoder);
     }
 
     /// Starts asynchronous mapping after the resolve command buffer has been submitted.
     #[inline]
-    pub fn gpu_timing_map_sample(&self) {
-        self.gpu_timing.map_sample();
+    pub fn accelerator_timing_map_sample(&self) {
+        self.accelerator_timing.map_sample();
     }
 
     /// Returns a reference to the `Accelerator`'s `wgpu::Instance`
@@ -183,33 +184,33 @@ mod tests {
     }
 
     #[test]
-    fn gpu_timing_readback_completes_with_nonblocking_polls() {
+    fn accelerator_timing_readback_completes_with_nonblocking_polls() {
         let _tracing_guard = initialize_test_tracing();
         let accelerator: Accelerator = Accelerator::new().unwrap();
-        if !accelerator.gpu_timing.is_available() {
+        if !accelerator.accelerator_timing.is_available() {
             return;
         }
-        accelerator.gpu_timing_begin_sample();
+        accelerator.accelerator_timing_begin_sample();
         let mut encoder: wgpu::CommandEncoder =
             accelerator
                 .wgpu_device()
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("GPU timing smoke test"),
+                    label: Some("Accelerator timing smoke test"),
                 });
         {
             let _pass: wgpu::ComputePass<'_> =
                 accelerator.begin_compute_pass(&mut encoder, "empty compute pass");
         }
-        accelerator.gpu_timing_resolve_sample(&mut encoder);
+        accelerator.accelerator_timing_resolve_sample(&mut encoder);
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
-        accelerator.gpu_timing_map_sample();
+        accelerator.accelerator_timing_map_sample();
         for _ in 0..100 {
             accelerator.poll().unwrap();
-            if accelerator.gpu_timing.is_idle() {
+            if accelerator.accelerator_timing.is_idle() {
                 return;
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
-        panic!("GPU timing readback did not complete");
+        panic!("Accelerator timing readback did not complete");
     }
 }

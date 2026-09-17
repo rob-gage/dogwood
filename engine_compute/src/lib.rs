@@ -2,13 +2,13 @@
 
 mod accelerator;
 mod accelerator_buffer;
-mod gpu_timing;
+mod accelerator_timing;
 #[cfg(debug_assertions)]
-mod gpu_timing_readback;
+mod accelerator_timing_readback;
 #[cfg(debug_assertions)]
-mod gpu_timing_record;
+mod accelerator_timing_record;
 #[cfg(debug_assertions)]
-mod gpu_timing_state;
+mod accelerator_timing_state;
 mod shader_composition;
 
 pub use accelerator::Accelerator;

@@ -176,11 +176,11 @@ impl<G: Game> GameApplication<G> {
         );
 
         self.accelerator
-            .gpu_timing_resolve_sample(&mut command_encoder);
+            .accelerator_timing_resolve_sample(&mut command_encoder);
         self.accelerator
             .wgpu_queue()
             .submit(Some(command_encoder.finish()));
-        self.accelerator.gpu_timing_map_sample();
+        self.accelerator.accelerator_timing_map_sample();
         self.accelerator.wgpu_queue().present(frame);
         self.rendered_frames = self.rendered_frames.saturating_add(1);
     }
@@ -529,7 +529,7 @@ impl<G: Game> winit::application::ApplicationHandler for GameApplication<G> {
     }
 
     fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        self.accelerator.gpu_timing_begin_sample();
+        self.accelerator.accelerator_timing_begin_sample();
         self.game
             .pass_input(&self.keyboard_input_state, self.input_translator.as_ref());
         if let Err(error) = self.update() {
