@@ -26,3 +26,18 @@ and scoring,
 `scene/` should contain the generator and world setup, and `ui/` should contain
 widgets plus HUD state. The template's executable is deliberately thin; a
 real game can retain that separation while replacing demo content.
+
+The supported CLI convention is a Cargo workspace with a binary package named
+`game`. A workspace may declare the package explicitly:
+
+```toml
+[workspace.metadata.dogwood]
+version = 1
+game = "game"
+```
+
+From the workspace root, use `dogwood debug` for local development,
+`dogwood build --linux-x64` (or another supported target) for a release
+artifact, `dogwood run` to build and run the host target, and `dogwood check`
+to validate the project and Docker build tools. Build outputs are written to
+`dist/<target>/`.

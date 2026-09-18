@@ -13,4 +13,5 @@ name = "dogwood"
 path = "src/main.rs"
 
 [dependencies]
+cargo_metadata.workspace = true
 clap.workspace = true

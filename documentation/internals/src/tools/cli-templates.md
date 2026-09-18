@@ -1,9 +1,17 @@
 # CLI And Templates
 
-The CLI currently owns project initialization rather than build orchestration.
+The CLI owns project initialization and build orchestration.
 `dogwood new` validates a Cargo-compatible project name, creates the requested
 directory and `src`, and writes a manifest plus a `main.rs` that launches the
 template project with a shared `Accelerator`.
+
+The build commands discover a Cargo workspace through Cargo metadata. A game
+project must contain a binary package named `game`, or declare its package in
+`[workspace.metadata.dogwood]` with `version = 1` and `game = "..."`.
+`dogwood debug` runs that package locally. `dogwood build` uses Docker BuildKit
+with cargo-xwin for Windows targets and cargo-zigbuild for Linux targets, then
+exports `dist/<target>/game` (or `game.exe`). `dogwood check` reports project,
+host, Docker, and cross-build readiness without building the game.
 
 The template is executable documentation. `template_project` implements
 `Game`, creates temporary scene data, configures a generator, spawns and

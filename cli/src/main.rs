@@ -2,8 +2,12 @@
 
 //! Command-line project initialization and development tools for Dogwood.
 
+mod build;
 mod command;
+mod commands;
+mod project;
 mod subcommand;
+mod target;
 
 use std::{
     error::Error,
@@ -17,6 +21,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     use subcommand::Subcommand::*;
     let command: Command = clap::Parser::parse();
     match command.subcommand {
+        Debug { directory } => commands::debug(directory)?,
+        Build { directory, target } => commands::build_command(directory, target)?,
+        Run { directory, target } => commands::run(directory, target)?,
+        Check { directory } => commands::check(directory)?,
         New { directory, name } => {
             let project_name: String = match name {
                 Some(name) => name,
