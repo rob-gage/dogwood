@@ -203,11 +203,11 @@ impl ScenePhysicsWorld {
                         .exclude_collider(h)
                 },
             ),
-        ) {
-            if hit.normal1.dot(up) > 1e-4 && hit.time_of_impact <= earliest {
-                earliest = hit.time_of_impact;
-                support = true;
-            }
+        ) && hit.normal1.dot(up) > 1e-4
+            && hit.time_of_impact <= earliest
+        {
+            earliest = hit.time_of_impact;
+            support = true;
         }
         #[cfg(debug_assertions)]
         tracing::trace!(

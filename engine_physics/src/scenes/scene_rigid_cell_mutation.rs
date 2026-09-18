@@ -141,10 +141,10 @@ impl Scene {
             .iter()
             .filter(|cell| removed.contains(&cell.local))
         {
-            if cause == RigidCellRemovalCause::Fracture {
-                if let Some(placement) = self.rigid_cell_debris_placement(&state, cell) {
-                    debris.push(placement);
-                }
+            if cause == RigidCellRemovalCause::Fracture
+                && let Some(placement) = self.rigid_cell_debris_placement(&state, cell)
+            {
+                debris.push(placement);
             }
             self.release_rigid_cell_state(cell.state_slot);
         }

@@ -137,16 +137,15 @@ impl CellularPhysicsBodyProxy {
             .slice(..)
             .map_async(wgpu::MapMode::Read, move |result| {
                 if result.is_ok() {
-                    let mapped = readback.slice(..).get_mapped_range();
-                    if let Ok(mapped) = mapped {
-                        if let Ok(mut completed) = completed.lock() {
-                            completed.extend(mapped.chunks_exact(8).map(|bytes| {
-                                [
-                                    u32::from_le_bytes(bytes[..4].try_into().unwrap()),
-                                    u32::from_le_bytes(bytes[4..].try_into().unwrap()),
-                                ]
-                            }));
-                        }
+                    if let Ok(mapped) = readback.slice(..).get_mapped_range()
+                        && let Ok(mut completed) = completed.lock()
+                    {
+                        completed.extend(mapped.chunks_exact(8).map(|bytes| {
+                            [
+                                u32::from_le_bytes(bytes[..4].try_into().unwrap()),
+                                u32::from_le_bytes(bytes[4..].try_into().unwrap()),
+                            ]
+                        }));
                     }
                     readback.unmap();
                 }

@@ -200,10 +200,10 @@ impl ScenePhysicsWorld {
             })
             .collect();
         for key in stale_dynamic {
-            if let Some(tile) = self.dynamic_tiles.remove(&key) {
-                if let Some(handle) = tile.collider {
-                    self.rapier.remove_collider(handle);
-                }
+            if let Some(tile) = self.dynamic_tiles.remove(&key)
+                && let Some(handle) = tile.collider
+            {
+                self.rapier.remove_collider(handle);
             }
         }
         self.terrain_statistics.dynamic_cached_tiles = self.dynamic_tiles.len();
@@ -268,10 +268,10 @@ impl ScenePhysicsWorld {
             })
             .collect();
         for k in old {
-            if let Some(p) = self.terrain_patches.remove(&k) {
-                if let Some(h) = p.collider {
-                    self.rapier.remove_collider(h);
-                }
+            if let Some(p) = self.terrain_patches.remove(&k)
+                && let Some(h) = p.collider
+            {
+                self.rapier.remove_collider(h);
             }
         }
         self.terrain_statistics.active_patches = self.terrain_patches.len();
