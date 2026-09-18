@@ -4,6 +4,10 @@
 collector. It is shared by the application renderer and every physics resource;
 there is one queue ordering all submitted compute and render work.
 
+Adapter initialization requests the high-performance adapter so hybrid systems
+normally use their discrete GPU. Startup warnings identify CPU/software
+renderers and integrated GPUs when the platform does not honor that request.
+
 `AcceleratorBuffer` wraps storage buffers allocated with storage/copy usage.
 Subsystems own their buffers and expose borrowed views to neighboring systems.
 The accelerator provides polling for device progress and mapped timing

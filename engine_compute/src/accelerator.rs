@@ -19,6 +19,10 @@ pub struct Accelerator {
 
 impl Accelerator {
     /// Creates the shared graphics and compute device used by Dogwood.
+    ///
+    /// Requests the platform's high-performance adapter, which normally selects
+    /// a discrete GPU on hybrid systems. Startup warnings identify CPU/software
+    /// adapters and integrated GPUs when the platform does not honor that hint.
     pub fn new() -> Result<Self, Box<dyn Error>> {
         #[cfg(target_os = "windows")]
         let instance: wgpu::Instance = {
@@ -49,11 +53,29 @@ impl Accelerator {
         let instance: wgpu::Instance = wgpu::Instance::default();
         let adapter: wgpu::Adapter =
             pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
+                power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: None,
                 force_fallback_adapter: false,
                 apply_limit_buckets: false,
             }))?;
+        let adapter_info: wgpu::AdapterInfo = adapter.get_info();
+        match adapter_info.device_type {
+            wgpu::DeviceType::Cpu => tracing::warn!(
+                target: "dogwood_accelerator",
+                adapter = %adapter_info.name,
+                backend = ?adapter_info.backend,
+                driver = %adapter_info.driver,
+                "Accelerator selected a CPU/software renderer; graphics and compute performance will be severely degraded"
+            ),
+            wgpu::DeviceType::IntegratedGpu => tracing::warn!(
+                target: "dogwood_accelerator",
+                adapter = %adapter_info.name,
+                backend = ?adapter_info.backend,
+                driver = %adapter_info.driver,
+                "Accelerator selected an integrated GPU despite requesting high performance; verify Windows GPU preferences and driver configuration"
+            ),
+            _ => {}
+        }
         #[cfg(debug_assertions)]
         let mut required_features: wgpu::Features = wgpu::Features::empty();
         #[cfg(not(debug_assertions))]
@@ -81,8 +103,8 @@ impl Accelerator {
             available = timestamp_query_supported,
             "Accelerator timestamp profiling availability"
         );
-        tracing::debug!(
-            adapter = ?adapter.get_info(),
+        tracing::info!(
+            adapter = ?adapter_info,
             "initialized graphics accelerator"
         );
         Ok(Self {
