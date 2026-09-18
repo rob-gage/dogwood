@@ -205,11 +205,12 @@ impl ActorRegistry {
         &self,
         identifier: Actor,
     ) -> Option<([f32; 2], ActorCollisionShape)> {
-        let entity = self.world.get_entity(identifier.bevy_entity()).ok()?;
-        let pawn = entity.get::<ActorPawn>()?;
+        let entity: bevy_ecs::world::EntityRef<'_> =
+            self.world.get_entity(identifier.bevy_entity()).ok()?;
+        let pawn: &ActorPawn = entity.get::<ActorPawn>()?;
         pawn.swimming?;
-        let shape = pawn.collision_shape?;
-        let position = *entity.get::<ScenePosition>()?;
+        let shape: ActorCollisionShape = pawn.collision_shape?;
+        let position: ScenePosition = *entity.get::<ScenePosition>()?;
         Some((
             [
                 position.tile_coordinates.x as f32 + position.x_offset,
@@ -221,7 +222,7 @@ impl ActorRegistry {
 
     /// Applies one completed derived-fluid sample and its walking/swimming hysteresis
     pub fn apply_swimming_sample(&mut self, identifier: Actor, sample: [f32; 5]) -> bool {
-        let entity = identifier.bevy_entity();
+        let entity: bevy_ecs::entity::Entity = identifier.bevy_entity();
         let Some(pawn) = self.world.get::<ActorPawn>(entity) else {
             return false;
         };
@@ -230,7 +231,9 @@ impl ActorRegistry {
         };
         let movement: Option<ActorPawnMovement> = pawn.movement;
         let has_walking: bool = pawn.walking.is_some();
-        let Some(mut state) = self.world.get_mut::<ActorPawnSwimmingState>(entity) else {
+        let Some(mut state): Option<bevy_ecs::world::Mut<'_, ActorPawnSwimmingState>> =
+            self.world.get_mut::<ActorPawnSwimmingState>(entity)
+        else {
             return false;
         };
         state.immersion = sample[0].clamp(0.0, 1.0);
