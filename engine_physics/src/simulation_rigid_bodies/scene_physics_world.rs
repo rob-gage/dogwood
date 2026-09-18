@@ -21,18 +21,29 @@ use std::time::Instant;
 
 /// Owns Rapier rigid bodies and the CPU-readable cellular collision snapshot
 pub struct ScenePhysicsWorld {
+    /// Per-step support impulses accumulated from rigid contacts.
     step_support: Vec<(RigidBodyHandle, Vector, f32)>,
+    /// Per-step recovery impulses accumulated from rigid contacts.
     step_recovery: Vec<(RigidBodyHandle, Vector, f32)>,
+    /// Authoritative Rapier world for rigid bodies and colliders.
     rapier: PhysicsWorld,
     /// Latest asynchronously completed canonical cellular collision snapshot
     cellular_terrain_snapshot: Option<CollisionOccupancySnapshot>,
+    /// Static terrain collision patches currently bridged into Rapier.
     terrain_patches: HashMap<StaticTerrainCollisionPatchKey, StaticTerrainCollisionPatch>,
+    /// Static terrain patches required by the current actor/rigid-body neighborhood.
     required_terrain_patches: HashSet<StaticTerrainCollisionPatchKey>,
+    /// Dynamic cellular collision tiles currently bridged into Rapier.
     dynamic_tiles: HashMap<RigidDynamicCollisionTileKey, RigidDynamicCollisionTile>,
+    /// Dynamic tiles required by the current actor/rigid-body neighborhood.
     required_dynamic_tiles: HashSet<RigidDynamicCollisionTileKey>,
+    /// Monotonic terrain-bridge update sequence.
     terrain_tick: u64,
+    /// Counts work performed while synchronizing collision geometry.
     terrain_statistics: TerrainBridgeStatistics,
+    /// Whether the collision snapshot changed during the current fixed tick.
     snapshot_updated_this_tick: bool,
+    /// Rapier proxies for actors that participate in collision queries.
     pawn_proxies: HashMap<Actor, ActorPhysicsProxy>,
 }
 

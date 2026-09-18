@@ -12,8 +12,9 @@ use crate::{
     scenes::{Scene, ScenePosition, SceneVelocity},
     simulation::{ScenePhysicsWorld, SceneSimulation},
 };
-/// Owns the ECS world and provides the engine's actor-facing API
+/// Owns the ECS world and provides the engine's actor-facing API.
 pub struct ActorRegistry {
+    /// ECS entities and their actor components.
     world: bevy_ecs::world::World,
 }
 
