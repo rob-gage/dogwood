@@ -9,3 +9,6 @@ description.workspace = true
 
 [dependencies]
 dogwood_engine = { workspace = true }
+
+[lib]
+path = "src/materials.rs"
