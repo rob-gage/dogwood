@@ -2,9 +2,10 @@
 
 use super::TileCoordinates;
 
-/// The position of a cell within a `Scene`
+/// The position of a cell within a `Scene`.
 ///
-/// Positions move higher up as Y increases, and they move further right as X increases.
+/// Positions move higher up as `y` increases, and further right as `x` increases.
+/// One world tile unit contains eight cells.
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct CellCoordinates {
     pub x: i32,

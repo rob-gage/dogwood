@@ -1,8 +1,8 @@
 // Copyright Rob Gage 2026
 
-/// The position of a tile within a `Scene`
+/// The position of an eight-by-eight-cell tile within a `Scene`.
 ///
-/// Positions move higher up as Y increases, and they move further right as X increases.
+/// Positions move higher up as `y` increases, and further right as `x` increases.
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct TileCoordinates {
     pub x: i32,
@@ -10,7 +10,7 @@ pub struct TileCoordinates {
 }
 
 impl TileCoordinates {
-    /// Returns the `TileCoordinates` of the `Chunk` that these `TileCoordinates` are in
+    /// Returns the bottom-left tile coordinates of the `Chunk` containing this tile.
     pub const fn chunk_coordinates(self) -> TileCoordinates {
         TileCoordinates {
             x: self.x.div_euclid(64) * 64,

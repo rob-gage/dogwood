@@ -4,7 +4,7 @@ use super::CellularAppearance;
 use crate::materials::MaterialIdentifier;
 use std::io;
 
-/// An inactive 8x8 tile
+/// Authoritative state for an inactive eight-by-eight-cell tile.
 pub struct TileData {
     /// The `MaterialIdentifier`s for cells in this `TileData`
     cell_material_identifiers: [[MaterialIdentifier; 8]; 8],
@@ -19,15 +19,15 @@ pub struct TileData {
 }
 
 impl TileData {
-    /// The size of serialized `TileData` in bytes
+    /// The size in bytes of the current serialized tile format.
     pub const SERIALIZED_SIZE: usize = 8 * 8 * 4 * 5;
-    /// The pre-amount/temperature tile record size.
+    /// The size in bytes of the legacy tile format without amount and temperature fields.
     pub const LEGACY_SERIALIZED_SIZE: usize = 8 * 8 * 4 * 3;
 
-    /// The serialized size of one parallel cell field
+    /// The serialized size in bytes of one parallel cell field.
     pub const CELL_FIELD_SERIALIZED_SIZE: usize = 8 * 8 * 4;
 
-    /// An empty `TileInactive`
+    /// An empty tile with no material occupancy.
     pub const EMPTY: Self = Self {
         cell_material_identifiers: [[MaterialIdentifier::NULL; 8]; 8],
         cell_appearances: [[CellularAppearance::NEUTRAL; 8]; 8],
