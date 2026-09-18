@@ -1,8 +1,11 @@
 // Copyright Rob Gage 2026
 
 use super::DormantRigidCell;
-use crate::materials::{Material, MaterialForm, MaterialIdentifier, MaterialRegistry};
 use crate::tiles::CellularAppearance;
+use crate::{
+    binary_reader::read_u32,
+    materials::{Material, MaterialForm, MaterialIdentifier, MaterialRegistry},
+};
 use std::{collections::HashSet, io};
 
 /// Authoritative, handle-free state for a rigid body outside simulation residency.
@@ -208,11 +211,6 @@ impl DormantRigidBody {
         materials: &MaterialRegistry,
         has_sleeping: bool,
     ) -> Result<Self, io::Error> {
-        let read_u32: fn(&mut R) -> Result<u32, io::Error> = |reader: &mut R| {
-            let mut bytes: [u8; 4] = [0; 4];
-            reader.read_exact(&mut bytes)?;
-            Ok(u32::from_le_bytes(bytes))
-        };
         let mut identifier_bytes: [u8; 8] = [0; 8];
         reader.read_exact(&mut identifier_bytes)?;
         let position: [f32; 2] = [
