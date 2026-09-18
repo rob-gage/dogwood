@@ -52,7 +52,7 @@
     thermal_material_specific_heat_capacity
 }
 
-struct Parameters {
+struct ThermalInteractionParameters {
     ambient: f32,
     empty_k: f32,
     empty_capacity: f32,
@@ -88,7 +88,7 @@ struct RigidCell {
 @group(0) @binding(11) var<storage, read> external_occupancy: array<u32>;
 @group(0) @binding(12) var<storage, read> fluid_coverage: array<f32>;
 @group(0) @binding(13) var<storage, read_write> interaction: array<vec4<f32>>;
-@group(0) @binding(14) var<uniform> parameters: Parameters;
+@group(0) @binding(14) var<uniform> parameters: ThermalInteractionParameters;
 @group(0) @binding(15) var<uniform> material_parameters: ThermalMaterialParameters;
 @group(0) @binding(16) var<storage, read_write> rigid_raster_claim_counts: array<atomic<u32>>;
 @group(0) @binding(17) var<storage, read_write> reaction_energy: array<f32>;

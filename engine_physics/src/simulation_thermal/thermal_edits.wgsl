@@ -42,7 +42,7 @@
 #import utility::fluid_spatial::fluid_particle_world_cell
 
 // 48 bytes: six 8-byte vectors followed by six scalar u32/f32 words.
-struct Parameters {
+struct ThermalEditParameters {
     ring_origin: vec2<i32>,
     ring_tiles: vec2<u32>,
     ring_offset: vec2<u32>,
@@ -88,7 +88,7 @@ struct RigidCell {
 // authoritative state slot.  Store the lowest raster index, so each slot gets
 // one deterministic logical edit even when it has several raster claims.
 @group(0) @binding(10) var<storage, read_write> rigid_flags: array<atomic<u32>>;
-@group(0) @binding(11) var<uniform> parameters: Parameters;
+@group(0) @binding(11) var<uniform> parameters: ThermalEditParameters;
 
 @compute @workgroup_size(64)
 fn apply_thermal_requests(@builtin(global_invocation_id) invocation: vec3<u32>) {

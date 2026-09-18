@@ -250,7 +250,7 @@ fn phase_gases(
     let n = atomicAdd(&request_count[0], 1u);
     if (n < arrayLength(&requests)) {
         requests[n] =
-            Request(
+            ThermalPhaseTransitionRequest(
                 cell,
                 2u,
                 species,

@@ -42,7 +42,7 @@
 #import utility::tile_ring::physical_cell_index_from_world_cell
 #import utility::fluid_spatial::fluid_particle_world_cell
 
-struct Parameters {
+struct ThermalScatterParameters {
     origin: vec2<i32>,
     tiles: vec2<u32>,
     ring: vec2<u32>,
@@ -89,7 +89,7 @@ struct RigidCell {
 @group(0) @binding(12) var<storage, read> claim_counts: array<u32>;
 @group(0) @binding(13) var<storage, read_write> rigid_temperature_sum: array<atomic<u32>>;
 @group(0) @binding(14) var<storage, read> occupancy: array<u32>;
-@group(0) @binding(15) var<uniform> parameters: Parameters;
+@group(0) @binding(15) var<uniform> parameters: ThermalScatterParameters;
 
 fn cell_index(world: vec2<i32>) -> u32 {
     return

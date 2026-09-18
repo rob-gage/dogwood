@@ -85,7 +85,7 @@ struct RigidCell {
 
 // A request is deliberately authority-addressed: cell, kind (0 cell/1 particle/2 gas), locator,
 // expected source, replacement, amount, temperature, and source world position.
-struct Request {
+struct ThermalPhaseTransitionRequest {
     cell: u32,
     kind: u32,
     locator: u32,
@@ -97,7 +97,7 @@ struct Request {
     world_y: u32,
 }
 
-struct Parameters {
+struct ThermalPhaseTransitionParameters {
     origin: vec2<i32>,
     tiles: vec2<u32>,
     ring: vec2<u32>,
@@ -116,9 +116,9 @@ struct Parameters {
 @group(0) @binding(5) var<storage, read> gas_temperatures: array<f32>;
 @group(0) @binding(6) var<storage, read> properties: array<ThermalMaterialRecord>;
 @group(0) @binding(7) var<uniform> thermal: ThermalMaterialParameters;
-@group(0) @binding(8) var<storage, read_write> requests: array<Request>;
+@group(0) @binding(8) var<storage, read_write> requests: array<ThermalPhaseTransitionRequest>;
 @group(0) @binding(9) var<storage, read_write> request_count: array<atomic<u32>>;
-@group(0) @binding(10) var<uniform> parameters: Parameters;
+@group(0) @binding(10) var<uniform> parameters: ThermalPhaseTransitionParameters;
 @group(0) @binding(11) var<storage, read> rigid_claims: array<atomic<u32>>;
 
 struct GasFluidCandidate {

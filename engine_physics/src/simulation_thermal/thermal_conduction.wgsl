@@ -1,7 +1,7 @@
 #define_import_path compute::thermal_conduction
 #import utility::tile_ring::physical_cell_index_from_world_cell
 #import utility::cell_coordinates::world_cell_from_logical_tile_major_index
-struct Parameters {
+struct ThermalConductionParameters {
     delta_time: f32,
     cell_count: u32,
     origin: vec2<i32>,
@@ -14,7 +14,7 @@ struct Parameters {
 @group(0) @binding(2) var<storage, read_write> face_conductance: array<vec2<f32>>;
 @group(0) @binding(3) var<storage, read_write> conductance_sum: array<f32>;
 @group(0) @binding(4) var<storage, read_write> solved: array<vec4<f32>>;
-@group(0) @binding(5) var<uniform> parameters: Parameters;
+@group(0) @binding(5) var<uniform> parameters: ThermalConductionParameters;
 
 fn index(c: vec2<i32>) -> u32 {
     return
