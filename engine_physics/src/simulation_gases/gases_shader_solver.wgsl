@@ -212,7 +212,7 @@ fn advect_gas_concentrations(@builtin(global_invocation_id) invocation: vec3<u32
 
 fn gas_open_neighbor_count(cell: vec2<i32>) -> u32 {
     var count = 0u;
-    for (var direction = 0u; direction < 4u; direction += 1u) {
+    for (var direction: u32 = 0u; direction < 4u; direction += 1u) {
         let offset =
             select(
                 select(vec2<i32>(0, -1), vec2<i32>(0, 1), direction == 3u),
@@ -228,7 +228,7 @@ fn gas_open_neighbor_count(cell: vec2<i32>) -> u32 {
 
 fn gas_displaced_into_open_cell(species: u32, cell: vec2<i32>) -> f32 {
     var displaced = 0.0;
-    for (var direction = 0u; direction < 4u; direction += 1u) {
+    for (var direction: u32 = 0u; direction < 4u; direction += 1u) {
         let offset =
             select(
                 select(vec2<i32>(0, -1), vec2<i32>(0, 1), direction == 3u),
