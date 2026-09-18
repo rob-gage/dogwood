@@ -182,7 +182,7 @@ impl Scene {
                     coordinates,
                     result,
                 } => {
-                    let matches_request = matches!( // ignore mutated entries
+                    let matches_request: bool = matches!( // ignore mutated entries
                         self.chunks.get(&coordinates),
                         Some(ChunkEntry::Loading { streaming_identifier: current })
                             if *current == streaming_identifier
@@ -193,7 +193,7 @@ impl Scene {
                     match result {
                         // missing chunk begins a separate generation operation
                         Ok(Some(chunk)) => {
-                            let mut chunk = *chunk;
+                            let mut chunk: Chunk = *chunk;
                             chunk.resolve_uninitialized_temperatures(|identifier| {
                                 self.initial_temperature(identifier)
                             });
@@ -228,7 +228,7 @@ impl Scene {
                     match result {
                         // retain the successfully generated chunk
                         Ok(chunk) => {
-                            let mut chunk = *chunk;
+                            let mut chunk: Chunk = *chunk;
                             chunk.resolve_uninitialized_temperatures(|identifier| {
                                 self.initial_temperature(identifier)
                             });

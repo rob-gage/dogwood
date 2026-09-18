@@ -65,8 +65,8 @@ impl Scene {
     ) -> impl Future<Output = Result<(), io::Error>> + 'static {
         let mut error: Option<io::Error> = None;
         let mut uploads: Vec<Arc<Mutex<TileUpload>>> = Vec::new();
-        let materials = self.data.materials();
-        let ambient_temperature = self.ambient_temperature;
+        let materials: &MaterialRegistry = self.data.materials();
+        let ambient_temperature: f32 = self.ambient_temperature;
         for coordinates in area.iterate_tile_coordinates() {
             if self.tile_at(coordinates).is_none() {
                 continue;
@@ -80,7 +80,7 @@ impl Scene {
                                 .and_then(|properties| properties.default_temperature)
                                 .unwrap_or(ambient_temperature)
                         });
-                        let mut upload = TileUpload::new(coordinates, tile_data);
+                        let mut upload: TileUpload = TileUpload::new(coordinates, tile_data);
                         upload.resolve_uninitialized_state(|identifier| {
                             self.initial_temperature(identifier)
                         });

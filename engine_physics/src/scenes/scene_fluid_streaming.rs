@@ -338,7 +338,7 @@ impl Scene {
     /// Submits queued fluid exports and begins their asynchronous readbacks
     pub(super) fn fluid_downloads_submit(&self) -> Result<(), io::Error> {
         for download in &self.fluid_downloads {
-            let mut state = download
+            let mut state: std::sync::MutexGuard<FluidDownload> = download
                 .lock()
                 .map_err(|_| io::Error::other("Fluid download is unavailable"))?;
             if state.is_started {
@@ -405,7 +405,7 @@ impl Scene {
     /// Submits queued dormant-fluid reconstruction and begins result readback
     pub(super) fn fluid_uploads_submit(&self) -> Result<(), io::Error> {
         for upload in &self.fluid_uploads {
-            let mut state = upload
+            let mut state: std::sync::MutexGuard<FluidUpload> = upload
                 .lock()
                 .map_err(|_| io::Error::other("Fluid upload is unavailable"))?;
             if state.is_started {
@@ -448,7 +448,8 @@ impl Scene {
                     };
                     std::thread::spawn(move || {
                         if let Ok(mut state) = upload.lock() {
-                            let result = bytes.and_then(|bytes| state.failed_particles(&bytes));
+                            let result: Result<Vec<ChunkFluidParticle>, io::Error> =
+                                bytes.and_then(|bytes| state.failed_particles(&bytes));
                             state.result = Some(result);
                         }
                     });
