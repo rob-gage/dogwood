@@ -79,7 +79,7 @@ fn extract_cellular_collision_occupancy(@builtin(global_invocation_id) invocatio
         (physical.y * parameters.buffered_tile_size.x + physical.x) * CELL_COUNT_PER_TILE;
     var static_mask = vec2<u32>(0u);
     var dynamic_mask = vec2<u32>(0u);
-    for (var cell = 0u; cell < CELL_COUNT_PER_TILE; cell++) {
+    for (var cell: u32 = 0u; cell < CELL_COUNT_PER_TILE; cell++) {
         let identifier = cellular_material_identifiers[cell_start + cell];
         let form: u32 = material_form_from_identifier(identifier);
         if identifier != EMPTY_MATERIAL_IDENTIFIER && form == CELLULAR_STATIC_MATERIAL_FORM {

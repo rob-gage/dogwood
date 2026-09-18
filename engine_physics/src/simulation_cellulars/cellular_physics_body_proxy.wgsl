@@ -191,7 +191,7 @@ fn claim_actor_proxy(
     let bounds = actor_bounds(actor);
     let width = u32(max(0, bounds.z - bounds.x));
     let count = width * u32(max(0, bounds.w - bounds.y));
-    for (var candidate = lane; candidate < count; candidate += 64u) {
+    for (var candidate: u32 = lane; candidate < count; candidate += 64u) {
         actor_claim_candidate(
             group.x,
             actor,
@@ -211,7 +211,7 @@ fn count_actor_proxy(
     let bounds = actor_bounds(actor_proxies[group.x]);
     let width = u32(max(0, bounds.z - bounds.x));
     let count = width * u32(max(0, bounds.w - bounds.y));
-    for (var candidate = lane; candidate < count; candidate += 64u) {
+    for (var candidate: u32 = lane; candidate < count; candidate += 64u) {
         let cell = vec2<i32>(bounds.x + i32(candidate % width), bounds.y + i32(candidate / width));
         let index =
             physical_cell_index_from_world_cell(
@@ -239,7 +239,7 @@ fn resolve_actor_proxy(
     let width = u32(max(0, bounds.z - bounds.x));
     let count = width * u32(max(0, bounds.w - bounds.y));
     let divisor = f32(max(atomicLoad(&actor_counts[group.x]), 1u));
-    for (var candidate = lane; candidate < count; candidate += 64u) {
+    for (var candidate: u32 = lane; candidate < count; candidate += 64u) {
         let cell = vec2<i32>(bounds.x + i32(candidate % width), bounds.y + i32(candidate / width));
         let index =
             physical_cell_index_from_world_cell(

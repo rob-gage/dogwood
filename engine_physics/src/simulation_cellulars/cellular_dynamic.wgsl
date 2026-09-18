@@ -384,7 +384,7 @@ fn choose_cellular_dynamic_external_body_exit_destination(
         }
     }
     let first = hash_cellular_dynamic_claim_priority(source_world_cell, parameters.tick) & 3u;
-    for (var offset = 0u; offset < 4u; offset++) {
+    for (var offset: u32 = 0u; offset < 4u; offset++) {
         let direction = (first + offset) & 3u;
         let delta =
             select(
