@@ -76,7 +76,7 @@ impl CellularPhysicsBodyProxy {
             device,
             "cellular physics body proxy shader",
             include_str!("cellular_physics_body_proxy.wgsl"),
-            "engine_physics/src/simulation/cellular_physics_body_proxy.wgsl",
+            "engine_physics/src/simulation_cellulars/cellular_physics_body_proxy.wgsl",
         );
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("cellular physics body proxy pipeline layout"),

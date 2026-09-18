@@ -292,7 +292,7 @@ impl CellularPressure {
                 include_str!("cellular_pressure_shader_rigid_static_contacts.wgsl"),
                 include_str!("cellular_pressure_shader_coordinates.wgsl"),
             ),
-            "engine_physics/src/simulation/cellular_pressure.wgsl",
+            "engine_physics/src/simulation_cellulars/cellular_pressure.wgsl",
         );
         let pipeline_layout: wgpu::PipelineLayout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

@@ -165,7 +165,7 @@ impl ThermalScatter {
             device,
             "thermal scatter shader",
             include_str!("thermal_scatter.wgsl"),
-            "engine_physics/src/simulation/thermal_scatter.wgsl",
+            "engine_physics/src/simulation_thermal/thermal_scatter.wgsl",
         );
         let pipeline_layout: wgpu::PipelineLayout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

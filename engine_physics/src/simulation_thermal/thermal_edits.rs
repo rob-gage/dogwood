@@ -99,7 +99,7 @@ impl ThermalEdits {
             device,
             "thermal edits shader",
             include_str!("thermal_edits.wgsl"),
-            "engine_physics/src/simulation/thermal_edits.wgsl",
+            "engine_physics/src/simulation_thermal/thermal_edits.wgsl",
         );
         let pipeline_layout: wgpu::PipelineLayout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

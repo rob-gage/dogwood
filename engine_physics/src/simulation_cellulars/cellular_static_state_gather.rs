@@ -83,7 +83,7 @@ impl CellularStaticStateGather {
             device,
             "cellular static state gather",
             include_str!("cellular_static_state_gather.wgsl"),
-            "engine_physics/src/simulation/cellular_static_state_gather.wgsl",
+            "engine_physics/src/simulation_cellulars/cellular_static_state_gather.wgsl",
         );
         let pipeline: wgpu::ComputePipeline =
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {

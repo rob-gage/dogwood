@@ -169,7 +169,7 @@ impl ThermalInteraction {
             device,
             "thermal interaction shader",
             include_str!("thermal_interaction.wgsl"),
-            "engine_physics/src/simulation/thermal_interaction.wgsl",
+            "engine_physics/src/simulation_thermal/thermal_interaction.wgsl",
         );
         let pipeline_layout: wgpu::PipelineLayout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

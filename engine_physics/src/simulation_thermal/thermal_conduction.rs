@@ -105,7 +105,7 @@ impl ThermalConduction {
             device,
             "thermal conduction shader",
             include_str!("thermal_conduction.wgsl"),
-            "engine_physics/src/simulation/thermal_conduction.wgsl",
+            "engine_physics/src/simulation_thermal/thermal_conduction.wgsl",
         );
         let pipeline_layout: wgpu::PipelineLayout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

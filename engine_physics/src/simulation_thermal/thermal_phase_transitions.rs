@@ -205,7 +205,7 @@ impl ThermalPhaseTransitions {
                 include_str!("thermal_phase_transitions_shader_helpers.wgsl"),
                 include_str!("thermal_phase_transitions_shader_entry_points.wgsl"),
             ),
-            "engine_physics/src/simulation/thermal_phase_transitions.wgsl",
+            "engine_physics/src/simulation_thermal/thermal_phase_transitions.wgsl",
         );
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("thermal phase"),

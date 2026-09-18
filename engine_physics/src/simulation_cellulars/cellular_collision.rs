@@ -104,7 +104,7 @@ impl CellularCollision {
             device,
             "cellular collision shader",
             include_str!("cellular_collision.wgsl"),
-            "engine_physics/src/simulation/cellular_collision.wgsl",
+            "engine_physics/src/simulation_cellulars/cellular_collision.wgsl",
         );
         let pipeline_layout: wgpu::PipelineLayout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

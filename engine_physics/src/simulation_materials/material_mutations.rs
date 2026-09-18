@@ -147,7 +147,7 @@ impl MaterialMutations {
             device,
             "material mutation shader",
             include_str!("material_mutations.wgsl"),
-            "engine_physics/src/simulation/material_mutations.wgsl",
+            "engine_physics/src/simulation_materials/material_mutations.wgsl",
         );
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("material mutations"),

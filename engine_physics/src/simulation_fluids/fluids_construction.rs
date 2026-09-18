@@ -171,7 +171,7 @@ impl Fluids {
                 include_str!("fluids_shader_collision.wgsl"),
                 include_str!("fluids_shader_residency.wgsl"),
             ),
-            "engine_physics/src/simulation/fluids.wgsl",
+            "engine_physics/src/simulation_fluids/fluids.wgsl",
         );
         let pipeline_layout: wgpu::PipelineLayout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

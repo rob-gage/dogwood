@@ -132,7 +132,7 @@ impl CellularDynamic {
             device,
             "cellular dynamic shader",
             include_str!("cellular_dynamic.wgsl"),
-            "engine_physics/src/simulation/cellular_dynamic.wgsl",
+            "engine_physics/src/simulation_cellulars/cellular_dynamic.wgsl",
         );
         let pipeline_layout: wgpu::PipelineLayout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

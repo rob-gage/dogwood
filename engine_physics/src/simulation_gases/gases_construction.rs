@@ -113,7 +113,7 @@ impl Gases {
                 include_str!("gases_shader_streaming.wgsl"),
                 include_str!("gases_shader_utility.wgsl"),
             ),
-            "engine_physics/src/simulation/gases.wgsl",
+            "engine_physics/src/simulation_gases/gases.wgsl",
         );
         let pipeline_layout: wgpu::PipelineLayout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

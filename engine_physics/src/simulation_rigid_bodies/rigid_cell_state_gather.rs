@@ -64,7 +64,7 @@ impl RigidCellStateGather {
             device,
             "rigid cell state gather",
             include_str!("rigid_cell_state_gather.wgsl"),
-            "engine_physics/src/simulation/rigid_cell_state_gather.wgsl",
+            "engine_physics/src/simulation_rigid_bodies/rigid_cell_state_gather.wgsl",
         );
         let pipeline: wgpu::ComputePipeline =
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
