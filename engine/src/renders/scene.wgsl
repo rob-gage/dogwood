@@ -40,7 +40,8 @@ struct Uniforms {
     actor_count: u32,
     overlay_count: u32,
     _padding_end: vec2<u32>,
-    _unused: vec4<u32>,
+    lighting_size: vec2<u32>,
+    _lighting_padding: vec2<u32>,
 }
 
 struct SceneActorGraphics {
@@ -105,6 +106,7 @@ const CELLS_PER_CHUNK_EDGE: i32 = 512;
 @group(0) @binding(13) var<storage, read> rigid_appearances: array<u32>;
 @group(0) @binding(14) var<storage, read> actors: array<SceneActorGraphics>;
 @group(0) @binding(15) var<storage, read> overlays: array<SceneOverlay>;
+@group(0) @binding(16) var illumination: texture_2d<f32>;
 
 // A fullscreen triangle delegates all scene lookup to the fragment shader
 @vertex
@@ -160,12 +162,12 @@ fn render_scene_fragment(@builtin(position) position: vec4<f32>) -> @location(0)
         }
     }
     let result: vec4<f32> = render_scene_material_color(scene_cell, cell_index);
-    let optics: SceneOpticalSample = scene_optical_sample_at_cell(cell, cell_index);
-    let illumination: vec3<f32> = scene_radiance_cascades(cell);
     let gas: vec4<f32> = render_gas_scattering_at_cell_position(world * CELLS_PER_TILE_FLOAT);
     let surface: vec3<f32> = mix(result.rgb, gas.rgb, gas.a);
+    let incoming: vec3<f32> = sample_scene_illumination(position.xy);
+    let local_emission: vec3<f32> = scene_material_emission(scene_cell);
     return apply_scene_grid_borders(
-        vec4<f32>(surface * (0.12 + illumination * 3.0) + optics.emission, 1.0), cell, world,
+        vec4<f32>(surface * (0.12 + incoming * 3.0) + local_emission, 1.0), cell, world,
     );
 }
 
@@ -329,82 +331,40 @@ fn render_scene_material_color(scene_cell: SceneCellSample, cell_index: u32) -> 
     return result;
 }
 
-// Unified optical lookup for cellular, rigid-rasterized, fluid, and gas forms.
-fn scene_optical_sample_at_cell(cell: vec2<i32>, cell_index: u32) -> SceneOpticalSample {
-    let scene_cell: SceneCellSample = resolve_scene_cellular_or_fluid_sample(cell, cell_index);
-    if scene_cell.material_identifier != EMPTY_MATERIAL_IDENTIFIER {
-        let form: u32 = material_form_from_identifier(scene_cell.material_identifier);
-        let index: u32 = material_index_from_identifier(scene_cell.material_identifier);
-        var properties: MaterialAppearance;
-        switch form {
-            case CELLULAR_STATIC_MATERIAL_FORM: { properties = cellular_statics[index]; }
-            case CELLULAR_DYNAMIC_MATERIAL_FORM: { properties = cellular_dynamics[index]; }
-            case FLUID_MATERIAL_FORM: { properties = fluids[index]; }
-            default: { return SceneOpticalSample(vec3<f32>(0.0), 0.0); }
-        }
-        let packed: u32 = select(scene_cell.appearance, 0u, scene_cell.is_fluid);
-        let sample: vec4<f32> = unpack_sample(packed);
-        let emission: vec3<f32> = unpack_rgba8_color(properties.radiance_freezing).rgb *
-            (vec3<f32>(1.0) + sample.rgb * properties.radiance_influence.rgb);
-        let coverage: f32 = select(1.0, scene_cell.fluid_coverage, scene_cell.is_fluid);
-        return SceneOpticalSample(max(emission * coverage, vec3<f32>(0.0)),
-            max(properties.extinction * coverage, 0.0));
+fn scene_material_emission(scene_cell: SceneCellSample) -> vec3<f32> {
+    if scene_cell.material_identifier == EMPTY_MATERIAL_IDENTIFIER {
+        return vec3<f32>(0.0);
     }
-    return scene_gas_optical_sample(cell);
+    let form: u32 = material_form_from_identifier(scene_cell.material_identifier);
+    let index: u32 = material_index_from_identifier(scene_cell.material_identifier);
+    var properties: MaterialAppearance;
+    switch form {
+        case CELLULAR_STATIC_MATERIAL_FORM: { properties = cellular_statics[index]; }
+        case CELLULAR_DYNAMIC_MATERIAL_FORM: { properties = cellular_dynamics[index]; }
+        case FLUID_MATERIAL_FORM: { properties = fluids[index]; }
+        default: { return vec3<f32>(0.0); }
+    }
+    let sample: vec4<f32> = unpack_sample(select(scene_cell.appearance, 0u, scene_cell.is_fluid));
+    let coverage: f32 = select(1.0, scene_cell.fluid_coverage, scene_cell.is_fluid);
+    return max(unpack_rgba8_color(properties.radiance_freezing).rgb *
+        (vec3<f32>(1.0) + sample.rgb * properties.radiance_influence.rgb) * coverage,
+        vec3<f32>(0.0));
 }
 
-fn scene_gas_optical_sample(cell: vec2<i32>) -> SceneOpticalSample {
-    var emission: vec3<f32> = vec3<f32>(0.0);
-    var extinction: f32 = 0.0;
-    for (var species: u32 = 0u; species < uniforms.gas_count; species++) {
-        let concentration: f32 = sample_gas_concentration_bilinear_at_cell_position(
-            species, vec2<f32>(cell) + vec2<f32>(0.5),
-        );
-        let properties: MaterialAppearance = gases[species];
-        extinction += concentration * max(properties.extinction, 0.0);
-        emission += unpack_rgba8_color(properties.radiance_freezing).rgb * concentration;
+fn sample_scene_illumination(position: vec2<f32>) -> vec3<f32> {
+    if any(uniforms.lighting_size == vec2<u32>(0u)) {
+        return vec3<f32>(0.0);
     }
-    return SceneOpticalSample(emission, extinction);
-}
-
-// First ordinary Radiance Cascades slice: 5 exponentially growing intervals,
-// 4 probe directions, and front-to-back radiance/transmission compositing.
-fn scene_radiance_cascades(origin: vec2<i32>) -> vec3<f32> {
-    let directions = array<vec2<f32>, 4>(
-        vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 1.0),
-        vec2<f32>(-1.0, 0.0), vec2<f32>(0.0, -1.0),
-    );
-    var total: vec3<f32> = vec3<f32>(0.0);
-    for (var direction_index: u32 = 0u; direction_index < 4u; direction_index++) {
-        let direction: vec2<f32> = directions[direction_index];
-        var radiance: vec3<f32> = vec3<f32>(0.0);
-        var transmission: f32 = 1.0;
-        var interval_start: f32 = 1.0;
-        for (var cascade: u32 = 0u; cascade < 5u; cascade++) {
-            let interval_end: f32 = interval_start + 8.0 * pow(4.0, f32(cascade));
-            var travel: f32 = interval_start;
-            for (var step: u32 = 0u; step < 16u; step++) {
-                if travel >= interval_end || transmission <= 0.001 { break; }
-                let sample: SceneOpticalSample = scene_optical_sample_at_world_cell(
-                    origin + vec2<i32>(direction * travel),
-                );
-                radiance += transmission * sample.emission;
-                transmission *= exp(-sample.extinction);
-                travel += 1.0;
-            }
-            interval_start = interval_end;
-        }
-        total += radiance;
-    }
-    return total / 4.0;
-}
-
-fn scene_optical_sample_at_world_cell(cell: vec2<i32>) -> SceneOpticalSample {
-    let index: u32 = scene_physical_cell_index_from_world_cell(cell);
-    if index == INVALID_PHYSICAL_CELL_INDEX {
-        return SceneOpticalSample(vec3<f32>(0.0), 0.0);
-    }
-    return scene_optical_sample_at_cell(cell, index);
+    let coordinate: vec2<f32> = (position - uniforms.viewport_origin) *
+        vec2<f32>(uniforms.lighting_size) / uniforms.window_size;
+    let base: vec2<i32> = vec2<i32>(floor(coordinate));
+    let fraction: vec2<f32> = fract(coordinate);
+    let maximum: vec2<i32> = vec2<i32>(uniforms.lighting_size) - vec2<i32>(1);
+    let p00: vec3<f32> = textureLoad(illumination, clamp(base, vec2<i32>(0), maximum), 0).rgb;
+    let p10: vec3<f32> = textureLoad(illumination, clamp(base + vec2<i32>(1, 0), vec2<i32>(0), maximum), 0).rgb;
+    let p01: vec3<f32> = textureLoad(illumination, clamp(base + vec2<i32>(0, 1), vec2<i32>(0), maximum), 0).rgb;
+    let p11: vec3<f32> = textureLoad(illumination, clamp(base + vec2<i32>(1), vec2<i32>(0), maximum), 0).rgb;
+    return mix(mix(p00, p10, fraction.x), mix(p01, p11, fraction.x), fraction.y);
 }
 
 // Sums bilinearly sampled concentration across every registered gas species
