@@ -39,7 +39,8 @@ impl Gases {
             accelerator.allocate::<[f32; 2]>(buffered_cell_count as usize);
         let concentrations: AcceleratorBuffer =
             accelerator.allocate::<f32>(concentration_count.max(1) as usize);
-        let gas_temperature = accelerator.allocate::<f32>(buffered_cell_count as usize);
+        let gas_temperature: AcceleratorBuffer =
+            accelerator.allocate::<f32>(buffered_cell_count as usize);
         let concentration_scratch: AcceleratorBuffer =
             accelerator.allocate::<f32>(concentration_count.max(1) as usize);
         let divergence: AcceleratorBuffer =
@@ -51,12 +52,13 @@ impl Gases {
         let curl: AcceleratorBuffer = accelerator.allocate::<f32>(buffered_cell_count as usize);
         let streaming_data: AcceleratorBuffer =
             accelerator.allocate::<u32>(streaming_value_count as usize);
-        let parameters = crate::simulation::create_simulation_uniform_buffer(
+        let parameters: wgpu::Buffer = crate::simulation::create_simulation_uniform_buffer(
             device,
             "gas simulation parameters",
             96,
         );
-        let storage = crate::simulation::storage_bind_group_layout_entry;
+        let storage: fn(u32, bool) -> wgpu::BindGroupLayoutEntry =
+            crate::simulation::storage_bind_group_layout_entry;
         let layout: wgpu::BindGroupLayout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("gas simulation bind group layout"),
@@ -119,7 +121,7 @@ impl Gases {
                 bind_group_layouts: &[Some(&layout)],
                 immediate_size: 0,
             });
-        let pipeline = |entry_point, label| {
+        let pipeline = |entry_point: &'static str, label: &'static str| -> wgpu::ComputePipeline {
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(label),
                 layout: Some(&pipeline_layout),
