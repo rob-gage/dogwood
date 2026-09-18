@@ -1,7 +1,9 @@
 // Copyright Rob Gage 2026
 
 use super::EditorApplication;
-use crate::{editor_interface::EditorInterface, editor_tool::EditorTool};
+use crate::{
+    editor_interface::EditorInterface, editor_tool::EditorTool, editor_view_mode::EditorViewMode,
+};
 use engine::{Game, physics::materials::MaterialIdentifier};
 use engine_graphics::Color;
 use std::{cell::Cell, rc::Rc};
@@ -61,11 +63,11 @@ impl<G: Game> EditorApplication<G> {
             });
         let viewport_bounds: Rc<Cell<Option<[u32; 4]>>> = Rc::new(Cell::new(None));
         let (preview_cells, preview_color): (Vec<[f32; 4]>, Color) = self.brush_preview();
-        let view_mode_requested = Rc::new(Cell::new(self.view_mode));
-        let tile_borders_requested = Rc::new(Cell::new(self.show_tile_borders));
-        let chunk_borders_requested = Rc::new(Cell::new(self.show_chunk_borders));
+        let view_mode_requested: Rc<Cell<EditorViewMode>> = Rc::new(Cell::new(self.view_mode));
+        let tile_borders_requested: Rc<Cell<bool>> = Rc::new(Cell::new(self.show_tile_borders));
+        let chunk_borders_requested: Rc<Cell<bool>> = Rc::new(Cell::new(self.show_chunk_borders));
         let [frames_per_second, ticks_per_second]: [u32; 2] = self.application.performance_rates();
-        let mut layout = EditorInterface {
+        let mut layout: EditorInterface = EditorInterface {
             is_playing: self.is_playing,
             frames_per_second,
             ticks_per_second,
