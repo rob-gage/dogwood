@@ -164,7 +164,7 @@ fn render_scene_fragment(@builtin(position) position: vec4<f32>) -> @location(0)
     let result: vec4<f32> = render_scene_material_color(scene_cell, cell_index);
     let gas: vec4<f32> = render_gas_scattering_at_cell_position(world * CELLS_PER_TILE_FLOAT);
     let surface: vec3<f32> = mix(result.rgb, gas.rgb, gas.a);
-    let incoming: vec3<f32> = sample_scene_illumination(position.xy);
+    let incoming: vec3<f32> = sample_scene_illumination(world);
     let local_emission: vec3<f32> = scene_material_emission(scene_cell);
     return apply_scene_grid_borders(
         vec4<f32>(surface * (0.12 + incoming * 3.0) + local_emission, 1.0), cell, world,
@@ -358,6 +358,9 @@ fn sample_scene_illumination(position: vec2<f32>) -> vec3<f32> {
     let cell_position = position * CELLS_PER_TILE_FLOAT - vec2<f32>(uniforms.lighting_origin);
     let coordinate: vec2<f32> = cell_position - vec2<f32>(0.5);
     let base: vec2<i32> = vec2<i32>(floor(coordinate));
+    if any(base < vec2<i32>(0)) || any(base >= vec2<i32>(uniforms.lighting_size)) {
+        return vec3<f32>(0.0);
+    }
     let fraction: vec2<f32> = fract(coordinate);
     let maximum: vec2<i32> = vec2<i32>(uniforms.lighting_size) - vec2<i32>(1);
     let p00: vec3<f32> = textureLoad(illumination, clamp(base, vec2<i32>(0), maximum), 0).rgb;

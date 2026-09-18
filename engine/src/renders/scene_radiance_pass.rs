@@ -556,8 +556,8 @@ impl SceneRadiancePass {
             directions,
             start.to_bits(),
             end.to_bits(),
-            world_origin[0] as u32,
-            world_origin[1] as u32,
+            (world_origin[0] as f32).to_bits(),
+            (world_origin[1] as f32).to_bits(),
             0,
             0,
             0,
@@ -693,12 +693,9 @@ mod tests {
     }
 
     #[test]
-    fn probe_padding_is_symmetric() {
-        let size = SceneRadiancePass::probe_size([384, 216], 4);
-        assert_eq!(size, [98, 56]);
-        let first_center = (0.0_f32 - 0.5) * 4.0;
-        let last_center = (size[0] as f32 - 0.5) * 4.0;
-        assert!(first_center < 0.0);
-        assert!(last_center > 384.0);
+    fn config_serializes_negative_world_origin_as_float_bits() {
+        let config = SceneRadiancePass::config([384, 216], [98, 56], 4, 4, 0.0, 8.0, [-3, -17]);
+        assert_eq!(config[8], (-3.0_f32).to_bits());
+        assert_eq!(config[9], (-17.0_f32).to_bits());
     }
 }

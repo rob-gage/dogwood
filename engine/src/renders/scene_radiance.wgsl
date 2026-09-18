@@ -56,7 +56,10 @@ fn trace(@builtin(global_invocation_id) invocation: vec3<u32>) {
         origin_cell = vec2<i32>(probe_position);
         escaping_origin_cell = textureLoad(optical_field, origin_cell, 0).a > 0.000001;
     }
-    for (var step = 0u; step < 96u; step++) {
+    let step_count = u32(ceil(
+        trace_configuration.interval_end - trace_configuration.interval_start,
+    ));
+    for (var step = 0u; step < step_count; step++) {
         if travel >= trace_configuration.interval_end || transmission <= 0.001 { break; }
         let position = probe_position + direction * travel;
         if any(position < vec2<f32>(0.0)) ||
@@ -175,7 +178,6 @@ fn sample_integrated_probe(probe: vec2<i32>, direction: u32) -> vec4<f32> {
 }
 
 fn probe_origin(world_origin: vec2<f32>, spacing: u32) -> vec2<f32> {
-    let spacing_float = f32(spacing);
-    return world_origin - floor(world_origin / spacing_float) * spacing_float -
-        vec2<f32>(spacing_float);
+    let s = f32(spacing);
+    return floor(world_origin / s) * s - world_origin - vec2<f32>(s);
 }
