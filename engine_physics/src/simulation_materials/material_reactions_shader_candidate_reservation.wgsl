@@ -30,7 +30,7 @@ fn reserve_candidate(cell: u32) {
                 && first_form != FLUID_MATERIAL_FORM,
         );
     var cellular_products = 0u;
-    for (var product = 0u; product < 2u; product += 1u) {
+    for (var product: u32 = 0u; product < 2u; product += 1u) {
         let base = 8u + product * 4u;
         if (reactions[candidate.reaction].words[base + 2u] == 0u) {
             continue;
@@ -130,7 +130,7 @@ fn reserve_candidate(cell: u32) {
         return;
     }
     var output_slots = vec2<u32>(0xffffffffu);
-    for (var product = 0u; product < 2u; product += 1u) {
+    for (var product: u32 = 0u; product < 2u; product += 1u) {
         let base = 8u + product * 4u;
         if
             (reactions[candidate.reaction].words[base + 2u] == 0u || material_form_from_identifier(
@@ -179,7 +179,7 @@ fn reserve_candidate(cell: u32) {
             candidate.partner,
             first_remaining > 0.00001 && candidate.partner != 0xffffffffu,
         );
-    for (var product = 0u; product < 2u; product += 1u) {
+    for (var product: u32 = 0u; product < 2u; product += 1u) {
         let base = 8u + product * 4u;
         if (reactions[candidate.reaction].words[base + 2u] == 0u) {
             continue;
@@ -194,7 +194,7 @@ fn reserve_candidate(cell: u32) {
                 bitcast<f32>(reactions[candidate.reaction].words[base + 1u]) * candidate.extent,
             ))
         {
-            for (var previous = 0u; previous < product; previous += 1u) {
+            for (var previous: u32 = 0u; previous < product; previous += 1u) {
                 let previous_base = 8u + previous * 4u;
                 if
                     (reactions
@@ -283,7 +283,7 @@ fn reserve_candidate(cell: u32) {
                 bitcast<f32>(reactions[candidate.reaction].words[6]) * candidate.extent,
             );
         }
-        for (var product = 0u; product < 2u; product += 1u) {
+    for (var product: u32 = 0u; product < 2u; product += 1u) {
             let base = 8u + product * 4u;
             if
                 (reactions

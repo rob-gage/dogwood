@@ -70,7 +70,7 @@ fn apply_canonical(@builtin(global_invocation_id) invocation: vec3<u32>) {
     var cellular_product = EMPTY_MATERIAL_IDENTIFIER;
     var cellular_amount = 0.0;
     let fluid_product_slots = candidate.product_slots;
-    for (var product = 0u; product < 2u; product += 1u) {
+    for (var product: u32 = 0u; product < 2u; product += 1u) {
         let base = 8u + product * 4u;
         if (rule.words[base + 2u] == 0u) {
             continue;
@@ -194,7 +194,7 @@ fn apply_canonical(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if (source1_fluid) {
         apply_fluid_plan(cell, 1u);
     }
-    for (var product = 0u; product < 2u; product += 1u) {
+    for (var product: u32 = 0u; product < 2u; product += 1u) {
         let base = 8u + product * 4u;
         if (rule.words[base + 2u] == 0u) {
             continue;
@@ -214,7 +214,7 @@ fn apply_canonical(@builtin(global_invocation_id) invocation: vec3<u32>) {
     reaction_energy[cell] += bitcast<f32>(rule.words[23]) * candidate.extent;
     let pressure_output = bitcast<f32>(rule.words[24]) * candidate.extent;
     pending_pressure[cell] += vec4<f32>(pressure_output);
-    for (var product = 0u; product < 2u; product += 1u) {
+    for (var product: u32 = 0u; product < 2u; product += 1u) {
         let base = 8u + product * 4u;
         if (rule.words[base + 2u] == 0u) {
             continue;
@@ -288,7 +288,7 @@ fn discover_canonical(@builtin(global_invocation_id) invocation: vec3<u32>) {
             || atomicLoad(&rigid_claims[cell]) != 0xffffffffu;
     var air = local_air(cell);
     if (blocked) {
-        for (var direction = 1u; direction <= 4u; direction += 1u) {
+        for (var direction: u32 = 1u; direction <= 4u; direction += 1u) {
             air = max(air, local_air(neighbor(cell, direction)));
         }
     }
@@ -374,7 +374,7 @@ fn discover_canonical(@builtin(global_invocation_id) invocation: vec3<u32>) {
             output_cell = source1.cell;
         }
         var gas_product = 0.0;
-        for (var product = 0u; product < 2u; product += 1u) {
+        for (var product: u32 = 0u; product < 2u; product += 1u) {
             let base = 8u + product * 4u;
             if
                 (rule.words[base + 2u] != 0u && material_form_from_identifier(

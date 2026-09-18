@@ -5,7 +5,7 @@ fn reserve_fluid_authority(@builtin(global_invocation_id) invocation: vec3<u32>)
         return;
     }
     let count = min(atomicLoad(&candidate_count[0]), arrayLength(&candidate_indices));
-    for (var processed = 0u; processed < count; processed += 1u) {
+    for (var processed: u32 = 0u; processed < count; processed += 1u) {
         let best = candidate_indices[processed];
         if (best == 0xffffffffu || best >= arrayLength(&candidates)) {
             continue;

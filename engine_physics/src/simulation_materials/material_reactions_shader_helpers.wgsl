@@ -61,7 +61,7 @@ fn matches_selector(rule: Reaction, reactant: u32, material: u32) -> bool {
     }
     let offset = rule.words[base];
     let count = rule.words[base + 1u];
-    for (var i = 0u; i < count; i += 1u) {
+    for (var i: u32 = 0u; i < count; i += 1u) {
         if
             (offset + i < arrayLength(
                 &selector_members,
@@ -117,7 +117,7 @@ fn rigid_source(cell: u32, reactant: u32, rule: Reaction) -> Source {
 }
 
 fn gas_source(cell: u32, reactant: u32, rule: Reaction) -> Source {
-    for (var species = 0u; species < parameters.gas_count; species += 1u) {
+    for (var species: u32 = 0u; species < parameters.gas_count; species += 1u) {
         let material = species + 1u;
         let concentration = gas_concentrations[species * parameters.cell_count + cell];
         if (concentration > 0.000001 && matches_selector(rule, reactant, material)) {
@@ -289,7 +289,7 @@ fn local_air(cell: u32) -> f32 {
         return 1.0;
     }
     var gas = 0.0;
-    for (var species = 0u; species < parameters.gas_count; species += 1u) {
+    for (var species: u32 = 0u; species < parameters.gas_count; species += 1u) {
         gas += max(gas_concentrations[species * parameters.cell_count + cell], 0.0);
     }
     let blocked =
@@ -336,7 +336,7 @@ fn find_partner(anchor: u32, rule: Reaction) -> Source {
     if (same.found) {
         return same;
     }
-    for (var direction = 1u; direction <= 4u; direction += 1u) {
+    for (var direction: u32 = 1u; direction <= 4u; direction += 1u) {
         let cell = neighbor(anchor, direction);
         if (cell == 0xffffffffu) {
             continue;
@@ -351,7 +351,7 @@ fn find_partner(anchor: u32, rule: Reaction) -> Source {
 
 fn gas_total(cell: u32) -> f32 {
     var total = 0.0;
-    for (var species = 0u; species < parameters.gas_count; species += 1u) {
+    for (var species: u32 = 0u; species < parameters.gas_count; species += 1u) {
         total += max(gas_concentrations[species * parameters.cell_count + cell], 0.0);
     }
     return total;
