@@ -1,6 +1,9 @@
 // Copyright Rob Gage 2026
 
-use super::{CompiledMaterialReaction, MaterialForm, MaterialRegistry, MaterialThermalTransition};
+use super::{
+    CompiledMaterialReaction, MaterialForm, MaterialRegistry, MaterialThermalProperties,
+    MaterialThermalTransition,
+};
 use engine_compute::{Accelerator, AcceleratorBuffer};
 use engine_graphics::MaterialGraphics;
 
@@ -18,28 +21,29 @@ pub(crate) struct MaterialTable {
 
 impl MaterialTable {
     pub(crate) fn new(accelerator: &Accelerator, registry: &MaterialRegistry) -> Self {
-        let material_graphics = registry.build_material_graphics(accelerator);
+        let material_graphics: MaterialGraphics = registry.build_material_graphics(accelerator);
         // Four vec4-compatible groups (conductivity/heat capacity, cold transition,
         // hot transition, and padding) keep the WGSL record naturally 16-byte aligned.
         let records: Vec<[u32; 16]> = registry
             .iter()
             .map(|(material_identifier, _)| {
-                let properties = registry
+                let properties: MaterialThermalProperties = registry
                     .thermal_properties(material_identifier)
                     .cloned()
                     .unwrap_or_default();
-                let transition = |value: Option<&MaterialThermalTransition>| {
-                    value.map_or([0, 0, 0, 0], |t| {
-                        [
-                            t.threshold_temperature.to_bits(),
-                            t.target.as_u32(),
-                            t.yield_rate.to_bits(),
-                            t.latent_energy.to_bits(),
-                        ]
-                    })
-                };
-                let cold = transition(properties.cold_transition.as_ref());
-                let hot = transition(properties.hot_transition.as_ref());
+                let transition: fn(Option<&MaterialThermalTransition>) -> [u32; 4] =
+                    |value: Option<&MaterialThermalTransition>| {
+                        value.map_or([0, 0, 0, 0], |t| {
+                            [
+                                t.threshold_temperature.to_bits(),
+                                t.target.as_u32(),
+                                t.yield_rate.to_bits(),
+                                t.latent_energy.to_bits(),
+                            ]
+                        })
+                    };
+                let cold: [u32; 4] = transition(properties.cold_transition.as_ref());
+                let hot: [u32; 4] = transition(properties.hot_transition.as_ref());
                 [
                     properties.conductivity.to_bits(),
                     properties.specific_heat_capacity.to_bits(),
@@ -70,27 +74,27 @@ impl MaterialTable {
                 .wgpu_queue()
                 .write_buffer(properties.wgpu_buffer(), 0, &bytes);
         }
-        let static_count = registry
+        let static_count: u32 = registry
             .iter()
             .filter(|(material_identifier, _)| {
                 material_identifier.form() == MaterialForm::CellularStatic
             })
             .count() as u32;
-        let dynamic_count = registry
+        let dynamic_count: u32 = registry
             .iter()
             .filter(|(material_identifier, _)| {
                 material_identifier.form() == MaterialForm::CellularDynamic
             })
             .count() as u32;
-        let fluid_count = registry
+        let fluid_count: u32 = registry
             .iter()
             .filter(|(material_identifier, _)| material_identifier.form() == MaterialForm::Fluid)
             .count() as u32;
-        let gas_count = registry
+        let gas_count: u32 = registry
             .iter()
             .filter(|(material_identifier, _)| material_identifier.form() == MaterialForm::Gas)
             .count() as u32;
-        let offsets = [
+        let offsets: [u32; 8] = [
             static_count + dynamic_count + fluid_count,
             0,
             static_count,
@@ -100,14 +104,15 @@ impl MaterialTable {
             dynamic_count,
             fluid_count,
         ];
-        let parameters = accelerator
-            .wgpu_device()
-            .create_buffer(&wgpu::BufferDescriptor {
-                label: Some("thermal material table parameters"),
-                size: 32,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
+        let parameters: wgpu::Buffer =
+            accelerator
+                .wgpu_device()
+                .create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("thermal material table parameters"),
+                    size: 32,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
         accelerator.wgpu_queue().write_buffer(
             &parameters,
             0,
@@ -153,16 +158,17 @@ impl MaterialTable {
         accelerator: &Accelerator,
         materials: &MaterialRegistry,
     ) -> (AcceleratorBuffer, AcceleratorBuffer) {
-        let records = accelerator.allocate::<[u32; CompiledMaterialReaction::WORD_COUNT]>(
-            materials.reactions().len().max(1),
-        );
-        let selector_members =
+        let records: AcceleratorBuffer = accelerator
+            .allocate::<[u32; CompiledMaterialReaction::WORD_COUNT]>(
+                materials.reactions().len().max(1),
+            );
+        let selector_members: AcceleratorBuffer =
             accelerator.allocate::<u32>(materials.reaction_selector_members().len().max(1));
         let encoded: Vec<[u32; CompiledMaterialReaction::WORD_COUNT]> = materials
             .reactions()
             .iter()
             .map(|rule| {
-                let environment_flags = u32::from(rule.minimum_temperature.is_finite())
+                let environment_flags: u32 = u32::from(rule.minimum_temperature.is_finite())
                     | (u32::from(rule.maximum_temperature.is_finite()) << 1)
                     | (u32::from(rule.minimum_pressure.is_finite()) << 2)
                     | (u32::from(rule.maximum_pressure.is_finite()) << 3)
