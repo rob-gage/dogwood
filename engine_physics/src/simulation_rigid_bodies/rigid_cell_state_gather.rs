@@ -44,11 +44,11 @@ impl RigidCellStateGather {
             label: Some("rigid cell state gather"),
             layout: &layout,
             entries: [
-                &descriptors.wgpu_buffer(),
-                &integrities.wgpu_buffer(),
-                &amounts.wgpu_buffer(),
-                &temperatures.wgpu_buffer(),
-                &output.wgpu_buffer(),
+                descriptors.wgpu_buffer(),
+                integrities.wgpu_buffer(),
+                amounts.wgpu_buffer(),
+                temperatures.wgpu_buffer(),
+                output.wgpu_buffer(),
                 &count,
             ]
             .into_iter()

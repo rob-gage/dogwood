@@ -39,10 +39,10 @@ impl RigidCellStateUpload {
             label: Some("rigid cell state upload"),
             layout: &layout,
             entries: [
-                &records.wgpu_buffer(),
-                &integrities.wgpu_buffer(),
-                &amounts.wgpu_buffer(),
-                &temperatures.wgpu_buffer(),
+                records.wgpu_buffer(),
+                integrities.wgpu_buffer(),
+                amounts.wgpu_buffer(),
+                temperatures.wgpu_buffer(),
                 &count,
             ]
             .into_iter()
