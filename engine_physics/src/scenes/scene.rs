@@ -260,7 +260,7 @@ impl Scene {
         self.area_buffered().contains(position.tile_coordinates)
     }
 
-    /// Applies every compatible completed Accelerator reaction in submission order
+    /// Returns the authored default temperature or the scene ambient temperature
     fn initial_temperature(&self, material_identifier: MaterialIdentifier) -> f32 {
         self.data
             .materials()
