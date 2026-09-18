@@ -461,7 +461,7 @@ impl<G: Game> EditorApplication<G> {
         accelerator: Arc<engine::compute::Accelerator>,
         game: G,
     ) -> Result<(), Box<dyn Error>> {
-        let _application_span =
+        let _application_span: tracing::span::EnteredSpan =
             tracing::info_span!("application", title = G::TITLE, kind = "editor",).entered();
         tracing::info!("launching editor");
         let event_loop: winit::event_loop::EventLoop<()> = winit::event_loop::EventLoop::builder()

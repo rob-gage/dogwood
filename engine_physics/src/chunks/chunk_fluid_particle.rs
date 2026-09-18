@@ -57,9 +57,9 @@ impl ChunkFluidParticle {
     }
 
     pub fn deserialize_legacy<R: io::Read>(reader: &mut R) -> Result<Self, io::Error> {
-        let material_identifier =
+        let material_identifier: MaterialIdentifier =
             MaterialIdentifier::from_u32(crate::binary_reader::read_u32(reader)?);
-        let particle = Self {
+        let particle: Self = Self {
             material_identifier,
             position: [
                 f32::from_bits(crate::binary_reader::read_u32(reader)?),
