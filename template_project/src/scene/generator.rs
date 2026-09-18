@@ -8,10 +8,10 @@ use engine::physics::{
 };
 
 /// Generates flat stone ground.
-pub(super) struct TemplateSceneGenerator {
-    pub(super) stone: MaterialIdentifier,
-    pub(super) stone_variation: [f32; 4],
-    pub(super) stone_integrity: f32,
+pub(crate) struct TemplateSceneGenerator {
+    pub(crate) stone: MaterialIdentifier,
+    pub(crate) stone_variation: [f32; 4],
+    pub(crate) stone_integrity: f32,
 }
 
 impl SceneGenerator for TemplateSceneGenerator {

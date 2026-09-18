@@ -8,68 +8,48 @@ mod reactions;
 
 use engine::{
     graphics::{Color, MaterialAppearance},
-    physics::materials::{Material, MaterialIdentifier, MaterialRegistry, MaterialRegistryBuilder},
+    physics::materials::{
+        Material, MaterialIdentifier, MaterialRegistry, MaterialRegistryBuilder,
+        MaterialThermalProperties, MaterialThermalTransition,
+    },
 };
 
 /// The complete declarative material set used by the runnable template.
 pub struct TemplateMaterials {
-    /// Registered materials and their compiled derived properties.
     pub registry: MaterialRegistry,
-    /// Material identifier for stone debris.
     pub stone_debris: MaterialIdentifier,
-    /// Material identifier for sand.
     pub sand: MaterialIdentifier,
-    /// Material identifier for stone.
     pub stone: MaterialIdentifier,
-    /// Material identifier for water.
     pub water: MaterialIdentifier,
-    /// Material identifier for water vapor.
     pub water_vapor: MaterialIdentifier,
-    /// Material identifier for smoke.
     pub smoke: MaterialIdentifier,
-    /// Material identifier for fire.
     pub fire: MaterialIdentifier,
-    /// Material identifier for slush.
     pub slush: MaterialIdentifier,
-    /// Material identifier for ice.
     pub ice: MaterialIdentifier,
-    /// Material identifier for lava.
     pub lava: MaterialIdentifier,
-    /// Material identifier for molten glass.
     pub molten_glass: MaterialIdentifier,
-    /// Material identifier for broken glass.
     pub broken_glass: MaterialIdentifier,
-    /// Material identifier for glass.
     pub glass: MaterialIdentifier,
-    /// Material identifier for coal.
     pub coal: MaterialIdentifier,
-    /// Material identifier for oil.
     pub oil: MaterialIdentifier,
-    /// Material identifier for natural gas.
     pub natural_gas: MaterialIdentifier,
-    /// Material identifier for blasting powder.
     pub blasting_powder: MaterialIdentifier,
-    /// Material identifier for acid.
     pub acid: MaterialIdentifier,
-    /// Material identifier for acid gas.
     pub acid_gas: MaterialIdentifier,
-    /// Material identifier for acid sludge.
     pub acid_sludge: MaterialIdentifier,
-    /// Per-channel variation applied when rendering stone.
     pub stone_variation: [f32; 4],
-    /// Per-channel variation applied when rendering sand.
     pub sand_variation: [f32; 4],
 }
 
 impl TemplateMaterials {
     /// Builds and validates the template material registry.
     pub fn new() -> Result<Self, String> {
-        let mut materials: MaterialRegistryBuilder = MaterialRegistryBuilder::new();
-        let stone_debris_graphics: MaterialAppearance =
-            MaterialAppearance::from_color(Color::new_rgb(148, 148, 148))
-                .with_variation([0.5, 0.5, 0.5, 0.0])
-                .with_color_influence([0.25, 0.25, 0.25, 0.0]);
-        let stone_debris: MaterialIdentifier = materials.register(Material::CellularDynamic {
+        let mut materials = MaterialRegistryBuilder::new();
+
+        let stone_debris_graphics = MaterialAppearance::from_color(Color::new_rgb(148, 148, 148))
+            .with_variation([0.5, 0.5, 0.5, 0.0])
+            .with_color_influence([0.25, 0.25, 0.25, 0.0]);
+        let stone_debris = materials.register(Material::CellularDynamic {
             name: "Stone Debris".into(),
             graphics: stone_debris_graphics,
             mass: 3.0,
@@ -77,11 +57,13 @@ impl TemplateMaterials {
             friction: 0.45,
             restitution: 0.15,
         });
-        let sand_graphics: MaterialAppearance =
-            MaterialAppearance::from_color(Color::new_rgb(194, 178, 128))
-                .with_variation([0.5, 0.5, 0.5, 0.0])
-                .with_color_influence([0.20, 0.18, 0.12, 0.0]);
-        let sand: MaterialIdentifier = materials.register(Material::CellularDynamic {
+        let mut stone_debris_thermal = thermal(1.2, 0.88, 293.15);
+        stone_debris_thermal.hot_transition = Some(transition(1473.15, 120.0));
+
+        let sand_graphics = MaterialAppearance::from_color(Color::new_rgb(194, 178, 128))
+            .with_variation([0.5, 0.5, 0.5, 0.0])
+            .with_color_influence([0.20, 0.18, 0.12, 0.0]);
+        let sand = materials.register(Material::CellularDynamic {
             name: "Sand".into(),
             graphics: sand_graphics,
             mass: 1.0,
@@ -89,11 +71,13 @@ impl TemplateMaterials {
             friction: 0.65,
             restitution: 0.05,
         });
-        let stone_graphics: MaterialAppearance =
-            MaterialAppearance::from_color(Color::new_rgb(108, 108, 108))
-                .with_variation([0.5, 0.5, 0.5, 0.0])
-                .with_color_influence([0.25, 0.25, 0.25, 0.0]);
-        let stone: MaterialIdentifier = materials.register(Material::CellularStatic {
+        let mut sand_thermal = thermal(0.8, 0.83, 293.15);
+        sand_thermal.hot_transition = Some(transition(1700.0, 80.0));
+
+        let stone_graphics = MaterialAppearance::from_color(Color::new_rgb(108, 108, 108))
+            .with_variation([0.5, 0.5, 0.5, 0.0])
+            .with_color_influence([0.25, 0.25, 0.25, 0.0]);
+        let stone = materials.register(Material::CellularStatic {
             name: "Stone".into(),
             graphics: stone_graphics,
             mass: 1.0,
@@ -106,7 +90,10 @@ impl TemplateMaterials {
             friction: 0.8,
             restitution: 0.02,
         });
-        let water: MaterialIdentifier = materials.register(Material::Fluid {
+        let mut stone_thermal = thermal(1.4, 0.88, 293.15);
+        stone_thermal.hot_transition = Some(transition(1473.15, 120.0));
+
+        let water = materials.register(Material::Fluid {
             name: "Water".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(45, 125, 210)),
             pressure_transmission: 0.95,
@@ -119,7 +106,11 @@ impl TemplateMaterials {
             density: 1.0,
             viscosity: 2.0,
         });
-        let water_vapor: MaterialIdentifier = materials.register(Material::Gas {
+        let mut water_thermal = thermal(0.6, 4.18, 293.15);
+        water_thermal.cold_transition = Some(transition(273.15, 20.0));
+        water_thermal.hot_transition = Some(transition(373.15, 50.0));
+
+        let water_vapor = materials.register(Material::Gas {
             name: "Water Vapor".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(176, 205, 220)),
             density: 0.622,
@@ -128,7 +119,13 @@ impl TemplateMaterials {
             dissipation: 0.0,
             compressibility: 0.05,
         });
-        let smoke: MaterialIdentifier = materials.register(Material::Gas {
+        set_thermal(
+            &mut materials,
+            water_vapor,
+            thermal_with_cold(0.025, 2.0, 393.15, 373.15, 50.0, water),
+        )?;
+
+        let smoke = materials.register(Material::Gas {
             name: "Smoke".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(68, 72, 76)),
             density: 0.85,
@@ -137,7 +134,9 @@ impl TemplateMaterials {
             dissipation: 0.0001,
             compressibility: 0.1,
         });
-        let fire: MaterialIdentifier = materials.register(Material::Gas {
+        set_thermal(&mut materials, smoke, thermal(0.05, 1.1, 500.0))?;
+
+        let fire = materials.register(Material::Gas {
             name: "Fire".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(255, 145, 24)),
             density: 0.12,
@@ -146,7 +145,9 @@ impl TemplateMaterials {
             dissipation: 0.002,
             compressibility: 0.08,
         });
-        let slush: MaterialIdentifier = materials.register(Material::CellularDynamic {
+        set_thermal(&mut materials, fire, thermal(0.04, 1.2, 1050.0))?;
+
+        let slush = materials.register(Material::CellularDynamic {
             name: "Slush".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(130, 185, 215)),
             mass: 1.0,
@@ -154,7 +155,13 @@ impl TemplateMaterials {
             friction: 0.35,
             restitution: 0.0,
         });
-        let ice: MaterialIdentifier = materials.register(Material::CellularStatic {
+        set_thermal(
+            &mut materials,
+            slush,
+            thermal_with_hot(1.6, 2.1, 268.15, 273.15, 20.0, water),
+        )?;
+
+        let ice = materials.register(Material::CellularStatic {
             name: "Ice".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(180, 220, 245)),
             mass: 1.0,
@@ -167,7 +174,13 @@ impl TemplateMaterials {
             friction: 0.2,
             restitution: 0.0,
         });
-        let lava: MaterialIdentifier = materials.register(Material::Fluid {
+        set_thermal(
+            &mut materials,
+            ice,
+            thermal_with_hot(2.2, 2.1, 263.15, 273.15, 20.0, water),
+        )?;
+
+        let lava = materials.register(Material::Fluid {
             name: "Lava".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(220, 70, 20)),
             pressure_transmission: 0.92,
@@ -180,7 +193,13 @@ impl TemplateMaterials {
             density: 2.4,
             viscosity: 12.0,
         });
-        let molten_glass: MaterialIdentifier = materials.register(Material::Fluid {
+        set_thermal(
+            &mut materials,
+            lava,
+            thermal_with_cold(1.0, 1.1, 1573.15, 1473.15, 120.0, stone),
+        )?;
+
+        let molten_glass = materials.register(Material::Fluid {
             name: "Molten Glass".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(245, 125, 40)),
             pressure_transmission: 0.9,
@@ -193,7 +212,10 @@ impl TemplateMaterials {
             density: 2.2,
             viscosity: 18.0,
         });
-        let broken_glass: MaterialIdentifier = materials.register(Material::CellularDynamic {
+        let mut molten_glass_thermal = thermal(0.7, 1.0, 1800.0);
+        molten_glass_thermal.cold_transition = Some(transition(1400.0, 80.0));
+
+        let broken_glass = materials.register(Material::CellularDynamic {
             name: "Broken Glass".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(170, 200, 215)),
             mass: 2.0,
@@ -201,7 +223,13 @@ impl TemplateMaterials {
             friction: 0.5,
             restitution: 0.08,
         });
-        let glass: MaterialIdentifier = materials.register(Material::CellularStatic {
+        set_thermal(
+            &mut materials,
+            broken_glass,
+            thermal_with_hot(0.8, 0.84, 293.15, 1400.0, 80.0, molten_glass),
+        )?;
+
+        let glass = materials.register(Material::CellularStatic {
             name: "Glass".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(190, 215, 225)),
             mass: 2.0,
@@ -214,7 +242,13 @@ impl TemplateMaterials {
             friction: 0.35,
             restitution: 0.04,
         });
-        let coal: MaterialIdentifier = materials.register(Material::CellularDynamic {
+        set_thermal(
+            &mut materials,
+            glass,
+            thermal_with_hot(0.9, 0.84, 293.15, 1400.0, 80.0, molten_glass),
+        )?;
+
+        let coal = materials.register(Material::CellularDynamic {
             name: "Coal".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(42, 35, 32)),
             mass: 1.4,
@@ -222,7 +256,9 @@ impl TemplateMaterials {
             friction: 0.7,
             restitution: 0.02,
         });
-        let oil: MaterialIdentifier = materials.register(Material::Fluid {
+        set_thermal(&mut materials, coal, thermal(0.35, 1.5, 293.15))?;
+
+        let oil = materials.register(Material::Fluid {
             name: "Oil".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(88, 62, 24)),
             pressure_transmission: 0.9,
@@ -235,7 +271,9 @@ impl TemplateMaterials {
             density: 0.82,
             viscosity: 5.0,
         });
-        let natural_gas: MaterialIdentifier = materials.register(Material::Gas {
+        set_thermal(&mut materials, oil, thermal(0.12, 2.0, 293.15))?;
+
+        let natural_gas = materials.register(Material::Gas {
             name: "Natural Gas".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(215, 188, 105)),
             density: 0.2,
@@ -244,7 +282,9 @@ impl TemplateMaterials {
             dissipation: 0.0,
             compressibility: 0.08,
         });
-        let blasting_powder: MaterialIdentifier = materials.register(Material::CellularDynamic {
+        set_thermal(&mut materials, natural_gas, thermal(0.08, 2.2, 293.15))?;
+
+        let blasting_powder = materials.register(Material::CellularDynamic {
             name: "Blasting Powder".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(150, 118, 82)),
             mass: 1.1,
@@ -252,7 +292,9 @@ impl TemplateMaterials {
             friction: 0.65,
             restitution: 0.02,
         });
-        let acid: MaterialIdentifier = materials.register(Material::Fluid {
+        set_thermal(&mut materials, blasting_powder, thermal(0.25, 1.3, 293.15))?;
+
+        let acid = materials.register(Material::Fluid {
             name: "Acid".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(85, 220, 72)),
             pressure_transmission: 0.9,
@@ -265,7 +307,10 @@ impl TemplateMaterials {
             density: 1.05,
             viscosity: 2.5,
         });
-        let acid_gas: MaterialIdentifier = materials.register(Material::Gas {
+        let mut acid_thermal = thermal(0.55, 3.2, 293.15);
+        acid_thermal.hot_transition = Some(transition(450.0, 35.0));
+
+        let acid_gas = materials.register(Material::Gas {
             name: "Acid Gas".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(180, 235, 92)),
             density: 0.9,
@@ -274,7 +319,13 @@ impl TemplateMaterials {
             dissipation: 0.0,
             compressibility: 0.06,
         });
-        let acid_sludge: MaterialIdentifier = materials.register(Material::Fluid {
+        set_thermal(
+            &mut materials,
+            acid_gas,
+            thermal_with_cold(0.03, 1.6, 500.0, 450.0, 35.0, acid),
+        )?;
+
+        let acid_sludge = materials.register(Material::Fluid {
             name: "Acid Sludge".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(112, 150, 48)),
             pressure_transmission: 0.9,
@@ -287,6 +338,31 @@ impl TemplateMaterials {
             density: 1.15,
             viscosity: 6.0,
         });
+
+        // Resolve only the forward references; their complete thermal values
+        // remain beside the material registrations above.
+        stone_debris_thermal.hot_transition.as_mut().unwrap().target = lava;
+        sand_thermal.hot_transition.as_mut().unwrap().target = molten_glass;
+        stone_thermal.hot_transition.as_mut().unwrap().target = lava;
+        water_thermal.cold_transition.as_mut().unwrap().target = ice;
+        water_thermal.hot_transition.as_mut().unwrap().target = water_vapor;
+        molten_glass_thermal
+            .cold_transition
+            .as_mut()
+            .unwrap()
+            .target = glass;
+        acid_thermal.hot_transition.as_mut().unwrap().target = acid_gas;
+        for (material, properties) in [
+            (stone_debris, stone_debris_thermal),
+            (sand, sand_thermal),
+            (stone, stone_thermal),
+            (water, water_thermal),
+            (molten_glass, molten_glass_thermal),
+            (acid, acid_thermal),
+        ] {
+            set_thermal(&mut materials, material, properties)?;
+        }
+
         reactions::register_reactions(
             &mut materials,
             fire,
@@ -304,28 +380,6 @@ impl TemplateMaterials {
             glass,
             broken_glass,
             coal,
-        )?;
-        register_thermal_properties(
-            &mut materials,
-            ice,
-            water,
-            slush,
-            stone,
-            stone_debris,
-            lava,
-            sand,
-            molten_glass,
-            glass,
-            broken_glass,
-            water_vapor,
-            acid,
-            acid_gas,
-            fire,
-            coal,
-            oil,
-            natural_gas,
-            blasting_powder,
-            smoke,
         )?;
 
         Ok(Self {
@@ -356,288 +410,66 @@ impl TemplateMaterials {
     }
 }
 
-use crate::engine::physics::materials::{MaterialThermalProperties, MaterialThermalTransition};
+fn thermal(
+    conductivity: f32,
+    specific_heat_capacity: f32,
+    default_temperature: f32,
+) -> MaterialThermalProperties {
+    MaterialThermalProperties {
+        conductivity,
+        specific_heat_capacity,
+        default_temperature: Some(default_temperature),
+        ..Default::default()
+    }
+}
 
-fn register_thermal_properties(
+fn transition(threshold_temperature: f32, latent_energy: f32) -> MaterialThermalTransition {
+    MaterialThermalTransition {
+        threshold_temperature,
+        target: MaterialIdentifier::NULL,
+        yield_rate: 1.0,
+        latent_energy,
+    }
+}
+
+fn thermal_with_hot(
+    conductivity: f32,
+    specific_heat_capacity: f32,
+    default_temperature: f32,
+    threshold: f32,
+    latent_energy: f32,
+    target: MaterialIdentifier,
+) -> MaterialThermalProperties {
+    let mut properties = thermal(conductivity, specific_heat_capacity, default_temperature);
+    properties.hot_transition = Some(MaterialThermalTransition {
+        target,
+        ..transition(threshold, latent_energy)
+    });
+    properties
+}
+
+fn thermal_with_cold(
+    conductivity: f32,
+    specific_heat_capacity: f32,
+    default_temperature: f32,
+    threshold: f32,
+    latent_energy: f32,
+    target: MaterialIdentifier,
+) -> MaterialThermalProperties {
+    let mut properties = thermal(conductivity, specific_heat_capacity, default_temperature);
+    properties.cold_transition = Some(MaterialThermalTransition {
+        target,
+        ..transition(threshold, latent_energy)
+    });
+    properties
+}
+
+fn set_thermal(
     materials: &mut MaterialRegistryBuilder,
-    ice: MaterialIdentifier,
-    water: MaterialIdentifier,
-    slush: MaterialIdentifier,
-    stone: MaterialIdentifier,
-    stone_debris: MaterialIdentifier,
-    lava: MaterialIdentifier,
-    sand: MaterialIdentifier,
-    molten_glass: MaterialIdentifier,
-    glass: MaterialIdentifier,
-    broken_glass: MaterialIdentifier,
-    water_vapor: MaterialIdentifier,
-    acid: MaterialIdentifier,
-    acid_gas: MaterialIdentifier,
-    fire: MaterialIdentifier,
-    coal: MaterialIdentifier,
-    oil: MaterialIdentifier,
-    natural_gas: MaterialIdentifier,
-    blasting_powder: MaterialIdentifier,
-    smoke: MaterialIdentifier,
+    material: MaterialIdentifier,
+    properties: MaterialThermalProperties,
 ) -> Result<(), String> {
     materials
-        .set_thermal(
-            ice,
-            MaterialThermalProperties {
-                conductivity: 2.2,
-                specific_heat_capacity: 2.1,
-                default_temperature: Some(263.15),
-                cold_transition: None,
-                hot_transition: Some(MaterialThermalTransition {
-                    threshold_temperature: 273.15,
-                    target: water,
-                    yield_rate: 1.0,
-                    latent_energy: 20.0,
-                }),
-            },
-        )
-        .map_err(|error| error.to_string())?;
-    materials
-        .set_thermal(
-            slush,
-            MaterialThermalProperties {
-                conductivity: 1.6,
-                specific_heat_capacity: 2.1,
-                default_temperature: Some(268.15),
-                cold_transition: None,
-                hot_transition: Some(MaterialThermalTransition {
-                    threshold_temperature: 273.15,
-                    target: water,
-                    yield_rate: 1.0,
-                    latent_energy: 20.0,
-                }),
-            },
-        )
-        .map_err(|error| error.to_string())?;
-    materials
-        .set_thermal(
-            stone,
-            MaterialThermalProperties {
-                conductivity: 1.4,
-                specific_heat_capacity: 0.88,
-                default_temperature: Some(293.15),
-                cold_transition: None,
-                hot_transition: Some(MaterialThermalTransition {
-                    threshold_temperature: 1473.15,
-                    target: lava,
-                    yield_rate: 1.0,
-                    latent_energy: 120.0,
-                }),
-            },
-        )
-        .map_err(|error| error.to_string())?;
-    materials
-        .set_thermal(
-            stone_debris,
-            MaterialThermalProperties {
-                conductivity: 1.2,
-                specific_heat_capacity: 0.88,
-                default_temperature: Some(293.15),
-                cold_transition: None,
-                hot_transition: Some(MaterialThermalTransition {
-                    threshold_temperature: 1473.15,
-                    target: lava,
-                    yield_rate: 1.0,
-                    latent_energy: 120.0,
-                }),
-            },
-        )
-        .map_err(|error| error.to_string())?;
-    materials
-        .set_thermal(
-            lava,
-            MaterialThermalProperties {
-                conductivity: 1.0,
-                specific_heat_capacity: 1.1,
-                default_temperature: Some(1573.15),
-                cold_transition: Some(MaterialThermalTransition {
-                    threshold_temperature: 1473.15,
-                    target: stone,
-                    yield_rate: 1.0,
-                    latent_energy: 120.0,
-                }),
-                hot_transition: None,
-            },
-        )
-        .map_err(|error| error.to_string())?;
-    materials
-        .set_thermal(
-            sand,
-            MaterialThermalProperties {
-                conductivity: 0.8,
-                specific_heat_capacity: 0.83,
-                default_temperature: Some(293.15),
-                cold_transition: None,
-                hot_transition: Some(MaterialThermalTransition {
-                    threshold_temperature: 1700.0,
-                    target: molten_glass,
-                    yield_rate: 1.0,
-                    latent_energy: 80.0,
-                }),
-            },
-        )
-        .map_err(|error| error.to_string())?;
-    materials
-        .set_thermal(
-            molten_glass,
-            MaterialThermalProperties {
-                conductivity: 0.7,
-                specific_heat_capacity: 1.0,
-                default_temperature: Some(1800.0),
-                cold_transition: Some(MaterialThermalTransition {
-                    threshold_temperature: 1400.0,
-                    target: glass,
-                    yield_rate: 1.0,
-                    latent_energy: 80.0,
-                }),
-                hot_transition: None,
-            },
-        )
-        .map_err(|error| error.to_string())?;
-    materials
-        .set_thermal(
-            glass,
-            MaterialThermalProperties {
-                conductivity: 0.9,
-                specific_heat_capacity: 0.84,
-                default_temperature: Some(293.15),
-                cold_transition: None,
-                hot_transition: Some(MaterialThermalTransition {
-                    threshold_temperature: 1400.0,
-                    target: molten_glass,
-                    yield_rate: 1.0,
-                    latent_energy: 80.0,
-                }),
-            },
-        )
-        .map_err(|error| error.to_string())?;
-    materials
-        .set_thermal(
-            broken_glass,
-            MaterialThermalProperties {
-                conductivity: 0.8,
-                specific_heat_capacity: 0.84,
-                default_temperature: Some(293.15),
-                cold_transition: None,
-                hot_transition: Some(MaterialThermalTransition {
-                    threshold_temperature: 1400.0,
-                    target: molten_glass,
-                    yield_rate: 1.0,
-                    latent_energy: 80.0,
-                }),
-            },
-        )
-        .map_err(|error| error.to_string())?;
-    materials
-        .set_thermal(
-            water,
-            MaterialThermalProperties {
-                conductivity: 0.6,
-                specific_heat_capacity: 4.18,
-                default_temperature: Some(293.15),
-                cold_transition: Some(MaterialThermalTransition {
-                    threshold_temperature: 273.15,
-                    target: ice,
-                    yield_rate: 1.0,
-                    latent_energy: 20.0,
-                }),
-                hot_transition: Some(MaterialThermalTransition {
-                    threshold_temperature: 373.15,
-                    target: water_vapor,
-                    yield_rate: 1.0,
-                    latent_energy: 50.0,
-                }),
-            },
-        )
-        .map_err(|error| error.to_string())?;
-    materials
-        .set_thermal(
-            water_vapor,
-            MaterialThermalProperties {
-                conductivity: 0.025,
-                specific_heat_capacity: 2.0,
-                default_temperature: Some(393.15),
-                cold_transition: Some(MaterialThermalTransition {
-                    threshold_temperature: 373.15,
-                    target: water,
-                    yield_rate: 1.0,
-                    latent_energy: 50.0,
-                }),
-                hot_transition: None,
-            },
-        )
-        .map_err(|error| error.to_string())?;
-    materials
-        .set_thermal(
-            acid,
-            MaterialThermalProperties {
-                conductivity: 0.55,
-                specific_heat_capacity: 3.2,
-                default_temperature: Some(293.15),
-                cold_transition: None,
-                hot_transition: Some(MaterialThermalTransition {
-                    threshold_temperature: 450.0,
-                    target: acid_gas,
-                    yield_rate: 1.0,
-                    latent_energy: 35.0,
-                }),
-            },
-        )
-        .map_err(|error| error.to_string())?;
-    materials
-        .set_thermal(
-            acid_gas,
-            MaterialThermalProperties {
-                conductivity: 0.03,
-                specific_heat_capacity: 1.6,
-                default_temperature: Some(500.0),
-                cold_transition: Some(MaterialThermalTransition {
-                    threshold_temperature: 450.0,
-                    target: acid,
-                    yield_rate: 1.0,
-                    latent_energy: 35.0,
-                }),
-                hot_transition: None,
-            },
-        )
-        .map_err(|error| error.to_string())?;
-    materials
-        .set_thermal(
-            fire,
-            MaterialThermalProperties {
-                conductivity: 0.04,
-                specific_heat_capacity: 1.2,
-                default_temperature: Some(1050.0),
-                cold_transition: None,
-                hot_transition: None,
-            },
-        )
-        .map_err(|error| error.to_string())?;
-    for (material, conductivity, specific_heat_capacity, default_temperature) in [
-        (coal, 0.35, 1.5, 293.15),
-        (oil, 0.12, 2.0, 293.15),
-        (natural_gas, 0.08, 2.2, 293.15),
-        (blasting_powder, 0.25, 1.3, 293.15),
-        (smoke, 0.05, 1.1, 500.0),
-    ] {
-        materials
-            .set_thermal(
-                material,
-                MaterialThermalProperties {
-                    conductivity,
-                    specific_heat_capacity,
-                    default_temperature: Some(default_temperature),
-                    cold_transition: None,
-                    hot_transition: None,
-                },
-            )
-            .map_err(|error| error.to_string())?;
-    }
-
-    Ok(())
+        .set_thermal(material, properties)
+        .map_err(|error| error.to_string())
 }

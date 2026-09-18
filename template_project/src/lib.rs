@@ -6,7 +6,10 @@ extern crate dogwood_editor as editor;
 extern crate dogwood_engine as engine;
 extern crate dogwood_template_materials as template_materials;
 
-mod template_project;
-mod template_scene_generator;
+mod actors;
+mod gameplay;
+mod project;
+mod scene;
+mod ui;
 
-pub use template_project::TemplateProject;
+pub use project::TemplateProject;

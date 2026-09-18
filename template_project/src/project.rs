@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-use super::template_scene_generator::TemplateSceneGenerator;
+use super::scene::TemplateSceneGenerator;
 use engine::{
     Game,
     compute::Accelerator,
