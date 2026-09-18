@@ -5,19 +5,17 @@ const TAU: f32 = 6.283185307179586;
 struct CascadeConfiguration {
     scene_size: vec2<u32>,
     probe_size: vec2<u32>,
-    upper_probe_size: vec2<u32>,
     probe_spacing: u32,
-    upper_probe_spacing: u32,
     direction_count: u32,
     interval_start: f32,
     interval_end: f32,
+    world_origin: vec2<f32>,
     _padding: vec4<f32>,
 }
 
 struct RadianceIntervals { values: array<vec4<f32>>, }
 
 @group(0) @binding(0) var optical_field: texture_2d<f32>;
-@group(0) @binding(2) var distance_field: texture_2d<f32>;
 @group(0) @binding(3) var<uniform> trace_configuration: CascadeConfiguration;
 @group(0) @binding(4) var<storage, read_write> trace_output: RadianceIntervals;
 
@@ -40,8 +38,10 @@ fn trace(@builtin(global_invocation_id) invocation: vec3<u32>) {
         probe_index % trace_configuration.probe_size.x,
         probe_index / trace_configuration.probe_size.x,
     );
-    let probe_position = (vec2<f32>(probe) - vec2<f32>(0.5)) *
-        f32(trace_configuration.probe_spacing);
+    let probe_position = probe_origin(
+        trace_configuration.world_origin,
+        trace_configuration.probe_spacing,
+    ) + vec2<f32>(probe) * f32(trace_configuration.probe_spacing);
     let angle = (f32(direction_index) + 0.5) * TAU /
         f32(trace_configuration.direction_count);
     let direction = vec2<f32>(cos(angle), sin(angle));
@@ -82,8 +82,7 @@ fn trace(@builtin(global_invocation_id) invocation: vec3<u32>) {
             continue;
         }
         escaping_origin_cell = false;
-        let distance = textureLoad(distance_field, pixel, 0).r;
-        travel += max(distance * 0.8, 1.0);
+        travel += 1.0;
     }
     trace_output.values[invocation.x] = vec4<f32>(max(radiance, vec3<f32>(0.0)),
         clamp(transmission, 0.0, 1.0));
@@ -101,8 +100,10 @@ fn merge(@builtin(global_invocation_id) invocation: vec3<u32>) {
         probe_index % merge_configuration.probe_size.x,
         probe_index / merge_configuration.probe_size.x,
     );
-    let position = (vec2<f32>(probe) - vec2<f32>(0.5)) *
-        f32(merge_configuration.probe_spacing);
+    let position = probe_origin(
+        merge_configuration.world_origin,
+        merge_configuration.probe_spacing,
+    ) + vec2<f32>(probe) * f32(merge_configuration.probe_spacing);
     var far = vec4<f32>(0.0);
     for (var child = 0u; child < 4u; child++) {
         far += sample_upper(position, direction_index * 4u + child);
@@ -132,9 +133,11 @@ fn integrate(@builtin(global_invocation_id) invocation: vec3<u32>) {
 }
 
 fn sample_upper(position: vec2<f32>, direction: u32) -> vec4<f32> {
-    let spacing = merge_configuration.upper_probe_spacing;
-    let size = merge_configuration.upper_probe_size;
-    let coordinate = position / f32(spacing) + vec2<f32>(0.5);
+    let spacing = merge_configuration.probe_spacing * 2u;
+    let size = (merge_configuration.scene_size + vec2<u32>(spacing - 1u)) / spacing +
+        vec2<u32>(2);
+    let origin = probe_origin(merge_configuration.world_origin, spacing);
+    let coordinate = (position - origin) / f32(spacing);
     let base = clamp(vec2<i32>(floor(coordinate)), vec2<i32>(0), vec2<i32>(size) - vec2<i32>(1));
     let fraction = fract(coordinate);
     let p00 = sample_upper_probe(base, size, direction);
@@ -152,7 +155,8 @@ fn sample_upper_probe(probe: vec2<i32>, size: vec2<u32>, direction: u32) -> vec4
 
 fn sample_integrated(position: vec2<f32>, direction: u32) -> vec4<f32> {
     let spacing = integrate_configuration.probe_spacing;
-    let coordinate = position / f32(spacing) + vec2<f32>(0.5);
+    let origin = probe_origin(integrate_configuration.world_origin, spacing);
+    let coordinate = (position - origin) / f32(spacing);
     let base = clamp(vec2<i32>(floor(coordinate)), vec2<i32>(0),
         vec2<i32>(integrate_configuration.probe_size) - vec2<i32>(1));
     let fraction = fract(coordinate);
@@ -168,4 +172,10 @@ fn sample_integrated_probe(probe: vec2<i32>, direction: u32) -> vec4<f32> {
     let index = (u32(probe.y) * integrate_configuration.probe_size.x + u32(probe.x)) *
         integrate_configuration.direction_count + direction;
     return integrated_intervals.values[index];
+}
+
+fn probe_origin(world_origin: vec2<f32>, spacing: u32) -> vec2<f32> {
+    let spacing_float = f32(spacing);
+    return world_origin - floor(world_origin / spacing_float) * spacing_float -
+        vec2<f32>(spacing_float);
 }

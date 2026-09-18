@@ -2,7 +2,6 @@
 
 //! Scene and user-interface rendering orchestration.
 
-mod scene_distance_pass;
 mod scene_radiance_pass;
 mod scene_renderer;
 #[cfg(test)]

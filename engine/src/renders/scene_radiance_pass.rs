@@ -4,8 +4,6 @@ use engine_compute::{Accelerator, AcceleratorBuffer};
 use engine_graphics::SceneGraphics;
 use engine_physics::scenes::Scene;
 
-use super::scene_distance_pass::SceneDistancePass;
-
 const CASCADE_COUNT: usize = 5;
 const PROBE_SPACING: u32 = 4;
 const DIRECTION_COUNT: u32 = 4;
@@ -21,8 +19,6 @@ pub(super) struct LightingDomain {
 /// Persistent optical resolve and Radiance Cascades resources for one scene view.
 pub(super) struct SceneRadiancePass {
     domain: Option<LightingDomain>,
-    configured_size: Option<[u32; 2]>,
-    distance_pass: SceneDistancePass,
     optical: Option<(wgpu::Texture, wgpu::TextureView)>,
     optical_pipeline: Option<wgpu::RenderPipeline>,
     optical_layout: Option<wgpu::BindGroupLayout>,
@@ -46,8 +42,6 @@ impl SceneRadiancePass {
     pub(super) const fn new() -> Self {
         Self {
             domain: None,
-            configured_size: None,
-            distance_pass: SceneDistancePass::new(),
             optical: None,
             optical_pipeline: None,
             optical_layout: None,
@@ -86,7 +80,7 @@ impl SceneRadiancePass {
     ) {
         self.initialize(accelerator);
         let domain = Self::domain_for(camera_position, camera_size);
-        self.ensure_textures(accelerator, domain.size_cells);
+        self.resize(accelerator, domain.size_cells, domain.world_cell_origin);
         self.domain = Some(domain);
         let (
             Some(optical_pipeline),
@@ -183,17 +177,6 @@ impl SceneRadiancePass {
         render_pass.set_scissor_rect(0, 0, domain.size_cells[0], domain.size_cells[1]);
         render_pass.draw(0..3, 0..1);
         drop(render_pass);
-
-        self.distance_pass.compute(
-            accelerator,
-            domain.size_cells,
-            optical_view,
-            command_encoder,
-        );
-        let Some(distance_view) = self.distance_pass.distance().cloned() else {
-            return;
-        };
-        self.resize(accelerator, domain.size_cells, &distance_view);
 
         let mut compute_pass = command_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("Scene radiance cascades"),
@@ -307,7 +290,6 @@ impl SceneRadiancePass {
             label: Some("Scene radiance trace layout"),
             entries: &[
                 Self::texture_layout_entry(0),
-                Self::texture_layout_entry(2),
                 Self::uniform_layout_entry(3),
                 Self::storage_layout_entry(4, false),
             ],
@@ -360,10 +342,12 @@ impl SceneRadiancePass {
         self.integrate_layout = Some(integrate_layout);
     }
 
-    fn ensure_textures(&mut self, accelerator: &Accelerator, size: [u32; 2]) {
-        if self.configured_size == Some(size) {
+    fn resize(&mut self, accelerator: &Accelerator, size: [u32; 2], world_origin: [i32; 2]) {
+        if self.domain.map(|domain| domain.size_cells) == Some(size) {
+            self.update_origins(accelerator, size, world_origin);
             return;
         }
+        let device = accelerator.wgpu_device();
         self.optical = Some(Self::texture(
             accelerator,
             size,
@@ -378,19 +362,6 @@ impl SceneRadiancePass {
             wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
             "Scene illumination",
         ));
-        self.configured_size = None;
-    }
-
-    fn resize(
-        &mut self,
-        accelerator: &Accelerator,
-        size: [u32; 2],
-        distance_view: &wgpu::TextureView,
-    ) {
-        if self.configured_size == Some(size) {
-            return;
-        }
-        let device = accelerator.wgpu_device();
         self.configurations.clear();
         self.intervals.clear();
         self.counts.clear();
@@ -405,18 +376,15 @@ impl SceneRadiancePass {
             let spacing = PROBE_SPACING << cascade;
             let directions = DIRECTION_COUNT << (cascade * 2);
             let probe_size = Self::probe_size(size, spacing);
-            let upper_spacing = spacing << 1;
-            let upper_probe_size = Self::probe_size(size, upper_spacing);
             let end = start + Self::interval_length(cascade);
             let config = Self::config(
                 size,
                 probe_size,
-                upper_probe_size,
                 spacing,
-                upper_spacing,
                 directions,
                 start,
                 end,
+                world_origin,
             );
             let buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Scene cascade configuration"),
@@ -451,10 +419,6 @@ impl SceneRadiancePass {
                         wgpu::BindGroupEntry {
                             binding: 0,
                             resource: wgpu::BindingResource::TextureView(optical_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::TextureView(distance_view),
                         },
                         wgpu::BindGroupEntry {
                             binding: 3,
@@ -519,7 +483,32 @@ impl SceneRadiancePass {
                     },
                 ],
             }));
-        self.configured_size = Some(size);
+    }
+
+    fn update_origins(&self, accelerator: &Accelerator, size: [u32; 2], world_origin: [i32; 2]) {
+        for (cascade, configuration) in self.configurations.iter().enumerate() {
+            let spacing = PROBE_SPACING << cascade;
+            let directions = DIRECTION_COUNT << (cascade * 2);
+            let start: f32 = (0..cascade).map(Self::interval_length).sum();
+            let end = start + Self::interval_length(cascade);
+            let values = Self::config(
+                size,
+                Self::probe_size(size, spacing),
+                spacing,
+                directions,
+                start,
+                end,
+                world_origin,
+            );
+            accelerator.wgpu_queue().write_buffer(
+                configuration,
+                0,
+                &values
+                    .into_iter()
+                    .flat_map(u32::to_le_bytes)
+                    .collect::<Vec<_>>(),
+            );
+        }
     }
 
     fn domain_for(camera_position: [f32; 2], camera_size: [f32; 2]) -> LightingDomain {
@@ -552,25 +541,24 @@ impl SceneRadiancePass {
     fn config(
         size: [u32; 2],
         probes: [u32; 2],
-        upper_probes: [u32; 2],
         spacing: u32,
-        upper_spacing: u32,
         directions: u32,
         start: f32,
         end: f32,
+        world_origin: [i32; 2],
     ) -> [u32; 16] {
         [
             size[0],
             size[1],
             probes[0],
             probes[1],
-            upper_probes[0],
-            upper_probes[1],
             spacing,
-            upper_spacing,
             directions,
             start.to_bits(),
             end.to_bits(),
+            world_origin[0] as u32,
+            world_origin[1] as u32,
+            0,
             0,
             0,
             0,
