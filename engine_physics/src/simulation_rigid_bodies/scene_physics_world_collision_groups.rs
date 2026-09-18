@@ -53,6 +53,8 @@ impl ScenePhysicsWorld {
     }
 
     pub(crate) fn pawn_query_groups() -> InteractionGroups {
-        InteractionGroups::all().with_memberships(Group::GROUP_1 | Group::GROUP_3 | Group::GROUP_4)
+        InteractionGroups::all()
+            .with_memberships(Group::GROUP_1 | Group::GROUP_3 | Group::GROUP_4)
+            .with_filter(Group::GROUP_1 | Group::GROUP_3 | Group::GROUP_4)
     }
 }

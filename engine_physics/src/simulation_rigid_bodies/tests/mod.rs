@@ -5,11 +5,12 @@ mod rigid_body_test_patch_bounds;
 
 use crate::simulation_rigid_bodies::ScenePhysicsWorld;
 use crate::{
-    actors::{ActorCellularProxyState, ActorCollisionShape},
+    actors::{Actor, ActorCellularProxyState, ActorCollisionShape, ActorPhysicsProxyState},
     simulation::CollisionOccupancySnapshot,
     tiles::TileCoordinates,
 };
 use crate::{materials::MaterialRegistry, tiles::CellularAppearance};
+use bevy_ecs::entity::Entity;
 use rapier2d::prelude::{Pose, Vector};
 use rigid_body_test_actor_terrain::prepare_actor_terrain;
 use rigid_body_test_material::register_test_stone_material;
@@ -296,6 +297,12 @@ fn test_dynamic_group_filters_and_neighbor_tiles_have_no_gap() {
     assert!(
         ScenePhysicsWorld::rigid_solver_groups().test(ScenePhysicsWorld::dynamic_solver_groups())
     );
+    assert!(rigid.test(ScenePhysicsWorld::pawn_query_groups()));
+    assert!(static_terrain.test(ScenePhysicsWorld::pawn_query_groups()));
+    assert!(dynamic.test(ScenePhysicsWorld::pawn_query_groups()));
+    assert!(
+        !ScenePhysicsWorld::pawn_collision_groups().test(ScenePhysicsWorld::pawn_query_groups())
+    );
     assert!(!dynamic.test(static_terrain));
     assert!(!dynamic.test(dynamic));
     let shape = ScenePhysicsWorld::dynamic_tile_shape([u32::MAX; 2])
@@ -304,6 +311,68 @@ fn test_dynamic_group_filters_and_neighbor_tiles_have_no_gap() {
     let left = shape.compute_aabb(&Pose::translation(-2.0, 0.0));
     let right = shape.compute_aabb(&Pose::translation(-1.0, 0.0));
     assert!((left.maxs.x - right.mins.x).abs() < 1e-5);
+}
+
+#[test]
+fn test_pawn_proxy_is_ignored_by_locomotion_casts() {
+    let mut world = ScenePhysicsWorld::new();
+    let shape = ActorCollisionShape::Circle { radius: 0.25 };
+    world.sync_pawn_proxies(
+        &[ActorPhysicsProxyState {
+            actor: Actor::from_bevy_entity(Entity::from_raw_u32(1).unwrap()),
+            center: [0.75, 0.0],
+            shape,
+        }],
+        Vector::Y,
+    );
+    let (movement, _) = world.move_actor(
+        shape,
+        Vector::ZERO,
+        Vector::new(0.5, 0.0),
+        Vector::Y,
+        0.0,
+        0.0,
+        &mut |_| {},
+    );
+    assert!(
+        (movement.x - 0.5).abs() < 1e-5,
+        "pawn proxy blocked cast: {movement:?}"
+    );
+}
+
+#[test]
+fn test_rigid_body_still_blocks_locomotion_casts() {
+    let mut materials = MaterialRegistry::new();
+    let stone = register_test_stone_material(&mut materials, 1000.0, 100.0);
+    let mut world = ScenePhysicsWorld::new();
+    world.insert_rigid_cellular_body(
+        [1.0, 0.5],
+        0.0,
+        &materials,
+        vec![crate::simulation::RigidCellularBodyCell::test_cell(
+            [0, 0],
+            stone,
+            CellularAppearance::NEUTRAL,
+        )],
+        0.5,
+        0.0,
+        [0.0; 2],
+        0.0,
+    );
+    world.step([0.0; 2], 1.0 / 60.0);
+    let (movement, _) = world.move_actor(
+        ActorCollisionShape::Circle { radius: 0.25 },
+        Vector::new(0.0, 0.5),
+        Vector::new(2.0, 0.0),
+        Vector::Y,
+        0.0,
+        0.0,
+        &mut |_| {},
+    );
+    assert!(
+        movement.x < 2.0,
+        "pawn passed through rigid body: {movement:?}"
+    );
 }
 
 #[test]

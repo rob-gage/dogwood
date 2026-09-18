@@ -3,24 +3,6 @@
 use super::*;
 
 impl ScenePhysicsWorld {
-    pub(super) fn pawn_collider_at(
-        &self,
-        shape: ActorCollisionShape,
-        position: Vector,
-    ) -> Option<ColliderHandle> {
-        self.pawn_proxies
-            .values()
-            .filter_map(|proxy| {
-                let body = self.rapier.bodies.get(proxy.body)?;
-                (proxy.shape == shape).then_some((
-                    (body.position().translation - position).length_squared(),
-                    proxy.collider,
-                ))
-            })
-            .min_by(|a, b| a.0.total_cmp(&b.0))
-            .map(|(_, collider)| collider)
-    }
-
     fn demand_dynamic_tiles(
         required: &mut HashSet<RigidDynamicCollisionTileKey>,
         lo: Vector,

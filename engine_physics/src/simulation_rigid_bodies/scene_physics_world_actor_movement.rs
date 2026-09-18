@@ -14,47 +14,17 @@ impl ScenePhysicsWorld {
         snap_distance: f32,
         collisions: &mut impl FnMut(Vector),
     ) -> (Vector, bool) {
-        let exclude = self.pawn_collider_at(shape, position);
-        self.move_actor_excluding(
-            shape,
-            position,
-            desired,
-            up,
-            walkable_normal,
-            snap_distance,
-            exclude,
-            collisions,
-        )
-    }
-
-    pub(crate) fn move_actor_excluding(
-        &self,
-        shape: ActorCollisionShape,
-        position: Vector,
-        desired: Vector,
-        up: Vector,
-        walkable_normal: f32,
-        snap_distance: f32,
-        exclude: Option<ColliderHandle>,
-        collisions: &mut impl FnMut(Vector),
-    ) -> (Vector, bool) {
         let (mut translation, mut grounded) = self.resolve_actor_translation(
             shape,
             position,
             desired,
             up,
             walkable_normal,
-            exclude,
             collisions,
         );
         if snap_distance > 0.0 && desired.dot(up) <= 0.0 && !grounded {
-            let (snap, snapped) = self.resolve_actor_support_excluding(
-                shape,
-                position + translation,
-                snap_distance,
-                up,
-                exclude,
-            );
+            let (snap, snapped) =
+                self.resolve_actor_support(shape, position + translation, snap_distance, up);
             if snapped {
                 translation += snap;
                 grounded = true;
@@ -70,7 +40,6 @@ impl ScenePhysicsWorld {
         desired: Vector,
         up: Vector,
         walkable_normal: f32,
-        exclude: Option<ColliderHandle>,
         collisions: &mut impl FnMut(Vector),
     ) -> (Vector, bool) {
         #[cfg(debug_assertions)]
@@ -100,14 +69,7 @@ impl ScenePhysicsWorld {
                 remaining,
                 primitive.as_ref(),
                 options,
-                exclude.map_or_else(
-                    || QueryFilter::default().groups(Self::pawn_query_groups()),
-                    |h| {
-                        QueryFilter::default()
-                            .groups(Self::pawn_query_groups())
-                            .exclude_collider(h)
-                    },
-                ),
+                QueryFilter::default().groups(Self::pawn_query_groups()),
             ) {
                 if hit.time_of_impact + 1e-4 < earliest {
                     earliest = hit.time_of_impact;
@@ -161,17 +123,6 @@ impl ScenePhysicsWorld {
         distance: f32,
         up: Vector,
     ) -> (Vector, bool) {
-        self.resolve_actor_support_excluding(shape, position, distance, up, None)
-    }
-
-    fn resolve_actor_support_excluding(
-        &self,
-        shape: ActorCollisionShape,
-        position: Vector,
-        distance: f32,
-        up: Vector,
-        exclude: Option<ColliderHandle>,
-    ) -> (Vector, bool) {
         #[cfg(debug_assertions)]
         let started = Instant::now();
         if !distance.is_finite() || distance <= 0.0 {
@@ -194,14 +145,7 @@ impl ScenePhysicsWorld {
             desired,
             primitive.as_ref(),
             options,
-            exclude.map_or_else(
-                || QueryFilter::default().groups(Self::pawn_query_groups()),
-                |h| {
-                    QueryFilter::default()
-                        .groups(Self::pawn_query_groups())
-                        .exclude_collider(h)
-                },
-            ),
+            QueryFilter::default().groups(Self::pawn_query_groups()),
         ) && hit.normal1.dot(up) > 1e-4
             && hit.time_of_impact <= earliest
         {
