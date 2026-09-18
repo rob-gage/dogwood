@@ -1,17 +1,17 @@
 fn export_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let particle_index: u32 = invocation.x;
     if
-        particle_index >= parameters.particle_capacity
+        particle_index >= fluid_simulation_parameters.particle_capacity
             || particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER
     {
         return;
     }
     let tile: vec2<i32> = vec2<i32>(floor(particles[particle_index].position));
-    let relative: vec2<i32> = tile - parameters.streaming_origin;
+    let relative: vec2<i32> = tile - fluid_simulation_parameters.streaming_origin;
     if
         any(relative < vec2<i32>(0))
-            || relative.x >= i32(parameters.streaming_tile_size.x)
-            || relative.y >= i32(parameters.streaming_tile_size.y)
+            || relative.x >= i32(fluid_simulation_parameters.streaming_tile_size.x)
+            || relative.y >= i32(fluid_simulation_parameters.streaming_tile_size.y)
     {
         return;
     }
@@ -45,24 +45,24 @@ fn rasterize_fluid_particle_coverage_into_cells(
     @builtin(global_invocation_id) invocation: vec3<u32>,
 ) {
     let logical_index: u32 = invocation.x;
-    if logical_index >= parameters.buffered_cell_count {
+    if logical_index >= fluid_simulation_parameters.buffered_cell_count {
         return;
     }
     let cell: vec2<i32> = world_cell_from_fluid_logical_index(logical_index);
-    let physical_index: u32 = fluid_physical_cell_index_from_world_cell(cell);
+    let fluid_physical_cell_index: u32 = fluid_physical_cell_index_from_world_cell(cell);
     let center: vec2<f32> = vec2<f32>(cell) + vec2<f32>(0.5);
     let sample: DerivedFluidCellSample = gather_fluid_particle_sample_for_cell(center);
-    derived_material_identifiers[physical_index] = sample.material_identifier;
-    derived_coverage[physical_index] = sample.coverage;
-    derived_velocity[physical_index] = vec4<f32>(sample.velocity, 0.0, 0.0);
-    mechanical_cells[physical_index] =
+    derived_material_identifiers[fluid_physical_cell_index] = sample.material_identifier;
+    derived_coverage[fluid_physical_cell_index] = sample.coverage;
+    derived_velocity[fluid_physical_cell_index] = vec4<f32>(sample.velocity, 0.0, 0.0);
+    mechanical_cells[fluid_physical_cell_index] =
         MechanicalFluidCell(
             sample.mechanical_material_identifier,
             sample.mechanical_mass,
             sample.mechanical_velocity,
         );
-    mechanical_original_velocity[physical_index] = sample.mechanical_velocity;
-    derived_thermal[physical_index] = sample.thermal;
+    mechanical_original_velocity[fluid_physical_cell_index] = sample.mechanical_velocity;
+    derived_thermal[fluid_physical_cell_index] = sample.thermal;
 }
 
 // Each authoritative particle retains its center cell's solved velocity delta.
@@ -70,7 +70,7 @@ fn rasterize_fluid_particle_coverage_into_cells(
 fn scatter_fluid_mechanical_response(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let particle_index: u32 = invocation.x;
     if
-        particle_index >= parameters.particle_capacity
+        particle_index >= fluid_simulation_parameters.particle_capacity
             || particles[particle_index].material_identifier == EMPTY_MATERIAL_IDENTIFIER
             || particles[particle_index].is_active == 0u
     {
@@ -78,10 +78,10 @@ fn scatter_fluid_mechanical_response(@builtin(global_invocation_id) invocation: 
     }
     let cell: vec2<i32> =
         vec2<i32>(floor(particles[particle_index].position * CELLS_PER_TILE_FLOAT));
-    let index: u32 = fluid_physical_cell_index_from_world_cell(cell);
-    if index == INVALID_PHYSICAL_CELL_INDEX || mechanical_cells[index].mass <= 0.0 {
+    let fluid_physical_cell_index: u32 = fluid_physical_cell_index_from_world_cell(cell);
+    if fluid_physical_cell_index == INVALID_PHYSICAL_CELL_INDEX || mechanical_cells[fluid_physical_cell_index].mass <= 0.0 {
         return;
     }
     particles[particle_index].velocity +=
-        mechanical_cells[index].velocity - mechanical_original_velocity[index];
+        mechanical_cells[fluid_physical_cell_index].velocity - mechanical_original_velocity[fluid_physical_cell_index];
 }
