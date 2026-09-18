@@ -20,17 +20,19 @@ impl MaterialRegistry {
             ));
         }
         // read each material form in identifier-index order
-        let cellular_statics = Self::deserialize_form(reader, MaterialForm::CellularStatic)?;
-        let cellular_dynamics = Self::deserialize_form(reader, MaterialForm::CellularDynamic)?;
-        let fluids = Self::deserialize_form(reader, MaterialForm::Fluid)?;
-        let gases = Self::deserialize_optional_form(reader, MaterialForm::Gas)?;
+        let cellular_statics: Vec<Material> =
+            Self::deserialize_form(reader, MaterialForm::CellularStatic)?;
+        let cellular_dynamics: Vec<Material> =
+            Self::deserialize_form(reader, MaterialForm::CellularDynamic)?;
+        let fluids: Vec<Material> = Self::deserialize_form(reader, MaterialForm::Fluid)?;
+        let gases: Vec<Material> = Self::deserialize_optional_form(reader, MaterialForm::Gas)?;
         for material in &cellular_statics {
             if let Material::CellularStatic {
                 debris_material: Some(identifier),
                 ..
             } = material
             {
-                let valid = match identifier.form_checked() {
+                let valid: bool = match identifier.form_checked() {
                     Some(MaterialForm::CellularStatic) => {
                         cellular_statics.get(identifier.index() as usize).is_some()
                     }
@@ -66,8 +68,8 @@ impl MaterialRegistry {
     }
 
     fn deserialize_metadata<R: io::Read>(&mut self, reader: &mut R) -> Result<(), io::Error> {
-        let mut magic = [0; 8];
-        let read = reader.read(&mut magic)?;
+        let mut magic: [u8; 8] = [0; 8];
+        let read: usize = reader.read(&mut magic)?;
         if read == 0 {
             return Ok(());
         }
@@ -77,7 +79,7 @@ impl MaterialRegistry {
                 "Invalid material metadata extension",
             ));
         }
-        let version = Self::read_u32(reader)?;
+        let version: u32 = Self::read_u32(reader)?;
         if version != 1 && version != 2 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -90,17 +92,18 @@ impl MaterialRegistry {
                 "Material metadata count mismatch",
             ));
         }
-        let mut metadata = BTreeMap::new();
+        let mut metadata: BTreeMap<MaterialIdentifier, MaterialThermalProperties> = BTreeMap::new();
         for index in 0..self.material_count() {
-            let conductivity = f32::from_bits(Self::read_u32(reader)?);
-            let specific_heat_capacity = f32::from_bits(Self::read_u32(reader)?);
-            let default = Self::read_u32(reader)?;
+            let conductivity: f32 = f32::from_bits(Self::read_u32(reader)?);
+            let specific_heat_capacity: f32 = f32::from_bits(Self::read_u32(reader)?);
+            let default: u32 = Self::read_u32(reader)?;
             let transition =
                 |reader: &mut R| -> Result<Option<MaterialThermalTransition>, io::Error> {
-                    let threshold = Self::read_u32(reader)?;
-                    let target = MaterialIdentifier::from_u32(Self::read_u32(reader)?);
-                    let yield_rate = f32::from_bits(Self::read_u32(reader)?);
-                    let latent_energy = f32::from_bits(Self::read_u32(reader)?);
+                    let threshold: u32 = Self::read_u32(reader)?;
+                    let target: MaterialIdentifier =
+                        MaterialIdentifier::from_u32(Self::read_u32(reader)?);
+                    let yield_rate: f32 = f32::from_bits(Self::read_u32(reader)?);
+                    let latent_energy: f32 = f32::from_bits(Self::read_u32(reader)?);
                     Ok(
                         (threshold != u32::MAX).then_some(MaterialThermalTransition {
                             threshold_temperature: f32::from_bits(threshold),
@@ -121,28 +124,28 @@ impl MaterialRegistry {
                 },
             );
         }
-        let count = Self::read_u32(reader)?;
+        let count: u32 = Self::read_u32(reader)?;
         if count > 1_000_000 {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "Too many tags"));
         }
-        let mut tags = BTreeMap::new();
+        let mut tags: BTreeMap<String, Vec<MaterialIdentifier>> = BTreeMap::new();
         for _ in 0..count {
-            let len = Self::read_u32(reader)? as usize;
+            let len: usize = Self::read_u32(reader)? as usize;
             if len > 4096 {
                 return Err(io::Error::new(io::ErrorKind::InvalidData, "Tag too long"));
             }
-            let mut bytes = vec![0; len];
+            let mut bytes: Vec<u8> = vec![0; len];
             reader.read_exact(&mut bytes)?;
-            let name = String::from_utf8(bytes)
+            let name: String = String::from_utf8(bytes)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-            let members = Self::read_u32(reader)?;
+            let members: u32 = Self::read_u32(reader)?;
             if members > self.material_count() {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "Too many tag members",
                 ));
             }
-            let mut values = Vec::with_capacity(members as usize);
+            let mut values: Vec<MaterialIdentifier> = Vec::with_capacity(members as usize);
             for _ in 0..members {
                 values.push(MaterialIdentifier::from_u32(Self::read_u32(reader)?));
             }
