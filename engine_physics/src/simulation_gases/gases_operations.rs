@@ -11,9 +11,9 @@ impl Gases {
         clear_cells: &[usize],
     ) {
         fn runs(indices: &[usize], mut write: impl FnMut(usize, usize)) {
-            let mut start = 0;
+            let mut start: usize = 0;
             while start < indices.len() {
-                let mut end = start + 1;
+                let mut end: usize = start + 1;
                 while end < indices.len() && indices[end] == indices[end - 1] + 1 {
                     end += 1;
                 }
@@ -57,9 +57,9 @@ impl Gases {
             .map(|&(cell, _, temperature)| (cell, temperature))
             .collect();
         temperatures.sort_unstable_by_key(|&(cell, _)| cell);
-        let mut start = 0;
+        let mut start: usize = 0;
         while start < temperatures.len() {
-            let mut end = start + 1;
+            let mut end: usize = start + 1;
             while end < temperatures.len() && temperatures[end].0 == temperatures[end - 1].0 + 1 {
                 end += 1;
             }
