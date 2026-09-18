@@ -52,30 +52,30 @@ impl MaterialRegistry {
     /// Registers a material and returns its stable form-specific identifier.
     pub fn register(&mut self, material: Material) -> MaterialIdentifier {
         assert!(Self::material_is_valid(&material));
-        let identifier = match material {
+        let identifier: MaterialIdentifier = match material {
             material @ Material::CellularStatic { .. } => {
-                let index: u32 = self.cellular_statics.len() as u32;
+                let material_index: u32 = self.cellular_statics.len() as u32;
                 self.cellular_statics.push(material);
-                MaterialIdentifier::new(MaterialForm::CellularStatic, index)
+                MaterialIdentifier::new(MaterialForm::CellularStatic, material_index)
             }
             material @ Material::CellularDynamic { .. } => {
-                let index: u32 = self.cellular_dynamics.len() as u32;
+                let material_index: u32 = self.cellular_dynamics.len() as u32;
                 self.cellular_dynamics.push(material);
-                MaterialIdentifier::new(MaterialForm::CellularDynamic, index)
+                MaterialIdentifier::new(MaterialForm::CellularDynamic, material_index)
             }
             material @ Material::Fluid { .. } => {
-                let index: u32 = self.fluids.len() as u32;
+                let material_index: u32 = self.fluids.len() as u32;
                 self.fluids.push(material);
-                MaterialIdentifier::new(MaterialForm::Fluid, index)
+                MaterialIdentifier::new(MaterialForm::Fluid, material_index)
             }
             material @ Material::Gas { .. } => {
-                let index: u32 = self
+                let material_index: u32 = self
                     .gases
                     .len()
                     .try_into()
                     .expect("Too many registered gas materials");
                 self.gases.push(material);
-                MaterialIdentifier::new(MaterialForm::Gas, index)
+                MaterialIdentifier::new(MaterialForm::Gas, material_index)
             }
         };
         self.thermal = vec![MaterialThermalProperties::default(); self.material_count() as usize];
@@ -92,7 +92,7 @@ impl MaterialRegistry {
     /// Returns the stable form-major index used by compiled reaction metadata.
     pub fn dense_index(&self, identifier: MaterialIdentifier) -> Option<u32> {
         self.get(identifier)?;
-        let offset = match identifier.form_checked()? {
+        let offset: usize = match identifier.form_checked()? {
             MaterialForm::CellularStatic => 0,
             MaterialForm::CellularDynamic => self.cellular_statics.len(),
             MaterialForm::Fluid => self.cellular_statics.len() + self.cellular_dynamics.len(),
@@ -104,29 +104,29 @@ impl MaterialRegistry {
     }
     /// Converts a stable form-major index back to its material identifier.
     pub fn identifier_from_dense_index(&self, index: u32) -> Option<MaterialIdentifier> {
-        let index = index as usize;
-        let s = self.cellular_statics.len();
-        let d = s + self.cellular_dynamics.len();
-        let f = d + self.fluids.len();
-        if index < s {
+        let dense_index: usize = index as usize;
+        let cellular_static_count: usize = self.cellular_statics.len();
+        let cellular_dynamic_end: usize = cellular_static_count + self.cellular_dynamics.len();
+        let fluid_end: usize = cellular_dynamic_end + self.fluids.len();
+        if dense_index < cellular_static_count {
             Some(MaterialIdentifier::new(
                 MaterialForm::CellularStatic,
-                index as u32,
+                dense_index as u32,
             ))
-        } else if index < d {
+        } else if dense_index < cellular_dynamic_end {
             Some(MaterialIdentifier::new(
                 MaterialForm::CellularDynamic,
-                (index - s) as u32,
+                (dense_index - cellular_static_count) as u32,
             ))
-        } else if index < f {
+        } else if dense_index < fluid_end {
             Some(MaterialIdentifier::new(
                 MaterialForm::Fluid,
-                (index - d) as u32,
+                (dense_index - cellular_dynamic_end) as u32,
             ))
-        } else if index < self.material_count() as usize {
+        } else if dense_index < self.material_count() as usize {
             Some(MaterialIdentifier::new(
                 MaterialForm::Gas,
-                (index - f) as u32,
+                (dense_index - fluid_end) as u32,
             ))
         } else {
             None
@@ -158,15 +158,15 @@ impl MaterialRegistry {
         mut tags: BTreeMap<String, Vec<MaterialIdentifier>>,
         reactions: Vec<MaterialReaction>,
     ) -> Result<(), String> {
-        let mut thermal =
+        let mut thermal: Vec<MaterialThermalProperties> =
             vec![MaterialThermalProperties::default(); self.material_count() as usize];
         for (identifier, properties) in metadata {
-            let index = self
+            let dense_index: usize = self
                 .dense_index(identifier)
                 .ok_or("Thermal metadata references an unregistered material")?
                 as usize;
             Self::validate_thermal(identifier, &properties, self)?;
-            thermal[index] = properties;
+            thermal[dense_index] = properties;
         }
         for members in tags.values_mut() {
             members.sort_unstable();
@@ -188,10 +188,10 @@ impl MaterialRegistry {
         tags: &BTreeMap<String, Vec<MaterialIdentifier>>,
         registry: &Self,
     ) -> Result<(Vec<CompiledMaterialReaction>, Vec<MaterialIdentifier>), String> {
-        let mut compiled = Vec::with_capacity(reactions.len());
-        let mut members = Vec::new();
+        let mut compiled: Vec<CompiledMaterialReaction> = Vec::with_capacity(reactions.len());
+        let mut members: Vec<MaterialIdentifier> = Vec::new();
         for (order, reaction) in reactions.iter().enumerate() {
-            let finite = |value: f32| value.is_finite();
+            let finite: fn(f32) -> bool = |value: f32| value.is_finite();
             if !finite(reaction.maximum_extent_per_tick)
                 || reaction.maximum_extent_per_tick < 0.0
                 || !finite(reaction.thermal_energy)
@@ -232,13 +232,13 @@ impl MaterialRegistry {
             {
                 return Err("Invalid reaction range".into());
             }
-            let has_environment = reaction.minimum_temperature.is_some()
+            let has_environment: bool = reaction.minimum_temperature.is_some()
                 || reaction.maximum_temperature.is_some()
                 || reaction.minimum_pressure.is_some()
                 || reaction.maximum_pressure.is_some()
                 || reaction.minimum_air.is_some()
                 || reaction.maximum_air.is_some();
-            let reactant_count = reaction.reactants.iter().flatten().count();
+            let reactant_count: usize = reaction.reactants.iter().flatten().count();
             if reactant_count == 0 && !has_environment {
                 return Err("Unconditional zero-reactant reaction is invalid".into());
             }
@@ -248,7 +248,8 @@ impl MaterialRegistry {
             {
                 return Err("Reaction has no observable output".into());
             }
-            let mut compiled_reactants = [CompiledMaterialReactionReactant::default(); 2];
+            let mut compiled_reactants: [CompiledMaterialReactionReactant; 2] =
+                [CompiledMaterialReactionReactant::default(); 2];
             for (i, reactant) in reaction.reactants.iter().enumerate() {
                 let Some(reactant) = reactant else { continue };
                 if !finite(reactant.amount) || reactant.amount <= 0.0 {
@@ -285,7 +286,8 @@ impl MaterialRegistry {
                     present: 1,
                 };
             }
-            let mut compiled_products = [CompiledMaterialReactionProduct::default(); 2];
+            let mut compiled_products: [CompiledMaterialReactionProduct; 2] =
+                [CompiledMaterialReactionProduct::default(); 2];
             for (i, product) in reaction.products.iter().enumerate() {
                 let Some(product) = product else { continue };
                 if registry.get(product.material).is_none() {
