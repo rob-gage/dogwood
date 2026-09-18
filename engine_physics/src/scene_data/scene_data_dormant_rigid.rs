@@ -63,9 +63,9 @@ pub(crate) fn world_aabb<I>(
 where
     I: IntoIterator<Item = [i32; 2]>,
 {
-    let (sin, cos) = rotation.sin_cos();
-    let mut min = [f32::INFINITY; 2];
-    let mut max = [f32::NEG_INFINITY; 2];
+    let (sine, cosine): (f32, f32) = rotation.sin_cos();
+    let mut minimum: [f32; 2] = [f32::INFINITY; 2];
+    let mut maximum: [f32; 2] = [f32::NEG_INFINITY; 2];
     for [x, y] in locals {
         for corner in [
             [x as f32 / 8.0, y as f32 / 8.0],
@@ -73,17 +73,17 @@ where
             [x as f32 / 8.0, (y + 1) as f32 / 8.0],
             [(x + 1) as f32 / 8.0, (y + 1) as f32 / 8.0],
         ] {
-            let world = [
-                position[0] + cos * corner[0] - sin * corner[1],
-                position[1] + sin * corner[0] + cos * corner[1],
+            let world_position: [f32; 2] = [
+                position[0] + cosine * corner[0] - sine * corner[1],
+                position[1] + sine * corner[0] + cosine * corner[1],
             ];
-            min[0] = min[0].min(world[0]);
-            min[1] = min[1].min(world[1]);
-            max[0] = max[0].max(world[0]);
-            max[1] = max[1].max(world[1]);
+            minimum[0] = minimum[0].min(world_position[0]);
+            minimum[1] = minimum[1].min(world_position[1]);
+            maximum[0] = maximum[0].max(world_position[0]);
+            maximum[1] = maximum[1].max(world_position[1]);
         }
     }
-    min[0].is_finite().then_some((min, max))
+    minimum[0].is_finite().then_some((minimum, maximum))
 }
 
 pub(crate) fn owner_chunk(
@@ -91,24 +91,24 @@ pub(crate) fn owner_chunk(
     rotation: f32,
     locals: impl IntoIterator<Item = [i32; 2]>,
 ) -> Option<crate::tiles::TileCoordinates> {
-    let (min, max) = world_aabb(position, rotation, locals)?;
+    let (minimum, maximum): ([f32; 2], [f32; 2]) = world_aabb(position, rotation, locals)?;
     Some(
         crate::tiles::TileCoordinates {
-            x: ((min[0] + max[0]) * 0.5).floor() as i32,
-            y: ((min[1] + max[1]) * 0.5).floor() as i32,
+            x: ((minimum[0] + maximum[0]) * 0.5).floor() as i32,
+            y: ((minimum[1] + maximum[1]) * 0.5).floor() as i32,
         }
         .chunk_coordinates(),
     )
 }
 
 pub(crate) fn intersects_area(bounds: ([f32; 2], [f32; 2]), area: crate::tiles::TileArea) -> bool {
-    let (min, max) = bounds;
-    let origin = area.origin();
-    let dimensions = area.dimensions();
-    max[0] >= origin.x as f32
-        && min[0] < (origin.x + i32::from(dimensions[0])) as f32
-        && max[1] >= origin.y as f32
-        && min[1] < (origin.y + i32::from(dimensions[1])) as f32
+    let (minimum, maximum): ([f32; 2], [f32; 2]) = bounds;
+    let origin: crate::tiles::TileCoordinates = area.origin();
+    let dimensions: [u16; 2] = area.dimensions();
+    maximum[0] >= origin.x as f32
+        && minimum[0] < (origin.x + i32::from(dimensions[0])) as f32
+        && maximum[1] >= origin.y as f32
+        && minimum[1] < (origin.y + i32::from(dimensions[1])) as f32
 }
 
 impl DormantRigidBody {
@@ -131,7 +131,7 @@ impl DormantRigidBody {
                 "invalid dormant rigid body",
             ));
         }
-        let mut locals = HashSet::with_capacity(self.cells.len());
+        let mut locals: HashSet<[i32; 2]> = HashSet::with_capacity(self.cells.len());
         for cell in &self.cells {
             if !locals.insert(cell.local)
                 || !matches!(
@@ -208,19 +208,25 @@ impl DormantRigidBody {
         materials: &MaterialRegistry,
         has_sleeping: bool,
     ) -> Result<Self, io::Error> {
-        let u32 = |reader: &mut R| -> Result<u32, io::Error> {
-            let mut b = [0; 4];
-            reader.read_exact(&mut b)?;
-            Ok(u32::from_le_bytes(b))
+        let read_u32 = |reader: &mut R| -> Result<u32, io::Error> {
+            let mut bytes: [u8; 4] = [0; 4];
+            reader.read_exact(&mut bytes)?;
+            Ok(u32::from_le_bytes(bytes))
         };
-        let mut identifier_bytes = [0; 8];
+        let mut identifier_bytes: [u8; 8] = [0; 8];
         reader.read_exact(&mut identifier_bytes)?;
-        let position = [f32::from_bits(u32(reader)?), f32::from_bits(u32(reader)?)];
-        let rotation = f32::from_bits(u32(reader)?);
-        let linear_velocity = [f32::from_bits(u32(reader)?), f32::from_bits(u32(reader)?)];
-        let angular_velocity = f32::from_bits(u32(reader)?);
-        let sleeping = if has_sleeping {
-            match u32(reader)? {
+        let position: [f32; 2] = [
+            f32::from_bits(read_u32(reader)?),
+            f32::from_bits(read_u32(reader)?),
+        ];
+        let rotation: f32 = f32::from_bits(read_u32(reader)?);
+        let linear_velocity: [f32; 2] = [
+            f32::from_bits(read_u32(reader)?),
+            f32::from_bits(read_u32(reader)?),
+        ];
+        let angular_velocity: f32 = f32::from_bits(read_u32(reader)?);
+        let sleeping: bool = if has_sleeping {
+            match read_u32(reader)? {
                 0 => false,
                 1 => true,
                 _ => {
@@ -233,7 +239,7 @@ impl DormantRigidBody {
         } else {
             false
         };
-        let count = usize::try_from(u32(reader)?).map_err(|_| {
+        let count: usize = usize::try_from(read_u32(reader)?).map_err(|_| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 "dormant rigid cell count overflow",
@@ -245,7 +251,7 @@ impl DormantRigidBody {
                 "too many dormant rigid cells",
             ));
         }
-        let mut cells = Vec::new();
+        let mut cells: Vec<DormantRigidCell> = Vec::new();
         cells.try_reserve_exact(count).map_err(|_| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -255,17 +261,17 @@ impl DormantRigidBody {
         for _ in 0..count {
             cells.push(DormantRigidCell {
                 local: [
-                    i32::from_le_bytes(u32(reader)?.to_le_bytes()),
-                    i32::from_le_bytes(u32(reader)?.to_le_bytes()),
+                    i32::from_le_bytes(read_u32(reader)?.to_le_bytes()),
+                    i32::from_le_bytes(read_u32(reader)?.to_le_bytes()),
                 ],
-                material: MaterialIdentifier::from_u32(u32(reader)?),
-                appearance: CellularAppearance(u32(reader)?),
-                integrity: f32::from_bits(u32(reader)?),
-                amount: f32::from_bits(u32(reader)?),
-                temperature: f32::from_bits(u32(reader)?),
+                material: MaterialIdentifier::from_u32(read_u32(reader)?),
+                appearance: CellularAppearance(read_u32(reader)?),
+                integrity: f32::from_bits(read_u32(reader)?),
+                amount: f32::from_bits(read_u32(reader)?),
+                temperature: f32::from_bits(read_u32(reader)?),
             });
         }
-        let body = Self {
+        let body: Self = Self {
             identifier: u64::from_le_bytes(identifier_bytes),
             position,
             rotation,
