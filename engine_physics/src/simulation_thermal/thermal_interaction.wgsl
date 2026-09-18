@@ -201,7 +201,7 @@ fn gather_thermal_interaction(@builtin(global_invocation_id) invocation: vec3<u3
     var gas_amount = 0.0;
     var gas_capacity = 0.0;
     var gas_conductivity = 0.0;
-    for (var species = 0u; species < parameters.gas_count; species++) {
+    for (var species: u32 = 0u; species < parameters.gas_count; species++) {
         let amount = max(gas_concentrations[species * parameters.cell_count + index], 0.0);
         gas_amount += amount;
         let dense =

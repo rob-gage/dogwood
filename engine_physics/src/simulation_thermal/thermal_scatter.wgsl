@@ -140,7 +140,7 @@ fn scatter_cellular_gas(@builtin(global_invocation_id) invocation: vec3<u32>) {
         cellular_temperatures[i] = max(s, 0.0);
     }
     var gas = 0.0;
-    for (var n = 0u; n < parameters.gas_count; n++) {
+    for (var n: u32 = 0u; n < parameters.gas_count; n++) {
         gas += max(gas_concentrations[n * parameters.cell_count + i], 0.0);
     }
     let claim = rigid_claims[i];
