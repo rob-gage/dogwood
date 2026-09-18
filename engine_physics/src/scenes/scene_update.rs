@@ -1,6 +1,7 @@
 // Copyright Rob Gage 2026
 
 use super::*;
+use crate::actors_utility::ActorCellularProxyState;
 
 impl Scene {
     /// Handles Scene streaming and returns the number of completed fixed-rate ticks
@@ -29,7 +30,7 @@ impl Scene {
         self.gas_downloads_submit()?;
         self.restore_ready_rigids()?;
         if !self.pending_runtime_edits.is_empty() {
-            let mut edits = SceneEditBatch::new();
+            let mut edits: SceneEditBatch = SceneEditBatch::new();
             std::mem::swap(&mut edits, &mut self.pending_runtime_edits);
             self.apply_edits_immediate(&mut edits)?;
             self.pending_runtime_edits.append(edits);
@@ -80,20 +81,22 @@ impl Scene {
     /// Runs one fixed-rate physics simulation tick
     fn tick(&mut self, is_simulation_active: bool) -> Result<(), io::Error> {
         if let Some(mut snapshot) = self.cellular_collision.latest.take() {
-            let age = self.cellular_collision.snapshot_age(snapshot.sequence);
+            let age: u64 = self.cellular_collision.snapshot_age(snapshot.sequence);
             self.physics_world.set_collision_snapshot_age(age);
             self.detach_unanchored_static_components(&mut snapshot)?;
-            let collision_matches_current_ring = snapshot.origin == self.area_buffered().origin();
-            let snapshot_origin = snapshot.origin;
+            let collision_matches_current_ring: bool =
+                snapshot.origin == self.area_buffered().origin();
+            let snapshot_origin: TileCoordinates = snapshot.origin;
             self.physics_world.update_cellular_snapshot(snapshot);
             if collision_matches_current_ring {
                 self.rigid_activation_collision_origin = Some(snapshot_origin);
             }
         }
         let delta_time: f32 = 1.0 / TICK_RATE as f32;
-        let actor_proxies = self.actor_registry.cellular_proxy_states();
+        let actor_proxies: Vec<ActorCellularProxyState> =
+            self.actor_registry.cellular_proxy_states();
         if is_simulation_active {
-            let up = if self.gravity[0].hypot(self.gravity[1]) > 0.0 {
+            let up: Vector = if self.gravity[0].hypot(self.gravity[1]) > 0.0 {
                 Vector::new(-self.gravity[0], -self.gravity[1]).normalize()
             } else {
                 Vector::Y
@@ -128,14 +131,15 @@ impl Scene {
             self.gravity,
             &self.physics_world,
         );
-        let up = if self.gravity[0].hypot(self.gravity[1]) > 0.0 {
+        let up: Vector = if self.gravity[0].hypot(self.gravity[1]) > 0.0 {
             Vector::new(-self.gravity[0], -self.gravity[1]).normalize()
         } else {
             Vector::Y
         };
         self.physics_world
             .sync_pawn_proxies(&self.actor_registry.physics_proxy_states(), up);
-        let actor_proxies = self.actor_registry.cellular_proxy_states();
+        let actor_proxies: Vec<ActorCellularProxyState> =
+            self.actor_registry.cellular_proxy_states();
         let possessed_position: Option<ScenePosition> = self
             .possessed_actor()
             .and_then(|actor| self.actor_registry.get_position(actor))
@@ -206,11 +210,12 @@ impl Scene {
             // and the prior resolved pressure field. Its outputs are applied in
             // later stages, never recursively during this discovery pass.
             {
-                let mut encoder = self.accelerator.wgpu_device().create_command_encoder(
-                    &wgpu::CommandEncoderDescriptor {
+                let mut encoder: wgpu::CommandEncoder = self
+                    .accelerator
+                    .wgpu_device()
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                         label: Some("material reaction discovery"),
-                    },
-                );
+                    });
                 self.material_reactions
                     .encode(self.accelerator.as_ref(), &mut encoder);
                 // resolve chemistry's authority-addressed cell mutations before
@@ -285,23 +290,24 @@ impl Scene {
             self.fluids
                 .scatter_mechanical_response(self.accelerator.as_ref());
             self.gases.simulate_post_coupling(self.accelerator.as_ref());
-            let thermal_origin = [
+            let thermal_origin: [i32; 2] = [
                 self.origin.x - i32::from(self.simulation_buffer_size),
                 self.origin.y - i32::from(self.simulation_buffer_size),
             ];
-            let thermal_tiles = [
+            let thermal_tiles: [u32; 2] = [
                 u32::from(self.simulation_width + u16::from(self.simulation_buffer_size) * 2),
                 u32::from(self.simulation_height + u16::from(self.simulation_buffer_size) * 2),
             ];
-            let thermal_ring = [
+            let thermal_ring: [u32; 2] = [
                 u32::from(self.tiles_ring_offset_x),
                 u32::from(self.tiles_ring_offset_y),
             ];
-            let mut thermal_encoder = self.accelerator.wgpu_device().create_command_encoder(
-                &wgpu::CommandEncoderDescriptor {
+            let mut thermal_encoder: wgpu::CommandEncoder = self
+                .accelerator
+                .wgpu_device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("thermal pipeline"),
-                },
-            );
+                });
             self.thermal_interaction.encode(
                 self.accelerator.as_ref(),
                 &mut thermal_encoder,
