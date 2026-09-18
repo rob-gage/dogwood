@@ -1,3 +1,5 @@
+// Copyright Rob Gage 2026
+
 use engine_compute::{Accelerator, AcceleratorBuffer};
 
 pub(crate) struct ThermalConduction {
@@ -24,7 +26,7 @@ impl ThermalConduction {
         ring: [u32; 2],
         delta_time: f32,
     ) {
-        let values = [
+        let parameter_values: [u32; 8] = [
             delta_time.to_bits(),
             self.cell_count,
             origin[0] as u32,
@@ -37,12 +39,13 @@ impl ThermalConduction {
         accelerator.wgpu_queue().write_buffer(
             &self.parameters,
             0,
-            &values
+            &parameter_values
                 .iter()
-                .flat_map(|v| v.to_le_bytes())
+                .flat_map(|value| value.to_le_bytes())
                 .collect::<Vec<_>>(),
         );
-        let mut pass = accelerator.begin_compute_pass(encoder, "thermal conduction");
+        let mut pass: wgpu::ComputePass<'_> =
+            accelerator.begin_compute_pass(encoder, "thermal conduction");
         pass.set_bind_group(0, &self.bind_group, &[]);
         for pipeline in [
             &self.flux_pipeline,
@@ -59,29 +62,31 @@ impl ThermalConduction {
         interaction: &AcceleratorBuffer,
         cell_count: u32,
     ) -> Self {
-        let device = accelerator.wgpu_device();
-        let solved = accelerator.allocate::<[f32; 4]>(cell_count as usize);
-        let face_flux = accelerator.allocate::<[f32; 2]>(cell_count as usize);
-        let face_conductance = accelerator.allocate::<[f32; 2]>(cell_count as usize);
-        let conductance_sum = accelerator.allocate::<f32>(cell_count as usize);
-        let parameters = crate::simulation::create_simulation_uniform_buffer(
+        let device: &wgpu::Device = accelerator.wgpu_device();
+        let solved: AcceleratorBuffer = accelerator.allocate::<[f32; 4]>(cell_count as usize);
+        let face_flux: AcceleratorBuffer = accelerator.allocate::<[f32; 2]>(cell_count as usize);
+        let face_conductance: AcceleratorBuffer =
+            accelerator.allocate::<[f32; 2]>(cell_count as usize);
+        let conductance_sum: AcceleratorBuffer = accelerator.allocate::<f32>(cell_count as usize);
+        let parameters: wgpu::Buffer = crate::simulation::create_simulation_uniform_buffer(
             device,
             "thermal conduction parameters",
             64,
         );
         let storage = crate::simulation::storage_bind_group_layout_entry;
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("thermal conduction"),
-            entries: &[
-                storage(0, true),
-                storage(1, false),
-                storage(2, false),
-                storage(3, false),
-                storage(4, false),
-                crate::simulation::uniform_bind_group_layout_entry(5),
-            ],
-        });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let layout: wgpu::BindGroupLayout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("thermal conduction"),
+                entries: &[
+                    storage(0, true),
+                    storage(1, false),
+                    storage(2, false),
+                    storage(3, false),
+                    storage(4, false),
+                    crate::simulation::uniform_bind_group_layout_entry(5),
+                ],
+            });
+        let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("thermal conduction"),
             layout: &layout,
             entries: &[
@@ -96,18 +101,19 @@ impl ThermalConduction {
                 },
             ],
         });
-        let shader = crate::simulation::create_simulation_shader_module(
+        let shader: wgpu::ShaderModule = crate::simulation::create_simulation_shader_module(
             device,
             "thermal conduction shader",
             include_str!("thermal_conduction.wgsl"),
             "engine_physics/src/simulation/thermal_conduction.wgsl",
         );
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("thermal conduction"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
-        let pipeline = |entry| {
+        let pipeline_layout: wgpu::PipelineLayout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("thermal conduction"),
+                bind_group_layouts: &[Some(&layout)],
+                immediate_size: 0,
+            });
+        let pipeline = |entry: &'static str| {
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
                 layout: Some(&pipeline_layout),
@@ -139,7 +145,7 @@ impl ThermalConduction {
         ring: [u32; 2],
         delta_time: f32,
     ) {
-        let values = [
+        let parameter_values: [u32; 8] = [
             delta_time.to_bits(),
             self.cell_count,
             origin[0] as u32,
@@ -152,18 +158,19 @@ impl ThermalConduction {
         accelerator.wgpu_queue().write_buffer(
             &self.parameters,
             0,
-            &values
+            &parameter_values
                 .iter()
-                .flat_map(|v| v.to_le_bytes())
+                .flat_map(|value| value.to_le_bytes())
                 .collect::<Vec<_>>(),
         );
-        let mut encoder =
+        let mut encoder: wgpu::CommandEncoder =
             accelerator
                 .wgpu_device()
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("thermal conduction"),
                 });
-        let mut pass = accelerator.begin_compute_pass(&mut encoder, "thermal conduction flux");
+        let mut pass: wgpu::ComputePass<'_> =
+            accelerator.begin_compute_pass(&mut encoder, "thermal conduction flux");
         pass.set_pipeline(&self.flux_pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
