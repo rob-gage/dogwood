@@ -208,7 +208,7 @@ impl DormantRigidBody {
         materials: &MaterialRegistry,
         has_sleeping: bool,
     ) -> Result<Self, io::Error> {
-        let read_u32 = |reader: &mut R| -> Result<u32, io::Error> {
+        let read_u32: fn(&mut R) -> Result<u32, io::Error> = |reader: &mut R| {
             let mut bytes: [u8; 4] = [0; 4];
             reader.read_exact(&mut bytes)?;
             Ok(u32::from_le_bytes(bytes))

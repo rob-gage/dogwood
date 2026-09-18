@@ -59,7 +59,7 @@ impl FluidDownload {
                 "Downloaded fluid particle count exceeds pool capacity",
             ));
         }
-        let required = 16usize
+        let required: usize = 16usize
             .checked_add(
                 count
                     .checked_mul(ChunkFluidParticle::GPU_SIZE)

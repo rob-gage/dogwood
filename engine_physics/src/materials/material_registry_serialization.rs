@@ -71,7 +71,7 @@ impl MaterialRegistry {
         }
         writer.write_all(&(self.reactions.len() as u32).to_le_bytes())?;
         for rule in &self.reactions {
-            let words = [
+            let words: [u32; 27] = [
                 rule.reactants[0].member_offset,
                 rule.reactants[0].member_count,
                 rule.reactants[0].amount_bits,

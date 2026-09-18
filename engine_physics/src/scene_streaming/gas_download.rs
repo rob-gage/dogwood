@@ -84,7 +84,8 @@ impl GasDownload {
                 f32::from_bits(crate::binary_reader::read_u32_at(bytes, offset + 8)),
                 f32::from_bits(crate::binary_reader::read_u32_at(bytes, offset + 12)),
             ];
-            let temperature = f32::from_bits(crate::binary_reader::read_u32_at(bytes, offset + 16));
+            let temperature: f32 =
+                f32::from_bits(crate::binary_reader::read_u32_at(bytes, offset + 16));
             if !velocity.into_iter().all(f32::is_finite) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
