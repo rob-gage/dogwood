@@ -9,7 +9,7 @@ use engine_compute::Accelerator;
 use engine_graphics::MaterialGraphics;
 use std::{collections::BTreeMap, ops::Index};
 
-/// Registers `Material`s to `MaterialIdentifier`s
+/// Owns registered materials and their compiled simulation metadata.
 pub struct MaterialRegistry {
     /// The `Material::CellularStatic`s in this `MaterialRegistry`
     pub(super) cellular_statics: Vec<Material>,
@@ -35,7 +35,7 @@ impl Default for MaterialRegistry {
 }
 
 impl MaterialRegistry {
-    /// Creates a new empty `MaterialRegistry`
+    /// Creates an empty material registry.
     pub const fn new() -> Self {
         Self {
             cellular_statics: Vec::new(),
@@ -49,7 +49,7 @@ impl MaterialRegistry {
         }
     }
 
-    /// Registers a `Material` and returns its `MaterialIdentifier`
+    /// Registers a material and returns its stable form-specific identifier.
     pub fn register(&mut self, material: Material) -> MaterialIdentifier {
         assert!(Self::material_is_valid(&material));
         let identifier = match material {
@@ -82,14 +82,14 @@ impl MaterialRegistry {
         identifier
     }
 
-    /// Number of registered materials in stable form-major order.
+    /// Returns the number of registered materials.
     pub fn material_count(&self) -> u32 {
         (self.cellular_statics.len()
             + self.cellular_dynamics.len()
             + self.fluids.len()
             + self.gases.len()) as u32
     }
-    /// Stable form-major index used by compiled reaction metadata.
+    /// Returns the stable form-major index used by compiled reaction metadata.
     pub fn dense_index(&self, identifier: MaterialIdentifier) -> Option<u32> {
         self.get(identifier)?;
         let offset = match identifier.form_checked()? {
@@ -102,6 +102,7 @@ impl MaterialRegistry {
         };
         Some((offset + identifier.index() as usize) as u32)
     }
+    /// Converts a stable form-major index back to its material identifier.
     pub fn identifier_from_dense_index(&self, index: u32) -> Option<MaterialIdentifier> {
         let index = index as usize;
         let s = self.cellular_statics.len();
@@ -131,6 +132,7 @@ impl MaterialRegistry {
             None
         }
     }
+    /// Returns thermal metadata for a registered material, if available.
     pub fn thermal_properties(
         &self,
         identifier: MaterialIdentifier,
@@ -138,6 +140,7 @@ impl MaterialRegistry {
         self.dense_index(identifier)
             .and_then(|index| self.thermal.get(index as usize))
     }
+    /// Returns the registered members of a tag, if the tag exists.
     pub fn tag_members(&self, tag: &str) -> Option<&[MaterialIdentifier]> {
         self.tags.get(tag).map(Vec::as_slice)
     }
@@ -145,7 +148,7 @@ impl MaterialRegistry {
     pub fn reactions(&self) -> &[CompiledMaterialReaction] {
         &self.reactions
     }
-    /// Material IDs used by compiled reaction selector ranges.
+    /// Returns the material identifiers used by compiled reaction selector ranges.
     pub fn reaction_selector_members(&self) -> &[MaterialIdentifier] {
         &self.reaction_selector_members
     }
