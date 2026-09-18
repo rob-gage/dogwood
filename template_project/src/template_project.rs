@@ -23,7 +23,10 @@ use template_materials::TemplateMaterials;
 #[cfg(test)]
 use engine::physics::materials::{Material, MaterialIdentifier};
 
-/// A minimal game used to test the engine
+/// Runnable Dogwood template project with the shared template material set.
+///
+/// A project owns its UI context and the currently loaded scene. The scene is
+/// created from temporary scene data and uses the caller-provided Accelerator.
 pub struct TemplateProject {
     user_interface_context: UserInterfaceContext,
     scene: Option<Scene>,
