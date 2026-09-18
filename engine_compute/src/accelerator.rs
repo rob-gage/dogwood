@@ -185,7 +185,8 @@ mod tests {
 
     #[test]
     fn test_accelerator_timing_readback_completes_with_nonblocking_polls() {
-        let _tracing_guard = initialize_test_tracing();
+        let _tracing_guard: Option<tracing_appender::non_blocking::WorkerGuard> =
+            initialize_test_tracing();
         let accelerator: Accelerator = Accelerator::new().unwrap();
         if !accelerator.accelerator_timing.is_available() {
             return;
