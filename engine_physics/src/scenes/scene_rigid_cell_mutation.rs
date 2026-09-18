@@ -11,12 +11,12 @@ impl Scene {
             return;
         };
         let mut removals: HashMap<usize, HashSet<[i32; 2]>> = HashMap::new();
-        let mut rollback = Vec::new();
+        let mut rollback: Vec<u32> = Vec::new();
         for candidate in candidates {
-            let slot = candidate[0];
-            let generation = candidate[1];
-            let expected = MaterialIdentifier::from_u32(candidate[2]);
-            let replacement = candidate[3];
+            let slot: u32 = candidate[0];
+            let generation: u32 = candidate[1];
+            let expected: MaterialIdentifier = MaterialIdentifier::from_u32(candidate[2]);
+            let replacement: u32 = candidate[3];
             if !matches!(
                 self.data
                     .materials()
@@ -26,9 +26,9 @@ impl Scene {
                 rollback.push(candidate[9]);
                 continue;
             }
-            let amount = f32::from_bits(candidate[4]);
-            let temperature = f32::from_bits(candidate[5]);
-            let reserved = candidate[9];
+            let amount: f32 = f32::from_bits(candidate[4]);
+            let temperature: f32 = f32::from_bits(candidate[5]);
+            let reserved: u32 = candidate[9];
             let Some((body_index, cell)) =
                 self.rigid_cellular_bodies
                     .iter()
@@ -65,19 +65,19 @@ impl Scene {
                 rollback.push(reserved);
                 continue;
             };
-            let local = [
+            let local: [f32; 2] = [
                 (cell.local[0] as f32 + 0.5) / 8.0,
                 (cell.local[1] as f32 + 0.5) / 8.0,
             ];
-            let offset = [
+            let offset: [f32; 2] = [
                 state.angle.cos() * local[0] - state.angle.sin() * local[1],
                 state.angle.sin() * local[0] + state.angle.cos() * local[1],
             ];
-            let position = [
+            let position: [f32; 2] = [
                 state.translation[0] + offset[0],
                 state.translation[1] + offset[1],
             ];
-            let velocity = [
+            let velocity: [f32; 2] = [
                 state.linear_velocity[0]
                     - state.angular_velocity * (position[1] - state.center_of_mass[1]),
                 state.linear_velocity[1]
@@ -98,7 +98,7 @@ impl Scene {
             self.thermal_phase_transitions
                 .rollback_rigid_reservations(self.accelerator.as_ref(), &rollback);
         }
-        let mut removals: Vec<_> = removals.into_iter().collect();
+        let mut removals: Vec<(usize, HashSet<[i32; 2]>)> = removals.into_iter().collect();
         removals.sort_unstable_by_key(|(body_index, _)| std::cmp::Reverse(*body_index));
         for (body_index, removed) in removals {
             self.remove_rigid_cellular_body_cells(
@@ -125,7 +125,7 @@ impl Scene {
         else {
             return;
         };
-        let body = self.rigid_cellular_bodies.swap_remove(body_index);
+        let body: RigidCellularBody = self.rigid_cellular_bodies.swap_remove(body_index);
         self.rigid_activation_pending.remove(&body.id);
         self.rigid_sleeping_pending.remove(&body.id);
         self.rigid_cellular_topology_revision =
@@ -135,7 +135,7 @@ impl Scene {
         self.rigid_cellular_contact_active.clear();
         self.rigid_granular_contact_active.clear();
         self.physics_world.remove_rigid_cellular_body(&body);
-        let mut debris = Vec::new();
+        let mut debris: Vec<SceneEditCellPlacement> = Vec::new();
         for cell in body
             .cells
             .iter()
@@ -148,7 +148,7 @@ impl Scene {
             }
             self.release_rigid_cell_state(cell.state_slot);
         }
-        let remaining = body
+        let remaining: Vec<RigidCellularBodyCell> = body
             .cells
             .into_iter()
             .filter(|cell| !removed.contains(&cell.local))
@@ -168,18 +168,18 @@ impl Scene {
             }
             let local_center =
                 RigidCellularBody::mass_properties(&cells, self.data.materials()).local_com;
-            let child_center = [
+            let child_center: [f32; 2] = [
                 state.translation[0] + state.angle.cos() * local_center.x
                     - state.angle.sin() * local_center.y,
                 state.translation[1]
                     + state.angle.sin() * local_center.x
                     + state.angle.cos() * local_center.y,
             ];
-            let offset = [
+            let offset: [f32; 2] = [
                 child_center[0] - state.center_of_mass[0],
                 child_center[1] - state.center_of_mass[1],
             ];
-            let child_velocity = [
+            let child_velocity: [f32; 2] = [
                 state.linear_velocity[0] - state.angular_velocity * offset[1],
                 state.linear_velocity[1] + state.angular_velocity * offset[0],
             ];
@@ -215,7 +215,7 @@ impl Scene {
         position: [f32; 2],
         angle: f32,
     ) -> ([f32; 2], Vec<RigidCellularBodyCell>) {
-        let offset = cells
+        let offset: [i32; 2] = cells
             .iter()
             .map(|cell| cell.local)
             .fold([i32::MAX, i32::MAX], |[min_x, min_y], [x, y]| {
@@ -225,7 +225,7 @@ impl Scene {
             cell.local[0] -= offset[0];
             cell.local[1] -= offset[1];
         }
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos): (f32, f32) = angle.sin_cos();
         (
             [
                 position[0] + (cos * offset[0] as f32 - sin * offset[1] as f32) / 8.0,
@@ -250,7 +250,7 @@ impl Scene {
                 _ => sum,
             }
         });
-        let divisor = cells.len().max(1) as f32;
+        let divisor: f32 = cells.len().max(1) as f32;
         (friction / divisor, restitution / divisor)
     }
 
@@ -270,7 +270,7 @@ impl Scene {
     }
 
     pub(super) fn release_rigid_cell_state(&mut self, slot: u32) {
-        let generation = &mut self.rigid_cell_state_generations[slot as usize];
+        let generation: &mut u32 = &mut self.rigid_cell_state_generations[slot as usize];
         *generation = generation.wrapping_add(1);
         self.rigid_cell_state_free.push(slot);
     }
@@ -287,8 +287,8 @@ impl Scene {
             self.rigid_cellular_bodies.len(),
             "rigid granular sidecar must stay positional with resident bodies"
         );
-        let mut ids = HashSet::with_capacity(self.rigid_cellular_bodies.len());
-        let mut slots = HashSet::new();
+        let mut ids: HashSet<u64> = HashSet::with_capacity(self.rigid_cellular_bodies.len());
+        let mut slots: HashSet<u32> = HashSet::new();
         for body in &self.rigid_cellular_bodies {
             debug_assert!(
                 body.id != 0,
