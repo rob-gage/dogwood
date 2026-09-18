@@ -123,7 +123,7 @@ fn apply_canonical(@builtin(global_invocation_id) invocation: vec3<u32>) {
             let result_amount =
                 select(remaining, cellular_amount, cellular_product != EMPTY_MATERIAL_IDENTIFIER);
             mutation_requests[slot] =
-                Request(
+                MaterialReactionMutationRequest(
                     cell,
                     0u,
                     cell,
@@ -147,7 +147,7 @@ fn apply_canonical(@builtin(global_invocation_id) invocation: vec3<u32>) {
                     source0_canonical && (cellular_product != EMPTY_MATERIAL_IDENTIFIER || remaining <= 0.00001),
                 );
             mutation_requests[slot] =
-                Request(
+                MaterialReactionMutationRequest(
                     source1.cell,
                     0u,
                     source1.cell,

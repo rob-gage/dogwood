@@ -44,7 +44,7 @@
     material_index_from_identifier
 }
 
-struct Request {
+struct MaterialMutationRequest {
     cell: u32,
     kind: u32,
     locator: u32,
@@ -56,13 +56,13 @@ struct Request {
     world_y: u32,
 }
 
-struct Parameters {
+struct MaterialMutationParameters {
     buffered_cell_count: u32,
     gas_count: u32,
     padding: vec2<u32>,
 }
 
-@group(0) @binding(0) var<storage, read> requests: array<Request>;
+@group(0) @binding(0) var<storage, read> requests: array<MaterialMutationRequest>;
 @group(0) @binding(1) var<storage, read> request_count: array<atomic<u32>>;
 @group(0) @binding(2) var<storage, read_write> cellular_material_identifiers: array<u32>;
 @group(0) @binding(3) var<storage, read_write> cellular_appearances: array<u32>;
@@ -71,7 +71,7 @@ struct Parameters {
 @group(0) @binding(6) var<storage, read_write> cellular_kinematics: array<vec4<f32>>;
 @group(0) @binding(7) var<storage, read_write> fluid_edits: array<u32>;
 @group(0) @binding(8) var<storage, read_write> gas_concentrations: array<f32>;
-@group(0) @binding(9) var<uniform> parameters: Parameters;
+@group(0) @binding(9) var<uniform> parameters: MaterialMutationParameters;
 @group(0) @binding(10) var<storage, read_write> fluid_edits_pending: array<atomic<u32>>;
 @group(0) @binding(11) var<storage, read_write> cellular_amounts: array<f32>;
 @group(0) @binding(12) var<storage, read_write> cellular_temperatures: array<f32>;
@@ -240,7 +240,7 @@ fn claim_particle() -> u32 {
     return 0xffffffffu;
 }
 
-fn spawn_fluid(request: Request) -> bool {
+fn spawn_fluid(request: MaterialMutationRequest) -> bool {
     let index = claim_particle();
     if (index == 0xffffffffu) {
         return false;
@@ -258,7 +258,7 @@ fn spawn_fluid(request: Request) -> bool {
     return true;
 }
 
-fn place_cell(request: Request) -> bool {
+fn place_cell(request: MaterialMutationRequest) -> bool {
     if (cellular_material_identifiers[request.cell] != EMPTY_MATERIAL_IDENTIFIER) {
         return false;
     }
@@ -281,7 +281,7 @@ fn place_cell(request: Request) -> bool {
     return true;
 }
 
-fn resolve_particle(request: Request) {
+fn resolve_particle(request: MaterialMutationRequest) {
     if (request.locator >= arrayLength(&particles)) {
         return;
     }
@@ -310,7 +310,7 @@ fn resolve_particle(request: Request) {
     }
 }
 
-fn resolve_gas_nonallocating(request: Request) {
+fn resolve_gas_nonallocating(request: MaterialMutationRequest) {
     let source = material_index_from_identifier(request.expected_source);
     if (source >= parameters.gas_count) {
         return;

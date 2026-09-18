@@ -22,7 +22,7 @@ struct Candidate {
     rigid_padding: vec2<u32>,
 }
 
-struct Request {
+struct MaterialReactionMutationRequest {
     cell: u32,
     kind: u32,
     locator: u32,
@@ -34,7 +34,7 @@ struct Request {
     world_y: u32,
 }
 
-struct Parameters {
+struct MaterialReactionParameters {
     cell_count: u32,
     gas_count: u32,
     reaction_count: u32,
@@ -62,8 +62,8 @@ struct RigidCell {
 @group(0) @binding(8) var<storage, read> external_occupancy: array<u32>;
 @group(0) @binding(9) var<storage, read> rigid_claims: array<atomic<u32>>;
 @group(0) @binding(10) var<storage, read_write> candidates: array<Candidate>;
-@group(0) @binding(11) var<uniform> parameters: Parameters;
-@group(0) @binding(12) var<storage, read_write> mutation_requests: array<Request>;
+@group(0) @binding(11) var<uniform> parameters: MaterialReactionParameters;
+@group(0) @binding(12) var<storage, read_write> mutation_requests: array<MaterialReactionMutationRequest>;
 @group(0) @binding(13) var<storage, read_write> mutation_request_count: array<atomic<u32>>;
 @group(0) @binding(14) var<storage, read_write> reaction_energy: array<f32>;
 @group(0) @binding(15) var<storage, read_write> pending_pressure: array<vec4<f32>>;
