@@ -45,7 +45,7 @@
 #import utility::material_identifier::material_form_from_identifier
 #import utility::tile_ring::physical_tile_from_logical_tile
 
-struct Parameters {
+struct CellularCollisionParameters {
     buffered_origin: vec2<i32>,
     buffered_tile_size: vec2<u32>,
     ring_offset: vec2<u32>,
@@ -54,7 +54,7 @@ struct Parameters {
 
 @group(0) @binding(0) var<storage, read> cellular_material_identifiers: array<u32>;
 @group(0) @binding(1) var<storage, read_write> occupancy: array<vec4<u32>>;
-@group(0) @binding(2) var<uniform> parameters: Parameters;
+@group(0) @binding(2) var<uniform> parameters: CellularCollisionParameters;
 
 // Derives separate static and dynamic occupancy words for each logical buffered tile
 @compute @workgroup_size(1)

@@ -50,7 +50,7 @@
 #import utility::cell_coordinates::world_cell_from_logical_tile_major_index
 #import utility::tile_ring::physical_cell_index_from_world_cell
 
-struct Parameters {
+struct CellularPhysicsBodyProxyParameters {
     buffered_origin: vec2<i32>,
     buffered_tile_size: vec2<u32>,
     ring_offset: vec2<u32>,
@@ -86,7 +86,7 @@ struct RigidCell {
 @group(0) @binding(0) var<storage, read_write> occupancy: array<u32>;
 @group(0) @binding(1) var<storage, read_write> velocity: array<vec4<f32>>;
 @group(0) @binding(2) var<storage, read_write> actor_counts: array<atomic<u32>>;
-@group(0) @binding(3) var<uniform> parameters: Parameters;
+@group(0) @binding(3) var<uniform> parameters: CellularPhysicsBodyProxyParameters;
 @group(0) @binding(4) var<storage, read_write> rigid_material_identifiers: array<u32>;
 @group(0) @binding(5) var<storage, read_write> rigid_appearances: array<u32>;
 @group(0) @binding(6) var<storage, read_write> rigid_claims: array<atomic<u32>>;

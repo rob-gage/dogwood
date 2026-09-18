@@ -49,7 +49,7 @@
     world_cell_from_physical_tile_ring_index,
 }
 
-struct Parameters {
+struct CellularDynamicParameters {
     buffered_origin: vec2<i32>,
     buffered_tile_size: vec2<u32>,
     active_origin: vec2<i32>,
@@ -83,7 +83,7 @@ struct CellularDynamicPathTrace {
 @group(0) @binding(4) var<storage, read_write> appearances_output: array<u32>;
 @group(0) @binding(5) var<storage, read_write> destination_claims: array<atomic<u32>>;
 @group(0) @binding(6) var<storage, read_write> proposals: array<Proposal>;
-@group(0) @binding(7) var<uniform> parameters: Parameters;
+@group(0) @binding(7) var<uniform> parameters: CellularDynamicParameters;
 @group(0) @binding(8) var<storage, read> external_body_occupancy: array<u32>;
 @group(0) @binding(9) var<storage, read> cellular_amounts: array<f32>;
 @group(0) @binding(10) var<storage, read> cellular_temperatures: array<f32>;
