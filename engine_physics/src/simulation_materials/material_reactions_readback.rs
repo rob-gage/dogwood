@@ -7,8 +7,8 @@ impl MaterialReactions {
         if self.rigid_removal_readback_result.is_some() {
             return;
         }
-        let len = RIGID_REMOVAL_EVENTS_OFFSET;
-        let mut encoder =
+        let len: u64 = RIGID_REMOVAL_EVENTS_OFFSET;
+        let mut encoder: wgpu::CommandEncoder =
             accelerator
                 .wgpu_device()
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -36,7 +36,7 @@ impl MaterialReactions {
         &mut self,
         accelerator: &Accelerator,
     ) -> Option<Vec<[u32; 6]>> {
-        let result = self
+        let result: Result<(), wgpu::BufferAsyncError> = self
             .rigid_removal_readback_result
             .as_ref()?
             .try_recv()
@@ -46,25 +46,25 @@ impl MaterialReactions {
             self.rigid_removal_readback.unmap();
             return Some(Vec::new());
         }
-        let bytes = self
+        let bytes: wgpu::BufferView = self
             .rigid_removal_readback
             .slice(0..self.rigid_removal_readback_len)
             .get_mapped_range()
             .ok()?;
-        let count = u32::from_le_bytes(bytes[..4].try_into().ok()?).min(self.cell_count) as usize;
+        let count: usize =
+            u32::from_le_bytes(bytes[..4].try_into().ok()?).min(self.cell_count) as usize;
         if self.rigid_removal_readback_capacity == 0 {
             drop(bytes);
             self.rigid_removal_readback.unmap();
             if count == 0 {
                 return Some(Vec::new());
             }
-            let len = RIGID_REMOVAL_EVENTS_OFFSET + count as u64 * RIGID_REMOVAL_EVENT_SIZE;
-            let mut encoder =
-                accelerator
-                    .wgpu_device()
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("rigid chemistry event readback"),
-                    });
+            let len: u64 = RIGID_REMOVAL_EVENTS_OFFSET + count as u64 * RIGID_REMOVAL_EVENT_SIZE;
+            let mut encoder: wgpu::CommandEncoder = accelerator
+                .wgpu_device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("rigid chemistry event readback"),
+                });
             encoder.copy_buffer_to_buffer(
                 self.rigid_removal_events.wgpu_buffer(),
                 0,
@@ -85,13 +85,13 @@ impl MaterialReactions {
             self.rigid_removal_readback_result = Some(receiver);
             return None;
         }
-        let events = bytes[usize::try_from(RIGID_REMOVAL_EVENTS_OFFSET).unwrap()..]
+        let events: Vec<[u32; 6]> = bytes[usize::try_from(RIGID_REMOVAL_EVENTS_OFFSET).unwrap()..]
             .as_chunks::<32>()
             .0
             .iter()
             .take(count)
             .map(|b| {
-                let mut event = [0; 6];
+                let mut event: [u32; 6] = [0; 6];
                 for (word, value) in event.iter_mut().zip(b.as_chunks::<4>().0) {
                     *word = u32::from_le_bytes(*value);
                 }
