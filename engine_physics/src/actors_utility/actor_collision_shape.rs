@@ -45,7 +45,7 @@ impl ActorCollisionShape {
     }
 
     pub(crate) fn pose(self, center: Vector, up: Vector) -> Pose {
-        let angle = match self {
+        let angle: f32 = match self {
             Self::Circle { .. } => 0.0,
             _ => (-up.x).atan2(up.y),
         };

@@ -151,14 +151,14 @@ impl ActorRegistry {
         self.world
             .iter_entities()
             .filter_map(|entity| {
-                let pawn = entity.get::<ActorPawn>()?;
-                let shape = pawn.collision_shape?;
+                let pawn: &ActorPawn = entity.get::<ActorPawn>()?;
+                let shape: ActorCollisionShape = pawn.collision_shape?;
                 if matches!(pawn.movement, Some(ActorPawnMovement::Noclip)) {
                     return None;
                 }
-                let position = *entity.get::<ScenePosition>()?;
-                let velocity = *entity.get::<SceneVelocity>()?;
-                let state = entity.get::<ActorPawnWalkingState>()?;
+                let position: ScenePosition = *entity.get::<ScenePosition>()?;
+                let velocity: SceneVelocity = *entity.get::<SceneVelocity>()?;
+                let state: &ActorPawnWalkingState = entity.get::<ActorPawnWalkingState>()?;
                 Some(ActorCellularProxyState {
                     center: [
                         position.tile_coordinates.x as f32 + position.x_offset,
@@ -182,12 +182,12 @@ impl ActorRegistry {
         self.world
             .iter_entities()
             .filter_map(|entity| {
-                let pawn = entity.get::<ActorPawn>()?;
-                let shape = pawn.collision_shape?;
+                let pawn: &ActorPawn = entity.get::<ActorPawn>()?;
+                let shape: ActorCollisionShape = pawn.collision_shape?;
                 if matches!(pawn.movement, Some(ActorPawnMovement::Noclip)) {
                     return None;
                 }
-                let position = *entity.get::<ScenePosition>()?;
+                let position: ScenePosition = *entity.get::<ScenePosition>()?;
                 Some(ActorPhysicsProxyState {
                     actor: Actor::from_bevy_entity(entity.id()),
                     center: [
@@ -228,8 +228,8 @@ impl ActorRegistry {
         let Some(configuration) = pawn.swimming else {
             return false;
         };
-        let movement = pawn.movement;
-        let has_walking = pawn.walking.is_some();
+        let movement: Option<ActorPawnMovement> = pawn.movement;
+        let has_walking: bool = pawn.walking.is_some();
         let Some(mut state) = self.world.get_mut::<ActorPawnSwimmingState>(entity) else {
             return false;
         };
@@ -238,7 +238,7 @@ impl ActorRegistry {
         state.fluid_density = sample[3].max(0.0);
         state.fluid_viscosity = sample[4].max(0.0);
         drop(state);
-        let movement = match movement {
+        let movement: Option<ActorPawnMovement> = match movement {
             Some(ActorPawnMovement::Walking) if sample[0] >= configuration.enter_immersion => {
                 Some(ActorPawnMovement::Swimming)
             }
