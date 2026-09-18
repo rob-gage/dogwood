@@ -18,27 +18,29 @@ impl RigidCellStateGather {
         temperatures: &AcceleratorBuffer,
         capacity: usize,
     ) -> Self {
-        let device = accelerator.wgpu_device();
-        let descriptors = accelerator.allocate::<u32>(capacity.max(1));
-        let output = accelerator.allocate::<[f32; 4]>(capacity.max(1));
-        let count = crate::simulation::create_simulation_uniform_buffer(
+        let device: &wgpu::Device = accelerator.wgpu_device();
+        let descriptors: AcceleratorBuffer = accelerator.allocate::<u32>(capacity.max(1));
+        let output: AcceleratorBuffer = accelerator.allocate::<[f32; 4]>(capacity.max(1));
+        let count: wgpu::Buffer = crate::simulation::create_simulation_uniform_buffer(
             device,
             "rigid cell state gather count",
             4,
         );
-        let storage = crate::simulation::storage_bind_group_layout_entry;
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("rigid cell state gather"),
-            entries: &[
-                storage(0, true),
-                storage(1, true),
-                storage(2, true),
-                storage(3, true),
-                storage(4, false),
-                crate::simulation::uniform_bind_group_layout_entry(5),
-            ],
-        });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let storage: fn(u32, bool) -> wgpu::BindGroupLayoutEntry =
+            crate::simulation::storage_bind_group_layout_entry;
+        let layout: wgpu::BindGroupLayout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("rigid cell state gather"),
+                entries: &[
+                    storage(0, true),
+                    storage(1, true),
+                    storage(2, true),
+                    storage(3, true),
+                    storage(4, false),
+                    crate::simulation::uniform_bind_group_layout_entry(5),
+                ],
+            });
+        let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("rigid cell state gather"),
             layout: &layout,
             entries: [
@@ -58,26 +60,27 @@ impl RigidCellStateGather {
             .collect::<Vec<_>>()
             .as_slice(),
         });
-        let shader = crate::simulation::create_simulation_shader_module(
+        let shader: wgpu::ShaderModule = crate::simulation::create_simulation_shader_module(
             device,
             "rigid cell state gather",
             include_str!("rigid_cell_state_gather.wgsl"),
             "engine_physics/src/simulation/rigid_cell_state_gather.wgsl",
         );
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("rigid cell state gather"),
-            layout: Some(
-                &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: None,
-                    bind_group_layouts: &[Some(&layout)],
-                    immediate_size: 0,
-                }),
-            ),
-            module: &shader,
-            entry_point: Some("gather"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let pipeline: wgpu::ComputePipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("rigid cell state gather"),
+                layout: Some(
+                    &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: None,
+                        bind_group_layouts: &[Some(&layout)],
+                        immediate_size: 0,
+                    }),
+                ),
+                module: &shader,
+                entry_point: Some("gather"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
         Self {
             descriptors,
             output,
@@ -98,13 +101,14 @@ impl RigidCellStateGather {
         accelerator
             .wgpu_queue()
             .write_buffer(&self.count, 0, &(slots.len() as u32).to_le_bytes());
-        let mut encoder =
+        let mut encoder: wgpu::CommandEncoder =
             accelerator
                 .wgpu_device()
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("rigid dormancy gather"),
                 });
-        let mut pass = accelerator.begin_compute_pass(&mut encoder, "rigid dormancy gather");
+        let mut pass: wgpu::ComputePass<'_> =
+            accelerator.begin_compute_pass(&mut encoder, "rigid dormancy gather");
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.dispatch_workgroups((slots.len() as u32).div_ceil(64), 1, 1);
