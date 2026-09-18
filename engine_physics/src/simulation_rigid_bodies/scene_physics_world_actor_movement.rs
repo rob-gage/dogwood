@@ -131,8 +131,7 @@ impl ScenePhysicsWorld {
             consumed += advance;
             remaining -= advance;
             let mut active_normals = 0usize;
-            for index in 0..normal_count {
-                let normal = normals[index];
+            for normal in normals[..normal_count].iter().copied() {
                 active_normals += 1;
                 collisions(normal);
                 grounded |= normal.dot(up) >= walkable_normal;
