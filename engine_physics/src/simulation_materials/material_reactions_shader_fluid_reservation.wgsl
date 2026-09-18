@@ -63,6 +63,7 @@ fn reserve_fluid_plan(
                             )
                             && particle.amount > 0.000001
                             && matches_selector(rule, reactant, particle.material_identifier)
+                            && atomicLoad(&fluid_reservation_owners[p]) == 0xffffffffu
                             && atomicLoad(&fluid_reservations[p]) < u32(
                                 max(particle.amount, 0.0) * RESERVATION_SCALE,
                             ))
@@ -155,11 +156,9 @@ fn find_fluid_product_slot(cell: u32, material: u32) -> u32 {
                         && particle.is_active != 0u
                         && particle.material_identifier == material
                         && particle.amount > 0.000001
-                        && fluid_particle_belongs_to_cell(
-                            particle.position,
-                            world,
-                            CELLS_PER_TILE_FLOAT,
-                        )
+                        && distance(particle.position, center)
+                            <= fluid_spatial_parameters.support_radius_cells / CELLS_PER_TILE_FLOAT
+                        && atomicLoad(&fluid_reservation_owners[p]) == 0xffffffffu
                         && atomicLoad(&fluid_reservations[p]) == 0u)
                 {
                     selected = p;
@@ -171,6 +170,7 @@ fn find_fluid_product_slot(cell: u32, material: u32) -> u32 {
     if (selected == 0xffffffffu) {
         return selected;
     }
+    atomicStore(&fluid_reservation_owners[selected], 0xfffffffeu);
     return selected | 0x80000000u;
 }
 

@@ -22,7 +22,14 @@ fn reserve_fluid_authority(@builtin(global_invocation_id) invocation: vec3<u32>)
 }
 
 fn release_fluid_slot(slot: u32) {
-    if (slot == 0xffffffffu || (slot & 0x80000000u) != 0u) {
+    if (slot == 0xffffffffu) {
+        return;
+    }
+    if ((slot & 0x80000000u) != 0u) {
+        let existing_slot = slot & 0x7fffffffu;
+        if (existing_slot < arrayLength(&fluid_reservation_owners)) {
+            atomicStore(&fluid_reservation_owners[existing_slot], 0xffffffffu);
+        }
         return;
     }
     let count = atomicAdd(&fluid_free_count[0], 1u);
@@ -46,6 +53,7 @@ fn spawn_fluid_product(slot: u32, material: u32, amount: f32, cell: u32, tempera
         }
         existing.amount = total_amount;
         fluid_particles[existing_slot] = existing;
+        atomicStore(&fluid_reservation_owners[existing_slot], 0xffffffffu);
         return;
     }
     let world =
