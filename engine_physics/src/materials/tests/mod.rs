@@ -186,7 +186,6 @@ fn test_builder_compiles_dense_indices_tags_and_thermal_metadata() {
                     yield_rate: 1.0,
                     latent_energy: 1.0,
                 }),
-                ..Default::default()
             },
         )
         .unwrap();

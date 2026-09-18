@@ -68,7 +68,7 @@ impl SceneSimulationConfiguration {
                 "Simulation streaming batch size exceeds the simulation dimensions",
             ));
         }
-        if self.buffer_size % self.streaming_batch_size != 0 {
+        if !self.buffer_size.is_multiple_of(self.streaming_batch_size) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "Simulation buffer size must be a multiple of streaming batch size",
