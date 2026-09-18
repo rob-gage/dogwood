@@ -48,7 +48,7 @@
 #import utility::material_identifier::material_form_from_identifier
 #import utility::tile_ring::physical_cell_index_from_world_cell
 
-struct Parameters {
+struct GasSimulationParameters {
     buffered_origin: vec2<i32>,
     buffered_tile_size: vec2<u32>,
     ring_offset: vec2<u32>,
@@ -82,6 +82,6 @@ struct Parameters {
 @group(0) @binding(11) var<storage, read> gas_properties: array<vec4<f32>>;
 @group(0) @binding(12) var<storage, read_write> streaming_data: array<u32>;
 @group(0) @binding(14) var<storage, read_write> gas_temperature: array<f32>;
-@group(0) @binding(13) var<uniform> parameters: Parameters;
+@group(0) @binding(13) var<uniform> parameters: GasSimulationParameters;
 
 // Semi-Lagrangian backtracing from immutable velocity into separate scratch
