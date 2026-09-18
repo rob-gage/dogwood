@@ -322,9 +322,11 @@ impl Scene {
         self.fluid_sample_buffer.slice(..).map_async(
             wgpu::MapMode::Read,
             move |fluid_sample_mapping_result| {
+                let mut mapped: bool = false;
                 let sample: Result<[f32; 5], String> = fluid_sample_mapping_result
                     .map_err(|_| "Pawn fluid sample readback failed".to_owned())
                     .and_then(|()| {
+                        mapped = true;
                         mapped_fluid_sample_buffer
                             .slice(..)
                             .get_mapped_range()
@@ -347,7 +349,9 @@ impl Scene {
                                 }
                             })
                     });
-                mapped_fluid_sample_buffer.unmap();
+                if mapped {
+                    mapped_fluid_sample_buffer.unmap();
+                }
                 if let Ok(mut fluid_sample_result) = fluid_sample_result_store.lock() {
                     *fluid_sample_result = Some(sample);
                 }

@@ -38,6 +38,16 @@ impl Scene {
             }
         }
         self.rigid_streaming_apply_completed()?;
+        self.accelerator
+            .poll()
+            .map_err(|error| io::Error::other(error.to_string()))?;
+        self.material_extraction_results.extend(
+            self.material_extraction
+                .take_completed(self.accelerator.as_ref(), self.data.materials()),
+        );
+        self.apply_completed_rigid_thermal_transitions();
+        self.apply_completed_rigid_cellular_reactions()?;
+        self.rigid_dormancy_apply_completed()?;
         self.chunks_refresh()?;
         self.actors_streaming_update();
         self.tile_downloads_submit()?;

@@ -20,6 +20,12 @@ impl Scene {
         &mut self,
         future_buffered: TileArea,
     ) -> Result<bool, io::Error> {
+        // GPU-authored cell amounts and topology are not represented by the CPU
+        // bodies until their readbacks have been consumed. Never snapshot a body
+        // across that authority boundary while streaming.
+        if self.rigid_streaming_mutation_pending() {
+            return Ok(false);
+        }
         let current_buffered: TileArea = self.area_buffered();
         let mut selected: Vec<(usize, ScenePendingRigidDormancy)> = Vec::new();
         let mut state_count: usize = 0;
@@ -129,7 +135,6 @@ impl Scene {
                     let batch: SceneRigidDormancyBatch = self
                         .rigid_dormancy_batches
                         .swap_remove(rigid_dormancy_batch_index);
-                    self.rigid_dormancy_readbacks[batch.readback_slot].unmap();
                     self.rigid_dormancy_readback_free.push(batch.readback_slot);
                     self.restore_aborted_rigid_dormancy(batch.bodies);
                     return Err(io::Error::other("rigid dormancy readback disconnected"));
@@ -138,7 +143,6 @@ impl Scene {
                     let batch: SceneRigidDormancyBatch = self
                         .rigid_dormancy_batches
                         .swap_remove(rigid_dormancy_batch_index);
-                    self.rigid_dormancy_readbacks[batch.readback_slot].unmap();
                     self.rigid_dormancy_readback_free.push(batch.readback_slot);
                     self.restore_aborted_rigid_dormancy(batch.bodies);
                     return Err(io::Error::other(format!(
@@ -157,6 +161,9 @@ impl Scene {
             {
                 Ok(rigid_dormancy_readback_bytes) => rigid_dormancy_readback_bytes,
                 Err(error) => {
+                    // The map operation completed successfully. The range
+                    // acquisition failed, so release the mapped buffer before
+                    // recycling the slot.
                     self.rigid_dormancy_readbacks[batch.readback_slot].unmap();
                     self.rigid_dormancy_readback_free.push(batch.readback_slot);
                     self.restore_aborted_rigid_dormancy(batch.bodies);
@@ -252,6 +259,14 @@ impl Scene {
             self.rigid_io_submit();
         }
         Ok(())
+    }
+
+    fn rigid_streaming_mutation_pending(&self) -> bool {
+        !self.rigid_dormancy_batches.is_empty()
+            || self.thermal_phase_transitions.rigid_readback_pending()
+            || self.material_reactions.rigid_removal_readback_pending()
+            || self.cellular_pressure.rigid_reaction_readback_pending()
+            || self.material_extraction.readback_pending()
     }
 
     /// A failed map leaves the live Accelerator slots untouched, so reinserting the
