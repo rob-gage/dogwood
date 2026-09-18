@@ -32,7 +32,7 @@ impl Scene {
                 selected.push((
                     index,
                     PendingRigidDormancy {
-                        id: body.id,
+                        identifier: body.identifier,
                         position: state.translation,
                         rotation: state.angle,
                         linear_velocity: state.linear_velocity,
@@ -74,8 +74,8 @@ impl Scene {
             .rev()
             .map(|(index, pending)| {
                 let body = self.rigid_cellular_bodies.swap_remove(index);
-                self.rigid_activation_pending.remove(&body.id);
-                self.rigid_sleeping_pending.remove(&body.id);
+                self.rigid_activation_pending.remove(&body.identifier);
+                self.rigid_sleeping_pending.remove(&body.identifier);
                 self.physics_world.remove_rigid_cellular_body(&body);
                 pending
             })
@@ -169,7 +169,7 @@ impl Scene {
             while let Some(body) = bodies.next() {
                 let end: usize = cursor + body.cells.len();
                 let record: DormantRigidBody = crate::scenes::DormantRigidBody {
-                    identifier: body.id,
+                    identifier: body.identifier,
                     position: body.position,
                     rotation: body.rotation,
                     linear_velocity: body.linear_velocity,
@@ -231,7 +231,7 @@ impl Scene {
                 pending.linear_velocity,
                 pending.angular_velocity,
             );
-            body.id = pending.id;
+            body.identifier = pending.identifier;
             if pending.sleeping {
                 self.physics_world.sleep_rigid_cellular_body(&body);
             }

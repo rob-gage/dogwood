@@ -222,7 +222,7 @@ impl Scene {
             request.record.linear_velocity,
             request.record.angular_velocity,
         );
-        body.id = request.record.identifier;
+        body.identifier = request.record.identifier;
         if request.record.sleeping {
             self.physics_world.sleep_rigid_cellular_body(&body);
         }
@@ -242,11 +242,11 @@ impl Scene {
             if let Some(index) = self
                 .rigid_cellular_bodies
                 .iter()
-                .position(|body| body.id == *id)
+                .position(|body| body.identifier == *id)
             {
                 let body: RigidCellularBody = self.rigid_cellular_bodies.swap_remove(index);
-                self.rigid_activation_pending.remove(&body.id);
-                self.rigid_sleeping_pending.remove(&body.id);
+                self.rigid_activation_pending.remove(&body.identifier);
+                self.rigid_sleeping_pending.remove(&body.identifier);
                 self.physics_world.remove_rigid_cellular_body(&body);
                 for cell in body.cells {
                     self.release_rigid_cell_state(cell.state_slot);
@@ -309,7 +309,7 @@ impl Scene {
             if self
                 .rigid_cellular_bodies
                 .iter()
-                .any(|body| body.id == record.identifier)
+                .any(|body| body.identifier == record.identifier)
             {
                 self.rigid_owner_loads
                     .insert(owner, RigidOwnerLoad::Ready(original));
@@ -351,14 +351,14 @@ impl Scene {
                 record.linear_velocity,
                 record.angular_velocity,
             );
-            body.id = record.identifier;
+            body.identifier = record.identifier;
             if record.sleeping {
-                self.rigid_sleeping_pending.insert(body.id);
+                self.rigid_sleeping_pending.insert(body.identifier);
             }
             self.physics_world
                 .set_rigid_cellular_body_enabled(&body, false);
-            self.rigid_activation_pending.insert(body.id);
-            ids.push(body.id);
+            self.rigid_activation_pending.insert(body.identifier);
+            ids.push(body.identifier);
             self.rigid_cellular_body_id_next =
                 self.rigid_cellular_body_id_next
                     .max(record.identifier.checked_add(1).ok_or_else(|| {

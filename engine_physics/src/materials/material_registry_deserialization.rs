@@ -166,14 +166,15 @@ impl MaterialRegistry {
             }
             let mut members: Vec<MaterialIdentifier> = Vec::with_capacity(member_count);
             for _ in 0..member_count {
-                let id: MaterialIdentifier = MaterialIdentifier::from_u32(Self::read_u32(reader)?);
-                if self.get(id).is_none() {
+                let identifier: MaterialIdentifier =
+                    MaterialIdentifier::from_u32(Self::read_u32(reader)?);
+                if self.get(identifier).is_none() {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
                         "Invalid reaction selector member",
                     ));
                 }
-                members.push(id);
+                members.push(identifier);
             }
             let reaction_count: usize = Self::read_u32(reader)? as usize;
             if reaction_count > 65536 {

@@ -111,10 +111,10 @@ impl Scene {
             // staged body take part in this step.
             if self.rigid_activation_collision_origin == Some(self.area_buffered().origin()) {
                 for body in &self.rigid_cellular_bodies {
-                    if self.rigid_activation_pending.remove(&body.id) {
+                    if self.rigid_activation_pending.remove(&body.identifier) {
                         self.physics_world
                             .set_rigid_cellular_body_enabled(body, true);
-                        if self.rigid_sleeping_pending.remove(&body.id) {
+                        if self.rigid_sleeping_pending.remove(&body.identifier) {
                             self.physics_world.sleep_rigid_cellular_body(body);
                         }
                     }

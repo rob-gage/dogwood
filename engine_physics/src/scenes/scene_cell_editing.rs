@@ -295,7 +295,7 @@ impl Scene {
             [0.0; 2],
             0.0,
         );
-        body.id = self.next_rigid_cellular_body_id();
+        body.identifier = self.next_rigid_cellular_body_id();
         self.rigid_cellular_bodies.push(body);
         self.rigid_cellular_topology_revision =
             self.rigid_cellular_topology_revision.wrapping_add(1);

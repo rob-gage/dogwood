@@ -325,7 +325,7 @@ fn test_axis_aligned_rigid_block_raster_has_every_cell_once() {
     let (_accelerator_test_lock, accelerator) = new_accelerator_test();
     let material = MaterialIdentifier::new(MaterialForm::CellularStatic, 3);
     let body = RigidCellularBody {
-        id: 0,
+        identifier: 0,
         handle: RigidBodyHandle::invalid(),
         cells: (2..6)
             .flat_map(|y| {

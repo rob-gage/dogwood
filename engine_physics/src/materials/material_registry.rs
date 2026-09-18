@@ -171,7 +171,10 @@ impl MaterialRegistry {
         for members in tags.values_mut() {
             members.sort_unstable();
             members.dedup();
-            if members.iter().any(|id| self.get(*id).is_none()) {
+            if members
+                .iter()
+                .any(|identifier| self.get(*identifier).is_none())
+            {
                 return Err("Tag references an unregistered material".into());
             }
         }
@@ -256,11 +259,11 @@ impl MaterialRegistry {
                     return Err("Invalid reaction reactant amount".into());
                 }
                 let resolved: Vec<MaterialIdentifier> = match &reactant.selector {
-                    MaterialReference::Material(id) => {
-                        if registry.get(*id).is_none() {
+                    MaterialReference::Material(identifier) => {
+                        if registry.get(*identifier).is_none() {
                             return Err("Reaction references an unregistered material".into());
                         }
-                        vec![*id]
+                        vec![*identifier]
                     }
                     MaterialReference::Tag(tag) => tags
                         .get(tag)

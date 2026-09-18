@@ -126,8 +126,8 @@ impl Scene {
             return;
         };
         let body: RigidCellularBody = self.rigid_cellular_bodies.swap_remove(body_index);
-        self.rigid_activation_pending.remove(&body.id);
-        self.rigid_sleeping_pending.remove(&body.id);
+        self.rigid_activation_pending.remove(&body.identifier);
+        self.rigid_sleeping_pending.remove(&body.identifier);
         self.rigid_cellular_topology_revision =
             self.rigid_cellular_topology_revision.wrapping_add(1);
         self.rigid_cellular_support.clear();
@@ -196,7 +196,7 @@ impl Scene {
                 child_velocity,
                 state.angular_velocity,
             );
-            child.id = self.next_rigid_cellular_body_id();
+            child.identifier = self.next_rigid_cellular_body_id();
             self.rigid_cellular_bodies.push(child);
         }
         self.rigid_cellular_contact_active
@@ -291,11 +291,11 @@ impl Scene {
         let mut slots: HashSet<u32> = HashSet::new();
         for body in &self.rigid_cellular_bodies {
             debug_assert!(
-                body.id != 0,
+                body.identifier != 0,
                 "resident rigid body has no persistent identity"
             );
             debug_assert!(
-                ids.insert(body.id),
+                ids.insert(body.identifier),
                 "resident rigid identities must be unique"
             );
             for cell in &body.cells {

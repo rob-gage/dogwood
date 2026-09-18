@@ -97,7 +97,7 @@ impl ScenePhysicsWorld {
             Some(handle),
         );
         RigidCellularBody {
-            id: 0,
+            identifier: 0,
             handle,
             cells,
         }
