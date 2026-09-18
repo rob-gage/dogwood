@@ -144,11 +144,11 @@ mod tests {
     }
 
     fn transition_target(scene: &Scene, source: &str, hot: bool) -> Option<String> {
-        let properties = scene
+        let properties: &engine::physics::materials::MaterialThermalProperties = scene
             .materials()
             .thermal_properties(material_identifier(scene, source))
             .unwrap();
-        let transition = if hot {
+        let transition: &engine::physics::materials::MaterialThermalTransition = if hot {
             properties.hot_transition.as_ref()
         } else {
             properties.cold_transition.as_ref()
@@ -165,9 +165,9 @@ mod tests {
 
     #[test]
     fn test_demo_material_graph_and_rigid_thresholds_are_declarative() {
-        let accelerator = Arc::new(Accelerator::new().unwrap());
-        let game = TemplateProject::new(&accelerator).unwrap();
-        let scene = game.scene.as_ref().unwrap();
+        let accelerator: Arc<Accelerator> = Arc::new(Accelerator::new().unwrap());
+        let game: TemplateProject = TemplateProject::new(&accelerator).unwrap();
+        let scene: &Scene = game.scene.as_ref().unwrap();
         for (source, target) in [
             ("Ice", "Water"),
             ("Slush", "Water"),
@@ -222,7 +222,7 @@ mod tests {
                 Material::CellularStatic {
                     debris_material, ..
                 } => {
-                    let debris = debris_material
+                    let debris: Option<&Material> = debris_material
                         .and_then(|material_identifier| scene.materials().get(material_identifier));
                     assert_eq!(debris.map(Material::name), Some(target));
                 }

@@ -32,7 +32,7 @@ impl SceneGenerator for TemplateSceneGenerator {
                         let Some((material_identifier, variation)) = material else {
                             continue;
                         };
-                        let integrity = if material_identifier == self.stone {
+                        let integrity: f32 = if material_identifier == self.stone {
                             self.stone_integrity
                         } else {
                             0.0
