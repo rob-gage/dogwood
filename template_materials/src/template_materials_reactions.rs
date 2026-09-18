@@ -23,21 +23,23 @@ pub(super) fn register_reactions(
     broken_glass: MaterialIdentifier,
     coal: MaterialIdentifier,
 ) -> Result<(), String> {
-    let exact = |material: MaterialIdentifier, amount: f32| {
-        Some(MaterialReactionReactant {
-            selector: MaterialReference::Material(material),
-            amount,
-        })
-    };
-    let tag = |name: &str, amount: f32| {
+    let exact: fn(MaterialIdentifier, f32) -> Option<MaterialReactionReactant> =
+        |material: MaterialIdentifier, amount: f32| {
+            Some(MaterialReactionReactant {
+                selector: MaterialReference::Material(material),
+                amount,
+            })
+        };
+    let tag: fn(&str, f32) -> Option<MaterialReactionReactant> = |name: &str, amount: f32| {
         Some(MaterialReactionReactant {
             selector: MaterialReference::Tag(name.into()),
             amount,
         })
     };
-    let product = |material: MaterialIdentifier, amount: f32| {
-        Some(MaterialReactionProduct { material, amount })
-    };
+    let product: fn(MaterialIdentifier, f32) -> Option<MaterialReactionProduct> =
+        |material: MaterialIdentifier, amount: f32| {
+            Some(MaterialReactionProduct { material, amount })
+        };
     materials.register_reaction(MaterialReaction {
         reactants: [exact(fire, 0.08), tag("flammable", 1.0)],
         products: [product(fire, 0.08), product(smoke, 0.12)],

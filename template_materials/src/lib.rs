@@ -65,7 +65,7 @@ pub struct TemplateMaterials {
 impl TemplateMaterials {
     /// Builds and validates the template material registry.
     pub fn new() -> Result<Self, String> {
-        let mut materials = MaterialRegistryBuilder::new();
+        let mut materials: MaterialRegistryBuilder = MaterialRegistryBuilder::new();
         let stone_debris_graphics: MaterialAppearance =
             MaterialAppearance::from_color(Color::new_rgb(148, 148, 148))
                 .with_variation([0.5, 0.5, 0.5, 0.0])
@@ -107,7 +107,7 @@ impl TemplateMaterials {
             friction: 0.8,
             restitution: 0.02,
         });
-        let water = materials.register(Material::Fluid {
+        let water: MaterialIdentifier = materials.register(Material::Fluid {
             name: "Water".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(45, 125, 210)),
             pressure_transmission: 0.95,
@@ -147,7 +147,7 @@ impl TemplateMaterials {
             dissipation: 0.002,
             compressibility: 0.08,
         });
-        let slush = materials.register(Material::CellularDynamic {
+        let slush: MaterialIdentifier = materials.register(Material::CellularDynamic {
             name: "Slush".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(130, 185, 215)),
             mass: 1.0,
@@ -155,7 +155,7 @@ impl TemplateMaterials {
             friction: 0.35,
             restitution: 0.0,
         });
-        let ice = materials.register(Material::CellularStatic {
+        let ice: MaterialIdentifier = materials.register(Material::CellularStatic {
             name: "Ice".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(180, 220, 245)),
             mass: 1.0,
@@ -168,7 +168,7 @@ impl TemplateMaterials {
             friction: 0.2,
             restitution: 0.0,
         });
-        let lava = materials.register(Material::Fluid {
+        let lava: MaterialIdentifier = materials.register(Material::Fluid {
             name: "Lava".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(220, 70, 20)),
             pressure_transmission: 0.92,
@@ -181,7 +181,7 @@ impl TemplateMaterials {
             density: 2.4,
             viscosity: 12.0,
         });
-        let molten_glass = materials.register(Material::Fluid {
+        let molten_glass: MaterialIdentifier = materials.register(Material::Fluid {
             name: "Molten Glass".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(245, 125, 40)),
             pressure_transmission: 0.9,
@@ -194,7 +194,7 @@ impl TemplateMaterials {
             density: 2.2,
             viscosity: 18.0,
         });
-        let broken_glass = materials.register(Material::CellularDynamic {
+        let broken_glass: MaterialIdentifier = materials.register(Material::CellularDynamic {
             name: "Broken Glass".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(170, 200, 215)),
             mass: 2.0,
@@ -202,7 +202,7 @@ impl TemplateMaterials {
             friction: 0.5,
             restitution: 0.08,
         });
-        let glass = materials.register(Material::CellularStatic {
+        let glass: MaterialIdentifier = materials.register(Material::CellularStatic {
             name: "Glass".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(190, 215, 225)),
             mass: 2.0,
@@ -215,7 +215,7 @@ impl TemplateMaterials {
             friction: 0.35,
             restitution: 0.04,
         });
-        let coal = materials.register(Material::CellularDynamic {
+        let coal: MaterialIdentifier = materials.register(Material::CellularDynamic {
             name: "Coal".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(42, 35, 32)),
             mass: 1.4,
@@ -223,7 +223,7 @@ impl TemplateMaterials {
             friction: 0.7,
             restitution: 0.02,
         });
-        let oil = materials.register(Material::Fluid {
+        let oil: MaterialIdentifier = materials.register(Material::Fluid {
             name: "Oil".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(88, 62, 24)),
             pressure_transmission: 0.9,
@@ -236,7 +236,7 @@ impl TemplateMaterials {
             density: 0.82,
             viscosity: 5.0,
         });
-        let natural_gas = materials.register(Material::Gas {
+        let natural_gas: MaterialIdentifier = materials.register(Material::Gas {
             name: "Natural Gas".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(215, 188, 105)),
             density: 0.2,
@@ -245,7 +245,7 @@ impl TemplateMaterials {
             dissipation: 0.0,
             compressibility: 0.08,
         });
-        let blasting_powder = materials.register(Material::CellularDynamic {
+        let blasting_powder: MaterialIdentifier = materials.register(Material::CellularDynamic {
             name: "Blasting Powder".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(150, 118, 82)),
             mass: 1.1,
@@ -253,7 +253,7 @@ impl TemplateMaterials {
             friction: 0.65,
             restitution: 0.02,
         });
-        let acid = materials.register(Material::Fluid {
+        let acid: MaterialIdentifier = materials.register(Material::Fluid {
             name: "Acid".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(85, 220, 72)),
             pressure_transmission: 0.9,
@@ -266,7 +266,7 @@ impl TemplateMaterials {
             density: 1.05,
             viscosity: 2.5,
         });
-        let acid_gas = materials.register(Material::Gas {
+        let acid_gas: MaterialIdentifier = materials.register(Material::Gas {
             name: "Acid Gas".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(180, 235, 92)),
             density: 0.9,
@@ -275,7 +275,7 @@ impl TemplateMaterials {
             dissipation: 0.0,
             compressibility: 0.06,
         });
-        let acid_sludge = materials.register(Material::Fluid {
+        let acid_sludge: MaterialIdentifier = materials.register(Material::Fluid {
             name: "Acid Sludge".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(112, 150, 48)),
             pressure_transmission: 0.9,
