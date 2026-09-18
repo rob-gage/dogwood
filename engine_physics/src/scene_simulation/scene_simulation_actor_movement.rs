@@ -187,7 +187,7 @@ pub trait SceneSimulation {
                 )
                 .is_some()
                 || {
-                    let mut supported = false;
+                    let mut supported: bool = false;
                     let (_, grounded) = physics_world.move_actor(
                         collision_shape,
                         Vector::new(world_x, world_y),
@@ -254,7 +254,7 @@ pub trait SceneSimulation {
         let mut contacted_walkable_surface: bool = false;
         let walkable_normal: f32 = configuration.maximum_slope_angle.cos();
         let desired_translation: Vector = desired_velocity * delta_time;
-        let virtual_surface = was_grounded && !jump_requested && surface_direction.is_some();
+        let virtual_surface: bool = was_grounded && !jump_requested && surface_direction.is_some();
         let mut collisions = |normal: Vector| {
             let normal_up: f32 = normal.dot(up);
             if normal_up >= walkable_normal {
@@ -285,7 +285,7 @@ pub trait SceneSimulation {
                 &mut collisions,
             )
         };
-        let virtual_surface_complete = virtual_surface
+        let virtual_surface_complete: bool = virtual_surface
             && (resolved_translation - desired_translation).length_squared()
                 <= 4.0 / (1024.0 * 1024.0);
         integrate_actor_position(
@@ -383,9 +383,9 @@ pub trait SceneSimulation {
         walkable_normal: f32,
         collisions: &mut impl FnMut(Vector),
     ) -> (Vector, bool) {
-        let requested_rise = desired.dot(up);
+        let requested_rise: f32 = desired.dot(up);
         // A canonical cell is the maximum discrete riser accepted by the validated probe.
-        let clearance = 1.0 / 8.0 + requested_rise.max(0.0);
+        let clearance: f32 = 1.0 / 8.0 + requested_rise.max(0.0);
         let (raised, _) = physics_world.move_actor(
             collision_shape,
             position,
