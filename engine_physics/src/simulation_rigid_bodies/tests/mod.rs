@@ -13,6 +13,7 @@ use crate::actors::Actor;
 use crate::actors::ActorCellularProxyState;
 use crate::actors::ActorCollisionShape;
 use crate::actors::ActorPhysicsProxyState;
+use crate::actors_utility::ActorPhysicalProxyState;
 use crate::materials::MaterialRegistry;
 use crate::simulation::CollisionOccupancySnapshot;
 use crate::simulation_rigid_bodies::ScenePhysicsWorld;
@@ -53,6 +54,71 @@ fn test_every_actor_primitive_casts_against_static_terrain_patches() {
         );
         assert!(movement.x < 0.5);
     }
+}
+
+#[test]
+fn test_generic_physical_actor_demands_and_settles_on_cellular_terrain() {
+    let mut physics = ScenePhysicsWorld::new();
+    let mut static_masks = vec![[0; 2]; 9];
+    static_masks[4] = [u32::MAX; 2];
+    physics.update_cellular_snapshot(CollisionOccupancySnapshot {
+        sequence: 0,
+        origin: TileCoordinates { x: -1, y: -1 },
+        width: 3,
+        height: 3,
+        static_masks: static_masks.into_boxed_slice(),
+        dynamic_masks: vec![[0; 2]; 9].into_boxed_slice(),
+    });
+    let actor = Actor::new(100);
+    let shape = ActorCollisionShape::Rectangle {
+        width: 0.5,
+        height: 0.5,
+    };
+    let mut proxy = ActorPhysicalProxyState {
+        actor,
+        center: [0.5, 3.0],
+        velocity: [0.0, 0.0],
+        shape,
+        mass: 1.0,
+        friction: 0.5,
+        restitution: 0.0,
+    };
+    physics.sync_physical_proxies(std::slice::from_ref(&proxy));
+    let mut recent_y_positions = Vec::new();
+    for _ in 0..120 {
+        physics.prepare_cellular_terrain_with_physical(
+            &[],
+            &[],
+            std::slice::from_ref(&proxy),
+            [0.0, -9.81],
+            1.0 / 60.0,
+        );
+        physics.step([0.0, -9.81], 1.0 / 60.0);
+        let state = physics.physical_proxy_states().pop().unwrap();
+        proxy.center = state.1;
+        proxy.velocity = state.2;
+        if recent_y_positions.len() >= 20 {
+            recent_y_positions.remove(0);
+        }
+        recent_y_positions.push(state.1[1]);
+    }
+    let statistics = physics.terrain_bridge_statistics();
+    assert!(statistics.active_patches > 0);
+    let state = physics.physical_proxy_states().pop().unwrap();
+    assert!((state.1[1] - 1.25).abs() < 0.05, "state: {state:?}");
+    assert!(state.2[1].abs() < 0.05, "velocity: {state:?}");
+    let minimum = recent_y_positions
+        .iter()
+        .copied()
+        .fold(f32::INFINITY, f32::min);
+    let maximum = recent_y_positions
+        .iter()
+        .copied()
+        .fold(f32::NEG_INFINITY, f32::max);
+    assert!(
+        maximum - minimum < 0.001,
+        "positions: {recent_y_positions:?}"
+    );
 }
 
 #[test]

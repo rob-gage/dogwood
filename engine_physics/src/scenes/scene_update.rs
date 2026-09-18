@@ -199,9 +199,10 @@ impl Scene {
                 .sync_pawn_proxies(&self.actor_registry.physics_proxy_states(), up);
             self.physics_world
                 .sync_physical_proxies(&self.actor_registry.physical_proxy_states());
-            self.physics_world.prepare_cellular_terrain(
+            self.physics_world.prepare_cellular_terrain_with_physical(
                 &self.rigid_cellular_bodies,
                 &actor_proxies,
+                &self.actor_registry.physical_proxy_states(),
                 self.gravity,
                 delta_time,
             );

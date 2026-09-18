@@ -16,6 +16,7 @@ use super::super::terrain_patch::StaticTerrainCollisionPatch;
 use super::super::terrain_patch_key::StaticTerrainCollisionPatchKey;
 use super::ScenePhysicsWorld;
 use crate::actors::ActorCellularProxyState;
+use crate::actors_utility::ActorPhysicalProxyState;
 use crate::simulation::RigidCellularBody;
 use crate::simulation::simulation_constants::DYNAMIC_TILE_RETENTION_TICKS;
 use crate::simulation::simulation_constants::TERRAIN_COLLISION_PATCH_CELLS;
@@ -37,10 +38,61 @@ impl ScenePhysicsWorld {
         }
     }
 
+    fn demand_actor_terrain(
+        required_dynamic_tiles: &mut HashSet<RigidDynamicCollisionTileKey>,
+        required_terrain_patches: &mut HashSet<StaticTerrainCollisionPatchKey>,
+        center: [f32; 2],
+        velocity: [f32; 2],
+        shape: crate::actors::ActorCollisionShape,
+        gravity: [f32; 2],
+        delta_time: f32,
+    ) {
+        let actor_center: Vector = Vector::new(center[0], center[1]);
+        let actor_radius: f32 = shape
+            .nominal_dimensions()
+            .into_iter()
+            .fold(0.0f32, f32::max)
+            * 0.5;
+        let actor_displacement: Vector = Vector::new(velocity[0], velocity[1]) * delta_time
+            + Vector::new(gravity[0], gravity[1]) * (0.5 * delta_time * delta_time);
+        let minimum: Vector = actor_center.min(actor_center + actor_displacement)
+            - Vector::splat(actor_radius + 0.25);
+        let maximum: Vector = actor_center.max(actor_center + actor_displacement)
+            + Vector::splat(actor_radius + 0.25);
+        Self::demand_dynamic_tiles(required_dynamic_tiles, minimum, maximum);
+        let patch_x_minimum: i32 =
+            ((minimum.x * 8.0).floor() as i32).div_euclid(TERRAIN_COLLISION_PATCH_CELLS) - 1;
+        let patch_y_minimum: i32 =
+            ((minimum.y * 8.0).floor() as i32).div_euclid(TERRAIN_COLLISION_PATCH_CELLS) - 1;
+        let patch_x_maximum: i32 =
+            ((maximum.x * 8.0).floor() as i32).div_euclid(TERRAIN_COLLISION_PATCH_CELLS) + 1;
+        let patch_y_maximum: i32 =
+            ((maximum.y * 8.0).floor() as i32).div_euclid(TERRAIN_COLLISION_PATCH_CELLS) + 1;
+        for patch_y in patch_y_minimum..=patch_y_maximum {
+            for patch_x in patch_x_minimum..=patch_x_maximum {
+                required_terrain_patches.insert(StaticTerrainCollisionPatchKey {
+                    x: patch_x,
+                    y: patch_y,
+                });
+            }
+        }
+    }
+
     pub(crate) fn prepare_cellular_terrain(
         &mut self,
         bodies: &[RigidCellularBody],
         actors: &[ActorCellularProxyState],
+        gravity: [f32; 2],
+        delta_time: f32,
+    ) {
+        self.prepare_cellular_terrain_with_physical(bodies, actors, &[], gravity, delta_time);
+    }
+
+    pub(crate) fn prepare_cellular_terrain_with_physical(
+        &mut self,
+        bodies: &[RigidCellularBody],
+        actors: &[ActorCellularProxyState],
+        physical_actors: &[ActorPhysicalProxyState],
         gravity: [f32; 2],
         delta_time: f32,
     ) {
@@ -96,38 +148,26 @@ impl ScenePhysicsWorld {
             }
         }
         for actor in actors {
-            let actor_center: Vector = Vector::new(actor.center[0], actor.center[1]);
-            let actor_radius: f32 = actor
-                .shape
-                .nominal_dimensions()
-                .into_iter()
-                .fold(0.0f32, f32::max)
-                * 0.5;
-            let actor_displacement: Vector = Vector::new(actor.velocity[0], actor.velocity[1])
-                * delta_time
-                + Vector::new(gravity[0], gravity[1]) * (0.5 * delta_time * delta_time);
-            let minimum: Vector = actor_center.min(actor_center + actor_displacement)
-                - Vector::splat(actor_radius + 0.25);
-            let maximum: Vector = actor_center.max(actor_center + actor_displacement)
-                + Vector::splat(actor_radius + 0.25);
-            Self::demand_dynamic_tiles(&mut self.required_dynamic_tiles, minimum, maximum);
-            let patch_x_minimum: i32 =
-                ((minimum.x * 8.0).floor() as i32).div_euclid(TERRAIN_COLLISION_PATCH_CELLS) - 1;
-            let patch_y_minimum: i32 =
-                ((minimum.y * 8.0).floor() as i32).div_euclid(TERRAIN_COLLISION_PATCH_CELLS) - 1;
-            let patch_x_maximum: i32 =
-                ((maximum.x * 8.0).floor() as i32).div_euclid(TERRAIN_COLLISION_PATCH_CELLS) + 1;
-            let patch_y_maximum: i32 =
-                ((maximum.y * 8.0).floor() as i32).div_euclid(TERRAIN_COLLISION_PATCH_CELLS) + 1;
-            for patch_y in patch_y_minimum..=patch_y_maximum {
-                for patch_x in patch_x_minimum..=patch_x_maximum {
-                    self.required_terrain_patches
-                        .insert(StaticTerrainCollisionPatchKey {
-                            x: patch_x,
-                            y: patch_y,
-                        });
-                }
-            }
+            Self::demand_actor_terrain(
+                &mut self.required_dynamic_tiles,
+                &mut self.required_terrain_patches,
+                actor.center,
+                actor.velocity,
+                actor.shape,
+                gravity,
+                delta_time,
+            );
+        }
+        for actor in physical_actors {
+            Self::demand_actor_terrain(
+                &mut self.required_dynamic_tiles,
+                &mut self.required_terrain_patches,
+                actor.center,
+                actor.velocity,
+                actor.shape,
+                gravity,
+                delta_time,
+            );
         }
         let Some(snapshot) = self.cellular_terrain_snapshot.as_ref() else {
             return;

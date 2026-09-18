@@ -183,7 +183,7 @@ impl ActorRegistry {
 
     /// Gathers all physical non-noclip pawns for batched transient proxy rasterization
     pub(crate) fn cellular_proxy_states(&self) -> Vec<ActorCellularProxyState> {
-        let mut actor_cellular_proxy_states: Vec<ActorCellularProxyState> = self
+        let actor_cellular_proxy_states: Vec<ActorCellularProxyState> = self
             .world
             .iter_entities()
             .filter_map(|entity| {
@@ -213,22 +213,6 @@ impl ActorRegistry {
                 })
             })
             .collect();
-        actor_cellular_proxy_states.extend(self.world.iter_entities().filter_map(|entity| {
-            let physical: &ActorPhysical = entity.get::<ActorPhysical>()?;
-            let position: ScenePosition = *entity.get::<ScenePosition>()?;
-            let velocity: SceneVelocity = *entity.get::<SceneVelocity>()?;
-            Some(ActorCellularProxyState {
-                center: [
-                    position.tile_coordinates.x as f32 + position.x_offset,
-                    position.tile_coordinates.y as f32 + position.y_offset,
-                ],
-                velocity: [velocity.x, velocity.y],
-                drive: [0.0; 2],
-                shape: physical.0.collision_shape,
-                occupancy_kind: 1,
-                mass: physical.0.mass,
-            })
-        }));
         actor_cellular_proxy_states
     }
 
@@ -288,6 +272,13 @@ impl ActorRegistry {
             let Some(entity) = self.entities.get(actor).copied() else {
                 continue;
             };
+            let current_position: Option<ScenePosition> =
+                self.world.get::<ScenePosition>(entity).copied();
+            if let Some(current_position) = current_position
+                && let Some(mut previous) = self.world.get_mut::<ActorPreviousPosition>(entity)
+            {
+                previous.0 = current_position;
+            }
             if let Some(mut position) = self.world.get_mut::<ScenePosition>(entity) {
                 position.tile_coordinates.x = center[0].floor() as i32;
                 position.tile_coordinates.y = center[1].floor() as i32;

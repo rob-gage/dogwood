@@ -131,10 +131,39 @@ fn test_unloaded_actor_queries_are_safe_and_restore_keeps_identity() {
     assert!(registry.restore_physical_snapshot(snapshot));
     assert!(registry.contains(actor));
     assert_eq!(registry.get_velocity(actor).unwrap().x, 1.0);
+    let restored = registry.get_render_position(actor, 0.5).unwrap();
+    assert_eq!(
+        restored.tile_coordinates.x,
+        snapshot.position.tile_coordinates.x
+    );
+    assert_eq!(
+        restored.tile_coordinates.y,
+        snapshot.position.tile_coordinates.y
+    );
+    assert_eq!(restored.x_offset, snapshot.position.x_offset);
+    assert_eq!(restored.y_offset, snapshot.position.y_offset);
     let replacement = registry.spawn(ScenePosition {
         tile_coordinates: TileCoordinates { x: 1, y: 0 },
         x_offset: 0.0,
         y_offset: 0.0,
     });
     assert_ne!(replacement, actor);
+}
+
+#[test]
+fn test_physical_actor_interpolation_tracks_consecutive_fixed_states() {
+    let mut registry = ActorRegistry::new();
+    let actor = registry.spawn_physical_actor(
+        ActorPhysicalConfiguration::default(),
+        ScenePosition {
+            tile_coordinates: TileCoordinates { x: 0, y: 3 },
+            x_offset: 0.5,
+            y_offset: 0.5,
+        },
+        SceneVelocity { x: 0.0, y: 0.0 },
+    );
+    registry.apply_physical_proxy_states(&[(actor, [0.5, 2.5], [0.0, -1.0])]);
+    registry.apply_physical_proxy_states(&[(actor, [0.5, 2.0], [0.0, 0.0])]);
+    let rendered = registry.get_render_position(actor, 0.5).unwrap();
+    assert!((rendered.tile_coordinates.y as f32 + rendered.y_offset - 2.25).abs() < f32::EPSILON);
 }
