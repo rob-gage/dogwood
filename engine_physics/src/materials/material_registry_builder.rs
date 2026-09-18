@@ -20,6 +20,7 @@ impl Default for MaterialRegistryBuilder {
 }
 
 impl MaterialRegistryBuilder {
+    /// Creates an empty material registry builder.
     pub const fn new() -> Self {
         Self {
             registry: MaterialRegistry::new(),
@@ -33,9 +34,11 @@ impl MaterialRegistryBuilder {
     pub fn register_reaction(&mut self, reaction: MaterialReaction) {
         self.reactions.push(reaction);
     }
+    /// Registers a material and returns its form-specific identifier.
     pub fn register(&mut self, material: Material) -> MaterialIdentifier {
         self.registry.register(material)
     }
+    /// Associates thermal metadata with a previously registered material.
     pub fn set_thermal(
         &mut self,
         identifier: MaterialIdentifier,
@@ -47,6 +50,7 @@ impl MaterialRegistryBuilder {
         self.thermal.insert(identifier, properties);
         Ok(())
     }
+    /// Adds a material to a tag used by reaction selectors.
     pub fn tag(
         &mut self,
         identifier: MaterialIdentifier,
@@ -61,6 +65,7 @@ impl MaterialRegistryBuilder {
         }
         Ok(())
     }
+    /// Validates and compiles all declarations into a material registry.
     pub fn compile(mut self) -> Result<MaterialRegistry, String> {
         self.registry
             .set_compiled_metadata(self.thermal, self.tags, self.reactions)?;
