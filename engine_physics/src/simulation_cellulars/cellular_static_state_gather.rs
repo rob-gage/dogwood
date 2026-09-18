@@ -23,37 +23,40 @@ impl CellularStaticStateGather {
         temperatures: &AcceleratorBuffer,
         capacity: usize,
     ) -> Self {
-        let device = accelerator.wgpu_device();
-        let capacity = capacity.max(1);
-        let descriptors = accelerator.allocate::<u32>(capacity);
-        let output = accelerator.allocate::<[u32; 8]>(capacity);
-        let count = crate::simulation::create_simulation_uniform_buffer(
+        let device: &wgpu::Device = accelerator.wgpu_device();
+        let capacity: usize = capacity.max(1);
+        let descriptors: AcceleratorBuffer = accelerator.allocate::<u32>(capacity);
+        let output: AcceleratorBuffer = accelerator.allocate::<[u32; 8]>(capacity);
+        let count: wgpu::Buffer = crate::simulation::create_simulation_uniform_buffer(
             device,
             "cellular static state gather count",
             4,
         );
-        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+        let readback: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("cellular static state gather readback"),
             size: capacity as u64 * 32,
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let status = Arc::new(Mutex::new(None));
-        let storage = crate::simulation::storage_bind_group_layout_entry;
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("cellular static state gather"),
-            entries: &[
-                storage(0, true),
-                storage(1, true),
-                storage(2, true),
-                storage(3, true),
-                storage(4, true),
-                storage(5, true),
-                storage(6, false),
-                crate::simulation::uniform_bind_group_layout_entry(7),
-            ],
-        });
-        let bind_group_entries = [
+        let status: Arc<Mutex<Option<Result<Vec<CellularStaticState>, String>>>> =
+            Arc::new(Mutex::new(None));
+        let storage: fn(u32, bool) -> wgpu::BindGroupLayoutEntry =
+            crate::simulation::storage_bind_group_layout_entry;
+        let layout: wgpu::BindGroupLayout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("cellular static state gather"),
+                entries: &[
+                    storage(0, true),
+                    storage(1, true),
+                    storage(2, true),
+                    storage(3, true),
+                    storage(4, true),
+                    storage(5, true),
+                    storage(6, false),
+                    crate::simulation::uniform_bind_group_layout_entry(7),
+                ],
+            });
+        let bind_group_entries: [wgpu::BindingResource<'_>; 8] = [
             descriptors.wgpu_buffer().as_entire_binding(),
             material_identifiers.wgpu_buffer().as_entire_binding(),
             appearances.wgpu_buffer().as_entire_binding(),
@@ -63,7 +66,7 @@ impl CellularStaticStateGather {
             output.wgpu_buffer().as_entire_binding(),
             count.as_entire_binding(),
         ];
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("cellular static state gather"),
             layout: &layout,
             entries: bind_group_entries
@@ -76,26 +79,27 @@ impl CellularStaticStateGather {
                 .collect::<Vec<_>>()
                 .as_slice(),
         });
-        let shader = crate::simulation::create_simulation_shader_module(
+        let shader: wgpu::ShaderModule = crate::simulation::create_simulation_shader_module(
             device,
             "cellular static state gather",
             include_str!("cellular_static_state_gather.wgsl"),
             "engine_physics/src/simulation/cellular_static_state_gather.wgsl",
         );
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("cellular static state gather"),
-            layout: Some(
-                &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: None,
-                    bind_group_layouts: &[Some(&layout)],
-                    immediate_size: 0,
-                }),
-            ),
-            module: &shader,
-            entry_point: Some("gather"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let pipeline: wgpu::ComputePipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("cellular static state gather"),
+                layout: Some(
+                    &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: None,
+                        bind_group_layouts: &[Some(&layout)],
+                        immediate_size: 0,
+                    }),
+                ),
+                module: &shader,
+                entry_point: Some("gather"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
         Self {
             descriptors,
             output,
