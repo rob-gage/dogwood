@@ -88,7 +88,8 @@ impl AcceleratorTiming {
                 return;
             }
             let now: Instant = Instant::now();
-            let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+            let mut state: std::sync::MutexGuard<'_, AcceleratorTimingState> =
+                self.state.lock().unwrap_or_else(|error| error.into_inner());
             if state.active_slot.is_some()
                 || state.last_sample.is_some_and(|last_sample| {
                     now.duration_since(last_sample) < Self::SAMPLE_INTERVAL
@@ -166,7 +167,8 @@ impl AcceleratorTiming {
             else {
                 return;
             };
-            let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+            let mut state: std::sync::MutexGuard<'_, AcceleratorTimingState> =
+                self.state.lock().unwrap_or_else(|error| error.into_inner());
             let Some(slot) = state.active_slot.take() else {
                 return;
             };
@@ -207,7 +209,8 @@ impl AcceleratorTiming {
                 std::sync::Arc<std::sync::atomic::AtomicU8>,
                 u64,
             )> = {
-                let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+                let state: std::sync::MutexGuard<'_, AcceleratorTimingState> =
+                    self.state.lock().unwrap_or_else(|error| error.into_inner());
                 state
                     .readbacks
                     .iter()
@@ -247,7 +250,8 @@ impl AcceleratorTiming {
         #[cfg(debug_assertions)]
         {
             let ready: Vec<usize> = {
-                let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+                let state: std::sync::MutexGuard<'_, AcceleratorTimingState> =
+                    self.state.lock().unwrap_or_else(|error| error.into_inner());
                 state
                     .readbacks
                     .iter()
@@ -274,7 +278,8 @@ impl AcceleratorTiming {
 
     #[cfg(test)]
     pub(crate) fn is_idle(&self) -> bool {
-        let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let state: std::sync::MutexGuard<'_, AcceleratorTimingState> =
+            self.state.lock().unwrap_or_else(|error| error.into_inner());
         state.active_slot.is_none()
             && state.readbacks.iter().all(|readback| {
                 readback.status.load(Ordering::Acquire) == AcceleratorTimingReadback::IDLE
@@ -286,7 +291,8 @@ impl AcceleratorTiming {
         if !self.recording.load(Ordering::Acquire) {
             return None;
         }
-        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let mut state: std::sync::MutexGuard<'_, AcceleratorTimingState> =
+            self.state.lock().unwrap_or_else(|error| error.into_inner());
         if state.query_count + 2 > Self::QUERY_CAPACITY {
             self.recording.store(false, Ordering::Release);
             if !state.capacity_exhausted {
@@ -319,7 +325,8 @@ impl AcceleratorTiming {
     #[cfg(debug_assertions)]
     fn collect_readback(&self, index: usize) {
         let (sample, records, timestamps, failed) = {
-            let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+            let mut state: std::sync::MutexGuard<'_, AcceleratorTimingState> =
+                self.state.lock().unwrap_or_else(|error| error.into_inner());
             let readback: &mut AcceleratorTimingReadback = &mut state.readbacks[index];
             let failed: bool =
                 readback.status.load(Ordering::Acquire) == AcceleratorTimingReadback::FAILED;
@@ -327,7 +334,7 @@ impl AcceleratorTiming {
                 Vec::new()
             } else {
                 let byte_count: u64 = u64::from(readback.query_count) * u64::from(wgpu::QUERY_SIZE);
-                let mapped = readback
+                let mapped: wgpu::BufferView = readback
                     .buffer
                     .get_mapped_range(0..byte_count)
                     .expect("mapped Accelerator timestamp readback must remain accessible");
