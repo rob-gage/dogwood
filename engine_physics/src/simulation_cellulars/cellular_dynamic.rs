@@ -105,12 +105,12 @@ impl CellularDynamic {
                         .wgpu_buffer()
                         .as_entire_binding(),
                 },
-                crate::simulation::accelerator_buffer_bind_group_entry(9, &cellular_amounts),
-                crate::simulation::accelerator_buffer_bind_group_entry(10, &cellular_temperatures),
+                crate::simulation::accelerator_buffer_bind_group_entry(9, cellular_amounts),
+                crate::simulation::accelerator_buffer_bind_group_entry(10, cellular_temperatures),
                 crate::simulation::accelerator_buffer_bind_group_entry(11, &amounts_output),
                 crate::simulation::accelerator_buffer_bind_group_entry(12, &temperatures_output),
-                crate::simulation::accelerator_buffer_bind_group_entry(8, &external_body_occupancy),
-                crate::simulation::accelerator_buffer_bind_group_entry(1, &cellular_appearances),
+                crate::simulation::accelerator_buffer_bind_group_entry(8, external_body_occupancy),
+                crate::simulation::accelerator_buffer_bind_group_entry(1, cellular_appearances),
                 crate::simulation::accelerator_buffer_bind_group_entry(2, &kinematics),
                 wgpu::BindGroupEntry {
                     binding: 3,
