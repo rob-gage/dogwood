@@ -1,4 +1,4 @@
-# Scene model
+# Scene Model
 
 `Scene` is the runtime world coordinator. Construction validates
 `SceneSimulationConfiguration`, loads or creates `SceneData`, allocates the
@@ -32,7 +32,7 @@ event accumulation, render views, and the active region target. A possessed
 actor normally drives region following, while `request_area_around` can request
 an explicit recenter.
 
-### Relevant implementation
+### Relevant Implementation
 
 - `engine_physics/src/scenes/scene.rs` — central state and subsystem fields.
 - `engine_physics/src/scenes/scene_construction.rs` — resource construction and

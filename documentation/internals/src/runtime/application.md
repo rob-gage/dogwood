@@ -1,4 +1,4 @@
-# Runtime and application lifecycle
+# Runtime And Application Lifecycle
 
 `Game` is the application-level contract. It supplies a title, camera,
 optional scene, pause state, input translation, input dispatch, UI context, and
@@ -26,7 +26,7 @@ UI composition continue.
 The camera follows `Game::camera_target`, normally the possessed actor. Camera
 position is interpolated at render time; simulation state remains fixed-step.
 
-### Relevant implementation
+### Relevant Implementation
 
 - `engine/src/games/game.rs` — game callbacks, input default, and launch.
 - `engine/src/games/game_application.rs` — lifecycle, update, camera, and

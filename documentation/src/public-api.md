@@ -19,7 +19,11 @@ callback. Game-owned HUD composition belongs in
 For example:
 
 ```rust
-use dogwood_engine::{Game, graphics::Camera, physics::scenes::Scene};
+use dogwood_engine::{
+    graphics::Camera,
+    physics::scenes::Scene,
+    Game,
+};
 ```
 
 Rustdoc is the detailed symbol reference. Manual pages describe workflows.

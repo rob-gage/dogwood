@@ -25,7 +25,7 @@ buoyancy/drag-style behavior. Flying and noclip use their configured movement
 rules. Possession only selects which possessable pawn receives the translated
 control state and which position drives camera/streaming follow.
 
-### Relevant implementation
+### Relevant Implementation
 
 - `engine_physics/src/actors/` — public actor identifiers, contacts, pawns, and
   configurations.

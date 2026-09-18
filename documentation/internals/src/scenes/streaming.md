@@ -1,4 +1,4 @@
-# Streaming and persistence
+# Streaming And Persistence
 
 Streaming keeps a bounded GPU world around the active area. The scene follows
 the target in batch-sized tile shifts. Before reusing outgoing ring slots it
@@ -29,7 +29,7 @@ Generation IDs and rigid identities prevent stale completions from mutating a
 new occupant of a reused slot. The ring is a residency cache, not a second
 world; non-resident coordinates cannot be queried from active buffers.
 
-### Relevant implementation
+### Relevant Implementation
 
 - `engine_physics/src/scenes/scene_chunk_navigation.rs` — region movement and
   transfer ordering.

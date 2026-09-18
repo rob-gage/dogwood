@@ -1,12 +1,24 @@
-# Actors and gameplay
+# Actors And Gameplay
 
 `physics::actors::ActorRegistry` owns actor identifiers and the built-in actor
 components. An ordinary actor has a `ScenePosition`; a pawn additionally has
 movement, velocity, control, and optional collision state.
 
 ```rust
-let actor = scene.actor_registry_mutable().spawn(position);
-let pawn = ActorPawn {
+use dogwood_engine::physics::{
+    actors::{
+        Actor,
+        ActorCollisionShape,
+        ActorPawn,
+        ActorPawnMovement,
+        ActorPawnWalkingConfiguration,
+        ActorPhysicalConfiguration,
+    },
+    scenes::{Scene, SceneVelocity},
+};
+
+let actor: Actor = scene.actor_registry_mutable().spawn(position);
+let pawn: ActorPawn = ActorPawn {
     collision_shape: Some(ActorCollisionShape::Circle { radius: 0.375 }),
     walking: Some(ActorPawnWalkingConfiguration {
         speed: 4.0, acceleration: 24.0, mass: 8.0,
@@ -15,7 +27,7 @@ let pawn = ActorPawn {
     movement: Some(ActorPawnMovement::Walking),
     ..ActorPawn::new()
 };
-let player = scene.actor_registry_mutable().spawn_possessable_pawn(
+let player: Actor = scene.actor_registry_mutable().spawn_possessable_pawn(
     pawn, position, velocity,
 );
 scene.possess_actor(player);
@@ -34,9 +46,12 @@ may be reconstructed in a later streaming pass. Generic dynamic actors can be
 spawned without Rapier types:
 
 ```rust
-let square = scene.actor_registry_mutable().spawn_physical_actor(
+let square: Actor = scene.actor_registry_mutable().spawn_physical_actor(
     ActorPhysicalConfiguration {
-        collision_shape: ActorCollisionShape::Rectangle { width: 0.7, height: 0.7 },
+        collision_shape: ActorCollisionShape::Rectangle {
+            width: 0.7,
+            height: 0.7,
+        },
         color: [1.0, 0.2, 0.1, 1.0],
         ..Default::default()
     },

@@ -1,4 +1,4 @@
-# Audio boundary
+# Audio Boundary
 
 `engine_audio` is present in the workspace and re-exported by
 `dogwood_engine::audio`, but it is not currently part of the runtime update or
@@ -12,7 +12,7 @@ need a clear owner for device resources, frame/update scheduling, and game
 lifetime before it can be described as a runtime stage. No existing simulation
 stage depends on it.
 
-### Relevant implementation
+### Relevant Implementation
 
 - `engine_audio/src/lib.rs` — crate module boundary and current exports.
 - `engine_audio/src/material_acoustics_cellular_static.rs` — static-cell

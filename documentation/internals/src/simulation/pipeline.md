@@ -1,4 +1,4 @@
-# Simulation pipeline
+# Simulation Pipeline
 
 `Scene::update` first services completed asynchronous work and queues streaming.
 It then consumes accumulated elapsed time into fixed 60 Hz ticks. The following
@@ -37,7 +37,7 @@ When simulation is inactive, scene streaming and completion handling still run,
 but the active simulation stages are skipped. Rendering can therefore show a
 paused/editor scene without advancing its physical state.
 
-### Relevant implementation
+### Relevant Implementation
 
 - `engine_physics/src/scenes/scene_update.rs` — update prelude and tick order.
 - `engine_physics/src/scenes/scene_cell_editing.rs` — completion application and

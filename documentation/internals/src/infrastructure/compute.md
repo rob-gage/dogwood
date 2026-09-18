@@ -1,4 +1,4 @@
-# Compute infrastructure
+# Compute Infrastructure
 
 `Accelerator` owns the WGPU instance, adapter, device, queue, and debug timing
 collector. It is shared by the application renderer and every physics resource;
@@ -22,7 +22,7 @@ copy plus map callback is the boundary between GPU result and CPU ownership.
 Debug timestamp queries are optional and compiled into the application timing
 sample only when the adapter supports them.
 
-### Relevant implementation
+### Relevant Implementation
 
 - `engine_compute/src/accelerator.rs` — device/queue ownership, polling, pass
   labels, and timing integration.

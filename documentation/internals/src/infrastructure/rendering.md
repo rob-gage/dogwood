@@ -23,7 +23,7 @@ also convert surface pixels back to world positions for editor pointer tools.
 operation over the scene target. Actor graphics are a lightweight CPU-to-GPU
 render list, interpolated between fixed ticks.
 
-### Relevant implementation
+### Relevant Implementation
 
 - `engine/src/renders/scene_renderer.rs` — scene pipeline, bindings, uniforms,
   and render pass.

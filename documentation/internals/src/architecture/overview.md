@@ -29,7 +29,7 @@ state. Some data is deliberately GPU-authoritative while resident, especially
 fluid particles and gas fields. The streaming layer makes those choices
 explicit when a region leaves the resident ring.
 
-### Relevant implementation
+### Relevant Implementation
 
 - `engine/src/lib.rs` — public facade and subsystem re-exports.
 - `engine/src/games/game.rs` — game contract and launch path.

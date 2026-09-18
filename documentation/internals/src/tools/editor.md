@@ -22,7 +22,7 @@ Free-fly temporarily creates/possesses an editor pawn and asks the scene to
 stream around it. Returning restores the original pawn and waits for streaming
 to catch up before normal gameplay possession resumes.
 
-### Relevant implementation
+### Relevant Implementation
 
 - `editor/src/editor_application.rs` — editor host state, update policy, and
   scene-edit submission.

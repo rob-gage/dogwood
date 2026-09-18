@@ -1,4 +1,4 @@
-# Dogwood engine internals
+# Dogwood Engine Internals
 
 This book describes how the current engine is assembled. It is an architecture
 map, not a Rustdoc mirror: each page explains ownership, representations,
@@ -9,7 +9,7 @@ usage. Use this book when a change crosses a subsystem boundary or when a
 simulation result needs to be traced from authored data to GPU buffers and
 back again.
 
-## Reading paths
+## Reading Paths
 
 - Start with [Architecture](architecture/overview.md) for crate boundaries,
   coordinate systems, and the CPU/GPU split.

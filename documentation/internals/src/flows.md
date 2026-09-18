@@ -1,79 +1,125 @@
 # Cross-System Flows
 
-These paths connect the subsystem pages. They are deliberately schematic: the
-implementation uses several asynchronous queues and GPU command buffers, but
-the ownership transitions below are the important architecture.
+These flows connect the subsystem pages. They are intentionally prose rather
+than pseudocode: GPU passes, bounded readbacks, and scene queues are the
+implementation details behind the ownership changes described here.
 
-## One simulation tick
+## One Simulation Tick
 
-`GameApplication` translates input and calls `Scene::update`. The scene applies
-completed streaming/readback work, then consumes elapsed time into fixed ticks.
-Each tick updates CPU physics and actor proxies, rasterizes actors/rigids,
-advances fluids and gases, discovers/applies material mutations, solves
-pressure and dynamic cells, couples thermal state and phase transitions, and
-extracts a collision snapshot. The next update polls and applies delayed
-readbacks. The renderer then samples the scene’s resident buffers and draws UI.
+`GameApplication` translates input and calls `Scene::update`. The scene first
+applies completed streaming and readback work, moves the resident ring if its
+target changed, and applies queued edits. Each fixed tick synchronizes actor
+and rigid proxies, steps CPU physics, advances cellular, fluid, and gas stages,
+resolves material reactions and pressure, couples thermal state and phase
+transitions, and schedules collision extraction. Completed GPU work is applied
+only after validation on a later safe boundary. Rendering then samples the
+resident scene view and UI is composited over it.
 
-## A material in the world
+The important dependency is that proxies and ring coordinates must be current
+before interaction passes, while readbacks must be validated before they alter
+CPU ownership.
 
-Game/template code authors a `Material` and registers it. The registry assigns a
-form-specific identifier, compiles dense metadata/tags/reactions, and builds
-`MaterialTable`/`MaterialGraphics` buffers. A scene edit or generated chunk
-places the identifier and persistent appearance in `TileData`; active state is
-uploaded to resident GPU fields. Simulation reads the identifier plus packed
-properties, while rendering reads the same identifier and appearance through
-the scene render view.
+## A Material In The World
 
-## A thermal phase transition
+Game or template code authors `Material`, registers it with
+`MaterialRegistryBuilder`, and compiles a `MaterialRegistry`. The scene builds
+dense simulation metadata and render appearance tables. Placement writes the
+identifier and appearance into `TileData` or an edit request. Resident upload
+copies the tile fields into GPU cell storage, where pressure, thermal,
+reaction, and movement stages read the compiled identifier. Rendering samples
+the same identifier and appearance through `SceneGraphics`; it never becomes
+the owner of the material.
 
-Temperature begins in the authoritative form’s field. Interaction and
-conduction resolve heat, scatter shares it across cellular/fluid/gas/rigid
-representations, and phase evaluation compares it with the material’s cold/hot
-threshold. A candidate becomes a material mutation carrying target and latent
-energy. The mutation stage applies it to the correct authority; for rigid cells,
-bounded readback precedes body-local changes. A cellular/fluid/gas transition
-can therefore change representation while preserving thermal ordering.
+## A Thermal Phase Transition
 
-## Static terrain breaking into dynamic or rigid matter
+Each form contributes temperature to thermal interaction. Conduction resolves
+neighbor transfer using conductivity and heat capacity. Scatter sends the
+resolved temperature back to cellular cells, fluid particles, gas cells, and
+rigid body-local cells. Phase evaluation compares the authoritative result to
+hot/cold thresholds and creates a bounded candidate with target, yield, and
+latent energy. Mutation application consumes the source and creates the target
+form, using rigid readback and identity checks when a body-local cell is
+involved.
 
-Pressure propagates through static material using transmission and contact
-state. Damage reduces integrity. Failed cells use debris metadata, commonly
-changing static matter into a dynamic/granular debris material; connected
-surviving components are checked against minimum size and may become rigid
-body-local cells. Static detachment gathers the GPU state, replaces the static
-cells, inserts a CPU rigid body, and rasterizes it on later ticks. Too-small
-components are destroyed or reduced to debris rather than creating a useless
-body.
+## Static Terrain Under Pressure
 
-## Fluid interacting with an actor or rigid body
+Contacts and reaction pressure enter the cellular pressure field. Directional
+transmission and retained pressure reduce static integrity when the load is
+eligible. Failed cells can emit dynamic debris. The remaining static graph is
+checked for connected components; a sufficiently large detached component is
+gathered into a CPU rigid body, while a small component is discarded or
+reduced through debris metadata. The new body is uploaded as a proxy on a
+later tick and begins participating in Rapier and cellular contact.
 
-Actors/rigids are represented in CPU physics and rasterized into the cellular
-proxy double. Fluid particles use spatial buckets and solid/contact fields to
-project positions and compute mechanical response. The response is scattered
-back to particle velocity; the derived fluid cellular view also supplies
-swimming samples and render coverage. CPU actor/rigid transforms remain
-authoritative for their bodies; fluid particle records remain authoritative for
-fluid motion.
+## Rigid Body Interacting With Sand
 
-## Scene streaming
+Rapier integrates the body's transform. Upload/rasterization publishes its
+body-local cells as occupied proxy cells. Dynamic granular movement sees those
+cells as contacts and settles or redirects around them. Pressure and damage
+may produce validated body-cell feedback, but the body transform stays in
+Rapier and sand remains authoritative in dynamic cellular state.
 
-The active target moves, selecting outgoing and incoming strips in the ring.
-GPU tile/fluid/gas state is downloaded before physical slots are remapped and
-written into CPU chunks or dormant records. Rigid bodies are gathered into
-owner files. New chunks are loaded/generated, then their tile fields, particles,
-gas cells, and rigid bodies are uploaded/reconstructed. Collision extraction
-and rigid activation wait for the new ring origin, so old snapshots cannot
-interact with newly interpreted slots.
+## Rigid Body Interacting With Water
 
-### Relevant implementation
+Water particles predict motion and solve density, then project away from the
+rigid proxy. The resulting displacement reconstructs particle velocity and the
+fluid contact field can apply body push/drag effects. Swimming samples the
+derived fluid raster for pawns. The body-local structure remains the rigid
+authority and the particle population remains the fluid authority.
 
-- `engine_physics/src/scenes/scene_update.rs` — complete update/tick flow.
-- `engine_physics/src/scenes/scene_chunk_navigation.rs` — ring movement and
-  streaming ordering.
-- `engine_physics/src/scenes/scene_rigid_cell_mutation.rs` — representation
-  changes from phase/reaction results.
-- `engine_physics/src/scenes/scene_rigid_detachment.rs` — static component
-  detachment and rigid formation.
-- `engine_physics/src/simulation_thermal/` — thermal cross-form flow.
-- `engine_physics/src/simulation_fluids/` and `simulation_gases/` — fluid/gas
-  authoritative fields and derived representations.
+## Fire Consuming Material And Producing Heat/Smoke
+
+A reaction candidate matches fire and its reactant selector plus temperature,
+pressure, or air gates. Reservation prevents another candidate from consuming
+the same source. Application consumes the reactant, adds thermal energy and
+pressure, and creates smoke as a gas product through gas mutation routing.
+Thermal conduction and scatter then update nearby forms, while rendering reads
+the resulting smoke concentration and material appearance.
+
+## Water Heating Into Vapor
+
+Water particle temperature is gathered into the thermal solve. Conduction and
+reaction energy bring it across the hot transition threshold. A phase candidate
+requests a gas target; mutation removes the source amount from fluid authority
+and inserts concentration into the gas field. The next gas transport pass
+advects that concentration in the shared velocity field.
+
+## Vapor Cooling Into Water
+
+Gas temperature is resolved and scattered through the gas authority. Cooling
+below the material's cold threshold produces a fluid target. Mutation removes
+gas concentration and allocates fluid particles with the resulting material,
+position, amount, and temperature. The particle solver then owns motion.
+
+## Rigid Material Melting Into Fluid
+
+Thermal evaluation identifies a hot rigid body-local cell. A validated rigid
+readback identifies the exact body and local cell before mutation removes it
+from the CPU body-local structure. The product is allocated as fluid particles
+at the corresponding world position. If the remaining body disconnects,
+component splitting runs after the removal.
+
+## Scene Streaming
+
+When the active target moves, the scene identifies outgoing strips and waits
+for tile, fluid, and gas downloads. Tile fields become persistent chunk state;
+particles and gas cells become sparse dormant records; rigid bodies are
+gathered into stable owner files. Only then can physical ring slots be reused.
+Incoming chunks are loaded or generated, fields and dormant records are
+uploaded, and rigid bodies are reconstructed. Collision snapshots and body
+activation wait for the new ring origin and matching generation so old GPU
+results cannot affect new occupants.
+
+### Relevant Implementation
+
+- `engine_physics/src/scenes/scene_update.rs` — fixed-tick and completion order.
+- `engine_physics/src/scenes/scene_chunk_navigation.rs` — resident-ring
+  movement.
+- `engine_physics/src/scenes/scene_rigid_detachment.rs` — pressure-to-body flow.
+- `engine_physics/src/scenes/scene_rigid_cell_mutation.rs` — rigid cross-form
+  mutation.
+- `engine_physics/src/simulation_materials/` — reaction discovery,
+  reservation, and application.
+- `engine_physics/src/simulation_thermal/` — thermal gathering, conduction,
+  scatter, and phase candidates.
+- `engine_physics/src/scenes_streaming/` — asynchronous transfer boundaries.

@@ -1,4 +1,4 @@
-# CLI and templates
+# CLI And Templates
 
 The CLI currently owns project initialization rather than build orchestration.
 `dogwood new` validates a Cargo-compatible project name, creates the requested
@@ -17,7 +17,7 @@ and reactions, and compiles one registry shared by the template scene and
 tests. The template generator fills missing chunks with a deterministic stone
 ground using world cell coordinates and appearance seeds.
 
-### Relevant implementation
+### Relevant Implementation
 
 - `cli/src/main.rs` — project creation, manifest and source templates.
 - `cli/src/command.rs` and `cli/src/subcommand.rs` — CLI argument model.

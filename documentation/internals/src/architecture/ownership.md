@@ -1,6 +1,6 @@
-# Ownership, coordinates, and CPU/GPU split
+# Ownership, Coordinates, And CPU/GPU Split
 
-## Coordinates and storage units
+## Coordinates And Storage Units
 
 World positions use tile units. A tile is 8 by 8 cells. A chunk is 64 by 64
 tiles, so it is 512 by 512 cells. `TileCoordinates` and `CellCoordinates` are
@@ -12,7 +12,7 @@ area. Ring offsets let the scene move the logical origin without copying the
 whole buffer. `TileArea` is the shared rectangle type for active, buffered,
 streaming, and download/upload regions.
 
-## Authoritative representations
+## Authoritative Representations
 
 - `SceneData` and `Chunk` own inactive persistent world state on the CPU.
 - `Scene` owns active CPU metadata, actors, rigid bodies, and transfer queues.
@@ -31,7 +31,7 @@ generation/identity checks, and pending queues to enforce this. A moving ring
 must download outgoing state before its physical slots are reused for incoming
 world coordinates.
 
-### Relevant implementation
+### Relevant Implementation
 
 - `engine_physics/src/scene_geometry/scene_position.rs` — continuous tile-space
   actor positions and render interpolation.

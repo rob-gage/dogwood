@@ -1,20 +1,63 @@
-# Physics and collision
+# Physics And Collision
 
-Physics is exposed at gameplay level through actor pawn configuration and the
-scene’s collision-aware simulation. Choose an `ActorCollisionShape` (`Circle`,
-`Capsule`, or `Rectangle`) and configure one or more movement modes: walking,
-swimming, flying, or noclip.
+Gameplay configures actors and materials; Dogwood owns the simulation stages.
+Game code normally does not touch Rapier, WGPU buffers, or shader resources.
 
-Static cellular matter forms terrain; dynamic/granular cellular matter can move
-and fracture; rigid cellular bodies are placed with
-`SceneEditBatch::place_rigid_body`; fluids and gases interact with configured
-actors and materials. Gameplay does not need Rapier, GPU buffers, or solver
-internals.
+## Static Terrain
 
-There is no public “on collision” callback in the current facade. Poll the actor
-position/velocity and use scene/world queries or gameplay overlap bookkeeping.
-For a player-contact rule, compare a pickup’s position with the player’s
-rendered or fixed position, then despawn the pickup and update game state.
+Static cellular materials form terrain in the resident scene. They can carry
+integrity, transmit pressure, fracture into debris, detach into rigid cellular
+bodies, and provide the delayed collision view used by actors and Rapier.
+Use scene edits for gameplay placement or destruction rather than trying to
+edit a collision object directly.
 
-Pause is controlled by `Game::is_paused`; a pawn can opt into
+## Dynamic Cellular Matter
+
+Dynamic cellular materials move cell by cell under gravity and contact rules.
+They are useful for sand and debris. Configure their material mass, friction,
+restitution, and pressure transmission. The engine handles movement and
+resident-region persistence.
+
+## Fluids And Gases
+
+Fluids are particle-based and can interact with solid proxies, actor swimming,
+and rigid bodies. Configure density, viscosity, rest density, smoothing, and
+contact response on the fluid material. Gases are species in a shared flow
+field; configure density, diffusivity, extinction, dissipation, and
+compressibility.
+
+## Rigid Bodies
+
+Rigid cellular bodies preserve material cells while moving through CPU physics.
+Place one with `SceneEditBatch::place_rigid_body` or let detached terrain form
+one when its component meets the material minimum-size rule. The body has a
+Rapier transform/collider plus a derived cellular proxy for pressure, thermal,
+fluid, and granular interaction.
+
+## Actors And Shapes
+
+Actors choose `Circle`, `Capsule`, or `Rectangle` collision geometry. Pawns can
+enable walking, swimming, flying, or noclip; the active movement mode is set
+by `ActorPawn::movement`. Walking configuration uses tiles per second for
+`speed`, tiles per second squared for `acceleration`, tiles per second for
+`jump_velocity`, and radians for `maximum_slope_angle`. `mass` is the effective
+mass used when the pawn drives cellular material.
+
+Walking uses gravity-relative up and slope handling. Swimming samples the
+derived fluid field. Flying and noclip use their configured movement rules.
+Pause normally stops world simulation; a pawn can opt into
 `simulate_when_paused`.
+
+## Contacts
+
+The current public facade does not expose a general collision callback. Actor
+contact events are the supported logical contact signal when available;
+otherwise gameplay can compare fixed actor positions or query resident cells.
+Use `Game::actor_contacts` for contact batches and keep game-specific overlap
+state in the game layer.
+
+See [Actors And Gameplay](actors.md), [World Cells And Edits](world.md), and
+the internals [Rigid Cellular Bodies](
+../internals/src/simulation/rigid-bodies.md
+)
+for ownership details.

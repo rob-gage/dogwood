@@ -1,4 +1,4 @@
-# Workspace and crate boundaries
+# Workspace And Crate Boundaries
 
 The workspace is intentionally split by responsibility. `dogwood_engine` is
 the supported facade; lower-level crates are linked into its public modules.
@@ -23,7 +23,7 @@ public items under `compute`, `graphics`, `input`, `physics`, and
 move between modules. The editor deliberately consumes the facade plus a few
 implementation crates for its host-specific integration.
 
-### Relevant implementation
+### Relevant Implementation
 
 - `Cargo.toml` — workspace members and shared dependency versions.
 - `engine/Cargo.toml` — facade dependencies and platform features.

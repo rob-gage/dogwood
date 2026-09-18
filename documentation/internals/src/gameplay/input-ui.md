@@ -1,4 +1,4 @@
-# Input and user interface
+# Input And User Interface
 
 Input begins as Winit keyboard events. `KeyboardInputState` retains pressed
 keys; `InputTranslator` turns that state into a normalized `ControlState`.
@@ -18,7 +18,7 @@ uploaded, and egui is drawn over the scene render pass. UI input is offered to
 egui from window events and may be consumed before gameplay-specific handling.
 UI state belongs to the game/editor owner, not the scene.
 
-### Relevant implementation
+### Relevant Implementation
 
 - `engine_input/src/keyboard/` — Winit key state and key constants.
 - `engine_input/src/controls/` — control state and translators.
