@@ -64,15 +64,18 @@ impl MaterialTable {
                 ]
             })
             .collect();
-        let properties = accelerator.allocate::<[u32; 16]>(records.len().max(1));
+        let thermal_properties_buffer: AcceleratorBuffer =
+            accelerator.allocate::<[u32; 16]>(records.len().max(1));
         if !records.is_empty() {
             let bytes: Vec<u8> = records
                 .iter()
                 .flat_map(|record| record.iter().flat_map(|v| v.to_le_bytes()))
                 .collect();
-            accelerator
-                .wgpu_queue()
-                .write_buffer(properties.wgpu_buffer(), 0, &bytes);
+            accelerator.wgpu_queue().write_buffer(
+                thermal_properties_buffer.wgpu_buffer(),
+                0,
+                &bytes,
+            );
         }
         let static_count: u32 = registry
             .iter()
@@ -125,7 +128,7 @@ impl MaterialTable {
             Self::create_reaction_buffers(accelerator, registry);
         Self {
             material_graphics,
-            thermal_properties: properties,
+            thermal_properties: thermal_properties_buffer,
             thermal_parameters: parameters,
             reaction_records,
             reaction_selector_members,

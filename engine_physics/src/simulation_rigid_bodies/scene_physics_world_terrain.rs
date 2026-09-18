@@ -8,9 +8,12 @@ impl ScenePhysicsWorld {
         lo: Vector,
         hi: Vector,
     ) {
-        for y in (lo.y.floor() as i32 - 1)..=(hi.y.floor() as i32 + 1) {
-            for x in (lo.x.floor() as i32 - 1)..=(hi.x.floor() as i32 + 1) {
-                required.insert(RigidDynamicCollisionTileKey { x, y });
+        for tile_y in (lo.y.floor() as i32 - 1)..=(hi.y.floor() as i32 + 1) {
+            for tile_x in (lo.x.floor() as i32 - 1)..=(hi.x.floor() as i32 + 1) {
+                required.insert(RigidDynamicCollisionTileKey {
+                    x: tile_x,
+                    y: tile_y,
+                });
             }
         }
     }
@@ -23,7 +26,7 @@ impl ScenePhysicsWorld {
         delta_time: f32,
     ) {
         #[cfg(debug_assertions)]
-        let started = Instant::now();
+        let started: Instant = Instant::now();
         self.terrain_tick += 1;
         if !self.snapshot_updated_this_tick {
             self.terrain_statistics.collision_snapshot_age += 1;
@@ -31,59 +34,79 @@ impl ScenePhysicsWorld {
         self.snapshot_updated_this_tick = false;
         self.required_terrain_patches.clear();
         self.required_dynamic_tiles.clear();
-        for body in bodies {
-            let Some(rigid) = self.rapier.bodies.get(body.handle) else {
+        for rigid_cellular_body in bodies {
+            let Some(rigid_body) = self.rapier.bodies.get(rigid_cellular_body.handle) else {
                 continue;
             };
-            for handle in rigid.colliders() {
-                let Some(collider) = self.rapier.colliders.get(*handle) else {
+            for collider_handle in rigid_body.colliders() {
+                let Some(collider) = self.rapier.colliders.get(*collider_handle) else {
                     continue;
                 };
-                let aabb = collider.compute_aabb();
-                let radius = (aabb.maxs - aabb.mins).length() * 0.5;
-                let d = rigid.linvel() * delta_time
+                let aabb: rapier2d::parry::bounding_volume::Aabb = collider.compute_aabb();
+                let collision_radius: f32 = (aabb.maxs - aabb.mins).length() * 0.5;
+                let displacement: Vector = rigid_body.linvel() * delta_time
                     + Vector::new(gravity[0], gravity[1]) * (0.5 * delta_time * delta_time);
-                let angular = rigid.angvel().abs() * delta_time * radius;
-                let lo = aabb.mins.min(aabb.mins + d) - Vector::splat(angular + 0.25);
-                let hi = aabb.maxs.max(aabb.maxs + d) + Vector::splat(angular + 0.25);
-                Self::demand_dynamic_tiles(&mut self.required_dynamic_tiles, lo, hi);
-                let x0 =
-                    ((lo.x * 8.0).floor() as i32).div_euclid(TERRAIN_COLLISION_PATCH_CELLS) - 1;
-                let y0 =
-                    ((lo.y * 8.0).floor() as i32).div_euclid(TERRAIN_COLLISION_PATCH_CELLS) - 1;
-                let x1 =
-                    ((hi.x * 8.0).floor() as i32).div_euclid(TERRAIN_COLLISION_PATCH_CELLS) + 1;
-                let y1 =
-                    ((hi.y * 8.0).floor() as i32).div_euclid(TERRAIN_COLLISION_PATCH_CELLS) + 1;
-                for y in y0..=y1 {
-                    for x in x0..=x1 {
+                let angular_displacement: f32 =
+                    rigid_body.angvel().abs() * delta_time * collision_radius;
+                let minimum: Vector = aabb.mins.min(aabb.mins + displacement)
+                    - Vector::splat(angular_displacement + 0.25);
+                let maximum: Vector = aabb.maxs.max(aabb.maxs + displacement)
+                    + Vector::splat(angular_displacement + 0.25);
+                Self::demand_dynamic_tiles(&mut self.required_dynamic_tiles, minimum, maximum);
+                let patch_x_minimum: i32 = ((minimum.x * 8.0).floor() as i32)
+                    .div_euclid(TERRAIN_COLLISION_PATCH_CELLS)
+                    - 1;
+                let patch_y_minimum: i32 = ((minimum.y * 8.0).floor() as i32)
+                    .div_euclid(TERRAIN_COLLISION_PATCH_CELLS)
+                    - 1;
+                let patch_x_maximum: i32 = ((maximum.x * 8.0).floor() as i32)
+                    .div_euclid(TERRAIN_COLLISION_PATCH_CELLS)
+                    + 1;
+                let patch_y_maximum: i32 = ((maximum.y * 8.0).floor() as i32)
+                    .div_euclid(TERRAIN_COLLISION_PATCH_CELLS)
+                    + 1;
+                for patch_y in patch_y_minimum..=patch_y_maximum {
+                    for patch_x in patch_x_minimum..=patch_x_maximum {
                         self.required_terrain_patches
-                            .insert(StaticTerrainCollisionPatchKey { x, y });
+                            .insert(StaticTerrainCollisionPatchKey {
+                                x: patch_x,
+                                y: patch_y,
+                            });
                     }
                 }
             }
         }
         for actor in actors {
-            let center = Vector::new(actor.center[0], actor.center[1]);
-            let radius = actor
+            let actor_center: Vector = Vector::new(actor.center[0], actor.center[1]);
+            let actor_radius: f32 = actor
                 .shape
                 .nominal_dimensions()
                 .into_iter()
                 .fold(0.0f32, f32::max)
                 * 0.5;
-            let d = Vector::new(actor.velocity[0], actor.velocity[1]) * delta_time
+            let actor_displacement: Vector = Vector::new(actor.velocity[0], actor.velocity[1])
+                * delta_time
                 + Vector::new(gravity[0], gravity[1]) * (0.5 * delta_time * delta_time);
-            let lo = center.min(center + d) - Vector::splat(radius + 0.25);
-            let hi = center.max(center + d) + Vector::splat(radius + 0.25);
-            Self::demand_dynamic_tiles(&mut self.required_dynamic_tiles, lo, hi);
-            let x0 = ((lo.x * 8.0).floor() as i32).div_euclid(TERRAIN_COLLISION_PATCH_CELLS) - 1;
-            let y0 = ((lo.y * 8.0).floor() as i32).div_euclid(TERRAIN_COLLISION_PATCH_CELLS) - 1;
-            let x1 = ((hi.x * 8.0).floor() as i32).div_euclid(TERRAIN_COLLISION_PATCH_CELLS) + 1;
-            let y1 = ((hi.y * 8.0).floor() as i32).div_euclid(TERRAIN_COLLISION_PATCH_CELLS) + 1;
-            for y in y0..=y1 {
-                for x in x0..=x1 {
+            let minimum: Vector = actor_center.min(actor_center + actor_displacement)
+                - Vector::splat(actor_radius + 0.25);
+            let maximum: Vector = actor_center.max(actor_center + actor_displacement)
+                + Vector::splat(actor_radius + 0.25);
+            Self::demand_dynamic_tiles(&mut self.required_dynamic_tiles, minimum, maximum);
+            let patch_x_minimum: i32 =
+                ((minimum.x * 8.0).floor() as i32).div_euclid(TERRAIN_COLLISION_PATCH_CELLS) - 1;
+            let patch_y_minimum: i32 =
+                ((minimum.y * 8.0).floor() as i32).div_euclid(TERRAIN_COLLISION_PATCH_CELLS) - 1;
+            let patch_x_maximum: i32 =
+                ((maximum.x * 8.0).floor() as i32).div_euclid(TERRAIN_COLLISION_PATCH_CELLS) + 1;
+            let patch_y_maximum: i32 =
+                ((maximum.y * 8.0).floor() as i32).div_euclid(TERRAIN_COLLISION_PATCH_CELLS) + 1;
+            for patch_y in patch_y_minimum..=patch_y_maximum {
+                for patch_x in patch_x_minimum..=patch_x_maximum {
                     self.required_terrain_patches
-                        .insert(StaticTerrainCollisionPatchKey { x, y });
+                        .insert(StaticTerrainCollisionPatchKey {
+                            x: patch_x,
+                            y: patch_y,
+                        });
                 }
             }
         }
@@ -91,42 +114,46 @@ impl ScenePhysicsWorld {
             return;
         };
         self.terrain_statistics.dynamic_required_tiles = self.required_dynamic_tiles.len();
-        let dynamic_keys: Vec<_> = self.required_dynamic_tiles.iter().copied().collect();
-        let mut changed_dynamic = Vec::new();
-        for key in dynamic_keys {
-            let mask = snapshot.dynamic_tile_mask(key.x, key.y);
-            let tile = self
+        let dynamic_keys: Vec<RigidDynamicCollisionTileKey> =
+            self.required_dynamic_tiles.iter().copied().collect();
+        let mut changed_dynamic: Vec<RigidDynamicCollisionTileKey> = Vec::new();
+        for dynamic_tile_key in dynamic_keys {
+            let dynamic_tile_mask: [u32; 2] =
+                snapshot.dynamic_tile_mask(dynamic_tile_key.x, dynamic_tile_key.y);
+            let dynamic_tile: &mut RigidDynamicCollisionTile = self
                 .dynamic_tiles
-                .entry(key)
+                .entry(dynamic_tile_key)
                 .or_insert(RigidDynamicCollisionTile {
                     collider: None,
                     mask: [0; 2],
                     last_required_tick: self.terrain_tick,
                 });
-            tile.last_required_tick = self.terrain_tick;
-            if tile.mask == mask {
+            dynamic_tile.last_required_tick = self.terrain_tick;
+            if dynamic_tile.mask == dynamic_tile_mask {
                 continue;
             }
-            tile.mask = mask;
-            changed_dynamic.push(key);
+            dynamic_tile.mask = dynamic_tile_mask;
+            changed_dynamic.push(dynamic_tile_key);
             self.terrain_statistics.dynamic_mask_changes += 1;
             self.terrain_statistics.dynamic_cells_scanned += 64;
-            if mask == [0; 2] {
-                if let Some(handle) = tile.collider {
+            if dynamic_tile_mask == [0; 2] {
+                if let Some(collider_handle) = dynamic_tile.collider {
                     self.rapier
                         .colliders
-                        .get_mut(handle)
+                        .get_mut(collider_handle)
                         .unwrap()
                         .set_enabled(false);
                     self.terrain_statistics.dynamic_enable_disable_changes += 1;
                 }
                 continue;
             }
-            let (shape, rectangles) = Self::dynamic_tile_shape(mask);
+            let (shape, rectangles): (Option<SharedShape>, usize) =
+                Self::dynamic_tile_shape(dynamic_tile_mask);
             self.terrain_statistics.dynamic_shape_rebuilds += 1;
             self.terrain_statistics.dynamic_rectangles_emitted += rectangles as u64;
-            if let Some(handle) = tile.collider {
-                let collider = self.rapier.colliders.get_mut(handle).unwrap();
+            if let Some(collider_handle) = dynamic_tile.collider {
+                let collider: &mut rapier2d::prelude::Collider =
+                    self.rapier.colliders.get_mut(collider_handle).unwrap();
                 collider.set_shape(shape.unwrap());
                 self.terrain_statistics.dynamic_set_shape_calls += 1;
                 if !collider.is_enabled() {
@@ -134,10 +161,13 @@ impl ScenePhysicsWorld {
                     self.terrain_statistics.dynamic_enable_disable_changes += 1;
                 }
             } else {
-                tile.collider = Some(
+                dynamic_tile.collider = Some(
                     self.rapier.insert_collider(
                         ColliderBuilder::new(shape.unwrap())
-                            .translation(Vector::new(key.x as f32, key.y as f32))
+                            .translation(Vector::new(
+                                dynamic_tile_key.x as f32,
+                                dynamic_tile_key.y as f32,
+                            ))
                             .friction(0.8)
                             .restitution(0.0)
                             .collision_groups(Self::dynamic_collision_groups())
@@ -148,32 +178,40 @@ impl ScenePhysicsWorld {
             }
         }
         // a support tile can vanish underneath a sleeping body. Wake only bodies touching it.
-        for key in changed_dynamic {
-            let lo = Vector::new(key.x as f32, key.y as f32) - Vector::splat(0.125);
-            let hi = lo + Vector::splat(1.25);
-            for body in bodies {
-                let Some(rigid) = self.rapier.bodies.get(body.handle) else {
+        for dynamic_tile_key in changed_dynamic {
+            let minimum: Vector = Vector::new(dynamic_tile_key.x as f32, dynamic_tile_key.y as f32)
+                - Vector::splat(0.125);
+            let maximum: Vector = minimum + Vector::splat(1.25);
+            for rigid_cellular_body in bodies {
+                let Some(rigid_body) = self.rapier.bodies.get(rigid_cellular_body.handle) else {
                     continue;
                 };
-                if !rigid.is_sleeping() {
+                if !rigid_body.is_sleeping() {
                     continue;
                 }
-                let touches = rigid.colliders().iter().any(|handle| {
-                    self.rapier.colliders.get(*handle).is_some_and(|c| {
-                        let a = c.compute_aabb();
-                        a.mins.x <= hi.x && a.maxs.x >= lo.x && a.mins.y <= hi.y && a.maxs.y >= lo.y
-                    })
+                let touches: bool = rigid_body.colliders().iter().any(|collider_handle| {
+                    self.rapier
+                        .colliders
+                        .get(*collider_handle)
+                        .is_some_and(|collider| {
+                            let collider_aabb: rapier2d::parry::bounding_volume::Aabb =
+                                collider.compute_aabb();
+                            collider_aabb.mins.x <= maximum.x
+                                && collider_aabb.maxs.x >= minimum.x
+                                && collider_aabb.mins.y <= maximum.y
+                                && collider_aabb.maxs.y >= minimum.y
+                        })
                 });
                 if touches {
                     self.rapier
                         .bodies
-                        .get_mut(body.handle)
+                        .get_mut(rigid_cellular_body.handle)
                         .unwrap()
                         .wake_up(true);
                 }
             }
         }
-        let stale_dynamic: Vec<_> = self
+        let stale_dynamic: Vec<RigidDynamicCollisionTileKey> = self
             .dynamic_tiles
             .iter()
             .filter_map(|(key, tile)| {
@@ -181,55 +219,72 @@ impl ScenePhysicsWorld {
                     .then_some(*key)
             })
             .collect();
-        for key in stale_dynamic {
-            if let Some(tile) = self.dynamic_tiles.remove(&key)
-                && let Some(handle) = tile.collider
+        for dynamic_tile_key in stale_dynamic {
+            if let Some(dynamic_tile) = self.dynamic_tiles.remove(&dynamic_tile_key)
+                && let Some(collider_handle) = dynamic_tile.collider
             {
-                self.rapier.remove_collider(handle);
+                self.rapier.remove_collider(collider_handle);
             }
         }
         self.terrain_statistics.dynamic_cached_tiles = self.dynamic_tiles.len();
         self.terrain_statistics.dynamic_collider_tiles = self
             .dynamic_tiles
             .values()
-            .filter(|tile| {
-                tile.collider
-                    .is_some_and(|h| self.rapier.colliders.get(h).is_some_and(|c| c.is_enabled()))
+            .filter(|dynamic_tile| {
+                dynamic_tile.collider.is_some_and(|collider_handle| {
+                    self.rapier
+                        .colliders
+                        .get(collider_handle)
+                        .is_some_and(|collider| collider.is_enabled())
+                })
             })
             .count();
-        let keys: Vec<_> = self.required_terrain_patches.iter().copied().collect();
-        for key in keys {
-            let masks = snapshot.static_patch_masks(key.x, key.y);
-            let changed = self
+        let terrain_patch_keys: Vec<StaticTerrainCollisionPatchKey> =
+            self.required_terrain_patches.iter().copied().collect();
+        for terrain_patch_key in terrain_patch_keys {
+            let terrain_patch_masks: [[u32; 2]; 16] =
+                snapshot.static_patch_masks(terrain_patch_key.x, terrain_patch_key.y);
+            let changed: bool = self
                 .terrain_patches
-                .get(&key)
-                .is_none_or(|p| p.masks != masks);
-            let patch = self
+                .get(&terrain_patch_key)
+                .is_none_or(|terrain_patch| terrain_patch.masks != terrain_patch_masks);
+            let terrain_patch: &mut StaticTerrainCollisionPatch = self
                 .terrain_patches
-                .entry(key)
+                .entry(terrain_patch_key)
                 .or_insert(StaticTerrainCollisionPatch {
                     collider: None,
-                    masks,
+                    masks: terrain_patch_masks,
                     last_required_tick: self.terrain_tick,
                 });
-            patch.last_required_tick = self.terrain_tick;
+            terrain_patch.last_required_tick = self.terrain_tick;
             if !changed {
                 continue;
             }
-            patch.masks = masks;
+            terrain_patch.masks = terrain_patch_masks;
             self.terrain_statistics.patch_rebuilds += 1;
             self.terrain_statistics.patch_cells_scanned += 1024;
-            match (patch.collider, Self::terrain_patch_shape(&masks)) {
-                (Some(h), Some(s)) => self.rapier.colliders.get_mut(h).unwrap().set_shape(s),
-                (Some(h), None) => {
-                    self.rapier.remove_collider(h);
-                    patch.collider = None;
+            match (
+                terrain_patch.collider,
+                Self::terrain_patch_shape(&terrain_patch_masks),
+            ) {
+                (Some(collider_handle), Some(shape)) => self
+                    .rapier
+                    .colliders
+                    .get_mut(collider_handle)
+                    .unwrap()
+                    .set_shape(shape),
+                (Some(collider_handle), None) => {
+                    self.rapier.remove_collider(collider_handle);
+                    terrain_patch.collider = None;
                 }
-                (None, Some(s)) => {
-                    patch.collider = Some(
+                (None, Some(shape)) => {
+                    terrain_patch.collider = Some(
                         self.rapier.insert_collider(
-                            ColliderBuilder::new(s)
-                                .translation(Vector::new(key.x as f32 * 4.0, key.y as f32 * 4.0))
+                            ColliderBuilder::new(shape)
+                                .translation(Vector::new(
+                                    terrain_patch_key.x as f32 * 4.0,
+                                    terrain_patch_key.y as f32 * 4.0,
+                                ))
                                 .friction(0.8)
                                 .restitution(0.0)
                                 .collision_groups(Self::terrain_collision_groups())
@@ -241,26 +296,27 @@ impl ScenePhysicsWorld {
                 (None, None) => {}
             }
         }
-        let old: Vec<_> = self
+        let stale_terrain_patch_keys: Vec<StaticTerrainCollisionPatchKey> = self
             .terrain_patches
             .iter()
-            .filter_map(|(k, p)| {
-                (self.terrain_tick - p.last_required_tick > TERRAIN_PATCH_RETENTION_TICKS)
-                    .then_some(*k)
+            .filter_map(|(terrain_patch_key, terrain_patch)| {
+                (self.terrain_tick - terrain_patch.last_required_tick
+                    > TERRAIN_PATCH_RETENTION_TICKS)
+                    .then_some(*terrain_patch_key)
             })
             .collect();
-        for k in old {
-            if let Some(p) = self.terrain_patches.remove(&k)
-                && let Some(h) = p.collider
+        for terrain_patch_key in stale_terrain_patch_keys {
+            if let Some(terrain_patch) = self.terrain_patches.remove(&terrain_patch_key)
+                && let Some(collider_handle) = terrain_patch.collider
             {
-                self.rapier.remove_collider(h);
+                self.rapier.remove_collider(collider_handle);
             }
         }
         self.terrain_statistics.active_patches = self.terrain_patches.len();
         self.terrain_statistics.collider_patches = self
             .terrain_patches
             .values()
-            .filter(|p| p.collider.is_some())
+            .filter(|terrain_patch| terrain_patch.collider.is_some())
             .count();
         #[cfg(debug_assertions)]
         tracing::trace!(
@@ -280,13 +336,15 @@ impl ScenePhysicsWorld {
     }
 
     pub(crate) fn terrain_patch_shape(masks: &[[u32; 2]; 16]) -> Option<SharedShape> {
-        let mut rows = [0u32; 32];
-        for ty in 0..4 {
-            for tx in 0..4 {
-                let [lo, hi] = masks[ty * 4 + tx];
-                for y in 0..8 {
-                    rows[ty * 8 + y] |=
-                        ((if y < 4 { lo } else { hi }) >> ((y % 4) * 8) & 0xff) << (tx * 8);
+        let mut rows: [u32; 32] = [0u32; 32];
+        for patch_y in 0..4 {
+            for patch_x in 0..4 {
+                let [low_mask, high_mask] = masks[patch_y * 4 + patch_x];
+                for cell_y in 0..8 {
+                    rows[patch_y * 8 + cell_y] |= ((if cell_y < 4 { low_mask } else { high_mask })
+                        >> ((cell_y % 4) * 8)
+                        & 0xff)
+                        << (patch_x * 8);
                 }
             }
         }
@@ -294,45 +352,55 @@ impl ScenePhysicsWorld {
     }
 
     pub(crate) fn dynamic_tile_shape(mask: [u32; 2]) -> (Option<SharedShape>, usize) {
-        let mut rows = [0u32; 8];
-        for (y, row) in rows.iter_mut().enumerate() {
-            *row = (mask[y / 4] >> ((y % 4) * 8)) & 0xff;
+        let mut rows: [u32; 8] = [0u32; 8];
+        for (cell_y, row) in rows.iter_mut().enumerate() {
+            *row = (mask[cell_y / 4] >> ((cell_y % 4) * 8)) & 0xff;
         }
         Self::shape_from_rows(&mut rows, 8)
     }
 
     fn shape_from_rows(rows: &mut [u32], size: usize) -> (Option<SharedShape>, usize) {
-        if rows.iter().all(|r| *r == 0) {
+        if rows.iter().all(|row| *row == 0) {
             return (None, 0);
         }
-        let mut parts = Vec::with_capacity(size);
-        for y in 0..size {
-            while rows[y] != 0 {
-                let x = rows[y].trailing_zeros() as usize;
-                let w = (rows[y] >> x).trailing_ones() as usize;
-                let mask = if w == 32 {
+        let mut rectangle_parts: Vec<(Pose, SharedShape)> = Vec::with_capacity(size);
+        for cell_y in 0..size {
+            while rows[cell_y] != 0 {
+                let cell_x: usize = rows[cell_y].trailing_zeros() as usize;
+                let rectangle_width: usize = (rows[cell_y] >> cell_x).trailing_ones() as usize;
+                let rectangle_mask: u32 = if rectangle_width == 32 {
                     u32::MAX
                 } else {
-                    (((1u64 << w) - 1) as u32) << x
+                    (((1u64 << rectangle_width) - 1) as u32) << cell_x
                 };
-                let mut h = 1;
-                while y + h < size && rows[y + h] & mask == mask {
-                    h += 1;
+                let mut rectangle_height: usize = 1;
+                while cell_y + rectangle_height < size
+                    && rows[cell_y + rectangle_height] & rectangle_mask == rectangle_mask
+                {
+                    rectangle_height += 1;
                 }
-                for row in &mut rows[y..y + h] {
-                    *row &= !mask;
+                for row in &mut rows[cell_y..cell_y + rectangle_height] {
+                    *row &= !rectangle_mask;
                 }
-                parts.push((
+                rectangle_parts.push((
                     Pose::translation(
-                        (x + w / 2) as f32 / 8.0 + (w % 2) as f32 / 16.0,
-                        (y + h / 2) as f32 / 8.0 + (h % 2) as f32 / 16.0,
+                        (cell_x + rectangle_width / 2) as f32 / 8.0
+                            + (rectangle_width % 2) as f32 / 16.0,
+                        (cell_y + rectangle_height / 2) as f32 / 8.0
+                            + (rectangle_height % 2) as f32 / 16.0,
                     ),
-                    SharedShape::cuboid(w as f32 / 16.0, h as f32 / 16.0),
+                    SharedShape::cuboid(
+                        rectangle_width as f32 / 16.0,
+                        rectangle_height as f32 / 16.0,
+                    ),
                 ));
             }
         }
-        let count = parts.len();
-        (Some(SharedShape::compound(parts)), count)
+        let rectangle_count: usize = rectangle_parts.len();
+        (
+            Some(SharedShape::compound(rectangle_parts)),
+            rectangle_count,
+        )
     }
 
     #[cfg_attr(not(test), allow(dead_code))]

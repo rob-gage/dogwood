@@ -174,7 +174,7 @@ impl ThermalScatter {
                 bind_group_layouts: &[Some(&layout)],
                 immediate_size: 0,
             });
-        let pipeline = |entry: &'static str| {
+        let pipeline: &dyn Fn(&'static str) -> wgpu::ComputePipeline = &|entry: &'static str| {
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
                 layout: Some(&pipeline_layout),

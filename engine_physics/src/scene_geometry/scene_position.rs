@@ -23,17 +23,17 @@ impl ScenePosition {
         let previous_y: f32 = previous.tile_coordinates.y as f32 + previous.y_offset;
         let current_x: f32 = self.tile_coordinates.x as f32 + self.x_offset;
         let current_y: f32 = self.tile_coordinates.y as f32 + self.y_offset;
-        let x: f32 = previous_x + (current_x - previous_x) * interpolation;
-        let y: f32 = previous_y + (current_y - previous_y) * interpolation;
-        let tile_x: f32 = x.floor();
-        let tile_y: f32 = y.floor();
+        let interpolated_world_x: f32 = previous_x + (current_x - previous_x) * interpolation;
+        let interpolated_world_y: f32 = previous_y + (current_y - previous_y) * interpolation;
+        let interpolated_tile_x: f32 = interpolated_world_x.floor();
+        let interpolated_tile_y: f32 = interpolated_world_y.floor();
         Self {
             tile_coordinates: TileCoordinates {
-                x: tile_x as i32,
-                y: tile_y as i32,
+                x: interpolated_tile_x as i32,
+                y: interpolated_tile_y as i32,
             },
-            x_offset: x - tile_x,
-            y_offset: y - tile_y,
+            x_offset: interpolated_world_x - interpolated_tile_x,
+            y_offset: interpolated_world_y - interpolated_tile_y,
         }
     }
 }
