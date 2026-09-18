@@ -59,7 +59,7 @@ impl MaterialRegistryBuilder {
         if self.registry.get(identifier).is_none() {
             return Err("Tag references an unregistered material".into());
         }
-        let members = self.tags.entry(tag.into()).or_default();
+        let members: &mut Vec<MaterialIdentifier> = self.tags.entry(tag.into()).or_default();
         if !members.contains(&identifier) {
             members.push(identifier);
         }

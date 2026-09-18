@@ -51,7 +51,7 @@ impl MaterialRegistry {
                 }
             }
         }
-        let mut registry = Self {
+        let mut registry: Self = Self {
             cellular_statics,
             cellular_dynamics,
             fluids,
@@ -96,8 +96,8 @@ impl MaterialRegistry {
         for index in 0..self.material_count() {
             let conductivity: f32 = f32::from_bits(Self::read_u32(reader)?);
             let specific_heat_capacity: f32 = f32::from_bits(Self::read_u32(reader)?);
-            let default: u32 = Self::read_u32(reader)?;
-            let transition =
+            let default_temperature_bits: u32 = Self::read_u32(reader)?;
+            let transition: fn(&mut R) -> Result<Option<MaterialThermalTransition>, io::Error> =
                 |reader: &mut R| -> Result<Option<MaterialThermalTransition>, io::Error> {
                     let threshold: u32 = Self::read_u32(reader)?;
                     let target: MaterialIdentifier =
@@ -118,7 +118,8 @@ impl MaterialRegistry {
                 MaterialThermalProperties {
                     conductivity,
                     specific_heat_capacity,
-                    default_temperature: (default != u32::MAX).then_some(f32::from_bits(default)),
+                    default_temperature: (default_temperature_bits != u32::MAX)
+                        .then_some(f32::from_bits(default_temperature_bits)),
                     cold_transition: transition(reader)?,
                     hot_transition: transition(reader)?,
                 },
@@ -188,29 +189,24 @@ impl MaterialRegistry {
                 for word in &mut words {
                     *word = Self::read_u32(reader)?;
                 }
-                let reactant = |offset: u32,
-                                count: u32,
-                                amount_bits: u32,
-                                present: u32|
-                 -> CompiledMaterialReactionReactant {
-                    CompiledMaterialReactionReactant {
-                        member_offset: offset,
-                        member_count: count,
-                        amount_bits,
-                        present,
-                    }
-                };
-                let product = |material: u32,
-                               amount_bits: u32,
-                               present: u32|
-                 -> CompiledMaterialReactionProduct {
-                    CompiledMaterialReactionProduct {
-                        material,
-                        amount_bits,
-                        present,
-                        _padding: 0,
-                    }
-                };
+                let reactant: fn(u32, u32, u32, u32) -> CompiledMaterialReactionReactant =
+                    |offset: u32, count: u32, amount_bits: u32, present: u32| {
+                        CompiledMaterialReactionReactant {
+                            member_offset: offset,
+                            member_count: count,
+                            amount_bits,
+                            present,
+                        }
+                    };
+                let product: fn(u32, u32, u32) -> CompiledMaterialReactionProduct =
+                    |material: u32, amount_bits: u32, present: u32| {
+                        CompiledMaterialReactionProduct {
+                            material,
+                            amount_bits,
+                            present,
+                            _padding: 0,
+                        }
+                    };
                 let rule: CompiledMaterialReaction = CompiledMaterialReaction {
                     reactants: [
                         reactant(words[0], words[1], words[2], words[3]),
@@ -330,19 +326,21 @@ impl MaterialRegistry {
             .with_variation(variation)
             .with_color_influence(color_influence)
             .with_radiance_influence(radiance_influence);
-            let material = match form {
+            let material: Material = match form {
                 MaterialForm::CellularStatic => {
-                    let mass = f32::from_bits(Self::read_u32(reader)?);
-                    let pressure_ignore_threshold = f32::from_bits(Self::read_u32(reader)?);
-                    let default_integrity = f32::from_bits(Self::read_u32(reader)?);
-                    let minimum_rigid_body_cell_count = Self::read_u32(reader)?;
-                    let debris_identifier = MaterialIdentifier::from_u32(Self::read_u32(reader)?);
-                    let debris_material = (debris_identifier != MaterialIdentifier::NULL)
+                    let mass: f32 = f32::from_bits(Self::read_u32(reader)?);
+                    let pressure_ignore_threshold: f32 = f32::from_bits(Self::read_u32(reader)?);
+                    let default_integrity: f32 = f32::from_bits(Self::read_u32(reader)?);
+                    let minimum_rigid_body_cell_count: u32 = Self::read_u32(reader)?;
+                    let debris_identifier: MaterialIdentifier =
+                        MaterialIdentifier::from_u32(Self::read_u32(reader)?);
+                    let debris_material: Option<MaterialIdentifier> = (debris_identifier
+                        != MaterialIdentifier::NULL)
                         .then_some(debris_identifier);
-                    let debris_yield_rate = f32::from_bits(Self::read_u32(reader)?);
-                    let pressure_transmission = f32::from_bits(Self::read_u32(reader)?);
-                    let friction = f32::from_bits(Self::read_u32(reader)?);
-                    let restitution = f32::from_bits(Self::read_u32(reader)?);
+                    let debris_yield_rate: f32 = f32::from_bits(Self::read_u32(reader)?);
+                    let pressure_transmission: f32 = f32::from_bits(Self::read_u32(reader)?);
+                    let friction: f32 = f32::from_bits(Self::read_u32(reader)?);
+                    let restitution: f32 = f32::from_bits(Self::read_u32(reader)?);
                     Material::CellularStatic {
                         name,
                         graphics,
