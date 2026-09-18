@@ -50,6 +50,7 @@ rapier2d = { version = "=0.35.3", features = ["parallel"] }
 tracing = { version = "=0.1.44", features = ["release_max_level_off"] }
 tracing-appender = "=0.2.5"
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter"] }
+tempfile = "=3.27.0"
 # Backend features are supplied by engine_compute per target. Keeping them out
 # of this shared dependency prevents the Windows build from linking/probing
 # Vulkan or OpenGL.

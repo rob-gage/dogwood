@@ -14,4 +14,5 @@ dogwood_engine_graphics = { workspace = true }
 dogwood_engine_input = { workspace = true }
 rapier2d = { workspace = true }
 tracing.workspace = true
+tempfile.workspace = true
 wgpu.workspace = true

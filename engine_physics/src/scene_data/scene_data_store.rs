@@ -2,7 +2,6 @@
 
 use std::collections::HashSet;
 use std::fs::File;
-use std::fs::create_dir;
 use std::fs::create_dir_all;
 use std::fs::metadata;
 use std::io;
@@ -10,17 +9,15 @@ use std::io::Read;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::Ordering;
+
+use tempfile::Builder;
+use tempfile::TempDir;
 
 use super::scene_data_dormant_rigid::SceneDormantRigidBody;
 use super::scene_data_dormant_rigid::owner_chunk;
 use crate::chunks::Chunk;
 use crate::materials::MaterialRegistry;
 use crate::tiles::TileCoordinates;
-
-/// The identifier assigned to the next temporary scene-data directory
-static TEMPORARY_IDENTIFIER: AtomicU64 = AtomicU64::new(0);
 
 /// A source of filesystem-backed `Scene` data
 #[derive(Clone)]
@@ -29,8 +26,8 @@ pub struct SceneData {
     materials: Arc<MaterialRegistry>,
     /// The path of the directory containing the data
     path: Arc<PathBuf>,
-    /// Whether the directory should be removed after its last owner is dropped
-    is_temporary: bool,
+    /// Keeps temporary scene data alive until its last owner is dropped
+    temporary_directory: Option<Arc<TempDir>>,
 }
 
 impl SceneData {
@@ -47,38 +44,24 @@ impl SceneData {
         Ok(Self {
             materials: Arc::new(materials),
             path: Arc::new(path),
-            is_temporary: false,
+            temporary_directory: None,
         })
     }
 
-    /// Creates empty scene data in a new temporary directory
+    /// Creates empty scene data in a new temporary directory that is removed
+    /// after the last `SceneData` owner is dropped
     pub fn new_temporary(materials: MaterialRegistry) -> Result<Self, io::Error> {
         let materials: Arc<MaterialRegistry> = Arc::new(materials);
-        let user_home_directory: PathBuf =
-            std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| {
-                io::Error::new(io::ErrorKind::NotFound, "Home directory is unavailable")
-            })?;
-        let save_directory: PathBuf = user_home_directory.join(".DOGWOOD");
-        create_dir_all(&save_directory)?;
-        loop {
-            let identifier: u64 = TEMPORARY_IDENTIFIER.fetch_add(1, Ordering::Relaxed);
-            let temporary_scene_path: PathBuf =
-                save_directory.join(format!("dogwood-scene-{}-{identifier}", std::process::id(),));
-            match create_dir(&temporary_scene_path) {
-                Ok(()) => {
-                    let mut materials_file: File =
-                        File::create(temporary_scene_path.join("materials"))?;
-                    materials.serialize(&mut materials_file)?;
-                    return Ok(Self {
-                        materials,
-                        path: Arc::new(temporary_scene_path),
-                        is_temporary: true,
-                    });
-                }
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-                Err(error) => return Err(error),
-            }
-        }
+        let temporary_directory: Arc<TempDir> =
+            Arc::new(Builder::new().prefix("dogwood-scene-").tempdir()?);
+        let temporary_scene_path: PathBuf = temporary_directory.path().to_path_buf();
+        let mut materials_file: File = File::create(temporary_scene_path.join("materials"))?;
+        materials.serialize(&mut materials_file)?;
+        Ok(Self {
+            materials,
+            path: Arc::new(temporary_scene_path),
+            temporary_directory: Some(temporary_directory),
+        })
     }
 
     /// Returns the CPU-side materials stored with this scene data

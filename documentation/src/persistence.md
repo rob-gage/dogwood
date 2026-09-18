@@ -11,7 +11,8 @@ let scene: Scene = Scene::load_with_generator(
 ```
 
 Use `SceneData::new_temporary(registry)` for a disposable scene, as the template
-does. `read_chunk` and `write_chunk` are the explicit chunk persistence
+does. Its temporary directory is removed after the last `SceneData` owner is
+dropped. `read_chunk` and `write_chunk` are the explicit chunk persistence
 boundary.
 
 Scenes stream a resident tile buffer around the requested area (normally the
