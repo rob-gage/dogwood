@@ -58,9 +58,11 @@ impl EditorInterface {
     }
 
     fn material_button(ui: &mut egui::Ui, selected: bool, name: &str, color: Color) -> bool {
-        let response = ui.horizontal(|ui| {
-            let (row, _) = ui.allocate_exact_size(egui::vec2(16.0, 28.0), egui::Sense::hover());
-            let swatch = egui::Rect::from_center_size(row.center(), egui::vec2(16.0, 16.0));
+        let response: egui::InnerResponse<bool> = ui.horizontal(|ui| {
+            let (row, _response): (egui::Rect, egui::Response) =
+                ui.allocate_exact_size(egui::vec2(16.0, 28.0), egui::Sense::hover());
+            let swatch: egui::Rect =
+                egui::Rect::from_center_size(row.center(), egui::vec2(16.0, 16.0));
             ui.painter().rect_filled(
                 swatch,
                 3.0,
@@ -78,7 +80,7 @@ impl EditorInterface {
 
 impl Widget for EditorInterface {
     fn display(&mut self, user_interface: &mut UserInterface) -> egui::Response {
-        let ui = user_interface.egui();
+        let ui: &mut egui::Ui = user_interface.egui();
         ui.style_mut().spacing.item_spacing = egui::vec2(6.0, 6.0);
         ui.style_mut().visuals.panel_fill = egui::Color32::from_rgb(30, 32, 36);
         ui.style_mut().visuals.window_fill = egui::Color32::from_rgb(36, 38, 43);
@@ -110,11 +112,11 @@ impl Widget for EditorInterface {
                             }
                         }
                         ui.separator();
-                        let mut tile_borders = self.show_tile_borders;
+                        let mut tile_borders: bool = self.show_tile_borders;
                         if ui.checkbox(&mut tile_borders, "Tile borders").changed() {
                             self.tile_borders_requested.set(tile_borders);
                         }
-                        let mut chunk_borders = self.show_chunk_borders;
+                        let mut chunk_borders: bool = self.show_chunk_borders;
                         if ui.checkbox(&mut chunk_borders, "Chunk borders").changed() {
                             self.chunk_borders_requested.set(chunk_borders);
                         }
@@ -186,7 +188,8 @@ impl Widget for EditorInterface {
                 egui::CollapsingHeader::new("Materials")
                     .default_open(true)
                     .show(ui, |ui| {
-                        let mut rigid_body_placement_enabled = self.rigid_body_placement_enabled;
+                        let mut rigid_body_placement_enabled: bool =
+                            self.rigid_body_placement_enabled;
                         if ui
                             .checkbox(&mut rigid_body_placement_enabled, "Rigid Body Placement")
                             .changed()
@@ -206,7 +209,7 @@ impl Widget for EditorInterface {
                         }
                     });
                 egui::CollapsingHeader::new("Pressure").show(ui, |ui| {
-                    let response = ui.add_sized(
+                    let response: egui::Response = ui.add_sized(
                         [(ui.available_width() - 22.0).max(0.0), 24.0],
                         egui::Slider::new(&mut self.impulse_rate, 1.0..=1000.0)
                             .text("P/s")
@@ -220,7 +223,7 @@ impl Widget for EditorInterface {
                     }
                 });
                 egui::CollapsingHeader::new("Thermal").show(ui, |ui| {
-                    let response = ui.add_sized(
+                    let response: egui::Response = ui.add_sized(
                         [(ui.available_width() - 22.0).max(0.0), 24.0],
                         egui::Slider::new(&mut self.thermal_rate, 1.0..=1000.0)
                             .text("K/s")
@@ -248,15 +251,15 @@ impl Widget for EditorInterface {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
-                let rect = ui.available_rect_before_wrap();
-                let scale = ui.ctx().pixels_per_point();
+                let rect: egui::Rect = ui.available_rect_before_wrap();
+                let scale: f32 = ui.ctx().pixels_per_point();
                 self.viewport_bounds.set(Some([
                     (rect.min.x * scale).round() as u32,
                     (rect.min.y * scale).round() as u32,
                     (rect.width() * scale).round() as u32,
                     (rect.height() * scale).round() as u32,
                 ]));
-                let painter = ui.painter().with_clip_rect(rect);
+                let painter: egui::Painter = ui.painter().with_clip_rect(rect);
                 let preview_color: egui::Color32 = (&self.preview_color).into();
                 let cell_size: [f32; 2] = self.preview_cells.iter().fold(
                     [0.0, 0.0],
@@ -275,18 +278,18 @@ impl Widget for EditorInterface {
                     })
                     .collect();
                 for [left, top, right, bottom] in &self.preview_cells {
-                    let cell = egui::Rect::from_min_max(
+                    let cell: egui::Rect = egui::Rect::from_min_max(
                         egui::pos2(left / scale, top / scale),
                         egui::pos2(right / scale, bottom / scale),
                     );
                     painter.rect_filled(cell, 0.0, preview_color);
-                    let key = (
+                    let key: (i32, i32) = (
                         (left / cell_size[0]).round() as i32,
                         (top / cell_size[1]).round() as i32,
                     );
-                    let stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
-                    let left_edge = egui::pos2(left / scale, top / scale);
-                    let right_edge = egui::pos2(right / scale, bottom / scale);
+                    let stroke: egui::Stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
+                    let left_edge: egui::Pos2 = egui::pos2(left / scale, top / scale);
+                    let right_edge: egui::Pos2 = egui::pos2(right / scale, bottom / scale);
                     if !preview_keys.contains(&(key.0 - 1, key.1)) {
                         painter.line_segment(
                             [left_edge, egui::pos2(left / scale, bottom / scale)],
