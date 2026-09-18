@@ -35,7 +35,7 @@ impl ChunkGasCell {
             f32::from_bits(crate::binary_reader::read_u32(reader)?),
             f32::from_bits(crate::binary_reader::read_u32(reader)?),
         ];
-        let temperature = f32::from_bits(crate::binary_reader::read_u32(reader)?);
+        let temperature: f32 = f32::from_bits(crate::binary_reader::read_u32(reader)?);
         let count: usize = crate::binary_reader::read_u32(reader)? as usize;
         let mut species: Vec<(MaterialIdentifier, f32)> = Vec::new();
         species.try_reserve_exact(count).map_err(|_| {
@@ -61,16 +61,16 @@ impl ChunkGasCell {
     }
 
     pub fn deserialize_legacy<R: io::Read>(reader: &mut R) -> Result<Self, io::Error> {
-        let coordinates = CellCoordinates {
+        let coordinates: CellCoordinates = CellCoordinates {
             x: crate::binary_reader::read_u32(reader)? as i32,
             y: crate::binary_reader::read_u32(reader)? as i32,
         };
-        let velocity = [
+        let velocity: [f32; 2] = [
             f32::from_bits(crate::binary_reader::read_u32(reader)?),
             f32::from_bits(crate::binary_reader::read_u32(reader)?),
         ];
-        let count = crate::binary_reader::read_u32(reader)? as usize;
-        let mut species = Vec::new();
+        let count: usize = crate::binary_reader::read_u32(reader)? as usize;
+        let mut species: Vec<(MaterialIdentifier, f32)> = Vec::new();
         species.try_reserve_exact(count).map_err(|_| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -83,7 +83,7 @@ impl ChunkGasCell {
                 f32::from_bits(crate::binary_reader::read_u32(reader)?),
             ));
         }
-        let cell = Self {
+        let cell: Self = Self {
             coordinates,
             velocity,
             temperature: f32::NAN,
