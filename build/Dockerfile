@@ -17,10 +17,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/root/.cache/cargo-xwin \
     if [ "$DOGWOOD_TARGET" = windows-x64 ] || [ "$DOGWOOD_TARGET" = windows-x86 ] || [ "$DOGWOOD_TARGET" = windows-arm64 ]; then \
       cargo xwin build --locked --release --package "$GAME_PACKAGE" --target "$RUST_TARGET"; \
-      mkdir -p /artifact; cp "target/$RUST_TARGET/release/$GAME_BINARY.exe" /artifact/; \
+      mkdir -p /artifact; cp "target/$RUST_TARGET/release/$GAME_BINARY.exe" /artifact/game.exe; \
     else \
       cargo zigbuild --locked --release --package "$GAME_PACKAGE" --target "$RUST_TARGET"; \
-      mkdir -p /artifact; cp "target/$RUST_TARGET/release/$GAME_BINARY" /artifact/; \
+      mkdir -p /artifact; cp "target/$RUST_TARGET/release/$GAME_BINARY" /artifact/game; \
     fi
 
 FROM scratch AS artifact
