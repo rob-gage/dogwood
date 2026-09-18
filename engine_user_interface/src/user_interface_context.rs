@@ -48,6 +48,11 @@ impl UserInterfaceContext {
         returned_output
     }
 
+    /// Adds game-owned contents to the next frame without exposing egui to the game.
+    pub fn add_contents(&self, add_contents: impl FnOnce(&mut UserInterface)) {
+        self.run(egui::RawInput::default(), add_contents);
+    }
+
     /// Displays a widget in the next user-interface frame.
     pub fn add_widget(
         &self,

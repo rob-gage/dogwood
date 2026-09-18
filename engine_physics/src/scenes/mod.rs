@@ -6,6 +6,7 @@
 pub(crate) mod tests;
 
 mod scene;
+mod scene_actor_contacts;
 mod scene_generator;
 mod scene_pending_rigid_dormancy;
 mod scene_pending_static_detachment;

@@ -37,6 +37,10 @@ struct Uniforms {
     show_chunk_borders: u32,
     gas_count: u32,
     _padding: vec2<u32>,
+    actor_count: u32,
+    _actor_padding: vec3<u32>,
+    actor_rects: array<vec4<f32>, 8>,
+    actor_colors: array<vec4<f32>, 8>,
 }
 
 struct MaterialAppearance {
@@ -100,6 +104,12 @@ fn render_scene_fragment(@builtin(position) position: vec4<f32>) -> @location(0)
     // TEMPORARY: draw the possessed walking pawn over the cellular scene
     if all(abs(world - uniforms.walking_pawn_position) < uniforms.walking_pawn_size * 0.5) {
         return vec4<f32>(1.0);
+    }
+    for (var actor_index: u32 = 0u; actor_index < uniforms.actor_count; actor_index++) {
+        let actor: vec4<f32> = uniforms.actor_rects[actor_index];
+        if all(abs(world - actor.xy) < actor.zw * 0.5) {
+            return uniforms.actor_colors[actor_index];
+        }
     }
     let cell: vec2<i32> = vec2<i32>(floor(world * CELLS_PER_TILE_FLOAT));
     let cell_index: u32 =

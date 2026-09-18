@@ -2,21 +2,28 @@
 
 use super::{
     actor_cellular_proxy_state::ActorCellularProxyState,
-    actor_collision_shape::ActorCollisionShape, actor_physics_proxy_state::ActorPhysicsProxyState,
+    actor_collision_shape::ActorCollisionShape, actor_physical::ActorPhysical,
+    actor_physical_proxy_state::ActorPhysicalProxyState,
+    actor_physics_proxy_state::ActorPhysicsProxyState,
 };
 use crate::{
     actors::{
         Actor, ActorControlState, ActorPawn, ActorPawnMovement, ActorPawnSwimmingConfiguration,
-        ActorPawnSwimmingState, ActorPawnWalkingState, ActorPossessable, ActorPreviousPosition,
+        ActorPawnSwimmingState, ActorPawnWalkingState, ActorPhysicalConfiguration,
+        ActorPossessable, ActorPreviousPosition,
     },
     scenes::{Scene, ScenePosition, SceneVelocity},
     simulation::ScenePhysicsWorld,
     simulation_actors::SceneSimulation,
 };
+use engine_graphics::SceneActorGraphics;
+use std::collections::HashMap;
 /// Owns the ECS world and provides the engine's actor-facing API.
 pub struct ActorRegistry {
     /// ECS entities and their actor components.
     world: bevy_ecs::world::World,
+    entities: HashMap<Actor, bevy_ecs::entity::Entity>,
+    next_identifier: u64,
 }
 
 impl Default for ActorRegistry {
@@ -30,16 +37,26 @@ impl ActorRegistry {
     pub fn new() -> Self {
         Self {
             world: bevy_ecs::world::World::new(),
+            entities: HashMap::new(),
+            next_identifier: 0,
         }
+    }
+
+    fn bevy_entity(&self, actor: Actor) -> bevy_ecs::entity::Entity {
+        self.entities[&actor]
+    }
+
+    fn spawn_components(&mut self, components: impl bevy_ecs::bundle::Bundle) -> Actor {
+        let entity: bevy_ecs::entity::Entity = self.world.spawn(components).id();
+        let actor: Actor = Actor::new(self.next_identifier);
+        self.next_identifier = self.next_identifier.wrapping_add(1);
+        self.entities.insert(actor, entity);
+        actor
     }
 
     /// Creates an actor with a `ScenePosition`
     pub fn spawn(&mut self, position: ScenePosition) -> Actor {
-        Actor::from_bevy_entity(
-            self.world
-                .spawn((ActorPreviousPosition(position), position))
-                .id(),
-        )
+        self.spawn_components((ActorPreviousPosition(position), position))
     }
 
     /// Creates a pawn with a position and velocity
@@ -50,19 +67,32 @@ impl ActorRegistry {
         velocity: SceneVelocity,
     ) -> Actor {
         Self::validate_pawn(&pawn);
-        Actor::from_bevy_entity(
-            self.world
-                .spawn((
-                    pawn,
-                    ActorControlState::default(),
-                    ActorPawnSwimmingState::default(),
-                    ActorPawnWalkingState::default(),
-                    ActorPreviousPosition(position),
-                    position,
-                    velocity,
-                ))
-                .id(),
-        )
+        self.spawn_components((
+            pawn,
+            ActorControlState::default(),
+            ActorPawnSwimmingState::default(),
+            ActorPawnWalkingState::default(),
+            ActorPreviousPosition(position),
+            position,
+            velocity,
+        ))
+    }
+
+    /// Creates a dynamic physical actor with the supplied initial state.
+    pub fn spawn_physical_actor(
+        &mut self,
+        configuration: ActorPhysicalConfiguration,
+        position: ScenePosition,
+        velocity: SceneVelocity,
+    ) -> Actor {
+        assert!(configuration.collision_shape.is_valid());
+        assert!(configuration.mass.is_finite() && configuration.mass > 0.0);
+        self.spawn_components((
+            ActorPhysical(configuration),
+            ActorPreviousPosition(position),
+            position,
+            velocity,
+        ))
     }
 
     /// Creates a pawn that is eligible for possession
@@ -73,45 +103,48 @@ impl ActorRegistry {
         velocity: SceneVelocity,
     ) -> Actor {
         Self::validate_pawn(&pawn);
-        Actor::from_bevy_entity(
-            self.world
-                .spawn((
-                    pawn,
-                    ActorPossessable,
-                    ActorControlState::default(),
-                    ActorPawnSwimmingState::default(),
-                    ActorPawnWalkingState::default(),
-                    ActorPreviousPosition(position),
-                    position,
-                    velocity,
-                ))
-                .id(),
-        )
+        self.spawn_components((
+            pawn,
+            ActorPossessable,
+            ActorControlState::default(),
+            ActorPawnSwimmingState::default(),
+            ActorPawnWalkingState::default(),
+            ActorPreviousPosition(position),
+            position,
+            velocity,
+        ))
     }
 
     /// Removes an actor from the registry, returning true if successful
     pub fn despawn(&mut self, identifier: Actor) -> bool {
-        self.world.despawn(identifier.bevy_entity())
+        let Some(entity) = self.entities.remove(&identifier) else {
+            return false;
+        };
+        self.world.despawn(entity)
     }
 
     /// Returns `true` if this `ActorRegistry` contains this `Actor`
     pub fn contains(&self, identifier: Actor) -> bool {
-        self.world.get_entity(identifier.bevy_entity()).is_ok()
+        self.entities
+            .get(&identifier)
+            .is_some_and(|entity| self.world.get_entity(*entity).is_ok())
     }
 
     /// Returns an actor's position
     pub fn get_position(&self, identifier: Actor) -> Option<&ScenePosition> {
-        self.world.get::<ScenePosition>(identifier.bevy_entity())
+        self.world
+            .get::<ScenePosition>(self.bevy_entity(identifier))
     }
 
     /// Returns an actor's velocity
     pub fn get_velocity(&self, identifier: Actor) -> Option<&SceneVelocity> {
-        self.world.get::<SceneVelocity>(identifier.bevy_entity())
+        self.world
+            .get::<SceneVelocity>(self.bevy_entity(identifier))
     }
 
     /// Returns an actor's pawn configuration
     pub fn get_pawn(&self, identifier: Actor) -> Option<&ActorPawn> {
-        self.world.get::<ActorPawn>(identifier.bevy_entity())
+        self.world.get::<ActorPawn>(self.bevy_entity(identifier))
     }
 
     /// Returns an actor position interpolated between its latest fixed ticks
@@ -123,7 +156,7 @@ impl ActorRegistry {
         let position: ScenePosition = *self.get_position(identifier)?;
         let previous: ScenePosition = self
             .world
-            .get::<ActorPreviousPosition>(identifier.bevy_entity())
+            .get::<ActorPreviousPosition>(self.bevy_entity(identifier))
             .map_or(position, |previous| previous.0);
         Some(position.interpolated(previous, interpolation))
     }
@@ -146,6 +179,31 @@ impl ActorRegistry {
                 shape.nominal_dimensions(),
             ))
         })
+    }
+
+    pub(crate) fn actor_graphics(&self, interpolation: f32) -> Vec<SceneActorGraphics> {
+        self.world
+            .iter_entities()
+            .filter_map(|entity| {
+                let physical: &ActorPhysical = entity.get::<ActorPhysical>()?;
+                let position: ScenePosition = *entity.get::<ScenePosition>()?;
+                let previous: ScenePosition = entity
+                    .get::<ActorPreviousPosition>()
+                    .map_or(position, |value| value.0);
+                let interpolated_position: ScenePosition =
+                    position.interpolated(previous, interpolation);
+                Some(SceneActorGraphics {
+                    position: [
+                        interpolated_position.tile_coordinates.x as f32
+                            + interpolated_position.x_offset,
+                        interpolated_position.tile_coordinates.y as f32
+                            + interpolated_position.y_offset,
+                    ],
+                    size: physical.0.collision_shape.nominal_dimensions(),
+                    color: physical.0.color,
+                })
+            })
+            .collect()
     }
 
     /// Gathers all physical non-noclip pawns for batched transient proxy rasterization
@@ -191,7 +249,11 @@ impl ActorRegistry {
                 }
                 let position: ScenePosition = *entity.get::<ScenePosition>()?;
                 Some(ActorPhysicsProxyState {
-                    actor: Actor::from_bevy_entity(entity.id()),
+                    actor: self
+                        .entities
+                        .iter()
+                        .find_map(|(actor, current)| (*current == entity.id()).then_some(*actor))
+                        .unwrap(),
                     center: [
                         position.tile_coordinates.x as f32 + position.x_offset,
                         position.tile_coordinates.y as f32 + position.y_offset,
@@ -202,13 +264,62 @@ impl ActorRegistry {
             .collect()
     }
 
+    pub(crate) fn physical_proxy_states(&self) -> Vec<ActorPhysicalProxyState> {
+        self.world
+            .iter_entities()
+            .filter_map(|entity| {
+                let actor_physical: &ActorPhysical = entity.get::<ActorPhysical>()?;
+                let actor_scene_position: ScenePosition = *entity.get::<ScenePosition>()?;
+                let actor_scene_velocity: SceneVelocity = *entity.get::<SceneVelocity>()?;
+                let actor_identifier: Actor = self
+                    .entities
+                    .iter()
+                    .find_map(|(actor, current)| (*current == entity.id()).then_some(*actor))?;
+                Some(ActorPhysicalProxyState {
+                    actor: actor_identifier,
+                    center: [
+                        actor_scene_position.tile_coordinates.x as f32
+                            + actor_scene_position.x_offset,
+                        actor_scene_position.tile_coordinates.y as f32
+                            + actor_scene_position.y_offset,
+                    ],
+                    velocity: [actor_scene_velocity.x, actor_scene_velocity.y],
+                    shape: actor_physical.0.collision_shape,
+                    mass: actor_physical.0.mass,
+                    friction: actor_physical.0.friction,
+                    restitution: actor_physical.0.restitution,
+                })
+            })
+            .collect()
+    }
+
+    pub(crate) fn apply_physical_proxy_states(&mut self, states: &[(Actor, [f32; 2], [f32; 2])]) {
+        for (actor, center, velocity) in states {
+            let Some(entity) = self.entities.get(actor).copied() else {
+                continue;
+            };
+            if let Some(mut position) = self.world.get_mut::<ScenePosition>(entity) {
+                position.tile_coordinates.x = center[0].floor() as i32;
+                position.tile_coordinates.y = center[1].floor() as i32;
+                position.x_offset = center[0] - center[0].floor();
+                position.y_offset = center[1] - center[1].floor();
+            }
+            if let Some(mut current) = self.world.get_mut::<SceneVelocity>(entity) {
+                *current = SceneVelocity {
+                    x: velocity[0],
+                    y: velocity[1],
+                };
+            }
+        }
+    }
+
     /// Returns the possessed swimming-capable pawn shape to sample on the Accelerator
     pub fn swimming_pawn_sample(
         &self,
         identifier: Actor,
     ) -> Option<([f32; 2], ActorCollisionShape)> {
         let entity: bevy_ecs::world::EntityRef<'_> =
-            self.world.get_entity(identifier.bevy_entity()).ok()?;
+            self.world.get_entity(self.bevy_entity(identifier)).ok()?;
         let pawn: &ActorPawn = entity.get::<ActorPawn>()?;
         pawn.swimming?;
         let shape: ActorCollisionShape = pawn.collision_shape?;
@@ -224,7 +335,7 @@ impl ActorRegistry {
 
     /// Applies one completed derived-fluid sample and its walking/swimming hysteresis
     pub fn apply_swimming_sample(&mut self, identifier: Actor, sample: [f32; 5]) -> bool {
-        let entity: bevy_ecs::entity::Entity = identifier.bevy_entity();
+        let entity: bevy_ecs::entity::Entity = self.bevy_entity(identifier);
         let Some(pawn) = self.world.get::<ActorPawn>(entity) else {
             return false;
         };
@@ -266,14 +377,14 @@ impl ActorRegistry {
         movement: ActorPawnMovement,
     ) -> bool {
         self.world
-            .get_mut::<ActorPawn>(identifier.bevy_entity())
+            .get_mut::<ActorPawn>(self.bevy_entity(identifier))
             .map(|mut pawn| pawn.movement = Some(movement))
             .is_some()
     }
 
     /// Sets an actor's position
     pub fn set_position(&mut self, identifier: Actor, position: ScenePosition) -> bool {
-        let entity: bevy_ecs::entity::Entity = identifier.bevy_entity();
+        let entity: bevy_ecs::entity::Entity = self.bevy_entity(identifier);
         let is_set: bool = self
             .world
             .get_mut::<ScenePosition>(entity)
@@ -288,7 +399,7 @@ impl ActorRegistry {
     /// Sets an actor's velocity
     pub fn set_velocity(&mut self, identifier: Actor, velocity: SceneVelocity) -> bool {
         self.world
-            .get_mut::<SceneVelocity>(identifier.bevy_entity())
+            .get_mut::<SceneVelocity>(self.bevy_entity(identifier))
             .map(|mut current| *current = velocity)
             .is_some()
     }
@@ -301,13 +412,13 @@ impl ActorRegistry {
     ) -> bool {
         if self
             .world
-            .get::<ActorPawn>(identifier.bevy_entity())
+            .get::<ActorPawn>(self.bevy_entity(identifier))
             .is_none()
         {
             return false;
         }
         self.world
-            .entity_mut(identifier.bevy_entity())
+            .entity_mut(self.bevy_entity(identifier))
             .insert(control_state);
         true
     }
@@ -337,7 +448,7 @@ impl ActorRegistry {
     /// Returns whether an actor is eligible for possession
     pub fn is_possessable(&self, identifier: Actor) -> bool {
         self.world
-            .get::<ActorPossessable>(identifier.bevy_entity())
+            .get::<ActorPossessable>(self.bevy_entity(identifier))
             .is_some()
     }
 

@@ -358,6 +358,7 @@ impl Scene {
             generator,
             actor_registry: ActorRegistry::new(),
             possessed_actor: None,
+            actor_contact_events: Vec::new(),
             chunks: HashMap::new(),
             chunk_streaming_response_sender,
             chunk_streaming_responses,

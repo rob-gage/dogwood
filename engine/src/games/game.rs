@@ -10,12 +10,18 @@ use engine_physics::{
     tiles::TileCoordinates,
 };
 use engine_user_interface::UserInterfaceContext;
-use std::{error::Error, sync::Arc};
+use std::{error::Error, sync::Arc, time::Duration};
 
 /// Implementors are games that run on this engine.
 pub trait Game {
     /// The title of the game.
     const TITLE: &'static str;
+
+    /// Runs after the active scene has processed this application update.
+    fn update(&mut self, _elapsed: Duration) {}
+
+    /// Adds ordinary game-owned UI for the next rendered frame.
+    fn compose_user_interface(&mut self) {}
 
     /// Returns the camera configuration used by this `Game`
     fn camera(&self) -> Camera;

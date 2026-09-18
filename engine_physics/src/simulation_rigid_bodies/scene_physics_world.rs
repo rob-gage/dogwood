@@ -6,14 +6,13 @@ use super::{
     terrain_bridge_statistics::TerrainBridgeStatistics, terrain_patch::StaticTerrainCollisionPatch,
     terrain_patch_key::StaticTerrainCollisionPatchKey,
 };
-use crate::actors::{Actor, ActorCellularProxyState, ActorCollisionShape};
+use crate::actors::{Actor, ActorContactEvent, ActorContactState};
+use crate::actors_utility::ActorPhysicalProxyState;
 use crate::materials::MaterialRegistry;
-use crate::simulation::simulation_constants::*;
 use crate::simulation::{CollisionOccupancySnapshot, RigidCellularBody, RigidCellularBodyState};
-use rapier2d::parry::query::ShapeCastOptions;
 use rapier2d::prelude::{
-    ColliderBuilder, ColliderHandle, LockedAxes, PhysicsWorld, Pose, QueryFilter, RigidBodyBuilder,
-    RigidBodyHandle, SharedShape, Vector,
+    ColliderBuilder, ColliderHandle, LockedAxes, PhysicsWorld, Pose, RigidBodyBuilder,
+    RigidBodyHandle, Vector,
 };
 use std::collections::{HashMap, HashSet};
 #[cfg(debug_assertions)]
@@ -45,6 +44,8 @@ pub struct ScenePhysicsWorld {
     snapshot_updated_this_tick: bool,
     /// Rapier proxies for actors that participate in collision queries.
     pawn_proxies: HashMap<Actor, ActorPhysicsProxy>,
+    physical_proxies: HashMap<Actor, ActorPhysicsProxy>,
+    actor_contacts: HashSet<(u64, u64)>,
 }
 
 #[path = "scene_physics_world_actor_movement.rs"]
@@ -74,6 +75,8 @@ impl ScenePhysicsWorld {
             terrain_statistics: TerrainBridgeStatistics::default(),
             snapshot_updated_this_tick: false,
             pawn_proxies: HashMap::new(),
+            physical_proxies: HashMap::new(),
+            actor_contacts: HashSet::new(),
         }
     }
 
@@ -89,7 +92,8 @@ impl ScenePhysicsWorld {
         linear_velocity: [f32; 2],
         angular_velocity: f32,
     ) -> RigidCellularBody {
-        let mass_properties = RigidCellularBody::mass_properties(&cells, materials);
+        let mass_properties: rapier2d::prelude::MassProperties =
+            RigidCellularBody::mass_properties(&cells, materials);
         let handle: RigidBodyHandle = self.rapier.insert_body(
             RigidBodyBuilder::dynamic()
                 .translation(Vector::new(position[0], position[1]))
@@ -119,15 +123,15 @@ impl ScenePhysicsWorld {
         &self,
         body: &RigidCellularBody,
     ) -> Option<RigidCellularBodyState> {
-        let rigid_body = self.rapier.bodies.get(body.handle)?;
+        let rigid_body: &rapier2d::dynamics::RigidBody = self.rapier.bodies.get(body.handle)?;
         assert!(
             !rigid_body
                 .locked_axes()
                 .intersects(LockedAxes::TRANSLATION_LOCKED_X | LockedAxes::TRANSLATION_LOCKED_Y,),
             "Rigid cellular Accelerator contact requires unlocked translation axes"
         );
-        let position = rigid_body.position();
-        let center = rigid_body.center_of_mass();
+        let position: &Pose = rigid_body.position();
+        let center: Vector = rigid_body.center_of_mass();
         Some(RigidCellularBodyState {
             translation: [position.translation.x, position.translation.y],
             angle: position.rotation.angle(),
@@ -232,6 +236,68 @@ impl ScenePhysicsWorld {
         }
     }
 
+    pub(crate) fn sync_physical_proxies(&mut self, states: &[ActorPhysicalProxyState]) {
+        let mut live_actors: HashSet<Actor> = HashSet::new();
+        for state in states {
+            live_actors.insert(state.actor);
+            if let Some(proxy) = self.physical_proxies.get(&state.actor) {
+                if let Some(body) = self.rapier.bodies.get_mut(proxy.body) {
+                    body.set_linvel(Vector::new(state.velocity[0], state.velocity[1]), true);
+                }
+                continue;
+            }
+            let body: RigidBodyHandle = self.rapier.insert_body(
+                RigidBodyBuilder::dynamic()
+                    .translation(Vector::new(state.center[0], state.center[1]))
+                    .linvel(Vector::new(state.velocity[0], state.velocity[1]))
+                    .additional_mass(state.mass),
+            );
+            let collider: ColliderHandle = self.rapier.insert_collider(
+                ColliderBuilder::new(state.shape.rapier_shape())
+                    .friction(state.friction)
+                    .restitution(state.restitution)
+                    .collision_groups(Self::physical_collision_groups())
+                    .solver_groups(Self::physical_solver_groups()),
+                Some(body),
+            );
+            self.physical_proxies.insert(
+                state.actor,
+                ActorPhysicsProxy {
+                    body,
+                    collider,
+                    shape: state.shape,
+                },
+            );
+        }
+        let stale: Vec<Actor> = self
+            .physical_proxies
+            .keys()
+            .filter(|actor| !live_actors.contains(actor))
+            .copied()
+            .collect();
+        for actor in stale {
+            if let Some(proxy) = self.physical_proxies.remove(&actor) {
+                self.rapier.remove_body(proxy.body);
+            }
+        }
+    }
+
+    pub(crate) fn physical_proxy_states(&self) -> Vec<(Actor, [f32; 2], [f32; 2])> {
+        self.physical_proxies
+            .iter()
+            .filter_map(|(actor, proxy)| {
+                let body: &rapier2d::dynamics::RigidBody = self.rapier.bodies.get(proxy.body)?;
+                let position: rapier2d::math::Pose = body.position().clone();
+                let velocity: Vector = body.linvel();
+                Some((
+                    *actor,
+                    [position.translation.x, position.translation.y],
+                    [velocity.x, velocity.y],
+                ))
+            })
+            .collect()
+    }
+
     /// Advances Rapier's collision world by one fixed scene step
     pub fn step(&mut self, gravity: [f32; 2], delta_time: f32) {
         #[cfg(debug_assertions)]
@@ -256,6 +322,44 @@ impl ScenePhysicsWorld {
             elapsed_us = start_time.elapsed().as_micros(),
             "rapier rigid step"
         );
+    }
+
+    pub(crate) fn actor_contact_events(&mut self) -> Vec<ActorContactEvent> {
+        let mut actors_by_collider: HashMap<ColliderHandle, Actor> = HashMap::new();
+        for (actor, proxy) in self.pawn_proxies.iter().chain(self.physical_proxies.iter()) {
+            actors_by_collider.insert(proxy.collider, *actor);
+        }
+        let current: HashSet<(u64, u64)> = self
+            .rapier
+            .contact_pairs()
+            .filter(|pair| pair.has_any_active_contact())
+            .filter_map(|pair| {
+                let first: u64 = actors_by_collider.get(&pair.collider1)?.stable_identifier();
+                let second: u64 = actors_by_collider.get(&pair.collider2)?.stable_identifier();
+                (first != second).then_some(if first < second {
+                    (first, second)
+                } else {
+                    (second, first)
+                })
+            })
+            .collect();
+        let mut events: Vec<ActorContactEvent> = Vec::new();
+        for &(first, second) in current.difference(&self.actor_contacts) {
+            events.push(ActorContactEvent {
+                first: Actor::new(first),
+                second: Actor::new(second),
+                state: ActorContactState::Started,
+            });
+        }
+        for &(first, second) in self.actor_contacts.difference(&current) {
+            events.push(ActorContactEvent {
+                first: Actor::new(first),
+                second: Actor::new(second),
+                state: ActorContactState::Ended,
+            });
+        }
+        self.actor_contacts = current;
+        events
     }
 
     /// Applies one already-integrated Accelerator impulse batch to its authoritative body

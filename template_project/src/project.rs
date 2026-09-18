@@ -30,6 +30,9 @@ use engine::physics::materials::{Material, MaterialIdentifier};
 pub struct TemplateProject {
     user_interface_context: UserInterfaceContext,
     scene: Option<Scene>,
+    pawn: engine::physics::actors::Actor,
+    squares: Vec<engine::physics::actors::Actor>,
+    collected: u32,
 }
 
 impl TemplateProject {
@@ -91,15 +94,30 @@ impl TemplateProject {
                 SceneVelocity { x: 0.0, y: 0.0 },
             );
         scene.possess_actor(pawn);
+        let squares = crate::actors::spawn_demo_squares(&mut scene);
         Ok(Self {
             user_interface_context: UserInterfaceContext::new(),
             scene: Some(scene),
+            pawn,
+            squares,
+            collected: 0,
         })
     }
 }
 
 impl Game for TemplateProject {
     const TITLE: &'static str = "Demo Game";
+
+    fn update(&mut self, _elapsed: std::time::Duration) {
+        if let Some(scene) = self.scene.as_mut() {
+            self.collected +=
+                crate::gameplay::collect_contacts(scene, self.pawn, &mut self.squares);
+        }
+    }
+
+    fn compose_user_interface(&mut self) {
+        crate::ui::draw_counter(&self.user_interface_context, self.collected);
+    }
 
     fn camera(&self) -> Camera {
         Camera {

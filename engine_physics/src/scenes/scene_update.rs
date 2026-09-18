@@ -1,7 +1,12 @@
 // Copyright Rob Gage 2026
 
-use super::*;
+use super::{
+    MAX_CATCH_UP_TICKS, Scene, SceneEditBatch, ScenePosition, TICK_RATE, TileArea, TileCoordinates,
+};
 use crate::actors_utility::ActorCellularProxyState;
+use crate::simulation::RigidCellularBodyState;
+use rapier2d::prelude::Vector;
+use std::{io, time::Duration};
 
 impl Scene {
     /// Handles Scene streaming and returns the number of completed fixed-rate ticks
@@ -103,6 +108,8 @@ impl Scene {
             };
             self.physics_world
                 .sync_pawn_proxies(&self.actor_registry.physics_proxy_states(), up);
+            self.physics_world
+                .sync_physical_proxies(&self.actor_registry.physical_proxy_states());
             self.physics_world.prepare_cellular_terrain(
                 &self.rigid_cellular_bodies,
                 &actor_proxies,
@@ -124,6 +131,8 @@ impl Scene {
                 }
             }
             self.physics_world.step(self.gravity, delta_time);
+            self.actor_registry
+                .apply_physical_proxy_states(&self.physics_world.physical_proxy_states());
         }
         self.actor_registry.simulate_actor_pawns(
             1.0 / TICK_RATE as f32,
@@ -138,6 +147,8 @@ impl Scene {
         };
         self.physics_world
             .sync_pawn_proxies(&self.actor_registry.physics_proxy_states(), up);
+        self.actor_contact_events
+            .extend(self.physics_world.actor_contact_events());
         let actor_proxies: Vec<ActorCellularProxyState> =
             self.actor_registry.cellular_proxy_states();
         let possessed_position: Option<ScenePosition> = self

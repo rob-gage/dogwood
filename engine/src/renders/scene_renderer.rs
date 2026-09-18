@@ -234,7 +234,7 @@ impl SceneRenderer {
             self.bind_group_layout = Some(bind_group_layout);
             self.uniform_buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Scene uniforms"),
-                size: 96,
+                size: 368,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }));
@@ -251,7 +251,7 @@ impl SceneRenderer {
             let graphics: SceneGraphics<'_> = scene.graphics();
             let (walking_pawn_position, walking_pawn_size): ([f32; 2], [f32; 2]) =
                 graphics.walking_pawn.unwrap_or(([0.0; 2], [0.0; 2]));
-            let uniforms: [u32; 24] = [
+            let mut uniforms: Vec<u32> = vec![
                 camera_position[0].to_bits(),
                 camera_position[1].to_bits(),
                 (viewport[2] as f32).to_bits(),
@@ -274,10 +274,26 @@ impl SceneRenderer {
                 show_tile_borders.into(),
                 show_chunk_borders.into(),
                 graphics.gas_count,
-                0,
-                0,
             ];
-            let mut uniform_data: Vec<u8> = Vec::with_capacity(96);
+            uniforms.extend([graphics.actors.len().min(8) as u32, 0, 0, 0]);
+            for actor in graphics.actors.iter().take(8) {
+                uniforms.extend([
+                    actor.position[0].to_bits(),
+                    actor.position[1].to_bits(),
+                    actor.size[0].to_bits(),
+                    actor.size[1].to_bits(),
+                ]);
+            }
+            for _ in graphics.actors.len().min(8)..8 {
+                uniforms.extend([0; 4]);
+            }
+            for actor in graphics.actors.iter().take(8) {
+                uniforms.extend(actor.color.map(f32::to_bits));
+            }
+            for _ in graphics.actors.len().min(8)..8 {
+                uniforms.extend([0; 4]);
+            }
+            let mut uniform_data: Vec<u8> = Vec::with_capacity(368);
             for value in uniforms {
                 uniform_data.extend_from_slice(&value.to_le_bytes());
             }

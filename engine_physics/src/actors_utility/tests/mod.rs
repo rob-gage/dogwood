@@ -2,7 +2,7 @@
 
 use crate::actors::{
     Actor, ActorPawn, ActorPawnMovement, ActorPawnSwimmingConfiguration,
-    ActorPawnWalkingConfiguration,
+    ActorPawnWalkingConfiguration, ActorPhysicalConfiguration,
 };
 use crate::actors_utility::{ActorCollisionShape, ActorRegistry};
 use crate::scenes::{ScenePosition, SceneVelocity};
@@ -62,4 +62,45 @@ fn test_swimming_sample_uses_hysteresis_without_changing_other_modes() {
         registry.get_pawn(actor).unwrap().movement,
         Some(ActorPawnMovement::Flying)
     ));
+}
+
+#[test]
+fn test_actor_identity_is_stable_and_not_an_ecs_entity() {
+    let mut registry = ActorRegistry::new();
+    let first = registry.spawn(ScenePosition {
+        tile_coordinates: TileCoordinates { x: 0, y: 0 },
+        x_offset: 0.0,
+        y_offset: 0.0,
+    });
+    let second = registry.spawn(ScenePosition {
+        tile_coordinates: TileCoordinates { x: 1, y: 0 },
+        x_offset: 0.0,
+        y_offset: 0.0,
+    });
+    assert_ne!(first, second);
+    assert!(registry.despawn(first));
+    let replacement = registry.spawn(ScenePosition {
+        tile_coordinates: TileCoordinates { x: 2, y: 0 },
+        x_offset: 0.0,
+        y_offset: 0.0,
+    });
+    assert_ne!(first, replacement);
+    assert!(registry.contains(second));
+}
+
+#[test]
+fn test_physical_actor_can_be_spawned_and_despawned() {
+    let mut registry = ActorRegistry::new();
+    let actor = registry.spawn_physical_actor(
+        ActorPhysicalConfiguration::default(),
+        ScenePosition {
+            tile_coordinates: TileCoordinates { x: 0, y: 2 },
+            x_offset: 0.5,
+            y_offset: 0.5,
+        },
+        SceneVelocity { x: 0.0, y: 0.0 },
+    );
+    assert!(registry.contains(actor));
+    assert!(registry.despawn(actor));
+    assert!(!registry.contains(actor));
 }

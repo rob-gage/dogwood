@@ -1,19 +1,20 @@
 // Copyright Rob Gage 2026
 
-use bevy_ecs::entity::Entity;
-
 /// Identifies an actor managed by an `ActorRegistry`
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-pub struct Actor(Entity);
+pub struct Actor(u64);
 
 impl Actor {
-    /// Creates an `ActorIdentifier` from an internal `bevy_ecs::entity::Entity`
-    pub(crate) const fn from_bevy_entity(entity: Entity) -> Self {
-        Self(entity)
+    pub(crate) const fn new(identifier: u64) -> Self {
+        Self(identifier)
     }
 
-    /// Returns the internal `bevy_ecs::entity::Entity` represented by this identifier
-    pub(crate) const fn bevy_entity(self) -> Entity {
+    pub(crate) const fn stable_identifier(self) -> u64 {
         self.0
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn from_bevy_entity(entity: bevy_ecs::entity::Entity) -> Self {
+        Self::new(entity.to_bits())
     }
 }

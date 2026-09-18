@@ -9,27 +9,25 @@ use super::scene_rigid_io_job::SceneRigidIoJob;
 use super::scene_rigid_owner_load::SceneRigidOwnerLoad;
 use super::scene_rigid_persistence_request::SceneRigidPersistenceRequest;
 use crate::scenes::{
-    FluidDownload, FluidUpload, GasDownload, GasUpload, SceneData, SceneEdit, SceneEditBatch,
-    SceneEditCellPlacement, SceneGenerator, ScenePosition, SceneVelocity, TileDownload, TileUpload,
+    FluidDownload, FluidUpload, GasDownload, SceneData, SceneEditBatch, SceneGenerator,
+    ScenePosition, SceneVelocity, TileDownload, TileUpload,
 };
 use crate::simulation::{
     CellularCollision, CellularDynamic, CellularPhysicsBodyProxy, CellularPressure,
     CellularStaticStateGather, CollisionOccupancySnapshot, Fluids, Gases, MaterialMutations,
     MaterialReactions, RigidCellStateGather, RigidCellStateUpload, RigidCellularBody,
-    RigidCellularBodyCell, RigidCellularBodyState, ScenePhysicsWorld, SceneSimulationConfiguration,
-    ThermalConduction, ThermalEdits, ThermalInteraction, ThermalPhaseTransitions, ThermalScatter,
+    ScenePhysicsWorld, SceneSimulationConfiguration, ThermalConduction, ThermalEdits,
+    ThermalInteraction, ThermalPhaseTransitions, ThermalScatter,
 };
 use crate::{
-    actors::{Actor, ActorRegistry},
-    chunks::{Chunk, ChunkEntry, ChunkFluidParticle, ChunkGasCell, ChunkStreamingResponse},
+    actors::{Actor, ActorContactEvent, ActorRegistry},
+    chunks::{Chunk, ChunkEntry, ChunkFluidParticle, ChunkStreamingResponse},
     materials::{Material, MaterialIdentifier, MaterialRegistry, MaterialTable},
-    tiles::{CellCoordinates, CellularAppearance, Tile, TileArea, TileCoordinates, TileData},
+    tiles::{Tile, TileArea, TileCoordinates, TileData},
 };
 use engine_compute::{Accelerator, AcceleratorBuffer};
-use engine_graphics::SceneGraphics;
-use rapier2d::prelude::Vector;
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     error::Error,
     future::poll_fn,
     io,
@@ -67,6 +65,7 @@ pub struct Scene {
     actor_registry: ActorRegistry,
     /// The actor currently receiving player control, if any
     possessed_actor: Option<Actor>,
+    pub(super) actor_contact_events: Vec<ActorContactEvent>,
     /// Chunks in this scene indexed by their `TilePosition`s
     chunks: HashMap<TileCoordinates, ChunkEntry>,
     /// The sender used by chunk streaming threads to return streamed chunks

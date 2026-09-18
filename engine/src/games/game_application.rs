@@ -305,6 +305,8 @@ impl<G: Game> GameApplication<G> {
                 .simulation_ticks
                 .saturating_add(scene.update(elapsed, simulation_active)?);
         }
+        self.game.update(elapsed);
+        self.game.compose_user_interface();
         self.update_performance_rates(update_time);
         self.update_camera(elapsed.as_secs_f32());
         Ok(())

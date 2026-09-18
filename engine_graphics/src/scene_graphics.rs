@@ -3,6 +3,14 @@
 use super::MaterialGraphics;
 use crate::engine_compute::AcceleratorBuffer;
 
+/// Minimal visible representation of a generic scene actor.
+#[derive(Copy, Clone, Debug)]
+pub struct SceneActorGraphics {
+    pub position: [f32; 2],
+    pub size: [f32; 2],
+    pub color: [f32; 4],
+}
+
 /// Borrowed scene resources exposed to the renderer for one frame.
 ///
 /// The scene retains ownership of all buffers. The renderer may bind these
@@ -36,4 +44,5 @@ pub struct SceneGraphics<'a> {
     pub ring_offset: [u32; 2],
     /// The center and size of the possessed walking pawn, if one is active
     pub walking_pawn: Option<([f32; 2], [f32; 2])>,
+    pub actors: Vec<SceneActorGraphics>,
 }

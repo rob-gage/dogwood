@@ -1,6 +1,7 @@
 // Copyright Rob Gage 2026
 
-use super::*;
+use super::Scene;
+use engine_graphics::{SceneActorGraphics, SceneGraphics};
 
 impl Scene {
     /// Returns graphics information for this scene
@@ -10,6 +11,9 @@ impl Scene {
         let walking_pawn: Option<([f32; 2], [f32; 2])> = self
             .actor_registry
             .first_walking_pawn_graphics(self.tick_interpolation());
+        let actors: Vec<SceneActorGraphics> = self
+            .actor_registry
+            .actor_graphics(self.tick_interpolation());
         SceneGraphics {
             material_graphics: self.material_table.graphics(),
             cellular_material_identifiers: &self.cellular_material_identifiers,
@@ -33,6 +37,7 @@ impl Scene {
                 u32::from(self.tiles_ring_offset_y),
             ],
             walking_pawn,
+            actors,
         }
     }
 }

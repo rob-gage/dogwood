@@ -3,6 +3,7 @@
 //! Actor identifiers, ECS components, and pawn configuration types.
 
 mod actor;
+mod actor_contact;
 mod actor_control_state;
 mod actor_pawn;
 mod actor_pawn_flying_configuration;
@@ -12,12 +13,14 @@ mod actor_pawn_swimming_configuration;
 mod actor_pawn_swimming_state;
 mod actor_pawn_walking_configuration;
 mod actor_pawn_walking_state;
+mod actor_physical_configuration;
 mod actor_possessable;
 mod actor_previous_position;
 
 pub(crate) use crate::actors_utility::{ActorCellularProxyState, ActorPhysicsProxyState};
 pub use crate::actors_utility::{ActorCollisionShape, ActorRegistry};
 pub use actor::Actor;
+pub use actor_contact::{ActorContactEvent, ActorContactState};
 pub use actor_control_state::ActorControlState;
 pub use actor_pawn::ActorPawn;
 pub use actor_pawn_flying_configuration::ActorPawnFlyingConfiguration;
@@ -27,5 +30,6 @@ pub use actor_pawn_swimming_configuration::ActorPawnSwimmingConfiguration;
 pub use actor_pawn_swimming_state::ActorPawnSwimmingState;
 pub use actor_pawn_walking_configuration::ActorPawnWalkingConfiguration;
 pub use actor_pawn_walking_state::ActorPawnWalkingState;
+pub use actor_physical_configuration::ActorPhysicalConfiguration;
 pub use actor_possessable::ActorPossessable;
 pub(crate) use actor_previous_position::ActorPreviousPosition;
