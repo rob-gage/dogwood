@@ -7,11 +7,11 @@ use crate::{
 };
 use std::io;
 
-/// An inactive 64 tile by 64 tile chunk of a `Scene`
+/// Authoritative storage for an inactive 64-by-64-tile region of a `Scene`.
 pub struct Chunk {
-    /// The `TilePosition` of the bottom left tile in this `Chunk`
+    /// The coordinates of the bottom-left tile in this chunk.
     pub tile_coordinates: TileCoordinates,
-    /// The tiles in this `Chunk`,
+    /// The tiles in row-major order from the chunk's bottom-left corner.
     tiles: Box<[TileData]>,
     /// Sparse authoritative fluid particles outside Accelerator residency
     dormant_fluid_particles: Vec<ChunkFluidParticle>,

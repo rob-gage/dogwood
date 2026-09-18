@@ -15,13 +15,16 @@ pub struct ChunkFluidParticle {
     pub position: [f32; 2],
     /// Continuous velocity in tiles per second
     pub velocity: [f32; 2],
+    /// Normalized amount of fluid represented by this particle.
     pub amount: f32,
+    /// Fluid temperature in the engine's material temperature units.
     pub temperature: f32,
 }
 
 impl ChunkFluidParticle {
     /// The aligned size of the matching Accelerator particle record
     pub const GPU_SIZE: usize = 40;
+    /// The size of the persistent serialized particle record in bytes.
     pub const SERIALIZED_SIZE: usize = 28;
 
     /// Returns the world tile containing this particle

@@ -13,6 +13,7 @@ pub struct ChunkGasCell {
     pub coordinates: CellCoordinates,
     /// Shared gas-mixture velocity in cells per second
     pub velocity: [f32; 2],
+    /// Gas-mixture temperature in the engine's material temperature units.
     pub temperature: f32,
     /// Non-negligible species concentrations in this cell
     pub species: Vec<(MaterialIdentifier, f32)>,
