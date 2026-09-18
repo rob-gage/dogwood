@@ -5,7 +5,7 @@ use engine::{
     Game, GameApplication,
     physics::{
         actors::{Actor, ActorPawn, ActorPawnMovement, ActorPawnNoclipConfiguration},
-        materials::Material,
+        materials::{Material, MaterialIdentifier},
         scenes::{SceneEditBatch, SceneEditCellPlacement, ScenePosition, SceneVelocity},
         tiles::{CellCoordinates, CellularAppearance},
     },
@@ -110,7 +110,7 @@ impl<G: Game> EditorApplication<G> {
         let Some(anchor): Option<CellCoordinates> = self.hovered_cell() else {
             return (Vec::new(), Color::new_rgba(255, 80, 80, 96));
         };
-        let material_identifier = match self.tool {
+        let material_identifier: Option<MaterialIdentifier> = match self.tool {
             EditorTool::Material(material_identifier) => Some(material_identifier),
             _ => None,
         };
@@ -180,7 +180,7 @@ impl<G: Game> EditorApplication<G> {
         for anchor in &anchors {
             cells.extend(self.brush.cells(*anchor));
         }
-        let tool = match self.tool {
+        let tool: EditorTool = match self.tool {
             EditorTool::Eraser => EditorTool::Eraser,
             EditorTool::Impulse => EditorTool::Impulse,
             EditorTool::Material(material_identifier) => EditorTool::Material(material_identifier),
@@ -190,15 +190,15 @@ impl<G: Game> EditorApplication<G> {
             return;
         };
         if matches!(tool, EditorTool::Thermal) {
-            let now = Instant::now();
-            let delta_time = self
+            let now: Instant = Instant::now();
+            let delta_time: f32 = self
                 .last_thermal_edit
                 .map_or(0.0, |last| now.duration_since(last).as_secs_f32().min(0.25));
             self.last_thermal_edit = Some(now);
             if delta_time > 0.0 {
-                let delta =
+                let delta: f32 =
                     self.thermal_rate * delta_time * if self.thermal_heat { 1.0 } else { -1.0 };
-                let mut edit = SceneEditBatch::new();
+                let mut edit: SceneEditBatch = SceneEditBatch::new();
                 edit.thermal(cells.into_iter().collect(), delta);
                 scene.queue_edits(edit);
             }
@@ -206,8 +206,8 @@ impl<G: Game> EditorApplication<G> {
             return;
         }
         if matches!(tool, EditorTool::Impulse) {
-            let now = Instant::now();
-            let delta_time = self.last_impulse_edit.map_or(1.0 / 60.0, |last| {
+            let now: Instant = Instant::now();
+            let delta_time: f32 = self.last_impulse_edit.map_or(1.0 / 60.0, |last| {
                 now.duration_since(last).as_secs_f32().min(0.25)
             });
             self.last_impulse_edit = Some(now);
@@ -264,15 +264,15 @@ impl<G: Game> EditorApplication<G> {
         else {
             return;
         };
-        let now = Instant::now();
+        let now: Instant = Instant::now();
         if self
             .last_rigid_body_placement
             .is_some_and(|last| now.duration_since(last) < RIGID_BODY_PLACEMENT_INTERVAL)
         {
             return;
         }
-        let variation = graphics.variation();
-        let cells = self
+        let variation: [f32; 4] = graphics.variation();
+        let cells: Vec<SceneEditCellPlacement> = self
             .brush
             .cells(anchor)
             .into_iter()
@@ -285,7 +285,7 @@ impl<G: Game> EditorApplication<G> {
         let Some(scene) = self.application.game_mutable().scene_mutable() else {
             return;
         };
-        let mut edits = SceneEditBatch::new();
+        let mut edits: SceneEditBatch = SceneEditBatch::new();
         edits.place_rigid_body(cells);
         scene.queue_edits(edits);
         self.last_rigid_body_placement = Some(now);
@@ -326,7 +326,7 @@ impl<G: Game> EditorApplication<G> {
                         self.stroke_anchor = None;
                         self.last_thermal_edit = None;
                         self.last_impulse_edit = None;
-                        let static_material = match self.tool {
+                        let static_material: Option<MaterialIdentifier> = match self.tool {
                             EditorTool::Material(material_identifier) => self
                                 .application
                                 .game()
