@@ -8,43 +8,81 @@ use std::{cell::Cell, collections::HashSet, rc::Rc};
 
 /// The docked editor chrome displayed around the scene viewport
 pub struct EditorInterface {
+    /// Whether the scene simulation is currently running.
     pub is_playing: bool,
+    /// Most recently measured rendered frames per second.
     pub frames_per_second: u32,
+    /// Most recently measured simulation ticks per second.
     pub ticks_per_second: u32,
+    /// Whether free-fly camera controls are active.
     pub free_fly_enabled: bool,
+    /// Whether the editor can return from free-fly mode.
     pub return_enabled: bool,
+    /// Whether brush placement uses a square shape.
     pub brush_is_square: bool,
+    /// Width and height of the placement brush in cells.
     pub brush_size: u16,
+    /// Material selected for placement, when one is selected.
     pub selected_tool: Option<MaterialIdentifier>,
+    /// Whether erase mode is selected.
     pub eraser_selected: bool,
+    /// Whether impulse mode is selected.
     pub impulse_selected: bool,
+    /// Strength of the impulse tool.
     pub impulse_rate: f32,
+    /// Whether the thermal tool is enabled.
     pub thermal_tool_active: bool,
+    /// Whether the thermal tool applies heat instead of cooling.
     pub thermal_heat_mode: bool,
+    /// Strength of the thermal tool.
     pub thermal_rate: f32,
+    /// Requested thermal-tool strength, if changed by the user interface.
     pub thermal_rate_requested: Rc<Cell<Option<f32>>>,
+    /// Whether the user requested heat mode.
     pub thermal_heat_requested: Rc<Cell<bool>>,
+    /// Whether the user requested cooling mode.
     pub thermal_cool_requested: Rc<Cell<bool>>,
+    /// Whether rigid-body placement mode is enabled.
     pub rigid_body_placement_enabled: bool,
+    /// Currently displayed scene view.
     pub view_mode: EditorViewMode,
+    /// Whether tile boundaries are displayed.
     pub show_tile_borders: bool,
+    /// Whether chunk boundaries are displayed.
     pub show_chunk_borders: bool,
+    /// Materials available to the material-selection interface.
     pub materials: Vec<(MaterialIdentifier, String, Color)>,
+    /// Cells shown by the current placement preview.
     pub preview_cells: Vec<[f32; 4]>,
+    /// Color used for the placement preview.
     pub preview_color: Color,
+    /// Current viewport bounds in physical cells.
     pub viewport_bounds: Rc<Cell<Option<[u32; 4]>>>,
+    /// Requests that the scene simulation start or stop.
     pub play_requested: Rc<Cell<bool>>,
+    /// Requests that free-fly mode be enabled.
     pub free_fly_requested: Rc<Cell<bool>>,
+    /// Requests that the camera leave free-fly mode.
     pub return_requested: Rc<Cell<bool>>,
+    /// Requests that the brush use a square shape.
     pub square_requested: Rc<Cell<bool>>,
+    /// Requests that the brush use a circular shape.
     pub circle_requested: Rc<Cell<bool>>,
+    /// Requests that erase mode be selected.
     pub eraser_requested: Rc<Cell<bool>>,
+    /// Requests that impulse mode be selected.
     pub impulse_requested: Rc<Cell<bool>>,
+    /// Requested impulse-tool strength, if changed by the user interface.
     pub impulse_rate_requested: Rc<Cell<Option<f32>>>,
+    /// Requested rigid-body placement state, if changed by the user interface.
     pub rigid_body_placement_requested: Rc<Cell<Option<bool>>>,
+    /// Requested material selection, if changed by the user interface.
     pub material_requested: Rc<Cell<Option<MaterialIdentifier>>>,
+    /// Requested scene view change.
     pub view_mode_requested: Rc<Cell<EditorViewMode>>,
+    /// Requests that tile-boundary display be toggled.
     pub tile_borders_requested: Rc<Cell<bool>>,
+    /// Requests that chunk-boundary display be toggled.
     pub chunk_borders_requested: Rc<Cell<bool>>,
 }
 
