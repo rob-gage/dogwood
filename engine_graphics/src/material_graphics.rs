@@ -44,7 +44,7 @@ impl MaterialGraphics {
         }
     }
 
-    /// Creates a Accelerator buffer containing graphics properties for one material form
+    /// Creates an Accelerator buffer containing graphics properties for one material form
     fn create_buffer(
         accelerator: &Accelerator,
         properties: Vec<MaterialAppearance>,
