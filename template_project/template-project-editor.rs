@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+//! Editor-enabled template-project binary entry point.
+
 use dogwood_editor::EditorGame;
 use dogwood_engine::compute::Accelerator;
 use dogwood_template_project::TemplateProject;

@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+//! Runnable template-project binary entry point.
+
 use dogwood_engine::{Game, compute::Accelerator};
 use dogwood_template_project::TemplateProject;
 use std::sync::Arc;

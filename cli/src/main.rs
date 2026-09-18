@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+//! Command-line project initialization and development tools for Dogwood.
+
 mod command;
 mod subcommand;
 
