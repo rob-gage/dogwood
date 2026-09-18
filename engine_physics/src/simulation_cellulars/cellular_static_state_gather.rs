@@ -157,7 +157,9 @@ impl CellularStaticStateGather {
                 let result = result.map_err(|error| error.to_string()).map(|_| {
                     let mapped = readback.slice(0..byte_count).get_mapped_range().unwrap();
                     let values = mapped
-                        .chunks_exact(32)
+                        .as_chunks::<32>()
+                        .0
+                        .iter()
                         .map(|bytes| CellularStaticState {
                             material: u32::from_le_bytes(bytes[0..4].try_into().unwrap()),
                             appearance: u32::from_le_bytes(bytes[4..8].try_into().unwrap()),

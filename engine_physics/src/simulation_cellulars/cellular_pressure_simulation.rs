@@ -288,7 +288,7 @@ impl CellularPressure {
                                 let mut supports = Vec::with_capacity(body_count);
                                 let mut recovery = Vec::with_capacity(body_count);
                                 let mut source_motion = Vec::with_capacity(body_count);
-                                for bytes in mapped[..body_count * 80].chunks_exact(80) {
+                                for bytes in mapped[..body_count * 80].as_chunks::<80>().0 {
                                     let state = |offset: usize| {
                                         [
                                             i32::from_le_bytes(
@@ -341,7 +341,9 @@ impl CellularPressure {
                                 let statistics_start: usize = body_count * 80;
                                 let contact_counts = mapped
                                     [statistics_start..statistics_start + body_count * 48]
-                                    .chunks_exact(48)
+                                    .as_chunks::<48>()
+                                    .0
+                                    .iter()
                                     .map(|bytes| {
                                         u32::from_le_bytes(bytes[0..4].try_into().unwrap())
                                     })
@@ -349,7 +351,9 @@ impl CellularPressure {
                                     .into_boxed_slice();
                                 let static_contact_counts = mapped
                                     [statistics_start..statistics_start + body_count * 48]
-                                    .chunks_exact(48)
+                                    .as_chunks::<48>()
+                                    .0
+                                    .iter()
                                     .map(|bytes| {
                                         u32::from_le_bytes(bytes[4..8].try_into().unwrap())
                                     })
@@ -357,7 +361,9 @@ impl CellularPressure {
                                     .into_boxed_slice();
                                 let granular_contact_counts = mapped
                                     [statistics_start..statistics_start + body_count * 48]
-                                    .chunks_exact(48)
+                                    .as_chunks::<48>()
+                                    .0
+                                    .iter()
                                     .map(|bytes| {
                                         u32::from_le_bytes(bytes[12..16].try_into().unwrap())
                                             & 0xffff
@@ -366,7 +372,9 @@ impl CellularPressure {
                                     .into_boxed_slice();
                                 let moving_contact_counts = mapped
                                     [statistics_start..statistics_start + body_count * 48]
-                                    .chunks_exact(48)
+                                    .as_chunks::<48>()
+                                    .0
+                                    .iter()
                                     .map(|bytes| {
                                         u32::from_le_bytes(bytes[12..16].try_into().unwrap()) >> 16
                                     })
@@ -374,7 +382,9 @@ impl CellularPressure {
                                     .into_boxed_slice();
                                 let energy_budgets = mapped
                                     [statistics_start..statistics_start + body_count * 48]
-                                    .chunks_exact(48)
+                                    .as_chunks::<48>()
+                                    .0
+                                    .iter()
                                     .map(|bytes| {
                                         u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as f32
                                             / 256.0
@@ -391,11 +401,12 @@ impl CellularPressure {
                                     Vec::new()
                                 } else {
                                     mapped[fractures_offset as usize..mapped_size as usize]
-                                        .chunks_exact(4)
+                                        .as_chunks::<4>()
+                                        .0
+                                        .iter()
                                         .enumerate()
                                         .flat_map(|(word, bytes)| {
-                                            let bits =
-                                                u32::from_le_bytes(bytes.try_into().unwrap());
+                                            let bits = u32::from_le_bytes(*bytes);
                                             (0..32).filter_map(move |bit| {
                                                 ((bits & (1 << bit)) != 0)
                                                     .then_some((word as u32) * 32 + bit)

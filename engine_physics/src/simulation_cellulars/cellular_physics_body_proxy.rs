@@ -140,7 +140,7 @@ impl CellularPhysicsBodyProxy {
                     if let Ok(mapped) = readback.slice(..).get_mapped_range()
                         && let Ok(mut completed) = completed.lock()
                     {
-                        completed.extend(mapped.chunks_exact(8).map(|bytes| {
+                        completed.extend(mapped.as_chunks::<8>().0.iter().map(|bytes| {
                             [
                                 u32::from_le_bytes(bytes[..4].try_into().unwrap()),
                                 u32::from_le_bytes(bytes[4..].try_into().unwrap()),
