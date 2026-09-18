@@ -180,12 +180,7 @@ impl<G: Game> EditorApplication<G> {
         for anchor in &anchors {
             cells.extend(self.brush.cells(*anchor));
         }
-        let tool: EditorTool = match self.tool {
-            EditorTool::Eraser => EditorTool::Eraser,
-            EditorTool::Impulse => EditorTool::Impulse,
-            EditorTool::Material(material_identifier) => EditorTool::Material(material_identifier),
-            EditorTool::Thermal => EditorTool::Thermal,
-        };
+        let tool: EditorTool = self.tool;
         let Some(scene) = self.application.game_mutable().scene_mutable() else {
             return;
         };

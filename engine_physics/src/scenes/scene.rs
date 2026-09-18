@@ -261,7 +261,6 @@ impl Scene {
     }
 
     /// Applies every compatible completed Accelerator reaction in submission order
-
     fn initial_temperature(&self, material_identifier: MaterialIdentifier) -> f32 {
         self.data
             .materials()
