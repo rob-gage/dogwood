@@ -67,7 +67,7 @@ impl<G: Game> EditorApplication<G> {
         let tile_borders_requested: Rc<Cell<bool>> = Rc::new(Cell::new(self.show_tile_borders));
         let chunk_borders_requested: Rc<Cell<bool>> = Rc::new(Cell::new(self.show_chunk_borders));
         let [frames_per_second, ticks_per_second]: [u32; 2] = self.application.performance_rates();
-        let mut layout: EditorInterface = EditorInterface {
+        let layout: EditorInterface = EditorInterface {
             is_playing: self.is_playing,
             frames_per_second,
             ticks_per_second,
@@ -110,15 +110,16 @@ impl<G: Game> EditorApplication<G> {
             tile_borders_requested: tile_borders_requested.clone(),
             chunk_borders_requested: chunk_borders_requested.clone(),
         };
-        self.application.add_widget(&mut layout);
+        self.application.add_widget(layout);
         if let Some(rate) = thermal_rate_requested.get() {
             self.thermal_rate = rate.clamp(1.0, 1000.0);
         }
         if let Some(rate) = impulse_rate_requested.get() {
             self.impulse_rate = rate.clamp(1.0, 1000.0);
         }
-        self.application
-            .set_scene_viewport_bounds(viewport_bounds.get());
+        if let Some(bounds) = viewport_bounds.get() {
+            self.application.set_scene_viewport_bounds(Some(bounds));
+        }
         if eraser_requested.get() {
             self.tool = EditorTool::Eraser;
             self.stroke_anchor = None;

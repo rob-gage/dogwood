@@ -8,15 +8,18 @@ and the default game implementation writes that control state to the possessed
 actor.
 
 UI is separate from simulation. `UserInterfaceContext` owns egui context,
-window integration state, and the latest `FullOutput`. Game code composes UI
-after scene/game update through `add_contents`; reusable Dogwood widgets
-implement `Widget::display` against the wrapper `UserInterface`. Built-in
-stacks, buttons, and spacers are ordinary widget composition.
+window integration state, queued contents, and the latest `FullOutput`. Game
+and editor code queue contents through `add_contents`; the application then
+takes window input once and runs one shared egui pass containing every queued
+producer. Reusable Dogwood widgets implement `Widget::display` against the
+wrapper `UserInterface`. Built-in stacks, buttons, and spacers are ordinary
+widget composition.
 
-At render time the context output is taken, tessellated, texture deltas are
-uploaded, and egui is drawn over the scene render pass. UI input is offered to
-egui from window events and may be consumed before gameplay-specific handling.
-UI state belongs to the game/editor owner, not the scene.
+After that pass, platform output is handled once, the context output is taken,
+tessellated, texture deltas are uploaded/freed, and egui is drawn over the
+scene render pass. UI input is offered to egui from window events and may be
+consumed before gameplay-specific handling. UI state belongs to the game/editor
+owner, not the scene.
 
 ### Relevant Implementation
 

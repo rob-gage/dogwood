@@ -6,7 +6,7 @@ use engine_compute::Accelerator;
 use engine_graphics::Camera;
 use engine_input::{InputTranslator, KeyboardInputState};
 use engine_physics::scenes::ScenePosition;
-use engine_user_interface::Widget;
+use engine_user_interface::{UserInterface, Widget};
 use std::{error::Error, sync::Arc};
 
 #[path = "game_application_window.rs"]
@@ -204,17 +204,29 @@ impl<G: Game> GameApplication<G> {
     }
 
     /// Adds a widget to the game's user interface.
-    pub fn add_widget(&mut self, widget: &mut impl Widget) {
+    pub fn add_widget(&mut self, mut widget: impl Widget + 'static) {
+        self.game.user_interface_context().add_contents(move |ui| {
+            ui.add_widget(&mut widget);
+        });
+    }
+
+    /// Queues host-owned UI contents for the shared frame.
+    pub fn add_contents(&mut self, add_contents: impl FnOnce(&mut UserInterface) + 'static) {
+        self.game
+            .user_interface_context()
+            .add_contents(add_contents);
+    }
+
+    /// Runs all queued game and host UI contents with the window's real input.
+    pub fn compose_user_interface(&mut self) {
         let (Some(configuration), Some(window)) =
             (self.surface_configuration.as_ref(), self.window.as_ref())
         else {
             return;
         };
-        self.game.user_interface_context().add_widget(
-            widget,
-            [configuration.width, configuration.height],
-            window,
-        );
+        self.game
+            .user_interface_context()
+            .compose([configuration.width, configuration.height], window);
     }
 
     /// Returns the game run by this application
@@ -409,6 +421,7 @@ impl<G: Game> winit::application::ApplicationHandler for GameApplication<G> {
             event_loop.exit();
             return;
         }
+        self.compose_user_interface();
         self.redraw();
     }
 }

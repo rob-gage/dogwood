@@ -62,13 +62,16 @@ impl Scene {
                     .read_chunk(coordinates)
                     .map(|chunk| chunk.map(Box::new))
                     .map_err(|error| Box::new(error).into());
-            sender
+            if sender
                 .send(ChunkStreamingResponse::Loaded {
                     streaming_identifier,
                     coordinates,
                     result: chunk_streaming_result,
                 })
-                .unwrap();
+                .is_err()
+            {
+                return;
+            }
         });
         Ok(())
     }
@@ -102,13 +105,16 @@ impl Scene {
         std::thread::spawn(move || {
             let chunk_streaming_result: Result<Box<Chunk>, Box<dyn Error + Send + Sync>> =
                 Ok(Box::new(generator.generate_chunk(coordinates)));
-            sender
+            if sender
                 .send(ChunkStreamingResponse::Generated {
                     streaming_identifier,
                     coordinates,
                     result: chunk_streaming_result,
                 })
-                .unwrap();
+                .is_err()
+            {
+                return;
+            }
         });
         Ok(())
     }
@@ -172,13 +178,16 @@ impl Scene {
                         Ok(()) => Ok(Box::new(chunk)),
                         Err(error) => Err((Box::new(chunk), error)),
                     };
-                sender
+                if sender
                     .send(ChunkStreamingResponse::Saved {
                         streaming_identifier,
                         coordinates,
                         result: chunk_streaming_result,
                     })
-                    .unwrap();
+                    .is_err()
+                {
+                    return;
+                }
             });
         }
         Ok(())
