@@ -374,9 +374,20 @@ impl SceneRadiancePass {
         for cascade in 0..CASCADE_COUNT {
             let spacing = PROBE_SPACING << cascade;
             let directions = DIRECTION_COUNT << (cascade * 2);
-            let probe_size = [size[0].div_ceil(spacing) + 2, size[1].div_ceil(spacing) + 2];
-            let end = start + INTERVAL_LENGTH * 4.0_f32.powi(cascade as i32);
-            let config = Self::config(size, probe_size, spacing, directions, start, end);
+            let probe_size = Self::probe_size(size, spacing);
+            let upper_spacing = spacing << 1;
+            let upper_probe_size = Self::probe_size(size, upper_spacing);
+            let end = start + Self::interval_length(cascade);
+            let config = Self::config(
+                size,
+                probe_size,
+                upper_probe_size,
+                spacing,
+                upper_spacing,
+                directions,
+                start,
+                end,
+            );
             let buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Scene cascade configuration"),
                 size: 64,
@@ -495,10 +506,20 @@ impl SceneRadiancePass {
         }
     }
 
+    fn probe_size(size: [u32; 2], spacing: u32) -> [u32; 2] {
+        [size[0].div_ceil(spacing) + 2, size[1].div_ceil(spacing) + 2]
+    }
+
+    fn interval_length(cascade: usize) -> f32 {
+        INTERVAL_LENGTH * 4.0_f32.powi(cascade as i32)
+    }
+
     fn config(
         size: [u32; 2],
         probes: [u32; 2],
+        upper_probes: [u32; 2],
         spacing: u32,
+        upper_spacing: u32,
         directions: u32,
         start: f32,
         end: f32,
@@ -508,13 +529,13 @@ impl SceneRadiancePass {
             size[1],
             probes[0],
             probes[1],
+            upper_probes[0],
+            upper_probes[1],
             spacing,
+            upper_spacing,
             directions,
             start.to_bits(),
             end.to_bits(),
-            0,
-            0,
-            0,
             0,
             0,
             0,
@@ -628,5 +649,33 @@ impl SceneRadiancePass {
             },
             count: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SceneRadiancePass;
+
+    #[test]
+    fn cascade_intervals_are_contiguous() {
+        let mut start = 0.0;
+        let mut expected_start = 0.0;
+        for cascade in 0..super::CASCADE_COUNT {
+            assert_eq!(start, expected_start);
+            let end = start + SceneRadiancePass::interval_length(cascade);
+            assert!(end > start);
+            start = end;
+            expected_start += SceneRadiancePass::interval_length(cascade);
+        }
+    }
+
+    #[test]
+    fn probe_padding_is_symmetric() {
+        let size = SceneRadiancePass::probe_size([384, 216], 4);
+        assert_eq!(size, [98, 56]);
+        let first_center = (0.0_f32 - 0.5) * 4.0;
+        let last_center = (size[0] as f32 - 0.5) * 4.0;
+        assert!(first_center < 0.0);
+        assert!(last_center > 384.0);
     }
 }

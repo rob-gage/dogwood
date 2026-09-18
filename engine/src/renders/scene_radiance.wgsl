@@ -5,7 +5,9 @@ const TAU: f32 = 6.283185307179586;
 struct CascadeConfiguration {
     scene_size: vec2<u32>,
     probe_size: vec2<u32>,
+    upper_probe_size: vec2<u32>,
     probe_spacing: u32,
+    upper_probe_spacing: u32,
     direction_count: u32,
     interval_start: f32,
     interval_end: f32,
@@ -37,29 +39,35 @@ fn trace(@builtin(global_invocation_id) invocation: vec3<u32>) {
         probe_index % trace_configuration.probe_size.x,
         probe_index / trace_configuration.probe_size.x,
     );
-    let probe_position = vec2<f32>(probe) * f32(trace_configuration.probe_spacing) +
-        vec2<f32>(f32(trace_configuration.probe_spacing) * 0.5);
+    let probe_position = (vec2<f32>(probe) - vec2<f32>(0.5)) *
+        f32(trace_configuration.probe_spacing);
     let angle = (f32(direction_index) + 0.5) * TAU /
         f32(trace_configuration.direction_count);
     let direction = vec2<f32>(cos(angle), sin(angle));
+    let interval_length = trace_configuration.interval_end - trace_configuration.interval_start;
+    let step_length = max(1.0, interval_length / 64.0);
     var travel = trace_configuration.interval_start;
     var radiance = vec3<f32>(0.0);
     var transmission = 1.0;
     for (var step = 0u; step < 64u; step++) {
         if travel >= trace_configuration.interval_end || transmission <= 0.001 { break; }
-        let position = probe_position + direction * travel;
+        let segment_length = min(step_length, trace_configuration.interval_end - travel);
+        let position = probe_position + direction * (travel + segment_length * 0.5);
         if any(position < vec2<f32>(0.0)) ||
                 any(position >= vec2<f32>(trace_configuration.scene_size)) { break; }
         let optical = textureLoad(optical_field, vec2<i32>(position), 0);
-        let optical_depth = max(optical.a, 0.0);
+        let cell_optical_depth = max(optical.a, 0.0);
+        let optical_depth = cell_optical_depth * segment_length;
         let attenuation = select(exp(-optical_depth), 1.0, step == 0u);
-        let segment_radiance = select(optical.rgb, optical.rgb *
-            ((1.0 - attenuation) / max(optical_depth, 0.000001)), optical_depth > 0.000001);
+        let segment_radiance = select(optical.rgb * segment_length, optical.rgb *
+            ((1.0 - exp(-optical_depth)) / max(cell_optical_depth, 0.000001)),
+            cell_optical_depth > 0.000001);
         radiance += transmission * segment_radiance;
         transmission *= attenuation;
-        travel += 1.0;
+        travel += segment_length;
     }
-    trace_output.values[invocation.x] = vec4<f32>(radiance, transmission);
+    trace_output.values[invocation.x] = vec4<f32>(max(radiance, vec3<f32>(0.0)),
+        clamp(transmission, 0.0, 1.0));
 }
 
 @compute @workgroup_size(64)
@@ -74,14 +82,17 @@ fn merge(@builtin(global_invocation_id) invocation: vec3<u32>) {
         probe_index % merge_configuration.probe_size.x,
         probe_index / merge_configuration.probe_size.x,
     );
-    let position = vec2<f32>(probe) * f32(merge_configuration.probe_spacing) +
-        vec2<f32>(f32(merge_configuration.probe_spacing) * 0.5);
+    let position = (vec2<f32>(probe) - vec2<f32>(0.5)) *
+        f32(merge_configuration.probe_spacing);
     var far = vec4<f32>(0.0);
     for (var child = 0u; child < 4u; child++) {
         far += sample_upper(position, direction_index * 4u + child);
     }
     far *= 0.25;
-    lower_intervals.values[invocation.x] = vec4<f32>(near.rgb + near.a * far.rgb, near.a * far.a);
+    lower_intervals.values[invocation.x] = vec4<f32>(
+        max(near.rgb + near.a * far.rgb, vec3<f32>(0.0)),
+        clamp(near.a * far.a, 0.0, 1.0),
+    );
 }
 
 @compute @workgroup_size(64)
@@ -96,14 +107,15 @@ fn integrate(@builtin(global_invocation_id) invocation: vec3<u32>) {
     for (var direction = 0u; direction < integrate_configuration.direction_count; direction++) {
         illumination += sample_integrated(vec2<f32>(pixel) + vec2<f32>(0.5), direction).rgb;
     }
-    illumination /= f32(integrate_configuration.direction_count);
+    illumination = max(illumination / f32(integrate_configuration.direction_count),
+        vec3<f32>(0.0));
     textureStore(illumination_output, vec2<i32>(pixel), vec4<f32>(illumination, 1.0));
 }
 
 fn sample_upper(position: vec2<f32>, direction: u32) -> vec4<f32> {
-    let spacing = merge_configuration.probe_spacing * 2u;
-    let size = (merge_configuration.scene_size + vec2<u32>(spacing - 1u)) / spacing + vec2<u32>(2);
-    let coordinate = position / f32(spacing) - vec2<f32>(0.5);
+    let spacing = merge_configuration.upper_probe_spacing;
+    let size = merge_configuration.upper_probe_size;
+    let coordinate = position / f32(spacing) + vec2<f32>(0.5);
     let base = clamp(vec2<i32>(floor(coordinate)), vec2<i32>(0), vec2<i32>(size) - vec2<i32>(1));
     let fraction = fract(coordinate);
     let p00 = sample_upper_probe(base, size, direction);
@@ -121,7 +133,7 @@ fn sample_upper_probe(probe: vec2<i32>, size: vec2<u32>, direction: u32) -> vec4
 
 fn sample_integrated(position: vec2<f32>, direction: u32) -> vec4<f32> {
     let spacing = integrate_configuration.probe_spacing;
-    let coordinate = position / f32(spacing) - vec2<f32>(0.5);
+    let coordinate = position / f32(spacing) + vec2<f32>(0.5);
     let base = clamp(vec2<i32>(floor(coordinate)), vec2<i32>(0),
         vec2<i32>(integrate_configuration.probe_size) - vec2<i32>(1));
     let fraction = fract(coordinate);
