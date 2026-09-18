@@ -104,15 +104,15 @@ impl SceneData {
         &self,
         owner: TileCoordinates,
     ) -> Result<Vec<DormantRigidBody>, io::Error> {
-        let path = self.rigid_path(owner);
-        let mut file = match File::open(path) {
+        let path: PathBuf = self.rigid_path(owner);
+        let mut file: File = match File::open(path) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(error) => return Err(error),
         };
-        let mut magic = [0; 8];
+        let mut magic: [u8; 8] = [0; 8];
         file.read_exact(&mut magic)?;
-        let legacy = match &magic {
+        let legacy: bool = match &magic {
             b"dwrigid1" => true,
             b"dwrigid2" => false,
             _ => {
@@ -122,9 +122,9 @@ impl SceneData {
                 ));
             }
         };
-        let mut count = [0; 4];
+        let mut count: [u8; 4] = [0; 4];
         file.read_exact(&mut count)?;
-        let count = usize::try_from(u32::from_le_bytes(count)).map_err(|_| {
+        let count: usize = usize::try_from(u32::from_le_bytes(count)).map_err(|_| {
             io::Error::new(io::ErrorKind::InvalidData, "dormant rigid count overflow")
         })?;
         if count > 1_024 {
@@ -133,8 +133,8 @@ impl SceneData {
                 "too many dormant rigid bodies",
             ));
         }
-        let mut records = Vec::new();
-        let mut ids = HashSet::new();
+        let mut records: Vec<DormantRigidBody> = Vec::new();
+        let mut ids: HashSet<u64> = HashSet::new();
         records.try_reserve_exact(count).map_err(|_| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -142,18 +142,18 @@ impl SceneData {
             )
         })?;
         for _ in 0..count {
-            let record = if legacy {
+            let record: DormantRigidBody = if legacy {
                 DormantRigidBody::deserialize_legacy(&mut file, self.materials())?
             } else {
                 DormantRigidBody::deserialize(&mut file, self.materials())?
             };
-            let record_owner = owner_chunk(
+            let record_owner: TileCoordinates = owner_chunk(
                 record.position,
                 record.rotation,
                 record.cells.iter().map(|cell| cell.local),
             )
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid rigid geometry"))?;
-            let legacy_owner = TileCoordinates {
+            let legacy_owner: TileCoordinates = TileCoordinates {
                 x: record.position[0].floor() as i32,
                 y: record.position[1].floor() as i32,
             }
@@ -182,7 +182,7 @@ impl SceneData {
         owner: TileCoordinates,
         records: &[DormantRigidBody],
     ) -> Result<(), io::Error> {
-        let path = self.rigid_path(owner);
+        let path: PathBuf = self.rigid_path(owner);
         if records.is_empty() {
             return match std::fs::remove_file(path) {
                 Ok(()) => Ok(()),
@@ -191,11 +191,11 @@ impl SceneData {
             };
         }
         create_dir_all(path.parent().unwrap())?;
-        let temporary = path.with_extension("rigid.tmp");
+        let temporary: PathBuf = path.with_extension("rigid.tmp");
         {
-            let mut file = File::create(&temporary)?;
+            let mut file: File = File::create(&temporary)?;
             file.write_all(b"dwrigid2")?;
-            let count = u32::try_from(records.len()).map_err(|_| {
+            let count: u32 = u32::try_from(records.len()).map_err(|_| {
                 io::Error::new(io::ErrorKind::InvalidData, "too many dormant rigid bodies")
             })?;
             file.write_all(&count.to_le_bytes())?;
@@ -209,22 +209,22 @@ impl SceneData {
 
     /// Startup-only scan establishes a collision-free monotonic scene ID.
     pub(crate) fn next_dormant_rigid_id(&self) -> Result<u64, io::Error> {
-        let directory = self.path.join("rigids");
-        let entries = match std::fs::read_dir(directory) {
+        let directory: PathBuf = self.path.join("rigids");
+        let entries: std::fs::ReadDir = match std::fs::read_dir(directory) {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(1),
             Err(error) => return Err(error),
         };
-        let mut next = 1u64;
+        let mut next: u64 = 1u64;
         for entry in entries {
-            let path = entry?.path();
+            let path: PathBuf = entry?.path();
             if path.extension().and_then(|extension| extension.to_str()) != Some("rigid") {
                 continue;
             }
-            let mut file = File::open(path)?;
-            let mut magic = [0; 8];
+            let mut file: File = File::open(path)?;
+            let mut magic: [u8; 8] = [0; 8];
             file.read_exact(&mut magic)?;
-            let legacy = match &magic {
+            let legacy: bool = match &magic {
                 b"dwrigid1" => true,
                 b"dwrigid2" => false,
                 _ => {
@@ -234,9 +234,9 @@ impl SceneData {
                     ));
                 }
             };
-            let mut count = [0; 4];
+            let mut count: [u8; 4] = [0; 4];
             file.read_exact(&mut count)?;
-            let count = u32::from_le_bytes(count);
+            let count: u32 = u32::from_le_bytes(count);
             if count > 1_024 {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -244,7 +244,7 @@ impl SceneData {
                 ));
             }
             for _ in 0..count {
-                let record = if legacy {
+                let record: DormantRigidBody = if legacy {
                     DormantRigidBody::deserialize_legacy(&mut file, self.materials())?
                 } else {
                     DormantRigidBody::deserialize(&mut file, self.materials())?
