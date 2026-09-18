@@ -102,7 +102,6 @@ impl Scene {
         if cells.is_empty() {
             return Ok(());
         }
-        let mut cells = cells;
         for cell in &mut cells {
             if !cell.temperature.is_finite() {
                 cell.temperature = self.ambient_temperature;

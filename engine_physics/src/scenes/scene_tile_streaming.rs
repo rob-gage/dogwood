@@ -69,7 +69,6 @@ impl Scene {
             match self.chunks.get_mut(&coordinates.chunk_coordinates()) {
                 Some(ChunkEntry::Active { chunk, .. }) => match chunk.get_tile_mut(coordinates) {
                     Ok(tile_data) => {
-                        let tile_data = tile_data;
                         tile_data.resolve_uninitialized_temperatures(|identifier| {
                             materials
                                 .thermal_properties(identifier)
