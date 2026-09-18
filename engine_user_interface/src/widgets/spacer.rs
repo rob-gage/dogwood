@@ -37,7 +37,7 @@ impl Spacer {
 
 impl Widget for Spacer {
     fn display(&mut self, user_interface: &mut UserInterface) -> egui::Response {
-        let rect = user_interface.available_rect();
+        let rect: egui::Rect = user_interface.available_rect();
         if let Some(background) = self.background_color {
             user_interface.painter().rect_filled(rect, 0.0, background);
         }

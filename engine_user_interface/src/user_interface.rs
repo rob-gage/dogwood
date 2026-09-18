@@ -44,7 +44,7 @@ impl<'a> UserInterface<'a> {
     ) -> egui::Response {
         self.0
             .scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-                let mut ui = UserInterface(ui);
+                let mut ui: UserInterface = UserInterface(ui);
                 add_contents(&mut ui);
             })
             .response
