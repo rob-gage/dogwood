@@ -34,8 +34,9 @@ fn accepts_game_pointer_press(
     ui_consumed: bool,
     world_position: Option<[f32; 2]>,
     already_down: bool,
+    hosted_scene_viewport: bool,
 ) -> bool {
-    enabled && !ui_consumed && world_position.is_some() && !already_down
+    enabled && (!ui_consumed || hosted_scene_viewport) && world_position.is_some() && !already_down
 }
 
 /// A `winit` application used to run a `Game` implementor
@@ -465,6 +466,7 @@ impl<G: Game> GameApplication<G> {
                     self.pointer_position
                         .and_then(|position| self.scene_world_position(position)),
                     self.primary_pointer_down,
+                    self.scene_viewport_bounds.is_some(),
                 ) {
                     self.primary_pointer_down = true;
                     self.primary_pointer_pressed = true;
@@ -525,26 +527,37 @@ mod tests {
             true,
             true,
             Some([0.0, 0.0]),
-            false
+            false,
+            false,
         ));
         assert!(!accepts_game_pointer_press(
             false,
             false,
             Some([0.0, 0.0]),
-            false
+            false,
+            false,
         ));
-        assert!(!accepts_game_pointer_press(true, false, None, false));
+        assert!(!accepts_game_pointer_press(true, false, None, false, false));
         assert!(accepts_game_pointer_press(
             true,
             false,
             Some([0.0, 0.0]),
-            false
+            false,
+            false,
         ));
         assert!(!accepts_game_pointer_press(
             true,
             false,
             Some([0.0, 0.0]),
-            true
+            true,
+            false,
+        ));
+        assert!(accepts_game_pointer_press(
+            true,
+            true,
+            Some([0.0, 0.0]),
+            false,
+            true,
         ));
     }
 }
