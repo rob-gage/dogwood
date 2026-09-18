@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::io;
 use std::time::Duration;
 
@@ -9,10 +11,12 @@ use super::MAX_CATCH_UP_TICKS;
 use super::Scene;
 use super::SceneEditBatch;
 use super::ScenePosition;
+use super::SceneRigidCellRemovalCause;
 use super::TICK_RATE;
 use super::TileArea;
 use super::TileCoordinates;
 use crate::actors_utility::ActorCellularProxyState;
+use crate::scenes::SceneRegion;
 use crate::simulation::RigidCellularBodyState;
 
 impl Scene {
@@ -51,6 +55,10 @@ impl Scene {
         self.accelerator
             .poll()
             .map_err(|error| io::Error::other(error.to_string()))?;
+        self.material_extraction_results.extend(
+            self.material_extraction
+                .take_completed(self.accelerator.as_ref(), self.data.materials()),
+        );
         self.apply_completed_rigid_thermal_transitions();
         self.apply_completed_rigid_cellular_reactions()?;
         self.rigid_dormancy_apply_completed()?;
@@ -84,7 +92,80 @@ impl Scene {
         if ticks == MAX_CATCH_UP_TICKS && self.tick_time >= tick_time {
             self.tick_time = tick_time.saturating_sub(Duration::from_nanos(1));
         }
+        self.submit_material_extraction();
         Ok(ticks)
+    }
+
+    fn submit_material_extraction(&mut self) {
+        if !self.material_extraction.has_free_slot() {
+            return;
+        }
+        let Some(pending) = self.material_extractions_queue.front() else {
+            return;
+        };
+        let rigid_cell_count = self
+            .cellular_physics_body_proxy
+            .rigid_cell_count(&self.rigid_cellular_bodies) as u32;
+        let mut removals: HashMap<usize, HashSet<[i32; 2]>> = HashMap::new();
+        let mut rigid_cell_index = 0u32;
+        for (body_index, body) in self.rigid_cellular_bodies.iter().enumerate() {
+            let Some(state) = self.physics_world.rigid_cellular_body_state(body) else {
+                continue;
+            };
+            for cell in &body.cells {
+                if rigid_cell_index >= rigid_cell_count {
+                    break;
+                }
+                rigid_cell_index += 1;
+                let Some(dense_index) = self.materials().dense_index(cell.material) else {
+                    continue;
+                };
+                if pending
+                    .material_mask
+                    .get(dense_index as usize / 32)
+                    .map_or(false, |word| word & (1u32 << (dense_index % 32)) != 0)
+                {
+                    let local_x = (cell.local[0] as f32 + 0.5) / 8.0;
+                    let local_y = (cell.local[1] as f32 + 0.5) / 8.0;
+                    let angle_sin = state.angle.sin();
+                    let angle_cos = state.angle.cos();
+                    let world_position = [
+                        state.translation[0] + angle_cos * local_x - angle_sin * local_y,
+                        state.translation[1] + angle_sin * local_x + angle_cos * local_y,
+                    ];
+                    if region_contains(pending.region, world_position) {
+                        removals.entry(body_index).or_default().insert(cell.local);
+                    }
+                }
+            }
+        }
+        let buffered_dimensions = self.area_buffered().dimensions();
+        let buffered_origin = self.area_buffered().origin();
+        let submitted = self.material_extraction.submit_next(
+            self.accelerator.as_ref(),
+            &mut self.material_extractions_queue,
+            buffered_origin,
+            [
+                u32::from(buffered_dimensions[0]),
+                u32::from(buffered_dimensions[1]),
+            ],
+            [
+                u32::from(self.tiles_ring_offset_x),
+                u32::from(self.tiles_ring_offset_y),
+            ],
+            rigid_cell_count,
+        );
+        if submitted {
+            let mut removals: Vec<(usize, HashSet<[i32; 2]>)> = removals.into_iter().collect();
+            removals.sort_unstable_by_key(|(body_index, _)| std::cmp::Reverse(*body_index));
+            for (body_index, removed) in removals {
+                self.remove_rigid_cellular_body_cells(
+                    body_index,
+                    &removed,
+                    SceneRigidCellRemovalCause::Extraction,
+                );
+            }
+        }
     }
 
     /// Returns progress from the previous fixed tick to the current fixed tick
@@ -409,4 +490,17 @@ impl Scene {
         }
         Ok(())
     }
+}
+
+fn region_contains(region: SceneRegion, position: [f32; 2]) -> bool {
+    let tile_x = position[0].floor();
+    let tile_y = position[1].floor();
+    region.contains(ScenePosition {
+        tile_coordinates: TileCoordinates {
+            x: tile_x as i32,
+            y: tile_y as i32,
+        },
+        x_offset: position[0] - tile_x,
+        y_offset: position[1] - tile_y,
+    })
 }

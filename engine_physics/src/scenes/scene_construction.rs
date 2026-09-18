@@ -45,6 +45,7 @@ use crate::simulation::ThermalEdits;
 use crate::simulation::ThermalInteraction;
 use crate::simulation::ThermalPhaseTransitions;
 use crate::simulation::ThermalScatter;
+use crate::simulation_materials::MaterialExtraction;
 use crate::tiles::Tile;
 use crate::tiles::TileArea;
 use crate::tiles::TileCoordinates;
@@ -321,6 +322,27 @@ impl Scene {
             gases.gas_count(),
             data.materials().reactions().len() as u32,
         );
+        let material_extraction: MaterialExtraction = MaterialExtraction::new(
+            accelerator.as_ref(),
+            data.materials(),
+            &cellular_material_identifiers,
+            &cellular_appearances,
+            &cellular_integrities,
+            cellular_dynamic.kinematics_buffer(),
+            &cellular_amounts,
+            &cellular_temperatures,
+            cellular_physics_body_proxy.occupancy_buffer(),
+            fluids.particles_buffer(),
+            fluids.free_indices_buffer(),
+            fluids.free_count_buffer(),
+            gases.concentrations_buffer(),
+            cellular_physics_body_proxy.rigid_cells_buffer(),
+            cellular_physics_body_proxy.rigid_transforms_buffer(),
+            &rigid_cell_amounts,
+            buffered_cell_count as u32,
+            fluids.particle_capacity(),
+            gases.gas_count(),
+        );
         let cellular_collision: CellularCollision = CellularCollision::new(
             accelerator.as_ref(),
             &cellular_material_identifiers,
@@ -446,6 +468,10 @@ impl Scene {
             thermal_edits,
             material_table,
             material_reactions,
+            material_extraction,
+            material_extractions_queue: VecDeque::new(),
+            material_extraction_results: Vec::new(),
+            material_extraction_request_next: 0,
             thermal_interaction,
             thermal_conduction,
             thermal_scatter,

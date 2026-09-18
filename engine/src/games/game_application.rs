@@ -313,13 +313,16 @@ impl<G: Game> GameApplication<G> {
         self.update_time = update_time;
         let simulation_active: bool = self.is_simulation_enabled && !self.game.is_paused();
         let mut actor_contacts = Vec::new();
+        let mut material_extractions = Vec::new();
         if let Some(scene) = self.game.scene_mutable() {
             self.simulation_ticks = self
                 .simulation_ticks
                 .saturating_add(scene.update(elapsed, simulation_active)?);
             actor_contacts = scene.drain_actor_contact_events();
+            material_extractions = scene.take_material_extraction_results();
         }
         self.game.actor_contacts(&actor_contacts);
+        self.game.material_extractions(&material_extractions);
         self.game.update(elapsed);
         self.game.compose_user_interface();
         self.update_performance_rates(update_time);

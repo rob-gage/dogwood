@@ -9,6 +9,7 @@ mod scene;
 mod scene_actor_contacts;
 mod scene_actor_streaming;
 mod scene_generator;
+mod scene_material_extraction;
 mod scene_pending_rigid_dormancy;
 mod scene_pending_static_detachment;
 mod scene_rigid_body_streaming_response;
@@ -20,6 +21,11 @@ mod scene_rigid_persistence_request;
 
 pub use scene::Scene;
 pub use scene_generator::SceneGenerator;
+pub(crate) use scene_material_extraction::PendingMaterialExtraction;
+pub use scene_material_extraction::{
+    MaterialExtraction, MaterialExtractionAmount, MaterialExtractionError,
+    MaterialExtractionRequest, MaterialExtractionResult, MaterialFilter, SceneRegion,
+};
 
 pub use crate::scene_data::SceneData;
 pub(crate) use crate::scene_data::SceneDormantRigidBody;

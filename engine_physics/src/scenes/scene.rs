@@ -13,6 +13,8 @@ use std::time::Duration;
 use engine_compute::Accelerator;
 use engine_compute::AcceleratorBuffer;
 
+use super::scene_material_extraction::MaterialExtractionResult;
+use super::scene_material_extraction::PendingMaterialExtraction;
 use super::scene_pending_rigid_dormancy::ScenePendingRigidDormancy;
 use super::scene_pending_static_detachment::ScenePendingStaticDetachment;
 use super::scene_rigid_body_streaming_response::SceneRigidBodyStreamingResponse;
@@ -61,6 +63,7 @@ use crate::simulation::ThermalEdits;
 use crate::simulation::ThermalInteraction;
 use crate::simulation::ThermalPhaseTransitions;
 use crate::simulation::ThermalScatter;
+use crate::simulation_materials::MaterialExtraction;
 #[cfg(test)]
 use crate::tiles::CellCoordinates;
 use crate::tiles::Tile;
@@ -222,6 +225,10 @@ pub struct Scene {
     thermal_edits: ThermalEdits,
     material_table: MaterialTable,
     material_reactions: MaterialReactions,
+    pub(super) material_extraction: MaterialExtraction,
+    pub(super) material_extractions_queue: VecDeque<PendingMaterialExtraction>,
+    pub(super) material_extraction_results: Vec<MaterialExtractionResult>,
+    pub(super) material_extraction_request_next: u64,
     thermal_interaction: ThermalInteraction,
     thermal_conduction: ThermalConduction,
     thermal_scatter: ThermalScatter,

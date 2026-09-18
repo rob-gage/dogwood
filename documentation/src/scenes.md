@@ -23,7 +23,8 @@ second runtime authority.
 The application passes elapsed wall time to `Scene::update`. The scene consumes
 that time as fixed simulation ticks (currently 60 Hz with bounded catch-up),
 applies queued edits, advances resident simulation, and schedules streaming or
-readback work. `Game::actor_contacts` receives contact batches and
+readback work. `Game::actor_contacts` receives contact batches,
+`Game::material_extractions` receives completed extraction batches, and
 `Game::update` receives the ordinary game callback after scene work.
 
 Rendering and UI continue while gameplay is paused. `Game::is_paused` disables
@@ -81,3 +82,28 @@ Generation is not called again for ordinary unload/reload.
 
 See [Saving, Loading, And Streaming](persistence.md) for residency behavior
 and [Scene Model](../internals/src/scenes/scene.md) for engine ownership.
+
+## Asynchronous Material Extraction
+
+Gameplay can remove matching authoritative material from a resident world
+region without polling GPU state. `SceneRegion` currently supports circles in
+world/tile units, and `MaterialFilter` supports any material, one identifier,
+tags, and forms. Results are aggregated by material and delivered once through
+`Game::material_extractions`; amounts use the stored normalized amount for the
+underlying cellular cell, fluid particle, gas concentration, or rigid cell.
+Material outside the resident simulation area is left untouched.
+
+```rust
+let request = scene.extract_materials(MaterialExtraction {
+    region: SceneRegion::Circle { center, radius: 1.0 },
+    filter: MaterialFilter::Material(stone),
+})?;
+
+fn material_extractions(&mut self, results: &[MaterialExtractionResult]) {
+    for result in results {
+        if result.request == self.collection_request {
+            // result.materials contains only nonzero totals.
+        }
+    }
+}
+```

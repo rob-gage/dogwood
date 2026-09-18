@@ -56,6 +56,11 @@ identifiers from the registry rather than manufacturing or serializing raw
 indices. `scene.materials()` provides read-only inspection through `get`,
 `iter`, `thermal_properties`, and `tag_members`.
 
+Material selectors used by asynchronous scene extraction are compiled against
+this registry before GPU work begins. Use `MaterialFilter::Tag` or
+`MaterialFilter::Form` to match a family without doing string searches in the
+shader.
+
 ## Static Cellular Materials
 
 Static cellular matter is terrain-like. `mass` affects mechanical response;

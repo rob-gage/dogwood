@@ -6,7 +6,7 @@ use engine_graphics::Camera;
 use engine_input::{InputTranslator, KeyboardInputState};
 use engine_physics::actors::{ActorContactEvent, ActorControlState};
 use engine_physics::{
-    scenes::{Scene, ScenePosition},
+    scenes::{MaterialExtractionResult, Scene, ScenePosition},
     tiles::TileCoordinates,
 };
 use engine_user_interface::UserInterfaceContext;
@@ -22,6 +22,9 @@ pub trait Game {
 
     /// Receives the deduplicated actor contacts produced by the latest scene update.
     fn actor_contacts(&mut self, _contacts: &[ActorContactEvent]) {}
+
+    /// Receives completed asynchronous material extraction results.
+    fn material_extractions(&mut self, _results: &[MaterialExtractionResult]) {}
 
     /// Adds ordinary game-owned UI for the next rendered frame.
     fn compose_user_interface(&mut self) {}

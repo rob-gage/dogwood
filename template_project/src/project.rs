@@ -10,7 +10,10 @@ use engine::{
             ActorCollisionShape, ActorPawn, ActorPawnMovement, ActorPawnSwimmingConfiguration,
             ActorPawnWalkingConfiguration,
         },
-        scenes::{Scene, SceneData, ScenePosition, SceneVelocity},
+        scenes::{
+            MaterialExtraction, MaterialExtractionRequest, MaterialFilter, Scene, SceneData,
+            ScenePosition, SceneRegion, SceneVelocity,
+        },
         simulation::SceneSimulationConfiguration,
         tiles::TileCoordinates,
     },
@@ -32,6 +35,8 @@ pub struct TemplateProject {
     scene: Option<Scene>,
     pawn: engine::physics::actors::Actor,
     collected: u32,
+    extraction_demo_request: MaterialExtractionRequest,
+    extraction_demo_amount: f32,
 }
 
 impl TemplateProject {
@@ -93,11 +98,24 @@ impl TemplateProject {
                 SceneVelocity { x: 0.0, y: 0.0 },
             );
         scene.possess_actor(pawn);
+        let extraction_demo_request = scene.extract_materials(MaterialExtraction {
+            region: SceneRegion::Circle {
+                center: ScenePosition {
+                    tile_coordinates: TileCoordinates { x: 0, y: -1 },
+                    x_offset: 0.5,
+                    y_offset: 0.5,
+                },
+                radius: 0.45,
+            },
+            filter: MaterialFilter::Material(stone),
+        })?;
         Ok(Self {
             user_interface_context: UserInterfaceContext::new(),
             scene: Some(scene),
             pawn,
             collected: 0,
+            extraction_demo_request,
+            extraction_demo_amount: 0.0,
         })
     }
 }
@@ -113,6 +131,22 @@ impl Game for TemplateProject {
 
     fn compose_user_interface(&mut self) {
         crate::ui::draw_counter(&self.user_interface_context, self.collected);
+        crate::ui::draw_extraction_demo(&self.user_interface_context, self.extraction_demo_amount);
+    }
+
+    fn material_extractions(
+        &mut self,
+        results: &[engine::physics::scenes::MaterialExtractionResult],
+    ) {
+        for result in results {
+            if result.request == self.extraction_demo_request {
+                self.extraction_demo_amount = result
+                    .materials
+                    .iter()
+                    .map(|material| material.amount)
+                    .sum();
+            }
+        }
     }
 
     fn camera(&self) -> Camera {
@@ -243,5 +277,33 @@ mod tests {
                 _ => panic!("{source} is not static"),
             }
         }
+    }
+
+    #[test]
+    fn extraction_demo_completes_asynchronously() {
+        let accelerator: Arc<Accelerator> = Arc::new(Accelerator::new().unwrap());
+        let mut game: TemplateProject = TemplateProject::new(&accelerator).unwrap();
+        for _ in 0..8 {
+            let results = {
+                let scene = game.scene.as_mut().unwrap();
+                scene
+                    .update(std::time::Duration::from_millis(20), false)
+                    .unwrap();
+                scene.take_material_extraction_results()
+            };
+            if let Some(result) = results
+                .into_iter()
+                .find(|result| result.request == game.extraction_demo_request)
+            {
+                assert!(
+                    result
+                        .materials
+                        .iter()
+                        .any(|material| material.amount > 0.0)
+                );
+                return;
+            }
+        }
+        panic!("extraction demo did not complete");
     }
 }
