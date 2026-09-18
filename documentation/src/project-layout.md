@@ -15,4 +15,6 @@ my_game/
 └── my-game.rs          # executable entry point
 ```
 
-`Cargo.toml` should depend on `dogwood_engine` and, when useful, a separate material crate. Import engine APIs through `dogwood_engine`, not directly from `dogwood_engine_physics` or other implementation crates.
+`Cargo.toml` should depend on `dogwood_engine` and, when useful, a separate
+material crate. Import engine APIs through `dogwood_engine`, not directly from
+`dogwood_engine_physics` or other implementation crates.
