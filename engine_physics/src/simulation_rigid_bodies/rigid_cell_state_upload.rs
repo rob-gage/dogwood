@@ -15,25 +15,27 @@ impl RigidCellStateUpload {
         temperatures: &AcceleratorBuffer,
         capacity: usize,
     ) -> Self {
-        let device = accelerator.wgpu_device();
-        let records = accelerator.allocate::<[u32; 4]>(capacity.max(1));
-        let count = crate::simulation::create_simulation_uniform_buffer(
+        let device: &wgpu::Device = accelerator.wgpu_device();
+        let records: AcceleratorBuffer = accelerator.allocate::<[u32; 4]>(capacity.max(1));
+        let count: wgpu::Buffer = crate::simulation::create_simulation_uniform_buffer(
             device,
             "rigid cell state upload count",
             4,
         );
-        let storage = crate::simulation::storage_bind_group_layout_entry;
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("rigid cell state upload"),
-            entries: &[
-                storage(0, true),
-                storage(1, false),
-                storage(2, false),
-                storage(3, false),
-                crate::simulation::uniform_bind_group_layout_entry(4),
-            ],
-        });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let storage: fn(u32, bool) -> wgpu::BindGroupLayoutEntry =
+            crate::simulation::storage_bind_group_layout_entry;
+        let layout: wgpu::BindGroupLayout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("rigid cell state upload"),
+                entries: &[
+                    storage(0, true),
+                    storage(1, false),
+                    storage(2, false),
+                    storage(3, false),
+                    crate::simulation::uniform_bind_group_layout_entry(4),
+                ],
+            });
+        let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("rigid cell state upload"),
             layout: &layout,
             entries: [
@@ -52,26 +54,27 @@ impl RigidCellStateUpload {
             .collect::<Vec<_>>()
             .as_slice(),
         });
-        let shader = crate::simulation::create_simulation_shader_module(
+        let shader: wgpu::ShaderModule = crate::simulation::create_simulation_shader_module(
             device,
             "rigid cell state upload",
             include_str!("rigid_cell_state_upload.wgsl"),
             "engine_physics/src/simulation/rigid_cell_state_upload.wgsl",
         );
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("rigid cell state upload"),
-            layout: Some(
-                &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: None,
-                    bind_group_layouts: &[Some(&layout)],
-                    immediate_size: 0,
-                }),
-            ),
-            module: &shader,
-            entry_point: Some("upload"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let pipeline: wgpu::ComputePipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("rigid cell state upload"),
+                layout: Some(
+                    &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: None,
+                        bind_group_layouts: &[Some(&layout)],
+                        immediate_size: 0,
+                    }),
+                ),
+                module: &shader,
+                entry_point: Some("upload"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
         Self {
             records,
             count,
@@ -96,13 +99,14 @@ impl RigidCellStateUpload {
             0,
             &(records.len() as u32).to_le_bytes(),
         );
-        let mut encoder =
+        let mut encoder: wgpu::CommandEncoder =
             accelerator
                 .wgpu_device()
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("rigid cell state upload"),
                 });
-        let mut pass = accelerator.begin_compute_pass(&mut encoder, "rigid cell state upload");
+        let mut pass: wgpu::ComputePass<'_> =
+            accelerator.begin_compute_pass(&mut encoder, "rigid cell state upload");
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.dispatch_workgroups((records.len() as u32).div_ceil(64), 1, 1);
