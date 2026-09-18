@@ -90,7 +90,7 @@ impl ThermalConduction {
             label: Some("thermal conduction"),
             layout: &layout,
             entries: &[
-                crate::simulation::accelerator_buffer_bind_group_entry(0, &interaction),
+                crate::simulation::accelerator_buffer_bind_group_entry(0, interaction),
                 crate::simulation::accelerator_buffer_bind_group_entry(1, &face_flux),
                 crate::simulation::accelerator_buffer_bind_group_entry(2, &face_conductance),
                 crate::simulation::accelerator_buffer_bind_group_entry(3, &conductance_sum),

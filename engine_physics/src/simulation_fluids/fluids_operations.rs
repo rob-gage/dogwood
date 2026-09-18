@@ -162,7 +162,7 @@ impl Fluids {
             temperatures[*index] = temperature.to_bits();
         }
         accelerator.wgpu_queue().write_buffer(
-            &self.edit_amounts.wgpu_buffer(),
+            self.edit_amounts.wgpu_buffer(),
             0,
             &amounts
                 .into_iter()
@@ -170,7 +170,7 @@ impl Fluids {
                 .collect::<Vec<_>>(),
         );
         accelerator.wgpu_queue().write_buffer(
-            &self.edit_temperatures.wgpu_buffer(),
+            self.edit_temperatures.wgpu_buffer(),
             0,
             &temperatures
                 .into_iter()
