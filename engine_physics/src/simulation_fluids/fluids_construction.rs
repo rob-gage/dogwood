@@ -29,15 +29,18 @@ impl Fluids {
         let free_count: AcceleratorBuffer = accelerator.allocate::<u32>(1);
         let edit_cells: AcceleratorBuffer =
             accelerator.allocate::<u32>(buffered_cell_count as usize);
-        let edit_amounts = accelerator.allocate::<f32>(buffered_cell_count as usize);
-        let edit_temperatures = accelerator.allocate::<f32>(buffered_cell_count as usize);
+        let edit_amounts: AcceleratorBuffer =
+            accelerator.allocate::<f32>(buffered_cell_count as usize);
+        let edit_temperatures: AcceleratorBuffer =
+            accelerator.allocate::<f32>(buffered_cell_count as usize);
         let accelerator_edits_pending: AcceleratorBuffer = accelerator.allocate::<u32>(1);
-        let accelerator_edit_dispatch = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Accelerator fluid edit indirect dispatch"),
-            size: 72,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
-            mapped_at_creation: false,
-        });
+        let accelerator_edit_dispatch: wgpu::Buffer =
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Accelerator fluid edit indirect dispatch"),
+                size: 72,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
+                mapped_at_creation: false,
+            });
         let bucket_heads: AcceleratorBuffer = accelerator.allocate::<u32>(bucket_count as usize);
         let next_particle: AcceleratorBuffer =
             accelerator.allocate::<u32>(particle_capacity as usize);
@@ -74,12 +77,13 @@ impl Fluids {
             0,
             &particle_capacity.to_le_bytes(),
         );
-        let parameters = crate::simulation::create_simulation_uniform_buffer(
+        let parameters: wgpu::Buffer = crate::simulation::create_simulation_uniform_buffer(
             device,
             "fluid simulation parameters",
             128,
         );
-        let storage = crate::simulation::storage_bind_group_layout_entry;
+        let storage: fn(u32, bool) -> wgpu::BindGroupLayoutEntry =
+            crate::simulation::storage_bind_group_layout_entry;
         let layout: wgpu::BindGroupLayout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("fluid simulation bind group layout"),
@@ -175,12 +179,12 @@ impl Fluids {
                 bind_group_layouts: &[Some(&layout)],
                 immediate_size: 0,
             });
-        let accelerator_edit_prepare_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let accelerator_edit_prepare_layout: wgpu::BindGroupLayout = device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Accelerator fluid edit preparation layout"),
                 entries: &[storage(0, false)],
             });
-        let accelerator_edit_prepare_bind_group =
+        let accelerator_edit_prepare_bind_group: wgpu::BindGroup =
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Accelerator fluid edit preparation"),
                 layout: &accelerator_edit_prepare_layout,
@@ -189,13 +193,13 @@ impl Fluids {
                     resource: accelerator_edit_dispatch.as_entire_binding(),
                 }],
             });
-        let accelerator_edit_prepare_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        let accelerator_edit_prepare_pipeline_layout: wgpu::PipelineLayout = device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Accelerator fluid edit preparation"),
                 bind_group_layouts: &[Some(&layout), Some(&accelerator_edit_prepare_layout)],
                 immediate_size: 0,
             });
-        let pipeline = |entry_point, label| {
+        let pipeline = |entry_point: &'static str, label: &'static str| -> wgpu::ComputePipeline {
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(label),
                 layout: Some(&pipeline_layout),
@@ -205,8 +209,8 @@ impl Fluids {
                 cache: None,
             })
         };
-        let prepare_accelerator_edits_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let prepare_accelerator_edits_pipeline: wgpu::ComputePipeline = device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some("Accelerator fluid edit preparation pipeline"),
                 layout: Some(&accelerator_edit_prepare_pipeline_layout),
                 module: &shader,
