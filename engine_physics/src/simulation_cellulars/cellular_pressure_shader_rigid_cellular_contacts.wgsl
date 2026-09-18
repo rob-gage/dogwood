@@ -16,9 +16,9 @@ fn process_rigid_cellular_contact(
         let world_cell: vec2<i32> =
             world_cell_from_physical_tile_ring_index(
                 other,
-                parameters.buffered_origin,
-                parameters.buffered_tile_size,
-                parameters.ring_offset,
+                cellular_pressure_parameters.buffered_origin,
+                cellular_pressure_parameters.buffered_tile_size,
+                cellular_pressure_parameters.ring_offset,
             );
         let away: u32 =
             cellular_pressure_physical_cell_index_from_world_cell(
@@ -138,7 +138,7 @@ fn process_rigid_cellular_contact(
             && rigid_inverse_effective_mass > 0.000001
     {
         let correction_speed: f32 =
-            min(0.25, (penetration - CELL_SIZE * 0.02) * 0.2 / parameters.delta_time);
+            min(0.25, (penetration - CELL_SIZE * 0.02) * 0.2 / cellular_pressure_parameters.delta_time);
         penetration_impulse =
             max(
                 0.0,
@@ -151,7 +151,7 @@ fn process_rigid_cellular_contact(
     var support_impulse: f32 = 0.0;
     if geometric_contacts != 0u && mass_record.z > 0.000001 && constrained && !dynamic {
         support_impulse =
-            max(0.0, dot(parameters.gravity * parameters.delta_time / mass_record.z, normal)) / f32(
+            max(0.0, dot(cellular_pressure_parameters.gravity * cellular_pressure_parameters.delta_time / mass_record.z, normal)) / f32(
                 geometric_contacts,
             );
         constraint_normal_impulse += support_impulse;
@@ -337,9 +337,9 @@ fn gas_cell_is_open(index: u32) -> bool {
 
 fn gas_cell_inverse_mass(index: u32) -> f32 {
     var density: f32 = 1.0;
-    for (var species: u32 = 0u; species < parameters.gas_count; species++) {
+    for (var species: u32 = 0u; species < cellular_pressure_parameters.gas_count; species++) {
         let concentration: f32 =
-            gas_concentrations[species * parameters.buffered_cell_count + index];
+            gas_concentrations[species * cellular_pressure_parameters.buffered_cell_count + index];
         density += concentration * (gas_properties[species * 2u].x - 1.0);
     }
     return 64.0 / max(density, 0.000001);

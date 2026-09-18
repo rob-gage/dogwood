@@ -1,15 +1,18 @@
 // Copyright Rob Gage 2026
 
-use crate::scenes::Scene;
-use engine_compute::{Accelerator, AcceleratorBuffer};
 use std::sync::mpsc;
+
+use engine_compute::Accelerator;
+use engine_compute::AcceleratorBuffer;
+
+use crate::scenes::Scene;
 
 pub(crate) fn read_cell_state(
     accelerator: &Accelerator,
     scene: &Scene,
     index: usize,
 ) -> (u32, f32) {
-    let readback = accelerator
+    let readback: wgpu::Buffer = accelerator
         .wgpu_device()
         .create_buffer(&wgpu::BufferDescriptor {
             label: Some("chemistry cell state readback"),
@@ -17,7 +20,7 @@ pub(crate) fn read_cell_state(
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-    let mut encoder = accelerator
+    let mut encoder: wgpu::CommandEncoder = accelerator
         .wgpu_device()
         .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
     encoder.copy_buffer_to_buffer(
@@ -51,7 +54,7 @@ pub(crate) fn read_cell_state(
         }
         std::thread::yield_now();
     }
-    let bytes = readback.slice(..).get_mapped_range().unwrap();
+    let bytes: wgpu::BufferView = readback.slice(..).get_mapped_range().unwrap();
     (
         u32::from_le_bytes(bytes[..4].try_into().unwrap()),
         f32::from_le_bytes(bytes[4..8].try_into().unwrap()),
@@ -59,7 +62,7 @@ pub(crate) fn read_cell_state(
 }
 
 pub(crate) fn read_amount(accelerator: &Accelerator, buffer: &AcceleratorBuffer, slot: u32) -> f32 {
-    let readback = accelerator
+    let readback: wgpu::Buffer = accelerator
         .wgpu_device()
         .create_buffer(&wgpu::BufferDescriptor {
             label: Some("chemistry amount readback"),
@@ -67,7 +70,7 @@ pub(crate) fn read_amount(accelerator: &Accelerator, buffer: &AcceleratorBuffer,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-    let mut encoder = accelerator
+    let mut encoder: wgpu::CommandEncoder = accelerator
         .wgpu_device()
         .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
     encoder.copy_buffer_to_buffer(buffer.wgpu_buffer(), u64::from(slot) * 4, &readback, 0, 4);
@@ -86,7 +89,7 @@ pub(crate) fn read_amount(accelerator: &Accelerator, buffer: &AcceleratorBuffer,
         }
         std::thread::yield_now();
     }
-    let bytes = readback.slice(..).get_mapped_range().unwrap();
+    let bytes: wgpu::BufferView = readback.slice(..).get_mapped_range().unwrap();
     f32::from_le_bytes(bytes[..4].try_into().unwrap())
 }
 
@@ -95,7 +98,7 @@ pub(crate) fn read_fluid_state(
     scene: &Scene,
     slot: u32,
 ) -> (u32, u32, f32) {
-    let readback = accelerator
+    let readback: wgpu::Buffer = accelerator
         .wgpu_device()
         .create_buffer(&wgpu::BufferDescriptor {
             label: Some("chemistry fluid state readback"),
@@ -103,7 +106,7 @@ pub(crate) fn read_fluid_state(
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-    let mut encoder = accelerator
+    let mut encoder: wgpu::CommandEncoder = accelerator
         .wgpu_device()
         .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
     encoder.copy_buffer_to_buffer(
@@ -128,7 +131,7 @@ pub(crate) fn read_fluid_state(
         }
         std::thread::yield_now();
     }
-    let bytes = readback.slice(..).get_mapped_range().unwrap();
+    let bytes: wgpu::BufferView = readback.slice(..).get_mapped_range().unwrap();
     (
         u32::from_le_bytes(bytes[..4].try_into().unwrap()),
         u32::from_le_bytes(bytes[4..8].try_into().unwrap()),

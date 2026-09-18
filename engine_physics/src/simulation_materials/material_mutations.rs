@@ -1,7 +1,10 @@
 // Copyright Rob Gage 2026
 
-use crate::materials::{Material, MaterialRegistry};
-use engine_compute::{Accelerator, AcceleratorBuffer};
+use engine_compute::Accelerator;
+use engine_compute::AcceleratorBuffer;
+
+use crate::materials::Material;
+use crate::materials::MaterialRegistry;
 
 /// Accelerator-resident replacements requested by simulation passes.  The queue is deliberately
 /// source-form agnostic so future chemistry may consume fluid and gas as well as cells.
@@ -10,7 +13,7 @@ pub struct MaterialMutations {
     request_count: AcceleratorBuffer,
     gas_fluid_candidates: AcceleratorBuffer,
     _static_defaults: AcceleratorBuffer,
-    parameters: wgpu::Buffer,
+    material_mutation_parameters: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     prepare_indirect_bind_group: wgpu::BindGroup,
     resolve_pipeline: wgpu::ComputePipeline,
@@ -34,7 +37,7 @@ impl MaterialMutations {
         fluid_edit_amounts: &AcceleratorBuffer,
         fluid_edit_temperatures: &AcceleratorBuffer,
         fluid_edits_pending: &AcceleratorBuffer,
-        gas_velocity: &AcceleratorBuffer,
+        _gas_velocity: &AcceleratorBuffer,
         gas_concentrations: &AcceleratorBuffer,
         gas_temperatures: &AcceleratorBuffer,
         particles: &AcceleratorBuffer,
@@ -43,17 +46,17 @@ impl MaterialMutations {
         buffered_cell_count: usize,
         gas_count: u32,
     ) -> Self {
-        let device = accelerator.wgpu_device();
+        let device: &wgpu::Device = accelerator.wgpu_device();
         // nine words retain the old cell replacement prefix and add an exact authority locator.
-        let requests =
+        let requests: AcceleratorBuffer =
             accelerator.allocate::<[u32; 9]>(buffered_cell_count * (2 + gas_count as usize));
-        let request_count = accelerator.allocate::<u32>(1);
+        let request_count: AcceleratorBuffer = accelerator.allocate::<u32>(1);
         accelerator
             .wgpu_queue()
             .write_buffer(request_count.wgpu_buffer(), 0, &0u32.to_le_bytes());
         // two branches (cold/hot), one dense slot per gas cell.  This is transient,
         // overwritten by phase_gases every tick, so it needs no clear pass.
-        let gas_fluid_candidates =
+        let gas_fluid_candidates: AcceleratorBuffer =
             accelerator.allocate::<[u32; 6]>((buffered_cell_count * gas_count as usize * 2).max(1));
         let defaults: Vec<u32> = materials
             .iter()
@@ -64,7 +67,7 @@ impl MaterialMutations {
                 _ => None,
             })
             .collect();
-        let static_defaults = accelerator.allocate::<u32>(defaults.len().max(1));
+        let static_defaults: AcceleratorBuffer = accelerator.allocate::<u32>(defaults.len().max(1));
         if !defaults.is_empty() {
             accelerator.wgpu_queue().write_buffer(
                 static_defaults.wgpu_buffer(),
@@ -75,44 +78,47 @@ impl MaterialMutations {
                     .collect::<Vec<_>>(),
             );
         }
-        let parameters = crate::simulation::create_simulation_uniform_buffer(
-            device,
-            "material mutation parameters",
-            16,
-        );
-        let indirect = device.create_buffer(&wgpu::BufferDescriptor {
+        let material_mutation_parameters: wgpu::Buffer =
+            crate::simulation::create_simulation_uniform_buffer(
+                device,
+                "material mutation parameters",
+                16,
+            );
+        let indirect: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("material mutation indirect"),
             size: 12,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
             mapped_at_creation: false,
         });
-        let storage = crate::simulation::storage_bind_group_layout_entry;
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("material mutation layout"),
-            entries: &[
-                storage(0, true),
-                storage(1, true),
-                storage(2, false),
-                storage(3, false),
-                storage(4, true),
-                storage(5, false),
-                storage(6, false),
-                storage(7, false),
-                storage(8, false),
-                storage(10, false),
-                storage(11, false),
-                storage(12, false),
-                storage(13, false),
-                storage(14, false),
-                storage(15, false),
-                storage(16, false),
-                storage(17, false),
-                storage(18, false),
-                storage(19, false),
-                crate::simulation::uniform_bind_group_layout_entry(9),
-            ],
-        });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let storage: fn(u32, bool) -> wgpu::BindGroupLayoutEntry =
+            crate::simulation::storage_bind_group_layout_entry;
+        let layout: wgpu::BindGroupLayout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("material mutation layout"),
+                entries: &[
+                    storage(0, true),
+                    storage(1, true),
+                    storage(2, false),
+                    storage(3, false),
+                    storage(4, true),
+                    storage(5, false),
+                    storage(6, false),
+                    storage(7, false),
+                    storage(8, false),
+                    storage(10, false),
+                    storage(11, false),
+                    storage(12, false),
+                    storage(13, false),
+                    storage(14, false),
+                    storage(15, false),
+                    storage(16, false),
+                    storage(17, false),
+                    storage(18, false),
+                    storage(19, false),
+                    crate::simulation::uniform_bind_group_layout_entry(9),
+                ],
+            });
+        let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("material mutations"),
             layout: &layout,
             entries: &[
@@ -137,71 +143,75 @@ impl MaterialMutations {
                 crate::simulation::accelerator_buffer_bind_group_entry(19, &gas_fluid_candidates),
                 wgpu::BindGroupEntry {
                     binding: 9,
-                    resource: parameters.as_entire_binding(),
+                    resource: material_mutation_parameters.as_entire_binding(),
                 },
             ],
         });
-        let shader = crate::simulation::create_simulation_shader_module(
+        let shader: wgpu::ShaderModule = crate::simulation::create_simulation_shader_module(
             device,
             "material mutation shader",
             include_str!("material_mutations.wgsl"),
             "engine_physics/src/simulation_materials/material_mutations.wgsl",
         );
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("material mutations"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
-        let prepare_indirect_layout =
+        let pipeline_layout: wgpu::PipelineLayout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("material mutations"),
+                bind_group_layouts: &[Some(&layout)],
+                immediate_size: 0,
+            });
+        let prepare_indirect_layout: wgpu::BindGroupLayout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("material mutation indirect preparation layout"),
                 entries: &[storage(0, false)],
             });
-        let prepare_indirect_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("material mutation indirect preparation"),
-            layout: &prepare_indirect_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: indirect.as_entire_binding(),
-            }],
-        });
-        let prepare_pipeline_layout =
+        let prepare_indirect_bind_group: wgpu::BindGroup =
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("material mutation indirect preparation"),
+                layout: &prepare_indirect_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: indirect.as_entire_binding(),
+                }],
+            });
+        let prepare_pipeline_layout: wgpu::PipelineLayout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("material mutation preparation"),
                 bind_group_layouts: &[Some(&layout), Some(&prepare_indirect_layout)],
                 immediate_size: 0,
             });
-        let resolve_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("resolve material mutations"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: Some("resolve_material_mutations_nonallocating"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
-        let allocate_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("aggregate gas fluid condensation"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: Some("resolve_gas_fluid_condensation"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
-        let prepare_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("prepare material mutation dispatch"),
-            layout: Some(&prepare_pipeline_layout),
-            module: &shader,
-            entry_point: Some("prepare_material_mutation_dispatch"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
-        let _ = gas_velocity;
+        let resolve_pipeline: wgpu::ComputePipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("resolve material mutations"),
+                layout: Some(&pipeline_layout),
+                module: &shader,
+                entry_point: Some("resolve_material_mutations_nonallocating"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+        let allocate_pipeline: wgpu::ComputePipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("aggregate gas fluid condensation"),
+                layout: Some(&pipeline_layout),
+                module: &shader,
+                entry_point: Some("resolve_gas_fluid_condensation"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+        let prepare_pipeline: wgpu::ComputePipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("prepare material mutation dispatch"),
+                layout: Some(&prepare_pipeline_layout),
+                module: &shader,
+                entry_point: Some("prepare_material_mutation_dispatch"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
         Self {
             requests,
             request_count,
             gas_fluid_candidates,
             _static_defaults: static_defaults,
-            parameters,
+            material_mutation_parameters,
             bind_group,
             prepare_indirect_bind_group,
             resolve_pipeline,
@@ -229,7 +239,7 @@ impl MaterialMutations {
         buffered_cell_count: u32,
         gas_count: u32,
     ) {
-        let mut encoder =
+        let mut encoder: wgpu::CommandEncoder =
             accelerator
                 .wgpu_device()
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -246,7 +256,7 @@ impl MaterialMutations {
         gas_count: u32,
     ) {
         accelerator.wgpu_queue().write_buffer(
-            &self.parameters,
+            &self.material_mutation_parameters,
             0,
             &[
                 buffered_cell_count.to_le_bytes(),
@@ -257,18 +267,23 @@ impl MaterialMutations {
             .concat(),
         );
         {
-            let mut pass =
+            let mut material_mutation_compute_pass: wgpu::ComputePass<'_> =
                 accelerator.begin_compute_pass(encoder, "prepare material mutation dispatch");
-            pass.set_pipeline(&self.prepare_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.set_bind_group(1, &self.prepare_indirect_bind_group, &[]);
-            pass.dispatch_workgroups(1, 1, 1);
+            material_mutation_compute_pass.set_pipeline(&self.prepare_pipeline);
+            material_mutation_compute_pass.set_bind_group(0, &self.bind_group, &[]);
+            material_mutation_compute_pass.set_bind_group(
+                1,
+                &self.prepare_indirect_bind_group,
+                &[],
+            );
+            material_mutation_compute_pass.dispatch_workgroups(1, 1, 1);
         }
         {
-            let mut pass = accelerator.begin_compute_pass(encoder, "resolve material mutations");
-            pass.set_pipeline(&self.resolve_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.dispatch_workgroups_indirect(&self.indirect, 0);
+            let mut material_mutation_compute_pass: wgpu::ComputePass<'_> =
+                accelerator.begin_compute_pass(encoder, "resolve material mutations");
+            material_mutation_compute_pass.set_pipeline(&self.resolve_pipeline);
+            material_mutation_compute_pass.set_bind_group(0, &self.bind_group, &[]);
+            material_mutation_compute_pass.dispatch_workgroups_indirect(&self.indirect, 0);
         }
         encoder.clear_buffer(self.request_count.wgpu_buffer(), 0, None);
     }
@@ -280,11 +295,15 @@ impl MaterialMutations {
         gas_count: u32,
     ) {
         {
-            let mut pass =
+            let mut material_mutation_compute_pass: wgpu::ComputePass<'_> =
                 accelerator.begin_compute_pass(encoder, "aggregate gas fluid condensation");
-            pass.set_pipeline(&self.allocate_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.dispatch_workgroups(buffered_cell_count.div_ceil(64), gas_count, 2);
+            material_mutation_compute_pass.set_pipeline(&self.allocate_pipeline);
+            material_mutation_compute_pass.set_bind_group(0, &self.bind_group, &[]);
+            material_mutation_compute_pass.dispatch_workgroups(
+                buffered_cell_count.div_ceil(64),
+                gas_count,
+                2,
+            );
         }
     }
 }

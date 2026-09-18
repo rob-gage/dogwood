@@ -89,35 +89,35 @@ struct RigidCell {
 @group(0) @binding(12) var<storage, read> claim_counts: array<u32>;
 @group(0) @binding(13) var<storage, read_write> rigid_temperature_sum: array<atomic<u32>>;
 @group(0) @binding(14) var<storage, read> occupancy: array<u32>;
-@group(0) @binding(15) var<uniform> parameters: ThermalScatterParameters;
+@group(0) @binding(15) var<uniform> thermal_scatter_parameters: ThermalScatterParameters;
 
 fn cell_index(world: vec2<i32>) -> u32 {
     return
         physical_cell_index_from_world_cell(
             world,
-            parameters.origin,
-            parameters.tiles,
-            parameters.ring,
+            thermal_scatter_parameters.origin,
+            thermal_scatter_parameters.tiles,
+            thermal_scatter_parameters.ring,
         );
 }
 
 fn physical_index_from_logical(logical: u32) -> u32 {
     let world =
-        world_cell_from_logical_tile_major_index(logical, parameters.origin, parameters.tiles);
+        world_cell_from_logical_tile_major_index(logical, thermal_scatter_parameters.origin, thermal_scatter_parameters.tiles);
     return
         physical_cell_index_from_world_cell(
             world,
-            parameters.origin,
-            parameters.tiles,
-            parameters.ring,
+            thermal_scatter_parameters.origin,
+            thermal_scatter_parameters.tiles,
+            thermal_scatter_parameters.ring,
         );
 }
 
-fn atomic_add_f32(index: u32, v: f32) {
-    var old = atomicLoad(&rigid_temperature_sum[index]);
+fn atomic_add_f32(thermal_rigid_cell_index: u32, v: f32) {
+    var old = atomicLoad(&rigid_temperature_sum[thermal_rigid_cell_index]);
     loop {
         let next = bitcast<u32>(bitcast<f32>(old) + v);
-        let r = atomicCompareExchangeWeak(&rigid_temperature_sum[index], old, next);
+        let r = atomicCompareExchangeWeak(&rigid_temperature_sum[thermal_rigid_cell_index], old, next);
         if (r.exchanged) {
             break;
         }
@@ -128,11 +128,11 @@ fn atomic_add_f32(index: u32, v: f32) {
 @compute @workgroup_size(64)
 fn scatter_cellular_gas(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let logical = invocation.x;
-    if (logical >= parameters.cell_count) {
+    if (logical >= thermal_scatter_parameters.cell_count) {
         return;
     }
     let i = physical_index_from_logical(logical);
-    if (i == INVALID_PHYSICAL_CELL_INDEX || i >= parameters.cell_count) {
+    if (i == INVALID_PHYSICAL_CELL_INDEX || i >= thermal_scatter_parameters.cell_count) {
         return;
     }
     let s = solved[i].w;
@@ -140,8 +140,8 @@ fn scatter_cellular_gas(@builtin(global_invocation_id) invocation: vec3<u32>) {
         cellular_temperatures[i] = max(s, 0.0);
     }
     var gas = 0.0;
-    for (var n: u32 = 0u; n < parameters.gas_count; n++) {
-        gas += max(gas_concentrations[n * parameters.cell_count + i], 0.0);
+    for (var n: u32 = 0u; n < thermal_scatter_parameters.gas_count; n++) {
+        gas += max(gas_concentrations[n * thermal_scatter_parameters.cell_count + i], 0.0);
     }
     let claim = rigid_claims[i];
     let blocked =
@@ -151,7 +151,7 @@ fn scatter_cellular_gas(@builtin(global_invocation_id) invocation: vec3<u32>) {
             || occupancy[i] == 3u;
     let available = select(1.0 - clamp(fluid_coverage[i], 0.0, 1.0), 0.0, blocked);
     let air = clamp(available - gas, 0.0, 1.0);
-    if (gas > 0.000001 || air * parameters.empty_space_heat_capacity > 0.000001) {
+    if (gas > 0.000001 || air * thermal_scatter_parameters.empty_space_heat_capacity > 0.000001) {
         gas_temperatures[i] = max(s, 0.0);
     }
 }
@@ -160,7 +160,7 @@ fn scatter_cellular_gas(@builtin(global_invocation_id) invocation: vec3<u32>) {
 fn scatter_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let i = invocation.x;
     if
-        (i >= parameters.particle_capacity
+        (i >= thermal_scatter_parameters.particle_capacity
             || particles[i].is_active == 0u
             || particles[i].material_identifier == 0u
             || particles[i].amount <= 0.000001)
@@ -169,14 +169,14 @@ fn scatter_fluid_particles(@builtin(global_invocation_id) invocation: vec3<u32>)
     }
     let p = particles[i];
     let idx = cell_index(fluid_particle_world_cell(p.position, CELLS_PER_TILE_FLOAT));
-    if (idx != INVALID_PHYSICAL_CELL_INDEX && idx < parameters.cell_count) {
+    if (idx != INVALID_PHYSICAL_CELL_INDEX && idx < thermal_scatter_parameters.cell_count) {
         particles[i].temperature = max(solved[idx].w, 0.0);
     }
 }
 
 @compute @workgroup_size(64)
 fn clear_rigid_temperature_sums(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    if (invocation.x < parameters.rigid_capacity) {
+    if (invocation.x < thermal_scatter_parameters.rigid_capacity) {
         atomicStore(&rigid_temperature_sum[invocation.x], bitcast<u32>(0.0));
     }
 }
@@ -184,11 +184,11 @@ fn clear_rigid_temperature_sums(@builtin(global_invocation_id) invocation: vec3<
 @compute @workgroup_size(64)
 fn accumulate_rigid_temperature_sums(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let logical = invocation.x;
-    if (logical >= parameters.cell_count) {
+    if (logical >= thermal_scatter_parameters.cell_count) {
         return;
     }
     let i = physical_index_from_logical(logical);
-    if (i == INVALID_PHYSICAL_CELL_INDEX || i >= parameters.cell_count) {
+    if (i == INVALID_PHYSICAL_CELL_INDEX || i >= thermal_scatter_parameters.cell_count) {
         return;
     }
     let claim = rigid_claims[i];
@@ -197,7 +197,7 @@ fn accumulate_rigid_temperature_sums(@builtin(global_invocation_id) invocation: 
     }
     let slot = rigid_cells[claim].state_slot;
     if
-        (slot >= parameters.rigid_capacity
+        (slot >= thermal_scatter_parameters.rigid_capacity
             || claim_counts[slot] == 0u
             || rigid_amounts[slot] <= 0.000001)
     {
@@ -209,7 +209,7 @@ fn accumulate_rigid_temperature_sums(@builtin(global_invocation_id) invocation: 
 @compute @workgroup_size(64)
 fn apply_rigid_temperatures(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let i = invocation.x;
-    if (i >= parameters.rigid_capacity) {
+    if (i >= thermal_scatter_parameters.rigid_capacity) {
         return;
     }
     let c = claim_counts[i];

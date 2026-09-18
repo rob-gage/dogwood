@@ -9,8 +9,11 @@ mod scene_data_dormant_rigid;
 mod scene_data_dormant_rigid_cell;
 mod scene_data_store;
 
-pub(crate) use scene_data_dormant_rigid::{
-    SceneDormantRigidBody, append_record, intersects_area, owner_chunk, remove_ids, world_aabb,
-};
+pub(crate) use scene_data_dormant_rigid::SceneDormantRigidBody;
+pub(crate) use scene_data_dormant_rigid::append_record;
+pub(crate) use scene_data_dormant_rigid::intersects_area;
+pub(crate) use scene_data_dormant_rigid::owner_chunk;
+pub(crate) use scene_data_dormant_rigid::remove_ids;
+pub(crate) use scene_data_dormant_rigid::world_aabb;
 pub(crate) use scene_data_dormant_rigid_cell::SceneDormantRigidCell;
 pub use scene_data_store::SceneData;

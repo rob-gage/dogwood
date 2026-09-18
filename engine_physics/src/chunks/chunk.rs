@@ -1,11 +1,14 @@
 // Copyright Rob Gage 2026
 
-use super::{ChunkFluidParticle, ChunkGasCell};
-use crate::{
-    materials::MaterialIdentifier,
-    tiles::{CellularAppearance, TileArea, TileCoordinates, TileData},
-};
 use std::io;
+
+use super::ChunkFluidParticle;
+use super::ChunkGasCell;
+use crate::materials::MaterialIdentifier;
+use crate::tiles::CellularAppearance;
+use crate::tiles::TileArea;
+use crate::tiles::TileCoordinates;
+use crate::tiles::TileData;
 
 /// Authoritative storage for an inactive 64-by-64-tile region of a `Scene`.
 pub struct Chunk {
@@ -86,17 +89,17 @@ impl Chunk {
         }
         let mut count_data: [u8; 4] = [0; 4];
         reader.read_exact(&mut count_data)?;
-        let count: usize = u32::from_le_bytes(count_data) as usize;
+        let dormant_fluid_particle_count: usize = u32::from_le_bytes(count_data) as usize;
         let mut dormant_fluid_particles: Vec<ChunkFluidParticle> = Vec::new();
         dormant_fluid_particles
-            .try_reserve_exact(count)
+            .try_reserve_exact(dormant_fluid_particle_count)
             .map_err(|_| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
                     "Dormant fluid particle count is too large",
                 )
             })?;
-        for _ in 0..count {
+        for _ in 0..dormant_fluid_particle_count {
             let particle: ChunkFluidParticle = if legacy || v2 {
                 ChunkFluidParticle::deserialize_legacy(reader)?
             } else {
@@ -124,15 +127,17 @@ impl Chunk {
             return Err(io::ErrorKind::InvalidData.into());
         }
         reader.read_exact(&mut count_data)?;
-        let count: usize = u32::from_le_bytes(count_data) as usize;
+        let dormant_gas_cell_count: usize = u32::from_le_bytes(count_data) as usize;
         let mut dormant_gas_cells: Vec<ChunkGasCell> = Vec::new();
-        dormant_gas_cells.try_reserve_exact(count).map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Dormant gas cell count is too large",
-            )
-        })?;
-        for _ in 0..count {
+        dormant_gas_cells
+            .try_reserve_exact(dormant_gas_cell_count)
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Dormant gas cell count is too large",
+                )
+            })?;
+        for _ in 0..dormant_gas_cell_count {
             let cell: ChunkGasCell = if legacy || v2 {
                 ChunkGasCell::deserialize_legacy(reader)?
             } else {
@@ -163,21 +168,23 @@ impl Chunk {
             tile.serialize(writer)?;
         }
         writer.write_all(b"fluid___")?;
-        let count: u32 = self.dormant_fluid_particles.len().try_into().map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Too many dormant fluid particles",
-            )
-        })?;
-        writer.write_all(&count.to_le_bytes())?;
+        let dormant_fluid_particle_count: u32 =
+            self.dormant_fluid_particles.len().try_into().map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Too many dormant fluid particles",
+                )
+            })?;
+        writer.write_all(&dormant_fluid_particle_count.to_le_bytes())?;
         for particle in &self.dormant_fluid_particles {
             particle.serialize(writer)?;
         }
         writer.write_all(b"gas_____")?;
-        let count: u32 = self.dormant_gas_cells.len().try_into().map_err(|_| {
-            io::Error::new(io::ErrorKind::InvalidData, "Too many dormant gas cells")
-        })?;
-        writer.write_all(&count.to_le_bytes())?;
+        let dormant_gas_cell_count: u32 =
+            self.dormant_gas_cells.len().try_into().map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "Too many dormant gas cells")
+            })?;
+        writer.write_all(&dormant_gas_cell_count.to_le_bytes())?;
         for cell in &self.dormant_gas_cells {
             cell.serialize(writer)?;
         }
@@ -277,12 +284,17 @@ impl Chunk {
     pub fn take_dormant_fluid_particles(&mut self, area: TileArea) -> Vec<ChunkFluidParticle> {
         // ponytail: linear sparse scan; index by local tile if dormant chunk density becomes costly
         let mut particles: Vec<ChunkFluidParticle> = Vec::new();
-        let mut index: usize = 0;
-        while index < self.dormant_fluid_particles.len() {
-            if area.contains(self.dormant_fluid_particles[index].tile_coordinates()) {
-                particles.push(self.dormant_fluid_particles.swap_remove(index));
+        let mut dormant_fluid_particle_index: usize = 0;
+        while dormant_fluid_particle_index < self.dormant_fluid_particles.len() {
+            if area.contains(
+                self.dormant_fluid_particles[dormant_fluid_particle_index].tile_coordinates(),
+            ) {
+                particles.push(
+                    self.dormant_fluid_particles
+                        .swap_remove(dormant_fluid_particle_index),
+                );
             } else {
-                index += 1;
+                dormant_fluid_particle_index += 1;
             }
         }
         particles
@@ -303,16 +315,17 @@ impl Chunk {
     /// Removes and returns dormant gas cells belonging to an area
     pub fn take_dormant_gas_cells(&mut self, area: TileArea) -> Vec<ChunkGasCell> {
         // ponytail: linear sparse scan; index by local tile if dormant gas density becomes costly
-        let mut cells: Vec<ChunkGasCell> = Vec::new();
-        let mut index: usize = 0;
-        while index < self.dormant_gas_cells.len() {
-            if area.contains(self.dormant_gas_cells[index].tile_coordinates()) {
-                cells.push(self.dormant_gas_cells.swap_remove(index));
+        let mut dormant_gas_cells_in_area: Vec<ChunkGasCell> = Vec::new();
+        let mut dormant_gas_cell_index: usize = 0;
+        while dormant_gas_cell_index < self.dormant_gas_cells.len() {
+            if area.contains(self.dormant_gas_cells[dormant_gas_cell_index].tile_coordinates()) {
+                dormant_gas_cells_in_area
+                    .push(self.dormant_gas_cells.swap_remove(dormant_gas_cell_index));
             } else {
-                index += 1;
+                dormant_gas_cell_index += 1;
             }
         }
-        cells
+        dormant_gas_cells_in_area
     }
 
     /// Adds one authoritative dormant gas cell to this chunk

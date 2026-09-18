@@ -1,6 +1,7 @@
 // Copyright Rob Gage 2026
 
-use super::{Material, MaterialRegistry};
+use super::Material;
+use super::MaterialRegistry;
 
 impl MaterialRegistry {
     /// Returns whether all simulation properties of a material are valid

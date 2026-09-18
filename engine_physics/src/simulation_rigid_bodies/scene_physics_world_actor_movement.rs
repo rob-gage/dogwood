@@ -1,6 +1,16 @@
 // Copyright Rob Gage 2026
 
-use super::*;
+#[cfg(debug_assertions)]
+use std::time::Instant;
+
+use rapier2d::parry::query::ShapeCastOptions;
+use rapier2d::prelude::Pose;
+use rapier2d::prelude::QueryFilter;
+use rapier2d::prelude::SharedShape;
+use rapier2d::prelude::Vector;
+
+use super::ScenePhysicsWorld;
+use crate::actors::ActorCollisionShape;
 
 impl ScenePhysicsWorld {
     /// Resolves authoritative actor motion through Rapier terrain and rigid-body queries.

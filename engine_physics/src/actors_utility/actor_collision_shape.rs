@@ -1,6 +1,8 @@
 // Copyright Rob Gage 2026
 
-use rapier2d::prelude::{Pose, SharedShape, Vector};
+use rapier2d::prelude::Pose;
+use rapier2d::prelude::SharedShape;
+use rapier2d::prelude::Vector;
 
 /// Selects the gravity-relative primitive collision geometry of an actor pawn
 #[derive(Copy, Clone, PartialEq)]

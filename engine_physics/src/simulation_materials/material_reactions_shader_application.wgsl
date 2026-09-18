@@ -1,7 +1,7 @@
 @compute @workgroup_size(64)
 fn apply_canonical(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let cell = invocation.x;
-    if (cell >= parameters.cell_count || cell >= arrayLength(&candidates)) {
+    if (cell >= material_reaction_parameters.cell_count || cell >= arrayLength(&candidates)) {
         return;
     }
     let candidate = candidates[cell];
@@ -164,7 +164,7 @@ fn apply_canonical(@builtin(global_invocation_id) invocation: vec3<u32>) {
     }
     if (first_present && source0_form == GAS_MATERIAL_FORM) {
         let gas_index =
-            material_index_from_identifier(source0.material) * parameters.cell_count + source0.cell;
+            material_index_from_identifier(source0.material) * material_reaction_parameters.cell_count + source0.cell;
         let demand =
             coefficient0 * candidate.extent + select(
                 0.0,
@@ -184,7 +184,7 @@ fn apply_canonical(@builtin(global_invocation_id) invocation: vec3<u32>) {
                 && source1.cell == source0.cell))
     {
         let gas_index =
-            material_index_from_identifier(source1.material) * parameters.cell_count + source1.cell;
+            material_index_from_identifier(source1.material) * material_reaction_parameters.cell_count + source1.cell;
         gas_concentrations[gas_index] =
             max(gas_concentrations[gas_index] - coefficient1 * candidate.extent, 0.0);
     }
@@ -222,9 +222,9 @@ fn apply_canonical(@builtin(global_invocation_id) invocation: vec3<u32>) {
         let replacement = rule.words[base];
         if (material_form_from_identifier(replacement) == GAS_MATERIAL_FORM) {
             let species = material_index_from_identifier(replacement);
-            if (species < parameters.gas_count) {
+            if (species < material_reaction_parameters.gas_count) {
                 let output_cell = select(cell, source1.cell, remaining > 0.00001 && source1.found);
-                gas_concentrations[species * parameters.cell_count + output_cell] +=
+                gas_concentrations[species * material_reaction_parameters.cell_count + output_cell] +=
                     bitcast<f32>(rule.words[base + 1u]) * candidate.extent;
             }
         }
@@ -259,7 +259,7 @@ fn environment_matches(rule: Reaction, cell: u32, source0: Source, air: f32) -> 
 @compute @workgroup_size(64)
 fn discover_canonical(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let cell = invocation.x;
-    if (cell >= parameters.cell_count || cell >= arrayLength(&candidates)) {
+    if (cell >= material_reaction_parameters.cell_count || cell >= arrayLength(&candidates)) {
         return;
     }
     candidates[cell] =
@@ -298,7 +298,7 @@ fn discover_canonical(@builtin(global_invocation_id) invocation: vec3<u32>) {
     var winner_order = 0xffffffffu;
     for (
         var reaction_index = 0u;
-        reaction_index < parameters.reaction_count && reaction_index < arrayLength(&reactions);
+        reaction_index < material_reaction_parameters.reaction_count && reaction_index < arrayLength(&reactions);
         reaction_index += 1u
     ) {
         let rule = reactions[reaction_index];

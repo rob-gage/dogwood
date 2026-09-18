@@ -1,7 +1,7 @@
 // Projects a fluid particle out of cellular or hard-body geometry
 fn project_fluid_particle_out_of_cellular_collision(initial_position: vec2<f32>) -> vec2<f32> {
     var position: vec2<f32> = initial_position;
-    let radius: f32 = parameters.particle_radius_cells / CELLS_PER_TILE_FLOAT;
+    let radius: f32 = fluid_simulation_parameters.particle_radius_cells / CELLS_PER_TILE_FLOAT;
     for (var iteration: u32 = 0u; iteration < 2u; iteration++) {
         let center_cell: vec2<i32> = vec2<i32>(floor(position * CELLS_PER_TILE_FLOAT));
         var resolved: bool = false;

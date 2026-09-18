@@ -1,6 +1,7 @@
 // Copyright Rob Gage 2026
 
-use crate::scenes::{ScenePosition, SceneVelocity};
+use crate::scenes::ScenePosition;
+use crate::scenes::SceneVelocity;
 
 /// Integrates an actor's continuous velocity and normalizes its tile-relative position
 pub(super) fn integrate_actor_position(

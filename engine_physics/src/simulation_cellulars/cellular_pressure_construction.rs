@@ -1,6 +1,20 @@
 // Copyright Rob Gage 2026
 
-use super::*;
+use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::sync::Mutex;
+
+use engine_compute::Accelerator;
+use engine_compute::AcceleratorBuffer;
+
+use super::CellularPressure;
+use crate::materials::Material;
+use crate::materials::MaterialIdentifier;
+use crate::materials::MaterialRegistry;
+use crate::simulation::RigidGranularReadbackSlot;
+use crate::simulation::RigidGranularReadbackStatus;
+use crate::simulation::simulation_constants::INITIAL_RIGID_BODY_CAPACITY;
+use crate::simulation::simulation_constants::RIGID_REACTION_READBACK_SLOT_COUNT;
 
 impl CellularPressure {
     /// Creates pressure fields, material tables, and compute pipelines for a scene
@@ -150,7 +164,7 @@ impl CellularPressure {
             accelerator.allocate::<u32>(buffered_cell_count as usize);
         let rigid_fractures: AcceleratorBuffer =
             accelerator.allocate::<u32>((buffered_cell_count as usize).div_ceil(32));
-        let rigid_damage_dispatch = device.create_buffer(&wgpu::BufferDescriptor {
+        let rigid_damage_dispatch: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("rigid pressure damage indirect dispatch"),
             size: 12,
             usage: wgpu::BufferUsages::STORAGE
@@ -158,7 +172,7 @@ impl CellularPressure {
                 | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let rigid_fracture_count = device.create_buffer(&wgpu::BufferDescriptor {
+        let rigid_fracture_count: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("rigid pressure fracture count"),
             size: 4,
             usage: wgpu::BufferUsages::STORAGE
@@ -166,12 +180,13 @@ impl CellularPressure {
                 | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let rigid_fracture_word_count = u64::from(buffered_cell_count).div_ceil(32);
-        let parameters = crate::simulation::create_simulation_uniform_buffer(
-            device,
-            "cellular pressure parameters",
-            96,
-        );
+        let rigid_fracture_word_count: u64 = u64::from(buffered_cell_count).div_ceil(32);
+        let cellular_pressure_parameters: wgpu::Buffer =
+            crate::simulation::create_simulation_uniform_buffer(
+                device,
+                "cellular pressure parameters",
+                96,
+            );
         let layout: wgpu::BindGroupLayout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("cellular pressure bind group layout"),
@@ -218,8 +233,8 @@ impl CellularPressure {
                 label: Some("cellular pressure indirect bind group layout"),
                 entries: &[Self::storage_layout_entry(0, false)],
             });
-        let rigid_damage_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let rigid_damage_bind_group_layout: wgpu::BindGroupLayout = device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("rigid pressure damage bind group layout"),
                 entries: &[Self::storage_layout_entry(1, false)],
             });
@@ -259,8 +274,12 @@ impl CellularPressure {
             (37, mutation_requests.wgpu_buffer().clone()),
             (38, mutation_request_count.wgpu_buffer().clone()),
         ];
-        let bind_group: wgpu::BindGroup =
-            Self::create_bind_group(device, &layout, &parameters, &bound_buffers);
+        let bind_group: wgpu::BindGroup = Self::create_bind_group(
+            device,
+            &layout,
+            &cellular_pressure_parameters,
+            &bound_buffers,
+        );
         let indirect_bind_group: wgpu::BindGroup =
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("cellular pressure indirect bind group"),
@@ -270,14 +289,15 @@ impl CellularPressure {
                     resource: indirect_dispatch.as_entire_binding(),
                 }],
             });
-        let rigid_damage_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("rigid pressure damage bind group"),
-            layout: &rigid_damage_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 1,
-                resource: rigid_damage_dispatch.as_entire_binding(),
-            }],
-        });
+        let rigid_damage_bind_group: wgpu::BindGroup =
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("rigid pressure damage bind group"),
+                layout: &rigid_damage_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: rigid_damage_dispatch.as_entire_binding(),
+                }],
+            });
         let shader: wgpu::ShaderModule = crate::simulation::create_simulation_shader_module(
             device,
             "cellular pressure shader",
@@ -306,7 +326,7 @@ impl CellularPressure {
                 bind_group_layouts: &[Some(&layout), Some(&indirect_bind_group_layout)],
                 immediate_size: 0,
             });
-        let rigid_damage_pipeline_layout =
+        let rigid_damage_pipeline_layout: wgpu::PipelineLayout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("rigid pressure damage pipeline layout"),
                 bind_group_layouts: &[Some(&layout), Some(&rigid_damage_bind_group_layout)],
@@ -350,7 +370,7 @@ impl CellularPressure {
             rigid_reaction_sequence_apply_next: 0,
             rigid_topology_revision: u64::MAX,
             rigid_fracture_word_count,
-            parameters,
+            cellular_pressure_parameters,
             bind_group,
             bind_group_layout: layout,
             bound_buffers,

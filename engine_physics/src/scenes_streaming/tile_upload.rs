@@ -1,8 +1,11 @@
 // Copyright Rob Gage 2026
 
+use std::io;
+use std::task::Waker;
+
 use crate::materials::MaterialIdentifier;
-use crate::tiles::{TileCoordinates, TileData};
-use std::{io, task::Waker};
+use crate::tiles::TileCoordinates;
+use crate::tiles::TileData;
 
 /// Tracks a nonblocking native-to-`Accelerator` tile upload
 pub struct TileUpload {
@@ -68,25 +71,29 @@ impl TileUpload {
         &mut self,
         initial_temperature: impl Fn(MaterialIdentifier) -> f32,
     ) {
-        for index in 0..64 {
-            let offset: usize = index * 4;
+        for tile_material_slot_index in 0..64 {
+            let tile_material_byte_offset: usize = tile_material_slot_index * 4;
             let identifier: MaterialIdentifier = MaterialIdentifier::from_u32(u32::from_le_bytes(
-                self.material_identifiers[offset..offset + 4]
+                self.material_identifiers[tile_material_byte_offset..tile_material_byte_offset + 4]
                     .try_into()
                     .unwrap(),
             ));
             if identifier == MaterialIdentifier::NULL {
-                self.amounts[offset..offset + 4].copy_from_slice(&0.0f32.to_bits().to_le_bytes());
-                self.temperatures[offset..offset + 4]
+                self.amounts[tile_material_byte_offset..tile_material_byte_offset + 4]
+                    .copy_from_slice(&0.0f32.to_bits().to_le_bytes());
+                self.temperatures[tile_material_byte_offset..tile_material_byte_offset + 4]
                     .copy_from_slice(&0.0f32.to_bits().to_le_bytes());
                 continue;
             }
             let temperature: f32 = f32::from_bits(u32::from_le_bytes(
-                self.temperatures[offset..offset + 4].try_into().unwrap(),
+                self.temperatures[tile_material_byte_offset..tile_material_byte_offset + 4]
+                    .try_into()
+                    .unwrap(),
             ));
             if !temperature.is_finite() {
-                self.amounts[offset..offset + 4].copy_from_slice(&1.0f32.to_bits().to_le_bytes());
-                self.temperatures[offset..offset + 4]
+                self.amounts[tile_material_byte_offset..tile_material_byte_offset + 4]
+                    .copy_from_slice(&1.0f32.to_bits().to_le_bytes());
+                self.temperatures[tile_material_byte_offset..tile_material_byte_offset + 4]
                     .copy_from_slice(&initial_temperature(identifier).to_bits().to_le_bytes());
             }
         }

@@ -1,12 +1,22 @@
 // Copyright Rob Gage 2026
 
-use super::*;
+use engine_compute::Accelerator;
+use engine_compute::AcceleratorBuffer;
+
+use super::MaterialReactions;
+use crate::materials::MaterialTable;
+use crate::simulation::simulation_constants::RIGID_REMOVAL_EVENT_SIZE;
+use crate::simulation::simulation_constants::RIGID_REMOVAL_EVENTS_OFFSET;
+use crate::simulation_fluids::FluidAuthorityView;
 
 impl MaterialReactions {
-    fn binding(binding: u32, buffer: &AcceleratorBuffer) -> wgpu::BindGroupEntry<'_> {
+    fn binding(
+        binding: u32,
+        material_reaction_buffer: &AcceleratorBuffer,
+    ) -> wgpu::BindGroupEntry<'_> {
         wgpu::BindGroupEntry {
             binding,
-            resource: buffer.wgpu_buffer().as_entire_binding(),
+            resource: material_reaction_buffer.wgpu_buffer().as_entire_binding(),
         }
     }
 
@@ -34,19 +44,21 @@ impl MaterialReactions {
         gas_count: u32,
         reaction_count: u32,
     ) -> Self {
-        let device = accelerator.wgpu_device();
-        let candidates = accelerator.allocate::<[u32; 32]>(cell_count as usize);
-        let sort_capacity = cell_count.max(1).next_power_of_two();
-        let candidate_indices = accelerator.allocate::<u32>(sort_capacity as usize);
-        let candidate_count = accelerator.allocate::<u32>(1);
+        let device: &wgpu::Device = accelerator.wgpu_device();
+        let candidates: AcceleratorBuffer = accelerator.allocate::<[u32; 32]>(cell_count as usize);
+        let sort_capacity: u32 = cell_count.max(1).next_power_of_two();
+        let candidate_indices: AcceleratorBuffer =
+            accelerator.allocate::<u32>(sort_capacity as usize);
+        let candidate_count: AcceleratorBuffer = accelerator.allocate::<u32>(1);
         let sort_step_values: Vec<[u32; 2]> = (1..=sort_capacity.trailing_zeros())
             .flat_map(|level| {
-                let k = 1u32 << level;
+                let k: u32 = 1u32 << level;
                 (0..level).rev().map(move |j| [k, 1u32 << j])
             })
             .collect();
-        let sort_steps = accelerator.allocate::<[u32; 2]>(sort_step_values.len().max(1));
-        let sort_indirect = device.create_buffer(&wgpu::BufferDescriptor {
+        let sort_steps: AcceleratorBuffer =
+            accelerator.allocate::<[u32; 2]>(sort_step_values.len().max(1));
+        let sort_indirect: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("chemistry sort indirect dispatch"),
             size: 12,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
@@ -62,22 +74,25 @@ impl MaterialReactions {
                     .collect::<Vec<_>>(),
             );
         }
-        let sort_parameters = crate::simulation::create_simulation_uniform_buffer(
+        let sort_parameters: wgpu::Buffer = crate::simulation::create_simulation_uniform_buffer(
             device,
             "chemistry sort parameters",
             8,
         );
-        let fluid_reservations =
+        let fluid_reservations: AcceleratorBuffer =
             accelerator.allocate::<u32>(fluid_authority.particle_capacity as usize);
-        let gas_reservations =
+        let gas_reservations: AcceleratorBuffer =
             accelerator.allocate::<u32>((cell_count * gas_count.max(1)) as usize);
-        let gas_output_reservations =
+        let gas_output_reservations: AcceleratorBuffer =
             accelerator.allocate::<u32>((cell_count * gas_count.max(1)) as usize);
-        let canonical_reservations = accelerator.allocate::<u32>(cell_count as usize);
-        let rigid_reservations = accelerator.allocate::<u32>(cell_count as usize);
-        let rigid_removal_events = accelerator.allocate::<[u32; 8]>(cell_count as usize);
-        let rigid_removal_count = accelerator.allocate::<u32>(1);
-        let rigid_removal_readback = device.create_buffer(&wgpu::BufferDescriptor {
+        let canonical_reservations: AcceleratorBuffer =
+            accelerator.allocate::<u32>(cell_count as usize);
+        let rigid_reservations: AcceleratorBuffer =
+            accelerator.allocate::<u32>(cell_count as usize);
+        let rigid_removal_events: AcceleratorBuffer =
+            accelerator.allocate::<[u32; 8]>(cell_count as usize);
+        let rigid_removal_count: AcceleratorBuffer = accelerator.allocate::<u32>(1);
+        let rigid_removal_readback: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("rigid chemistry removal readback"),
             size: RIGID_REMOVAL_EVENTS_OFFSET + u64::from(cell_count) * RIGID_REMOVAL_EVENT_SIZE,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
@@ -88,15 +103,16 @@ impl MaterialReactions {
             0,
             &0u32.to_le_bytes(),
         );
-        let fluid_reservation_owners =
+        let fluid_reservation_owners: AcceleratorBuffer =
             accelerator.allocate::<u32>(fluid_authority.particle_capacity as usize);
-        let parameters = crate::simulation::create_simulation_uniform_buffer(
-            device,
-            "material reaction parameters",
-            16,
-        );
+        let material_reaction_parameters: wgpu::Buffer =
+            crate::simulation::create_simulation_uniform_buffer(
+                device,
+                "material reaction parameters",
+                16,
+            );
         accelerator.wgpu_queue().write_buffer(
-            &parameters,
+            &material_reaction_parameters,
             0,
             &[
                 cell_count.to_le_bytes(),
@@ -106,49 +122,51 @@ impl MaterialReactions {
             ]
             .concat(),
         );
-        let storage = crate::simulation::storage_bind_group_layout_entry;
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("material reaction discovery layout"),
-            entries: &[
-                storage(0, true),
-                storage(1, true),
-                storage(2, true),
-                storage(3, false),
-                storage(4, true),
-                storage(5, true),
-                storage(6, true),
-                storage(7, false),
-                storage(8, true),
-                storage(9, true),
-                storage(10, false),
-                crate::simulation::uniform_bind_group_layout_entry(11),
-                storage(12, false),
-                storage(13, false),
-                storage(14, false),
-                storage(15, false),
-                storage(16, false),
-                storage(17, true),
-                storage(18, true),
-                crate::simulation::uniform_bind_group_layout_entry(19),
-                storage(20, false),
-                storage(21, false),
-                storage(22, false),
-                storage(23, false),
-                storage(24, false),
-                storage(25, false),
-                storage(26, false),
-                storage(27, true),
-                storage(28, false),
-                storage(29, false),
-                storage(30, false),
-                storage(31, false),
-                storage(32, false),
-                storage(33, false),
-                storage(37, true),
-                storage(38, true),
-            ],
-        });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let storage: fn(u32, bool) -> wgpu::BindGroupLayoutEntry =
+            crate::simulation::storage_bind_group_layout_entry;
+        let layout: wgpu::BindGroupLayout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("material reaction discovery layout"),
+                entries: &[
+                    storage(0, true),
+                    storage(1, true),
+                    storage(2, true),
+                    storage(3, false),
+                    storage(4, true),
+                    storage(5, true),
+                    storage(6, true),
+                    storage(7, false),
+                    storage(8, true),
+                    storage(9, true),
+                    storage(10, false),
+                    crate::simulation::uniform_bind_group_layout_entry(11),
+                    storage(12, false),
+                    storage(13, false),
+                    storage(14, false),
+                    storage(15, false),
+                    storage(16, false),
+                    storage(17, true),
+                    storage(18, true),
+                    crate::simulation::uniform_bind_group_layout_entry(19),
+                    storage(20, false),
+                    storage(21, false),
+                    storage(22, false),
+                    storage(23, false),
+                    storage(24, false),
+                    storage(25, false),
+                    storage(26, false),
+                    storage(27, true),
+                    storage(28, false),
+                    storage(29, false),
+                    storage(30, false),
+                    storage(31, false),
+                    storage(32, false),
+                    storage(33, false),
+                    storage(37, true),
+                    storage(38, true),
+                ],
+            });
+        let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("material reaction discovery"),
             layout: &layout,
             entries: &[
@@ -165,7 +183,7 @@ impl MaterialReactions {
                 Self::binding(10, &candidates),
                 wgpu::BindGroupEntry {
                     binding: 11,
-                    resource: parameters.as_entire_binding(),
+                    resource: material_reaction_parameters.as_entire_binding(),
                 },
                 Self::binding(12, mutation_requests),
                 Self::binding(13, mutation_request_count),
@@ -196,48 +214,51 @@ impl MaterialReactions {
                 Self::binding(38, rigid_temperatures),
             ],
         });
-        let prepare_sort_layout =
+        let prepare_sort_layout: wgpu::BindGroupLayout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("chemistry sort preparation layout"),
                 entries: &[storage(32, false), storage(33, false), storage(36, false)],
             });
-        let prepare_sort_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("chemistry sort preparation"),
-            layout: &prepare_sort_layout,
-            entries: &[
-                Self::binding(32, &candidate_indices),
-                Self::binding(33, &candidate_count),
-                wgpu::BindGroupEntry {
-                    binding: 36,
-                    resource: sort_indirect.as_entire_binding(),
-                },
-            ],
-        });
-        let sort_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("chemistry candidate sort layout"),
-            entries: &[
-                storage(0, true),
-                storage(10, false),
-                storage(32, false),
-                storage(33, false),
-                crate::simulation::uniform_bind_group_layout_entry(34),
-            ],
-        });
-        let sort_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("chemistry candidate sort"),
-            layout: &sort_layout,
-            entries: &[
-                Self::binding(0, table.records_buffer()),
-                Self::binding(10, &candidates),
-                Self::binding(32, &candidate_indices),
-                Self::binding(33, &candidate_count),
-                wgpu::BindGroupEntry {
-                    binding: 34,
-                    resource: sort_parameters.as_entire_binding(),
-                },
-            ],
-        });
-        let shader = crate::simulation::create_simulation_shader_module(
+        let prepare_sort_bind_group: wgpu::BindGroup =
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("chemistry sort preparation"),
+                layout: &prepare_sort_layout,
+                entries: &[
+                    Self::binding(32, &candidate_indices),
+                    Self::binding(33, &candidate_count),
+                    wgpu::BindGroupEntry {
+                        binding: 36,
+                        resource: sort_indirect.as_entire_binding(),
+                    },
+                ],
+            });
+        let sort_layout: wgpu::BindGroupLayout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("chemistry candidate sort layout"),
+                entries: &[
+                    storage(0, true),
+                    storage(10, false),
+                    storage(32, false),
+                    storage(33, false),
+                    crate::simulation::uniform_bind_group_layout_entry(34),
+                ],
+            });
+        let sort_bind_group: wgpu::BindGroup =
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("chemistry candidate sort"),
+                layout: &sort_layout,
+                entries: &[
+                    Self::binding(0, table.records_buffer()),
+                    Self::binding(10, &candidates),
+                    Self::binding(32, &candidate_indices),
+                    Self::binding(33, &candidate_count),
+                    wgpu::BindGroupEntry {
+                        binding: 34,
+                        resource: sort_parameters.as_entire_binding(),
+                    },
+                ],
+            });
+        let shader: wgpu::ShaderModule = crate::simulation::create_simulation_shader_module(
             device,
             "material reactions",
             concat!(
@@ -251,22 +272,24 @@ impl MaterialReactions {
             ),
             file!(),
         );
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("material reaction discovery pipeline layout"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
-        let pipeline = |entry_point, label| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(label),
-                layout: Some(&pipeline_layout),
-                module: &shader,
-                entry_point: Some(entry_point),
-                compilation_options: Default::default(),
-                cache: None,
-            })
-        };
-        let prepare_sort_pipeline =
+        let pipeline_layout: wgpu::PipelineLayout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("material reaction discovery pipeline layout"),
+                bind_group_layouts: &[Some(&layout)],
+                immediate_size: 0,
+            });
+        let pipeline: &dyn Fn(&'static str, &'static str) -> wgpu::ComputePipeline =
+            &|entry_point: &'static str, label: &'static str| -> wgpu::ComputePipeline {
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some(label),
+                    layout: Some(&pipeline_layout),
+                    module: &shader,
+                    entry_point: Some(entry_point),
+                    compilation_options: Default::default(),
+                    cache: None,
+                })
+            };
+        let prepare_sort_pipeline: wgpu::ComputePipeline =
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some("chemistry sort dispatch preparation pipeline"),
                 layout: Some(
@@ -281,20 +304,21 @@ impl MaterialReactions {
                 compilation_options: Default::default(),
                 cache: None,
             });
-        let sort_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("chemistry candidate sort pipeline"),
-            layout: Some(
-                &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("chemistry candidate sort pipeline layout"),
-                    bind_group_layouts: &[Some(&sort_layout)],
-                    immediate_size: 0,
-                }),
-            ),
-            module: &shader,
-            entry_point: Some("sort_candidates"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let sort_pipeline: wgpu::ComputePipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("chemistry candidate sort pipeline"),
+                layout: Some(
+                    &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: Some("chemistry candidate sort pipeline layout"),
+                        bind_group_layouts: &[Some(&sort_layout)],
+                        immediate_size: 0,
+                    }),
+                ),
+                module: &shader,
+                entry_point: Some("sort_candidates"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
         Self {
             candidates,
             candidate_indices,
@@ -315,7 +339,7 @@ impl MaterialReactions {
             rigid_removal_readback_result: None,
             fluid_reservation_owners,
             reaction_energy,
-            parameters,
+            material_reaction_parameters,
             bind_group,
             prepare_sort_bind_group,
             sort_bind_group,

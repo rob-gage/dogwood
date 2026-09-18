@@ -60,8 +60,8 @@ fn matches_selector(rule: Reaction, reactant: u32, material: u32) -> bool {
         return true;
     }
     let offset = rule.words[base];
-    let count = rule.words[base + 1u];
-    for (var i: u32 = 0u; i < count; i += 1u) {
+    let material_reaction_count = rule.words[base + 1u];
+    for (var i: u32 = 0u; i < material_reaction_count; i += 1u) {
         if
             (offset + i < arrayLength(
                 &selector_members,
@@ -117,9 +117,9 @@ fn rigid_source(cell: u32, reactant: u32, rule: Reaction) -> Source {
 }
 
 fn gas_source(cell: u32, reactant: u32, rule: Reaction) -> Source {
-    for (var species: u32 = 0u; species < parameters.gas_count; species += 1u) {
+    for (var species: u32 = 0u; species < material_reaction_parameters.gas_count; species += 1u) {
         let material = species + 1u;
-        let concentration = gas_concentrations[species * parameters.cell_count + cell];
+        let concentration = gas_concentrations[species * material_reaction_parameters.cell_count + cell];
         if (concentration > 0.000001 && matches_selector(rule, reactant, material)) {
             return Source(cell, material, concentration, true, 0xffffffffu);
         }
@@ -285,12 +285,12 @@ fn source_for(cell: u32, reactant: u32, rule: Reaction) -> Source {
 }
 
 fn local_air(cell: u32) -> f32 {
-    if (cell == INVALID_PHYSICAL_CELL_INDEX || cell >= parameters.cell_count) {
+    if (cell == INVALID_PHYSICAL_CELL_INDEX || cell >= material_reaction_parameters.cell_count) {
         return 1.0;
     }
     var gas = 0.0;
-    for (var species: u32 = 0u; species < parameters.gas_count; species += 1u) {
-        gas += max(gas_concentrations[species * parameters.cell_count + cell], 0.0);
+    for (var species: u32 = 0u; species < material_reaction_parameters.gas_count; species += 1u) {
+        gas += max(gas_concentrations[species * material_reaction_parameters.cell_count + cell], 0.0);
     }
     let blocked =
         material_identifiers[cell] != EMPTY_MATERIAL_IDENTIFIER
@@ -300,7 +300,7 @@ fn local_air(cell: u32) -> f32 {
 }
 
 fn neighbor(anchor: u32, direction: u32) -> u32 {
-    if (anchor == INVALID_PHYSICAL_CELL_INDEX || anchor >= parameters.cell_count) {
+    if (anchor == INVALID_PHYSICAL_CELL_INDEX || anchor >= material_reaction_parameters.cell_count) {
         return INVALID_PHYSICAL_CELL_INDEX;
     }
     let world =
@@ -351,26 +351,26 @@ fn find_partner(anchor: u32, rule: Reaction) -> Source {
 
 fn gas_total(cell: u32) -> f32 {
     var total = 0.0;
-    for (var species: u32 = 0u; species < parameters.gas_count; species += 1u) {
-        total += max(gas_concentrations[species * parameters.cell_count + cell], 0.0);
+    for (var species: u32 = 0u; species < material_reaction_parameters.gas_count; species += 1u) {
+        total += max(gas_concentrations[species * material_reaction_parameters.cell_count + cell], 0.0);
     }
     return total;
 }
 
 fn reserve_gas(cell: u32, material: u32, amount: f32) -> bool {
     let species = material_index_from_identifier(material);
-    let index = species * parameters.cell_count + cell;
-    if (index >= arrayLength(&gas_reservations)) {
+    let material_reaction_buffer_index = species * material_reaction_parameters.cell_count + cell;
+    if (material_reaction_buffer_index >= arrayLength(&gas_reservations)) {
         return false;
     }
     let required = u32(max(amount, 0.0) * RESERVATION_SCALE);
-    let available = u32(max(gas_concentrations[index], 0.0) * RESERVATION_SCALE);
-    var old = atomicLoad(&gas_reservations[index]);
+    let available = u32(max(gas_concentrations[material_reaction_buffer_index], 0.0) * RESERVATION_SCALE);
+    var old = atomicLoad(&gas_reservations[material_reaction_buffer_index]);
     loop {
         if (old + required > available) {
             return false;
         }
-        let result = atomicCompareExchangeWeak(&gas_reservations[index], old, old + required);
+        let result = atomicCompareExchangeWeak(&gas_reservations[material_reaction_buffer_index], old, old + required);
         if (result.exchanged) {
             return true;
         }
@@ -381,14 +381,14 @@ fn reserve_gas(cell: u32, material: u32, amount: f32) -> bool {
 
 fn reserve_gas_output(cell: u32, material: u32, amount: f32) -> bool {
     let species = material_index_from_identifier(material);
-    let index = species * parameters.cell_count + cell;
-    if (index >= arrayLength(&gas_output_reservations)) {
+    let material_reaction_buffer_index = species * material_reaction_parameters.cell_count + cell;
+    if (material_reaction_buffer_index >= arrayLength(&gas_output_reservations)) {
         return false;
     }
     let required = u32(max(amount, 0.0) * RESERVATION_SCALE);
-    let current = u32(max(gas_concentrations[index], 0.0) * RESERVATION_SCALE);
-    let inputs = atomicLoad(&gas_reservations[index]);
-    let old = atomicLoad(&gas_output_reservations[index]);
+    let current = u32(max(gas_concentrations[material_reaction_buffer_index], 0.0) * RESERVATION_SCALE);
+    let inputs = atomicLoad(&gas_reservations[material_reaction_buffer_index]);
+    let old = atomicLoad(&gas_output_reservations[material_reaction_buffer_index]);
     let net_current = select(current, current - min(current, inputs), inputs > 0u);
     var output_reserved = old;
     loop {
@@ -397,7 +397,7 @@ fn reserve_gas_output(cell: u32, material: u32, amount: f32) -> bool {
         }
         let result =
             atomicCompareExchangeWeak(
-                &gas_output_reservations[index],
+                &gas_output_reservations[material_reaction_buffer_index],
                 output_reserved,
                 output_reserved + required,
             );
@@ -410,29 +410,29 @@ fn reserve_gas_output(cell: u32, material: u32, amount: f32) -> bool {
 }
 
 fn release_gas_reservation(cell: u32, material: u32, amount: f32) {
-    let index = material_index_from_identifier(material) * parameters.cell_count + cell;
-    if (index < arrayLength(&gas_reservations)) {
-        atomicSub(&gas_reservations[index], u32(max(amount, 0.0) * RESERVATION_SCALE));
+    let material_reaction_buffer_index = material_index_from_identifier(material) * material_reaction_parameters.cell_count + cell;
+    if (material_reaction_buffer_index < arrayLength(&gas_reservations)) {
+        atomicSub(&gas_reservations[material_reaction_buffer_index], u32(max(amount, 0.0) * RESERVATION_SCALE));
     }
 }
 
 fn release_gas_output_reservation(cell: u32, material: u32, amount: f32) {
-    let index = material_index_from_identifier(material) * parameters.cell_count + cell;
-    if (index < arrayLength(&gas_output_reservations)) {
-        atomicSub(&gas_output_reservations[index], u32(max(amount, 0.0) * RESERVATION_SCALE));
+    let material_reaction_buffer_index = material_index_from_identifier(material) * material_reaction_parameters.cell_count + cell;
+    if (material_reaction_buffer_index < arrayLength(&gas_output_reservations)) {
+        atomicSub(&gas_output_reservations[material_reaction_buffer_index], u32(max(amount, 0.0) * RESERVATION_SCALE));
     }
 }
 
-fn reserve_mutation_requests(count: u32) -> u32 {
-    if (count == 0u) {
+fn reserve_mutation_requests(material_reaction_count: u32) -> u32 {
+    if (material_reaction_count == 0u) {
         return 0u;
     }
     var base = atomicLoad(&mutation_request_count[0]);
     loop {
-        if (base + count > arrayLength(&mutation_requests)) {
+        if (base + material_reaction_count > arrayLength(&mutation_requests)) {
             return 0xffffffffu;
         }
-        let result = atomicCompareExchangeWeak(&mutation_request_count[0], base, base + count);
+        let result = atomicCompareExchangeWeak(&mutation_request_count[0], base, base + material_reaction_count);
         if (result.exchanged) {
             return base;
         }

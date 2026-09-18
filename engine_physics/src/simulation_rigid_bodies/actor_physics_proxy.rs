@@ -1,7 +1,9 @@
 // Copyright Rob Gage 2026
 
+use rapier2d::prelude::ColliderHandle;
+use rapier2d::prelude::RigidBodyHandle;
+
 use crate::actors::ActorCollisionShape;
-use rapier2d::prelude::{ColliderHandle, RigidBodyHandle};
 
 pub(super) struct ActorPhysicsProxy {
     pub(super) body: RigidBodyHandle,

@@ -1,8 +1,9 @@
 // Copyright Rob Gage 2026
 
+use std::io;
+
 use super::CellularAppearance;
 use crate::materials::MaterialIdentifier;
-use std::io;
 
 /// Authoritative state for an inactive eight-by-eight-cell tile.
 pub struct TileData {
@@ -276,37 +277,38 @@ impl TileData {
         let mut tile_data: Self = Self::EMPTY;
         for row in &mut tile_data.cell_material_identifiers {
             for cell_material_identifier in row {
-                let mut data: [u8; 4] = [0; 4];
-                material_reader.read_exact(&mut data)?;
-                *cell_material_identifier = MaterialIdentifier::from_u32(u32::from_le_bytes(data));
+                let mut tile_field_u32_bytes: [u8; 4] = [0; 4];
+                material_reader.read_exact(&mut tile_field_u32_bytes)?;
+                *cell_material_identifier =
+                    MaterialIdentifier::from_u32(u32::from_le_bytes(tile_field_u32_bytes));
             }
         }
         for row in &mut tile_data.cell_appearances {
             for appearance in row {
-                let mut data: [u8; 4] = [0; 4];
-                appearance_reader.read_exact(&mut data)?;
-                *appearance = CellularAppearance(u32::from_le_bytes(data));
+                let mut tile_field_u32_bytes: [u8; 4] = [0; 4];
+                appearance_reader.read_exact(&mut tile_field_u32_bytes)?;
+                *appearance = CellularAppearance(u32::from_le_bytes(tile_field_u32_bytes));
             }
         }
         for row in &mut tile_data.cell_integrities {
             for integrity in row {
-                let mut data: [u8; 4] = [0; 4];
-                integrity_reader.read_exact(&mut data)?;
-                *integrity = f32::from_bits(u32::from_le_bytes(data));
+                let mut tile_field_u32_bytes: [u8; 4] = [0; 4];
+                integrity_reader.read_exact(&mut tile_field_u32_bytes)?;
+                *integrity = f32::from_bits(u32::from_le_bytes(tile_field_u32_bytes));
             }
         }
         for row in &mut tile_data.cell_amounts {
             for amount in row {
-                let mut data: [u8; 4] = [0; 4];
-                amount_reader.read_exact(&mut data)?;
-                *amount = f32::from_bits(u32::from_le_bytes(data));
+                let mut tile_field_u32_bytes: [u8; 4] = [0; 4];
+                amount_reader.read_exact(&mut tile_field_u32_bytes)?;
+                *amount = f32::from_bits(u32::from_le_bytes(tile_field_u32_bytes));
             }
         }
         for row in &mut tile_data.cell_temperatures {
             for temperature in row {
-                let mut data: [u8; 4] = [0; 4];
-                temperature_reader.read_exact(&mut data)?;
-                *temperature = f32::from_bits(u32::from_le_bytes(data));
+                let mut tile_field_u32_bytes: [u8; 4] = [0; 4];
+                temperature_reader.read_exact(&mut tile_field_u32_bytes)?;
+                *temperature = f32::from_bits(u32::from_le_bytes(tile_field_u32_bytes));
             }
         }
         tile_data.normalize_or_reject()?;
@@ -322,23 +324,24 @@ impl TileData {
         let mut tile_data: Self = Self::EMPTY;
         for row in &mut tile_data.cell_material_identifiers {
             for identifier in row {
-                let mut data: [u8; 4] = [0; 4];
-                material_reader.read_exact(&mut data)?;
-                *identifier = MaterialIdentifier::from_u32(u32::from_le_bytes(data));
+                let mut tile_field_u32_bytes: [u8; 4] = [0; 4];
+                material_reader.read_exact(&mut tile_field_u32_bytes)?;
+                *identifier =
+                    MaterialIdentifier::from_u32(u32::from_le_bytes(tile_field_u32_bytes));
             }
         }
         for row in &mut tile_data.cell_appearances {
             for appearance in row {
-                let mut data: [u8; 4] = [0; 4];
-                appearance_reader.read_exact(&mut data)?;
-                *appearance = CellularAppearance(u32::from_le_bytes(data));
+                let mut tile_field_u32_bytes: [u8; 4] = [0; 4];
+                appearance_reader.read_exact(&mut tile_field_u32_bytes)?;
+                *appearance = CellularAppearance(u32::from_le_bytes(tile_field_u32_bytes));
             }
         }
         for row in &mut tile_data.cell_integrities {
             for integrity in row {
-                let mut data: [u8; 4] = [0; 4];
-                integrity_reader.read_exact(&mut data)?;
-                *integrity = f32::from_bits(u32::from_le_bytes(data));
+                let mut tile_field_u32_bytes: [u8; 4] = [0; 4];
+                integrity_reader.read_exact(&mut tile_field_u32_bytes)?;
+                *integrity = f32::from_bits(u32::from_le_bytes(tile_field_u32_bytes));
             }
         }
         Ok(tile_data)

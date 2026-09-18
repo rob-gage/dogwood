@@ -1,12 +1,15 @@
 // Copyright Rob Gage 2026
 
+use std::collections::HashSet;
+use std::io;
+
 use super::SceneDormantRigidCell;
+use crate::binary_reader::read_u32;
+use crate::materials::Material;
+use crate::materials::MaterialForm;
+use crate::materials::MaterialIdentifier;
+use crate::materials::MaterialRegistry;
 use crate::tiles::CellularAppearance;
-use crate::{
-    binary_reader::read_u32,
-    materials::{Material, MaterialForm, MaterialIdentifier, MaterialRegistry},
-};
-use std::{collections::HashSet, io};
 
 /// Authoritative, handle-free state for a rigid body outside simulation residency.
 ///
@@ -46,11 +49,20 @@ pub(crate) fn append_record(
     Ok(())
 }
 
-pub(crate) fn remove_ids(records: &mut Vec<SceneDormantRigidBody>, ids: &[u64]) {
-    let before: HashSet<u64> = records.iter().map(|record| record.identifier).collect();
-    let claimed: HashSet<u64> = ids.iter().copied().collect();
-    records.retain(|record| !claimed.contains(&record.identifier));
-    let after: HashSet<u64> = records.iter().map(|record| record.identifier).collect();
+pub(crate) fn remove_ids(
+    dormant_rigid_records: &mut Vec<SceneDormantRigidBody>,
+    dormant_rigid_identifiers: &[u64],
+) {
+    let before: HashSet<u64> = dormant_rigid_records
+        .iter()
+        .map(|record| record.identifier)
+        .collect();
+    let claimed: HashSet<u64> = dormant_rigid_identifiers.iter().copied().collect();
+    dormant_rigid_records.retain(|record| !claimed.contains(&record.identifier));
+    let after: HashSet<u64> = dormant_rigid_records
+        .iter()
+        .map(|record| record.identifier)
+        .collect();
     debug_assert_eq!(
         after,
         before.difference(&claimed).copied().collect::<HashSet<_>>()
@@ -237,27 +249,29 @@ impl SceneDormantRigidBody {
         } else {
             false
         };
-        let count: usize = usize::try_from(read_u32(reader)?).map_err(|_| {
+        let dormant_rigid_cell_count: usize = usize::try_from(read_u32(reader)?).map_err(|_| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 "dormant rigid cell count overflow",
             )
         })?;
-        if count > Self::MAX_CELLS {
+        if dormant_rigid_cell_count > Self::MAX_CELLS {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "too many dormant rigid cells",
             ));
         }
-        let mut cells: Vec<SceneDormantRigidCell> = Vec::new();
-        cells.try_reserve_exact(count).map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "dormant rigid allocation failed",
-            )
-        })?;
-        for _ in 0..count {
-            cells.push(SceneDormantRigidCell {
+        let mut dormant_rigid_cells: Vec<SceneDormantRigidCell> = Vec::new();
+        dormant_rigid_cells
+            .try_reserve_exact(dormant_rigid_cell_count)
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "dormant rigid allocation failed",
+                )
+            })?;
+        for _ in 0..dormant_rigid_cell_count {
+            dormant_rigid_cells.push(SceneDormantRigidCell {
                 local: [
                     i32::from_le_bytes(read_u32(reader)?.to_le_bytes()),
                     i32::from_le_bytes(read_u32(reader)?.to_le_bytes()),
@@ -269,16 +283,16 @@ impl SceneDormantRigidBody {
                 temperature: f32::from_bits(read_u32(reader)?),
             });
         }
-        let body: Self = Self {
+        let dormant_rigid_body: Self = Self {
             identifier: u64::from_le_bytes(identifier_bytes),
             position,
             rotation,
             linear_velocity,
             angular_velocity,
             sleeping,
-            cells,
+            cells: dormant_rigid_cells,
         };
-        body.validate(materials)?;
-        Ok(body)
+        dormant_rigid_body.validate(materials)?;
+        Ok(dormant_rigid_body)
     }
 }

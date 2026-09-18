@@ -1,6 +1,25 @@
 // Copyright Rob Gage 2026
 
-use super::*;
+use std::collections::HashSet;
+#[cfg(debug_assertions)]
+use std::time::Instant;
+
+use rapier2d::prelude::ColliderBuilder;
+use rapier2d::prelude::Pose;
+use rapier2d::prelude::SharedShape;
+use rapier2d::prelude::Vector;
+
+use super::super::dynamic_tile::RigidDynamicCollisionTile;
+use super::super::dynamic_tile_key::RigidDynamicCollisionTileKey;
+use super::super::terrain_bridge_statistics::TerrainBridgeStatistics;
+use super::super::terrain_patch::StaticTerrainCollisionPatch;
+use super::super::terrain_patch_key::StaticTerrainCollisionPatchKey;
+use super::ScenePhysicsWorld;
+use crate::actors::ActorCellularProxyState;
+use crate::simulation::RigidCellularBody;
+use crate::simulation::simulation_constants::DYNAMIC_TILE_RETENTION_TICKS;
+use crate::simulation::simulation_constants::TERRAIN_COLLISION_PATCH_CELLS;
+use crate::simulation::simulation_constants::TERRAIN_PATCH_RETENTION_TICKS;
 
 impl ScenePhysicsWorld {
     fn demand_dynamic_tiles(

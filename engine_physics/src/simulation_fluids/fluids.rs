@@ -1,15 +1,13 @@
 // Copyright Rob Gage 2026
 
+use engine_compute::AcceleratorBuffer;
+
 use super::FluidAuthorityView;
-use crate::scenes::{FluidDownload, FluidUpload};
-use crate::simulation::simulation_constants::*;
-use crate::{
-    actors::ActorCollisionShape,
-    chunks::ChunkFluidParticle,
-    tiles::{TileArea, TileCoordinates},
-};
-use engine_compute::{Accelerator, AcceleratorBuffer};
-use std::io;
+use crate::simulation::simulation_constants::MAXIMUM_CORRECTION_CELLS;
+use crate::simulation::simulation_constants::MAXIMUM_MOVEMENT_CELLS;
+use crate::simulation::simulation_constants::PBF_CONSTRAINT_ITERATION_COUNT;
+use crate::simulation::simulation_constants::PBF_SUBSTEP_COUNT;
+use crate::simulation::simulation_constants::SUPPORT_RADIUS_CELLS;
 
 /// Owns authoritative fluid particles and their transient spatial/cellular representations.
 pub struct Fluids {
@@ -53,7 +51,7 @@ pub struct Fluids {
     /// One compact reduction of the possessed pawn capsule over derived fluid cells
     sample_output: AcceleratorBuffer,
     /// Current ring mapping, spatial dimensions, gravity, and fixed-step values
-    parameters: wgpu::Buffer,
+    fluid_simulation_parameters: wgpu::Buffer,
     /// All concrete particle, edit, collision, bucket, and derived-cell bindings
     bind_group: wgpu::BindGroup,
     accelerator_edit_prepare_bind_group: wgpu::BindGroup,
@@ -137,6 +135,30 @@ impl Fluids {
         &self.mechanical_cells
     }
 
+    pub(crate) const fn free_indices_buffer(&self) -> &AcceleratorBuffer {
+        &self.free_indices
+    }
+
+    pub(crate) const fn free_count_buffer(&self) -> &AcceleratorBuffer {
+        &self.free_count
+    }
+
+    pub(crate) const fn edit_cells_buffer(&self) -> &AcceleratorBuffer {
+        &self.edit_cells
+    }
+
+    pub(crate) const fn edit_amounts_buffer(&self) -> &AcceleratorBuffer {
+        &self.edit_amounts
+    }
+
+    pub(crate) const fn edit_temperatures_buffer(&self) -> &AcceleratorBuffer {
+        &self.edit_temperatures
+    }
+
+    pub(crate) const fn accelerator_edits_pending_buffer(&self) -> &AcceleratorBuffer {
+        &self.accelerator_edits_pending
+    }
+
     pub(crate) const fn particles_buffer(&self) -> &AcceleratorBuffer {
         &self.particles
     }
@@ -149,7 +171,7 @@ impl Fluids {
             free_count: &self.free_count,
             bucket_heads: &self.bucket_heads,
             next_particle: &self.next_particle,
-            parameters: &self.parameters,
+            parameters: &self.fluid_simulation_parameters,
         }
     }
 
@@ -194,6 +216,6 @@ impl Drop for Fluids {
         self.streaming_count.free();
         self.streaming_results.free();
         self.sample_output.free();
-        self.parameters.destroy();
+        self.fluid_simulation_parameters.destroy();
     }
 }

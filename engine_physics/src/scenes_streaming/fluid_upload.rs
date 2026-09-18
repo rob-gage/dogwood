@@ -1,8 +1,11 @@
 // Copyright Rob Gage 2026
 
-use crate::{chunks::ChunkFluidParticle, tiles::TileArea};
-use engine_compute::Accelerator;
 use std::io;
+
+use engine_compute::Accelerator;
+
+use crate::chunks::ChunkFluidParticle;
+use crate::tiles::TileArea;
 
 /// Tracks one nonblocking transfer of dormant fluid into Accelerator residency
 pub struct FluidUpload {

@@ -5,10 +5,15 @@ mod scene_test_accelerator;
 mod scene_test_configuration;
 pub(crate) mod scene_test_readback;
 
-use super::{GasDownload, GasUpload};
+use super::GasDownload;
+use super::GasUpload;
 use crate::chunks::ChunkGasCell;
-use crate::materials::{MaterialForm, MaterialIdentifier, MaterialRegistry};
-use crate::tiles::{CellCoordinates, TileArea, TileCoordinates};
+use crate::materials::MaterialForm;
+use crate::materials::MaterialIdentifier;
+use crate::materials::MaterialRegistry;
+use crate::tiles::CellCoordinates;
+use crate::tiles::TileArea;
+use crate::tiles::TileCoordinates;
 
 #[test]
 fn test_rejects_a_cell_outside_its_upload_area() {
@@ -35,20 +40,28 @@ fn test_rejects_invalid_temperature_before_constructing_gas_cells() {
     assert!(GasDownload::deserialize(&bytes, area, &[identifier]).is_err());
 }
 
-use crate::materials::{
-    Material, MaterialReaction, MaterialReactionReactant, MaterialReference,
-    MaterialRegistryBuilder,
-};
-use crate::scenes::tests::scene_test_readback::{read_amount, read_cell_state, read_fluid_state};
-use crate::scenes::{Scene, SceneData, SceneEditBatch, SceneEditCellPlacement};
-use crate::tiles::CellularAppearance;
-use engine_graphics::{Color, MaterialAppearance};
+use std::sync::mpsc;
+use std::time::Duration;
+use std::time::Instant;
+
+use engine_graphics::Color;
+use engine_graphics::MaterialAppearance;
 use scene_test_accelerator::new_scene_test_accelerator;
 use scene_test_configuration::scene_test_configuration;
-use std::{
-    sync::mpsc,
-    time::{Duration, Instant},
-};
+
+use crate::materials::Material;
+use crate::materials::MaterialReaction;
+use crate::materials::MaterialReactionReactant;
+use crate::materials::MaterialReference;
+use crate::materials::MaterialRegistryBuilder;
+use crate::scenes::Scene;
+use crate::scenes::SceneData;
+use crate::scenes::SceneEditBatch;
+use crate::scenes::SceneEditCellPlacement;
+use crate::scenes::tests::scene_test_readback::read_amount;
+use crate::scenes::tests::scene_test_readback::read_cell_state;
+use crate::scenes::tests::scene_test_readback::read_fluid_state;
+use crate::tiles::CellularAppearance;
 
 #[test]
 fn test_gas_leaves_and_returns_through_ring_streaming() {

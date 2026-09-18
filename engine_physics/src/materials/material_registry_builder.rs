@@ -1,9 +1,12 @@
 // Copyright Rob Gage 2026
 
-use super::{
-    Material, MaterialIdentifier, MaterialReaction, MaterialRegistry, MaterialThermalProperties,
-};
 use std::collections::BTreeMap;
+
+use super::Material;
+use super::MaterialIdentifier;
+use super::MaterialReaction;
+use super::MaterialRegistry;
+use super::MaterialThermalProperties;
 
 /// Declarative authoring path for compiled material metadata.
 pub struct MaterialRegistryBuilder {

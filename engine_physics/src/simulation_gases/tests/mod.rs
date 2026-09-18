@@ -1,20 +1,24 @@
 // Copyright Rob Gage 2026
 
-use crate::simulation::tests::new_accelerator_test;
-use engine_compute::{Accelerator, AcceleratorBuffer};
+use std::sync::mpsc;
+use std::time::Duration;
+use std::time::Instant;
+
+use engine_compute::Accelerator;
+use engine_compute::AcceleratorBuffer;
+use engine_graphics::Color;
+use engine_graphics::MaterialAppearance;
 
 use super::*;
-use crate::{
-    chunks::ChunkGasCell,
-    materials::{Material, MaterialForm, MaterialIdentifier, MaterialRegistry},
-    scenes::GasDownload,
-    tiles::{TileArea, TileCoordinates},
-};
-use engine_graphics::{Color, MaterialAppearance};
-use std::{
-    sync::mpsc,
-    time::{Duration, Instant},
-};
+use crate::chunks::ChunkGasCell;
+use crate::materials::Material;
+use crate::materials::MaterialForm;
+use crate::materials::MaterialIdentifier;
+use crate::materials::MaterialRegistry;
+use crate::scenes::GasDownload;
+use crate::simulation::tests::new_accelerator_test;
+use crate::tiles::TileArea;
+use crate::tiles::TileCoordinates;
 
 fn read_species(accelerator: &Accelerator, gases: &Gases, species: u32) -> Vec<f32> {
     let count = gases.test_buffered_cell_count() as usize;

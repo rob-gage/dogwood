@@ -1,11 +1,11 @@
 // Copyright Rob Gage 2026
 
-use crate::{
-    chunks::ChunkGasCell,
-    materials::{Material, MaterialRegistry},
-    tiles::TileArea,
-};
 use std::io;
+
+use crate::chunks::ChunkGasCell;
+use crate::materials::Material;
+use crate::materials::MaterialRegistry;
+use crate::tiles::TileArea;
 
 /// Owns dormant gas records while they are restored to Accelerator residency
 pub struct GasUpload {

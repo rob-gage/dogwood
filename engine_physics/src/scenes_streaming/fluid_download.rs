@@ -1,8 +1,11 @@
 // Copyright Rob Gage 2026
 
-use crate::{chunks::ChunkFluidParticle, tiles::TileArea};
-use engine_compute::Accelerator;
 use std::io;
+
+use engine_compute::Accelerator;
+
+use crate::chunks::ChunkFluidParticle;
+use crate::tiles::TileArea;
 
 /// Tracks one nonblocking export of fluid leaving Accelerator residency
 pub struct FluidDownload {
@@ -52,8 +55,9 @@ impl FluidDownload {
                 "Downloaded fluid buffer is truncated",
             ));
         }
-        let count: usize = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
-        if count > particle_capacity as usize {
+        let fluid_particle_count: usize =
+            u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
+        if fluid_particle_count > particle_capacity as usize {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Downloaded fluid particle count exceeds pool capacity",
@@ -61,7 +65,7 @@ impl FluidDownload {
         }
         let required: usize = 16usize
             .checked_add(
-                count
+                fluid_particle_count
                     .checked_mul(ChunkFluidParticle::GPU_SIZE)
                     .ok_or_else(|| {
                         io::Error::new(io::ErrorKind::InvalidData, "Downloaded fluid size overflow")
@@ -76,11 +80,13 @@ impl FluidDownload {
                 "Downloaded fluid buffer is truncated",
             ));
         }
-        (0..count)
-            .map(|index| {
-                let start: usize = 16 + index * ChunkFluidParticle::GPU_SIZE;
+        (0..fluid_particle_count)
+            .map(|particle_index| {
+                let particle_record_start_offset: usize =
+                    16 + particle_index * ChunkFluidParticle::GPU_SIZE;
                 ChunkFluidParticle::deserialize_gpu(
-                    &bytes[start..start + ChunkFluidParticle::GPU_SIZE],
+                    &bytes[particle_record_start_offset
+                        ..particle_record_start_offset + ChunkFluidParticle::GPU_SIZE],
                 )
             })
             .collect()

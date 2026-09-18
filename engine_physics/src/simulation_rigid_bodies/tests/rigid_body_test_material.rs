@@ -1,5 +1,9 @@
-use crate::materials::{Material, MaterialIdentifier, MaterialRegistry};
-use engine_graphics::{Color, MaterialAppearance};
+use engine_graphics::Color;
+use engine_graphics::MaterialAppearance;
+
+use crate::materials::Material;
+use crate::materials::MaterialIdentifier;
+use crate::materials::MaterialRegistry;
 
 pub(super) fn register_test_stone_material(
     materials: &mut MaterialRegistry,

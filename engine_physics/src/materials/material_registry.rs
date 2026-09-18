@@ -1,13 +1,17 @@
 // Copyright Rob Gage 2026
 
-use super::{
-    CompiledMaterialReaction, CompiledMaterialReactionProduct, CompiledMaterialReactionReactant,
-    Material, MaterialForm, MaterialIdentifier, MaterialReaction, MaterialReference,
-    MaterialThermalProperties,
-};
-use engine_compute::Accelerator;
-use engine_graphics::MaterialGraphics;
-use std::{collections::BTreeMap, ops::Index};
+use std::collections::BTreeMap;
+use std::ops::Index;
+
+use super::CompiledMaterialReaction;
+use super::CompiledMaterialReactionProduct;
+use super::CompiledMaterialReactionReactant;
+use super::Material;
+use super::MaterialForm;
+use super::MaterialIdentifier;
+use super::MaterialReaction;
+use super::MaterialReference;
+use super::MaterialThermalProperties;
 
 /// Owns registered materials and their compiled simulation metadata.
 pub struct MaterialRegistry {
@@ -92,7 +96,7 @@ impl MaterialRegistry {
     /// Returns the stable form-major index used by compiled reaction metadata.
     pub fn dense_index(&self, identifier: MaterialIdentifier) -> Option<u32> {
         self.get(identifier)?;
-        let offset: usize = match identifier.form_checked()? {
+        let material_dense_index_offset: usize = match identifier.form_checked()? {
             MaterialForm::CellularStatic => 0,
             MaterialForm::CellularDynamic => self.cellular_statics.len(),
             MaterialForm::Fluid => self.cellular_statics.len() + self.cellular_dynamics.len(),
@@ -100,7 +104,7 @@ impl MaterialRegistry {
                 self.cellular_statics.len() + self.cellular_dynamics.len() + self.fluids.len()
             }
         };
-        Some((offset + identifier.index() as usize) as u32)
+        Some((material_dense_index_offset + identifier.index() as usize) as u32)
     }
     /// Converts a stable form-major index back to its material identifier.
     pub fn identifier_from_dense_index(&self, index: u32) -> Option<MaterialIdentifier> {
@@ -273,18 +277,18 @@ impl MaterialRegistry {
                 if resolved.is_empty() {
                     return Err("Reaction selector cannot match an empty tag".into());
                 }
-                let offset: u32 = members
+                let reaction_selector_member_offset: u32 = members
                     .len()
                     .try_into()
                     .map_err(|_| "Too many reaction selector members")?;
-                let count: u32 = resolved
+                let reaction_selector_member_count: u32 = resolved
                     .len()
                     .try_into()
                     .map_err(|_| "Too many reaction selector members")?;
                 members.extend(resolved);
                 compiled_reactants[i] = CompiledMaterialReactionReactant {
-                    member_offset: offset,
-                    member_count: count,
+                    member_offset: reaction_selector_member_offset,
+                    member_count: reaction_selector_member_count,
                     amount_bits: reactant.amount.to_bits(),
                     present: 1,
                 };
@@ -365,12 +369,12 @@ impl MaterialRegistry {
 
     /// Returns the material represented by a valid registered identifier
     pub fn get(&self, identifier: MaterialIdentifier) -> Option<&Material> {
-        let index: usize = identifier.index() as usize;
+        let material_form_index: usize = identifier.index() as usize;
         match identifier.form_checked()? {
-            MaterialForm::CellularStatic => self.cellular_statics.get(index),
-            MaterialForm::CellularDynamic => self.cellular_dynamics.get(index),
-            MaterialForm::Fluid => self.fluids.get(index),
-            MaterialForm::Gas => self.gases.get(index),
+            MaterialForm::CellularStatic => self.cellular_statics.get(material_form_index),
+            MaterialForm::CellularDynamic => self.cellular_dynamics.get(material_form_index),
+            MaterialForm::Fluid => self.fluids.get(material_form_index),
+            MaterialForm::Gas => self.gases.get(material_form_index),
         }
     }
 
@@ -415,12 +419,12 @@ impl Index<MaterialIdentifier> for MaterialRegistry {
     type Output = Material;
 
     fn index(&self, identifier: MaterialIdentifier) -> &Self::Output {
-        let index: usize = identifier.index() as usize;
+        let material_form_index: usize = identifier.index() as usize;
         match identifier.form() {
-            MaterialForm::CellularStatic => &self.cellular_statics[index],
-            MaterialForm::CellularDynamic => &self.cellular_dynamics[index],
-            MaterialForm::Fluid => &self.fluids[index],
-            MaterialForm::Gas => &self.gases[index],
+            MaterialForm::CellularStatic => &self.cellular_statics[material_form_index],
+            MaterialForm::CellularDynamic => &self.cellular_dynamics[material_form_index],
+            MaterialForm::Fluid => &self.fluids[material_form_index],
+            MaterialForm::Gas => &self.gases[material_form_index],
         }
     }
 }

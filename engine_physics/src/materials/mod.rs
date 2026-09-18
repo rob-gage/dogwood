@@ -24,7 +24,8 @@ mod material_thermal_transition;
 #[cfg(test)]
 pub(crate) mod tests;
 
-pub use compiled_material_reaction::{CompiledMaterialReaction, compiled_selector_matches};
+pub use compiled_material_reaction::CompiledMaterialReaction;
+pub use compiled_material_reaction::compiled_selector_matches;
 pub use compiled_material_reaction_product::CompiledMaterialReactionProduct;
 pub use compiled_material_reaction_reactant::CompiledMaterialReactionReactant;
 pub use material::Material;

@@ -61,11 +61,11 @@ impl MaterialIdentifier {
 
     /// Returns the form-specific index of the `Material` represented by this `MaterialIdentifier`
     pub const fn index(self) -> u32 {
-        let index: u32 = self.0 & 0b00111111_11111111_11111111_11111111;
+        let material_form_index: u32 = self.0 & 0b00111111_11111111_11111111_11111111;
         if self.0 >> 30 == Self::GAS_TAG {
-            index.saturating_sub(1)
+            material_form_index.saturating_sub(1)
         } else {
-            index
+            material_form_index
         }
     }
 

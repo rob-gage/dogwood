@@ -1,16 +1,19 @@
 // Copyright Rob Gage 2026
 
-use engine_compute::{Accelerator, AcceleratorBuffer};
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::AtomicU32;
+use std::sync::atomic::Ordering;
+
+use engine_compute::Accelerator;
+use engine_compute::AcceleratorBuffer;
 
 /// Applies sparse externally-authored temperature deltas directly to authoritative state.
 pub(crate) struct ThermalEdits {
     requests: AcceleratorBuffer,
-    count: AcceleratorBuffer,
+    thermal_edit_request_count: AcceleratorBuffer,
     deltas: AcceleratorBuffer,
     rigid_flags: AcceleratorBuffer,
-    parameters: wgpu::Buffer,
+    thermal_edit_parameters: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     request_pipeline: wgpu::ComputePipeline,
     fluid_pipeline: wgpu::ComputePipeline,
@@ -37,7 +40,7 @@ impl ThermalEdits {
     ) -> Self {
         let device: &wgpu::Device = accelerator.wgpu_device();
         let requests: AcceleratorBuffer = accelerator.allocate::<[u32; 2]>(capacity as usize);
-        let count: AcceleratorBuffer = accelerator.allocate::<u32>(1);
+        let thermal_edit_request_count: AcceleratorBuffer = accelerator.allocate::<u32>(1);
         let deltas: AcceleratorBuffer = accelerator.allocate::<[u32; 2]>(capacity as usize);
         let rigid_flags: AcceleratorBuffer = accelerator.allocate::<u32>(rigid_capacity as usize);
         // `u32::MAX` means no raster request selected this authoritative slot.
@@ -50,11 +53,12 @@ impl ThermalEdits {
                 .flat_map(|value| value.to_le_bytes())
                 .collect::<Vec<_>>(),
         );
-        let parameters: wgpu::Buffer = crate::simulation::create_simulation_uniform_buffer(
-            device,
-            "thermal edit parameters",
-            48,
-        );
+        let thermal_edit_parameters: wgpu::Buffer =
+            crate::simulation::create_simulation_uniform_buffer(
+                device,
+                "thermal edit parameters",
+                48,
+            );
         let storage: fn(u32, bool) -> wgpu::BindGroupLayoutEntry =
             crate::simulation::storage_bind_group_layout_entry;
         let mut layout_entries: Vec<wgpu::BindGroupLayoutEntry> = (0u32..11)
@@ -68,7 +72,7 @@ impl ThermalEdits {
             });
         let buffers: [&AcceleratorBuffer; 11] = [
             &requests,
-            &count,
+            &thermal_edit_request_count,
             cellular_materials,
             cellular_temperatures,
             gas_temperatures,
@@ -79,7 +83,7 @@ impl ThermalEdits {
             &deltas,
             &rigid_flags,
         ];
-        let mut entries: Vec<wgpu::BindGroupEntry<'_>> = buffers
+        let mut thermal_edit_bind_group_entries: Vec<wgpu::BindGroupEntry<'_>> = buffers
             .iter()
             .enumerate()
             .map(|(index, buffer)| wgpu::BindGroupEntry {
@@ -87,14 +91,14 @@ impl ThermalEdits {
                 resource: buffer.wgpu_buffer().as_entire_binding(),
             })
             .collect();
-        entries.push(wgpu::BindGroupEntry {
+        thermal_edit_bind_group_entries.push(wgpu::BindGroupEntry {
             binding: 11,
-            resource: parameters.as_entire_binding(),
+            resource: thermal_edit_parameters.as_entire_binding(),
         });
         let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("thermal edits"),
             layout: &layout,
-            entries: &entries,
+            entries: &thermal_edit_bind_group_entries,
         });
         let shader: wgpu::ShaderModule = crate::simulation::create_simulation_shader_module(
             device,
@@ -108,22 +112,23 @@ impl ThermalEdits {
                 bind_group_layouts: &[Some(&layout)],
                 immediate_size: 0,
             });
-        let pipeline = |entry: &'static str| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(entry),
-                layout: Some(&pipeline_layout),
-                module: &shader,
-                entry_point: Some(entry),
-                compilation_options: Default::default(),
-                cache: None,
-            })
-        };
+        let pipeline: &dyn Fn(&'static str) -> wgpu::ComputePipeline =
+            &|entry: &'static str| -> wgpu::ComputePipeline {
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some(entry),
+                    layout: Some(&pipeline_layout),
+                    module: &shader,
+                    entry_point: Some(entry),
+                    compilation_options: Default::default(),
+                    cache: None,
+                })
+            };
         Self {
             requests,
-            count,
+            thermal_edit_request_count,
             deltas,
             rigid_flags,
-            parameters,
+            thermal_edit_parameters,
             bind_group,
             request_pipeline: pipeline("apply_thermal_requests"),
             fluid_pipeline: pipeline("apply_thermal_fluid"),
@@ -147,22 +152,35 @@ impl ThermalEdits {
         if physical_indices.is_empty() {
             return;
         }
-        let count: u32 = physical_indices.len().min(self.capacity as usize) as u32;
-        let generation: u32 = self
+        let thermal_edit_request_count: u32 =
+            physical_indices.len().min(self.capacity as usize) as u32;
+        let thermal_edit_generation: u32 = self
             .generation
             .fetch_add(1, Ordering::Relaxed)
             .wrapping_add(1);
-        let mut bytes: Vec<u8> = Vec::with_capacity(count as usize * 8);
-        for &index in physical_indices.iter().take(count as usize) {
-            bytes.extend_from_slice(&index.to_le_bytes());
-            bytes.extend_from_slice(&deltas[&(index as usize)].to_bits().to_le_bytes());
+        let mut thermal_edit_request_bytes: Vec<u8> =
+            Vec::with_capacity(thermal_edit_request_count as usize * 8);
+        for &physical_cell_index in physical_indices
+            .iter()
+            .take(thermal_edit_request_count as usize)
+        {
+            thermal_edit_request_bytes.extend_from_slice(&physical_cell_index.to_le_bytes());
+            thermal_edit_request_bytes.extend_from_slice(
+                &deltas[&(physical_cell_index as usize)]
+                    .to_bits()
+                    .to_le_bytes(),
+            );
         }
-        accelerator
-            .wgpu_queue()
-            .write_buffer(self.requests.wgpu_buffer(), 0, &bytes);
-        accelerator
-            .wgpu_queue()
-            .write_buffer(self.count.wgpu_buffer(), 0, &count.to_le_bytes());
+        accelerator.wgpu_queue().write_buffer(
+            self.requests.wgpu_buffer(),
+            0,
+            &thermal_edit_request_bytes,
+        );
+        accelerator.wgpu_queue().write_buffer(
+            self.thermal_edit_request_count.wgpu_buffer(),
+            0,
+            &thermal_edit_request_count.to_le_bytes(),
+        );
         let mut parameter_bytes: Vec<u8> = Vec::new();
         for value in [
             ring_origin[0] as u32,
@@ -172,8 +190,8 @@ impl ThermalEdits {
             ring_offset[0],
             ring_offset[1],
             self.capacity,
-            count,
-            generation,
+            thermal_edit_request_count,
+            thermal_edit_generation,
             0,
             0,
             0,
@@ -182,33 +200,51 @@ impl ThermalEdits {
         }
         accelerator
             .wgpu_queue()
-            .write_buffer(&self.parameters, 0, &parameter_bytes);
+            .write_buffer(&self.thermal_edit_parameters, 0, &parameter_bytes);
         let mut encoder: wgpu::CommandEncoder =
             accelerator
                 .wgpu_device()
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("thermal edits"),
                 });
-        let dispatch =
-            |pass: &mut wgpu::ComputePass<'_>, pipeline: &wgpu::ComputePipeline, n: u32| {
-                pass.set_pipeline(pipeline);
-                pass.set_bind_group(0, &self.bind_group, &[]);
-                pass.dispatch_workgroups(n.div_ceil(64), 1, 1);
+        let dispatch: &dyn Fn(&mut wgpu::ComputePass<'_>, &wgpu::ComputePipeline, u32) =
+            &|thermal_compute_pass: &mut wgpu::ComputePass<'_>,
+              thermal_compute_pipeline: &wgpu::ComputePipeline,
+              thermal_workgroup_count: u32| {
+                thermal_compute_pass.set_pipeline(thermal_compute_pipeline);
+                thermal_compute_pass.set_bind_group(0, &self.bind_group, &[]);
+                thermal_compute_pass.dispatch_workgroups(
+                    thermal_workgroup_count.div_ceil(64),
+                    1,
+                    1,
+                );
             };
         {
-            let mut pass: wgpu::ComputePass<'_> =
+            let mut thermal_compute_pass: wgpu::ComputePass<'_> =
                 accelerator.begin_compute_pass(&mut encoder, "thermal cellular and gas");
-            dispatch(&mut pass, &self.request_pipeline, count);
+            dispatch(
+                &mut thermal_compute_pass,
+                &self.request_pipeline,
+                thermal_edit_request_count,
+            );
         }
         {
-            let mut pass: wgpu::ComputePass<'_> =
+            let mut thermal_compute_pass: wgpu::ComputePass<'_> =
                 accelerator.begin_compute_pass(&mut encoder, "thermal fluid");
-            dispatch(&mut pass, &self.fluid_pipeline, self.particle_capacity);
+            dispatch(
+                &mut thermal_compute_pass,
+                &self.fluid_pipeline,
+                self.particle_capacity,
+            );
         }
         {
-            let mut pass: wgpu::ComputePass<'_> =
+            let mut thermal_compute_pass: wgpu::ComputePass<'_> =
                 accelerator.begin_compute_pass(&mut encoder, "thermal rigid");
-            dispatch(&mut pass, &self.rigid_pipeline, self.rigid_capacity);
+            dispatch(
+                &mut thermal_compute_pass,
+                &self.rigid_pipeline,
+                self.rigid_capacity,
+            );
         }
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
@@ -217,9 +253,9 @@ impl ThermalEdits {
 impl Drop for ThermalEdits {
     fn drop(&mut self) {
         self.requests.free();
-        self.count.free();
+        self.thermal_edit_request_count.free();
         self.deltas.free();
         self.rigid_flags.free();
-        self.parameters.destroy();
+        self.thermal_edit_parameters.destroy();
     }
 }

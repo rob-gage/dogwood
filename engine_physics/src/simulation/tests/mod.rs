@@ -72,15 +72,16 @@ fn test_latent_arithmetic_is_symmetric() {
     );
 }
 
-use crate::simulation::{
-    RigidCellularBody, RigidCellularBodyCell, ThermalConduction, ThermalEdits,
-};
+use std::collections::BTreeMap;
+use std::sync::mpsc::sync_channel;
+use std::time::Duration;
+use std::time::Instant;
+
+use crate::simulation::RigidCellularBody;
+use crate::simulation::RigidCellularBodyCell;
+use crate::simulation::ThermalConduction;
+use crate::simulation::ThermalEdits;
 use crate::tiles::CellularAppearance;
-use std::{
-    collections::BTreeMap,
-    sync::mpsc::sync_channel,
-    time::{Duration, Instant},
-};
 
 #[test]
 fn test_hot_rigid_field_cell_conducts_into_cold_canonical_neighbor() {

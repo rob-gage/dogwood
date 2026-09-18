@@ -1,10 +1,15 @@
 // Copyright Rob Gage 2026
 
+use std::sync::Arc;
+use std::sync::Mutex;
+
+use engine_compute::Accelerator;
+use engine_compute::AcceleratorBuffer;
+
 use crate::actors::ActorCellularProxyState;
-use crate::simulation::{RigidCellularBody, RigidCellularBodyState};
+use crate::simulation::RigidCellularBody;
+use crate::simulation::RigidCellularBodyState;
 use crate::tiles::TileCoordinates;
-use engine_compute::{Accelerator, AcceleratorBuffer};
-use std::sync::{Arc, Mutex};
 
 /// Rasterizes physical bodies into transient cellular interaction geometry
 pub struct CellularPhysicsBodyProxy {
@@ -22,7 +27,7 @@ pub struct CellularPhysicsBodyProxy {
     destroy_requests: AcceleratorBuffer,
     destroy_results: AcceleratorBuffer,
     destroy_completed: Arc<Mutex<Vec<[u32; 2]>>>,
-    parameters: wgpu::Buffer,
+    cellular_physics_body_proxy_parameters: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     bind_group_layout: wgpu::BindGroupLayout,
     clear_pipeline: wgpu::ComputePipeline,
@@ -94,48 +99,57 @@ impl CellularPhysicsBodyProxy {
         if indices.is_empty() {
             return;
         }
-        let count = indices.len().min(self.buffered_cell_count as usize);
-        let mut requests = Vec::with_capacity(count + 1);
-        requests.push(count as u32);
-        requests.extend(indices[..count].iter().map(|&index| index as u32));
+        let destruction_request_count: usize = indices.len().min(self.buffered_cell_count as usize);
+        let mut destruction_requests: Vec<u32> = Vec::with_capacity(destruction_request_count + 1);
+        destruction_requests.push(destruction_request_count as u32);
+        destruction_requests.extend(
+            indices[..destruction_request_count]
+                .iter()
+                .map(|&index| index as u32),
+        );
         accelerator.wgpu_queue().write_buffer(
             self.destroy_requests.wgpu_buffer(),
             0,
-            &requests
+            &destruction_requests
                 .into_iter()
                 .flat_map(u32::to_le_bytes)
                 .collect::<Vec<_>>(),
         );
-        let readback = accelerator
-            .wgpu_device()
-            .create_buffer(&wgpu::BufferDescriptor {
-                label: Some("rigid destruction readback"),
-                size: (count * 8) as u64,
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                mapped_at_creation: false,
-            });
-        let mut encoder =
+        let readback: wgpu::Buffer =
+            accelerator
+                .wgpu_device()
+                .create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("rigid destruction readback"),
+                    size: (destruction_request_count * 8) as u64,
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                });
+        let mut encoder: wgpu::CommandEncoder =
             accelerator
                 .wgpu_device()
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("resolve rigid destruction"),
                 });
         {
-            let mut pass =
+            let mut cellular_physics_body_proxy_compute_pass: wgpu::ComputePass<'_> =
                 accelerator.begin_compute_pass(&mut encoder, "resolve rigid destruction");
-            pass.set_pipeline(&self.destroy_resolve_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.dispatch_workgroups((count as u32).div_ceil(64), 1, 1);
+            cellular_physics_body_proxy_compute_pass.set_pipeline(&self.destroy_resolve_pipeline);
+            cellular_physics_body_proxy_compute_pass.set_bind_group(0, &self.bind_group, &[]);
+            cellular_physics_body_proxy_compute_pass.dispatch_workgroups(
+                (destruction_request_count as u32).div_ceil(64),
+                1,
+                1,
+            );
         }
         encoder.copy_buffer_to_buffer(
             self.destroy_results.wgpu_buffer(),
             0,
             &readback,
             0,
-            (count * 8) as u64,
+            (destruction_request_count * 8) as u64,
         );
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
-        let completed = self.destroy_completed.clone();
+        let completed: Arc<Mutex<Vec<[u32; 2]>>> = self.destroy_completed.clone();
         readback
             .clone()
             .slice(..)
@@ -184,7 +198,7 @@ impl CellularPhysicsBodyProxy {
             .sum::<u32>()
             .min(self.buffered_cell_count);
         if self.topology_revision != topology_revision {
-            let cells: Vec<u8> = bodies
+            let rigid_body_cell_proxy_bytes: Vec<u8> = bodies
                 .iter()
                 .enumerate()
                 .flat_map(|(body, rigid_body)| {
@@ -205,9 +219,11 @@ impl CellularPhysicsBodyProxy {
                 .flatten()
                 .flat_map(u32::to_le_bytes)
                 .collect();
-            accelerator
-                .wgpu_queue()
-                .write_buffer(self.rigid_cells.wgpu_buffer(), 0, &cells);
+            accelerator.wgpu_queue().write_buffer(
+                self.rigid_cells.wgpu_buffer(),
+                0,
+                &rigid_body_cell_proxy_bytes,
+            );
             self.topology_revision = topology_revision;
         }
         let transforms: Vec<u8> = body_states
@@ -261,7 +277,7 @@ impl CellularPhysicsBodyProxy {
                 &actor_bytes,
             );
         }
-        let values = [
+        let cellular_physics_body_proxy_parameter_values: [u32; 24] = [
             origin.x as u32,
             origin.y as u32,
             u32::from(width),
@@ -287,11 +303,17 @@ impl CellularPhysicsBodyProxy {
             0,
             0,
         ];
-        let bytes: Vec<u8> = values.into_iter().flat_map(u32::to_le_bytes).collect();
-        accelerator
-            .wgpu_queue()
-            .write_buffer(&self.parameters, 0, &bytes);
-        let mut encoder =
+        let cellular_physics_body_proxy_parameter_bytes: Vec<u8> =
+            cellular_physics_body_proxy_parameter_values
+                .into_iter()
+                .flat_map(u32::to_le_bytes)
+                .collect();
+        accelerator.wgpu_queue().write_buffer(
+            &self.cellular_physics_body_proxy_parameters,
+            0,
+            &cellular_physics_body_proxy_parameter_bytes,
+        );
+        let mut encoder: wgpu::CommandEncoder =
             accelerator
                 .wgpu_device()
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -341,10 +363,11 @@ impl CellularPhysicsBodyProxy {
                 false,
             ),
         ] {
-            let mut pass = accelerator.begin_compute_pass(&mut encoder, label);
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.dispatch_workgroups(
+            let mut cellular_physics_body_proxy_compute_pass: wgpu::ComputePass<'_> =
+                accelerator.begin_compute_pass(&mut encoder, label);
+            cellular_physics_body_proxy_compute_pass.set_pipeline(pipeline);
+            cellular_physics_body_proxy_compute_pass.set_bind_group(0, &self.bind_group, &[]);
+            cellular_physics_body_proxy_compute_pass.dispatch_workgroups(
                 if actor_dispatch {
                     count
                 } else {
@@ -386,7 +409,9 @@ impl CellularPhysicsBodyProxy {
                     },
                     wgpu::BindGroupEntry {
                         binding: 3,
-                        resource: self.parameters.as_entire_binding(),
+                        resource: self
+                            .cellular_physics_body_proxy_parameters
+                            .as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 4,
@@ -451,6 +476,6 @@ impl Drop for CellularPhysicsBodyProxy {
         self.rigid_transforms.free();
         self.destroy_requests.free();
         self.destroy_results.free();
-        self.parameters.destroy();
+        self.cellular_physics_body_proxy_parameters.destroy();
     }
 }

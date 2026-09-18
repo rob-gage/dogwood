@@ -108,7 +108,7 @@ struct ThermalPhaseTransitionParameters {
     rigid_count: u32,
 }
 
-@group(0) @binding(0) var<storage, read> cells: array<u32>;
+@group(0) @binding(0) var<storage, read> thermal_cellular_material_identifiers: array<u32>;
 @group(0) @binding(1) var<storage, read> amounts: array<f32>;
 @group(0) @binding(2) var<storage, read> temperatures: array<f32>;
 @group(0) @binding(3) var<storage, read> particles: array<Particle>;
@@ -118,7 +118,7 @@ struct ThermalPhaseTransitionParameters {
 @group(0) @binding(7) var<uniform> thermal: ThermalMaterialParameters;
 @group(0) @binding(8) var<storage, read_write> requests: array<ThermalPhaseTransitionRequest>;
 @group(0) @binding(9) var<storage, read_write> request_count: array<atomic<u32>>;
-@group(0) @binding(10) var<uniform> parameters: ThermalPhaseTransitionParameters;
+@group(0) @binding(10) var<uniform> thermal_phase_transition_parameters: ThermalPhaseTransitionParameters;
 @group(0) @binding(11) var<storage, read> rigid_claims: array<atomic<u32>>;
 
 struct GasFluidCandidate {
@@ -165,11 +165,11 @@ fn reserve_fluid_particle() -> u32 {
         }
         let r = atomicCompareExchangeWeak(&fluid_free_count[0], n, n - 1u);
         if (r.exchanged) {
-            let index = fluid_free_indices[n - 1u];
-            if (index >= arrayLength(&particles)) {
+            let thermal_fluid_particle_index = fluid_free_indices[n - 1u];
+            if (thermal_fluid_particle_index >= arrayLength(&particles)) {
                 return 0xffffffffu;
             }
-            return index;
+            return thermal_fluid_particle_index;
         }
         n = r.old_value;
     }
@@ -209,7 +209,7 @@ fn should_yield(rate: f32, cell: u32, source: u32) -> bool {
     if (rate <= 0.0) {
         return false;
     }
-    let h = (cell * 1664525u + source * 1013904223u + parameters.tick * 747796405u);
+    let h = (cell * 1664525u + source * 1013904223u + thermal_phase_transition_parameters.tick * 747796405u);
     return f32(h & 0x00ffffffu) / 16777216.0 < rate;
 }
 

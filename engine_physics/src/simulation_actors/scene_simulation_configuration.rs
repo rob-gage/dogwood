@@ -1,7 +1,8 @@
 // Copyright Rob Gage 2026
 
-use crate::simulation::Fluids;
 use std::io;
+
+use crate::simulation::Fluids;
 
 /// Configures the active and buffered simulation area of a `Scene`
 pub struct SceneSimulationConfiguration {

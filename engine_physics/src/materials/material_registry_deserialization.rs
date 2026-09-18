@@ -1,12 +1,20 @@
 // Copyright Rob Gage 2026
 
-use super::{
-    CompiledMaterialReaction, CompiledMaterialReactionProduct, CompiledMaterialReactionReactant,
-    Material, MaterialForm, MaterialIdentifier, MaterialRegistry, MaterialThermalProperties,
-    MaterialThermalTransition,
-};
-use engine_graphics::{Color, MaterialAppearance};
-use std::{collections::BTreeMap, io};
+use std::collections::BTreeMap;
+use std::io;
+
+use engine_graphics::Color;
+use engine_graphics::MaterialAppearance;
+
+use super::CompiledMaterialReaction;
+use super::CompiledMaterialReactionProduct;
+use super::CompiledMaterialReactionReactant;
+use super::Material;
+use super::MaterialForm;
+use super::MaterialIdentifier;
+use super::MaterialRegistry;
+use super::MaterialThermalProperties;
+use super::MaterialThermalTransition;
 
 impl MaterialRegistry {
     /// Reads a `MaterialRegistry` from its binary representation
@@ -125,19 +133,19 @@ impl MaterialRegistry {
                 },
             );
         }
-        let count: u32 = Self::read_u32(reader)?;
-        if count > 1_000_000 {
+        let material_tag_count: u32 = Self::read_u32(reader)?;
+        if material_tag_count > 1_000_000 {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "Too many tags"));
         }
         let mut tags: BTreeMap<String, Vec<MaterialIdentifier>> = BTreeMap::new();
-        for _ in 0..count {
-            let len: usize = Self::read_u32(reader)? as usize;
-            if len > 4096 {
+        for _ in 0..material_tag_count {
+            let material_tag_name_length: usize = Self::read_u32(reader)? as usize;
+            if material_tag_name_length > 4096 {
                 return Err(io::Error::new(io::ErrorKind::InvalidData, "Tag too long"));
             }
-            let mut bytes: Vec<u8> = vec![0; len];
-            reader.read_exact(&mut bytes)?;
-            let name: String = String::from_utf8(bytes)
+            let mut material_tag_name_bytes: Vec<u8> = vec![0; material_tag_name_length];
+            reader.read_exact(&mut material_tag_name_bytes)?;
+            let material_tag_name: String = String::from_utf8(material_tag_name_bytes)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             let members: u32 = Self::read_u32(reader)?;
             if members > self.material_count() {
@@ -146,11 +154,15 @@ impl MaterialRegistry {
                     "Too many tag members",
                 ));
             }
-            let mut values: Vec<MaterialIdentifier> = Vec::with_capacity(members as usize);
+            let mut material_tag_members: Vec<MaterialIdentifier> =
+                Vec::with_capacity(members as usize);
             for _ in 0..members {
-                values.push(MaterialIdentifier::from_u32(Self::read_u32(reader)?));
+                material_tag_members.push(MaterialIdentifier::from_u32(Self::read_u32(reader)?));
             }
-            if tags.insert(name, values).is_some() {
+            if tags
+                .insert(material_tag_name, material_tag_members)
+                .is_some()
+            {
                 return Err(io::Error::new(io::ErrorKind::InvalidData, "Duplicate tag"));
             }
         }
@@ -279,13 +291,13 @@ impl MaterialRegistry {
         }
         let mut remaining_count_bytes: [u8; 3] = [0; 3];
         reader.read_exact(&mut remaining_count_bytes)?;
-        let count: u32 = u32::from_le_bytes([
+        let material_form_count: u32 = u32::from_le_bytes([
             first_count_byte[0],
             remaining_count_bytes[0],
             remaining_count_bytes[1],
             remaining_count_bytes[2],
         ]);
-        Self::deserialize_form_count(reader, form, count)
+        Self::deserialize_form_count(reader, form, material_form_count)
     }
 
     /// Reads all materials belonging to one material form
@@ -293,17 +305,17 @@ impl MaterialRegistry {
         reader: &mut R,
         form: MaterialForm,
     ) -> Result<Vec<Material>, io::Error> {
-        let count: u32 = Self::read_u32(reader)?;
-        Self::deserialize_form_count(reader, form, count)
+        let material_form_count: u32 = Self::read_u32(reader)?;
+        Self::deserialize_form_count(reader, form, material_form_count)
     }
 
     fn deserialize_form_count<R: io::Read>(
         reader: &mut R,
         form: MaterialForm,
-        count: u32,
+        material_form_count: u32,
     ) -> Result<Vec<Material>, io::Error> {
-        let mut materials: Vec<Material> = Vec::with_capacity(count as usize);
-        for _ in 0..count {
+        let mut materials: Vec<Material> = Vec::with_capacity(material_form_count as usize);
+        for _ in 0..material_form_count {
             // decode the owned name first so registries can be loaded from disk.
             let name_length: u32 = Self::read_u32(reader)?;
             let mut name_bytes: Vec<u8> = vec![0; name_length as usize];
@@ -405,16 +417,21 @@ impl MaterialRegistry {
 
     /// Reads one packed RGBA color
     fn read_color<R: io::Read>(reader: &mut R) -> Result<Color, io::Error> {
-        let bytes: [u8; 4] = Self::read_u32(reader)?.to_le_bytes();
-        Ok(Color::new_rgba(bytes[0], bytes[1], bytes[2], bytes[3]))
+        let color_channel_bytes: [u8; 4] = Self::read_u32(reader)?.to_le_bytes();
+        Ok(Color::new_rgba(
+            color_channel_bytes[0],
+            color_channel_bytes[1],
+            color_channel_bytes[2],
+            color_channel_bytes[3],
+        ))
     }
 
     /// Reads four little-endian `f32` values
     fn read_f32_array<R: io::Read>(reader: &mut R) -> Result<[f32; 4], io::Error> {
-        let mut values: [f32; 4] = [0.0; 4];
-        for value in &mut values {
-            *value = f32::from_bits(Self::read_u32(reader)?);
+        let mut color_channel_values: [f32; 4] = [0.0; 4];
+        for color_channel_value in &mut color_channel_values {
+            *color_channel_value = f32::from_bits(Self::read_u32(reader)?);
         }
-        Ok(values)
+        Ok(color_channel_values)
     }
 }

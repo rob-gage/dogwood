@@ -4,10 +4,9 @@
 //! emits the same compact candidate shape; keeping arbitration here makes the
 //! ordering contract explicit and independently testable.
 
-use crate::simulation::simulation_constants::*;
-use crate::{materials::MaterialTable, simulation_fluids::FluidAuthorityView};
-use engine_compute::{Accelerator, AcceleratorBuffer};
-use std::sync::mpsc::{Receiver, sync_channel};
+use std::sync::mpsc::Receiver;
+
+use engine_compute::AcceleratorBuffer;
 
 /// Immutable-snapshot Accelerator reaction discovery. Application is intentionally a
 /// separate stage so no product becomes an input until the next chemistry tick.
@@ -31,7 +30,7 @@ pub(crate) struct MaterialReactions {
     rigid_removal_readback_result: Option<Receiver<Result<(), wgpu::BufferAsyncError>>>,
     fluid_reservation_owners: AcceleratorBuffer,
     reaction_energy: AcceleratorBuffer,
-    parameters: wgpu::Buffer,
+    material_reaction_parameters: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     prepare_sort_bind_group: wgpu::BindGroup,
     sort_bind_group: wgpu::BindGroup,

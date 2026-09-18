@@ -1,9 +1,24 @@
 // Copyright Rob Gage 2026
 
-use super::*;
+use std::collections::HashMap;
+use std::future::Future;
+use std::future::poll_fn;
+use std::io;
+use std::sync::Arc;
+use std::sync::Mutex;
+
+use super::Scene;
+use crate::chunks::ChunkEntry;
+use crate::materials::MaterialRegistry;
+use crate::scenes_streaming::TileDownload;
+use crate::scenes_streaming::TileUpload;
+use crate::tiles::Tile;
+use crate::tiles::TileArea;
+use crate::tiles::TileCoordinates;
+use crate::tiles::TileData;
 
 impl Scene {
-    /// Downloads resident tile state into CPU-owned tile records.
+    /// Downloads resident tile tile_transfer_state into CPU-owned tile records.
     pub fn tiles_download(
         &self,
         area: TileArea,
@@ -37,21 +52,21 @@ impl Scene {
             if let Some(error) = error.take() {
                 return std::task::Poll::Ready(Err(error));
             }
-            let mut index: usize = 0;
-            while index < downloads.len() {
+            let mut tile_download_index: usize = 0;
+            while tile_download_index < downloads.len() {
                 let mut download: std::sync::MutexGuard<TileDownload> =
-                    downloads[index].lock().unwrap();
+                    downloads[tile_download_index].lock().unwrap();
                 match download.result.take() {
                     Some(Ok(data)) => {
                         let coordinates: TileCoordinates = download.coordinates;
                         drop(download);
-                        downloads.swap_remove(index);
+                        downloads.swap_remove(tile_download_index);
                         tile_data.insert(coordinates, data);
                     }
                     Some(Err(error)) => return std::task::Poll::Ready(Err(error)),
                     None => {
                         download.waker = Some(context.waker().clone());
-                        index += 1;
+                        tile_download_index += 1;
                     }
                 }
             }
@@ -115,18 +130,19 @@ impl Scene {
             if let Some(error) = error.take() {
                 return std::task::Poll::Ready(Err(error));
             }
-            let mut index: usize = 0;
-            while index < uploads.len() {
-                let mut upload: std::sync::MutexGuard<TileUpload> = uploads[index].lock().unwrap();
+            let mut tile_upload_index: usize = 0;
+            while tile_upload_index < uploads.len() {
+                let mut upload: std::sync::MutexGuard<TileUpload> =
+                    uploads[tile_upload_index].lock().unwrap();
                 match upload.result.take() {
                     Some(Ok(())) => {
                         drop(upload);
-                        uploads.swap_remove(index);
+                        uploads.swap_remove(tile_upload_index);
                     }
                     Some(Err(error)) => return std::task::Poll::Ready(Err(error)),
                     None => {
                         upload.waker = Some(context.waker().clone());
-                        index += 1;
+                        tile_upload_index += 1;
                     }
                 }
             }
@@ -190,15 +206,15 @@ impl Scene {
 
     /// Applies completed outgoing tile downloads to persistent CPU chunks
     pub(super) fn tile_downloads_apply_completed(&mut self) -> Result<(), io::Error> {
-        let mut index: usize = 0;
-        while index < self.outgoing_tile_downloads.len() {
+        let mut outgoing_tile_download_index: usize = 0;
+        while outgoing_tile_download_index < self.outgoing_tile_downloads.len() {
             // leave unfinished and failed jobs pinned so stale chunks cannot be saved
             let mut download: std::sync::MutexGuard<TileDownload> = self.outgoing_tile_downloads
-                [index]
+                [outgoing_tile_download_index]
                 .lock()
                 .map_err(|_| io::Error::other("Outgoing tile download is unavailable"))?;
             let Some(result) = download.result.as_ref() else {
-                index += 1;
+                outgoing_tile_download_index += 1;
                 continue;
             };
             if let Err(error) = result {
@@ -228,7 +244,8 @@ impl Scene {
                 io::Error::other("Outgoing tile download is outside its active chunk")
             })?;
             *is_dirty = true;
-            self.outgoing_tile_downloads.swap_remove(index);
+            self.outgoing_tile_downloads
+                .swap_remove(outgoing_tile_download_index);
         }
         Ok(())
     }
@@ -239,20 +256,21 @@ impl Scene {
         let mut downloads_started: Vec<(Arc<Mutex<TileDownload>>, wgpu::Buffer)> = Vec::new();
         let mut command_encoder: Option<wgpu::CommandEncoder> = None;
         {
-            let downloads = self
+            let downloads: std::sync::MutexGuard<'_, Vec<Arc<Mutex<TileDownload>>>> = self
                 .tile_downloads
                 .lock()
                 .map_err(|_| io::Error::other("Tile download queue is unavailable"))?;
             // process each incomplete download
             for download in downloads.iter() {
-                let mut state: std::sync::MutexGuard<TileDownload> = download.lock().unwrap();
-                if state.result.is_some() {
+                let mut tile_transfer_state: std::sync::MutexGuard<TileDownload> =
+                    download.lock().unwrap();
+                if tile_transfer_state.result.is_some() {
                     continue;
                 }
-                if state.is_started {
+                if tile_transfer_state.is_started {
                     continue;
                 }
-                let tile: Tile = state.physical_tile;
+                let tile: Tile = tile_transfer_state.physical_tile;
                 let command_encoder: &mut wgpu::CommandEncoder = command_encoder
                     .get_or_insert_with(|| {
                         self.accelerator.wgpu_device().create_command_encoder(
@@ -264,40 +282,40 @@ impl Scene {
                 command_encoder.copy_buffer_to_buffer(
                     self.cellular_material_identifiers.wgpu_buffer(),
                     tile.0 as u64 * TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
-                    &state.buffer,
+                    &tile_transfer_state.buffer,
                     0,
                     TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
                 );
                 command_encoder.copy_buffer_to_buffer(
                     self.cellular_appearances.wgpu_buffer(),
                     tile.0 as u64 * TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
-                    &state.buffer,
+                    &tile_transfer_state.buffer,
                     TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
                     TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
                 );
                 command_encoder.copy_buffer_to_buffer(
                     self.cellular_integrities.wgpu_buffer(),
                     tile.0 as u64 * TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
-                    &state.buffer,
+                    &tile_transfer_state.buffer,
                     TileData::CELL_FIELD_SERIALIZED_SIZE as u64 * 2,
                     TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
                 );
                 command_encoder.copy_buffer_to_buffer(
                     self.cellular_amounts.wgpu_buffer(),
                     tile.0 as u64 * TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
-                    &state.buffer,
+                    &tile_transfer_state.buffer,
                     TileData::CELL_FIELD_SERIALIZED_SIZE as u64 * 3,
                     TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
                 );
                 command_encoder.copy_buffer_to_buffer(
                     self.cellular_temperatures.wgpu_buffer(),
                     tile.0 as u64 * TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
-                    &state.buffer,
+                    &tile_transfer_state.buffer,
                     TileData::CELL_FIELD_SERIALIZED_SIZE as u64 * 4,
                     TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
                 );
-                state.is_started = true;
-                downloads_started.push((download.clone(), state.buffer.clone()));
+                tile_transfer_state.is_started = true;
+                downloads_started.push((download.clone(), tile_transfer_state.buffer.clone()));
             }
         }
         if let Some(command_encoder) = command_encoder {
@@ -305,54 +323,58 @@ impl Scene {
                 .wgpu_queue()
                 .submit(Some(command_encoder.finish()));
             // submit the encoded copies and register their readback callbacks
-            for (download, buffer) in downloads_started {
-                let mapped_buffer: wgpu::Buffer = buffer.clone();
-                buffer
-                    .slice(..)
-                    .map_async(wgpu::MapMode::Read, move |result| {
-                        let result: Result<TileData, io::Error> = match result {
-                            Ok(()) => match mapped_buffer.slice(..).get_mapped_range() {
-                                Ok(mapped_data) => {
-                                    let mut material_data: &[u8] =
-                                        &mapped_data[..TileData::CELL_FIELD_SERIALIZED_SIZE];
-                                    let mut appearance_data: &[u8] = &mapped_data
-                                        [TileData::CELL_FIELD_SERIALIZED_SIZE
-                                            ..TileData::CELL_FIELD_SERIALIZED_SIZE * 2];
-                                    let mut integrity_data: &[u8] = &mapped_data
-                                        [TileData::CELL_FIELD_SERIALIZED_SIZE * 2
-                                            ..TileData::CELL_FIELD_SERIALIZED_SIZE * 3];
-                                    let mut amount_data: &[u8] = &mapped_data
-                                        [TileData::CELL_FIELD_SERIALIZED_SIZE * 3
-                                            ..TileData::CELL_FIELD_SERIALIZED_SIZE * 4];
-                                    let mut temperature_data: &[u8] =
-                                        &mapped_data[TileData::CELL_FIELD_SERIALIZED_SIZE * 4..];
-                                    let tile_data: Result<TileData, io::Error> =
-                                        TileData::deserialize_fields(
-                                            &mut material_data,
-                                            &mut appearance_data,
-                                            &mut integrity_data,
-                                            &mut amount_data,
-                                            &mut temperature_data,
-                                        );
-                                    drop(mapped_data);
-                                    mapped_buffer.unmap();
-                                    tile_data
+            for (download, tile_download_buffer) in downloads_started {
+                let mapped_tile_download_buffer: wgpu::Buffer = tile_download_buffer.clone();
+                tile_download_buffer.slice(..).map_async(
+                    wgpu::MapMode::Read,
+                    move |tile_download_mapping_result| {
+                        let tile_download_result: Result<TileData, io::Error> =
+                            match tile_download_mapping_result {
+                                Ok(()) => {
+                                    match mapped_tile_download_buffer.slice(..).get_mapped_range() {
+                                        Ok(mapped_data) => {
+                                            let mut tile_material_data: &[u8] = &mapped_data
+                                                [..TileData::CELL_FIELD_SERIALIZED_SIZE];
+                                            let mut tile_appearance_data: &[u8] = &mapped_data
+                                                [TileData::CELL_FIELD_SERIALIZED_SIZE
+                                                    ..TileData::CELL_FIELD_SERIALIZED_SIZE * 2];
+                                            let mut tile_integrity_data: &[u8] = &mapped_data
+                                                [TileData::CELL_FIELD_SERIALIZED_SIZE * 2
+                                                    ..TileData::CELL_FIELD_SERIALIZED_SIZE * 3];
+                                            let mut tile_amount_data: &[u8] = &mapped_data
+                                                [TileData::CELL_FIELD_SERIALIZED_SIZE * 3
+                                                    ..TileData::CELL_FIELD_SERIALIZED_SIZE * 4];
+                                            let mut tile_temperature_data: &[u8] = &mapped_data
+                                                [TileData::CELL_FIELD_SERIALIZED_SIZE * 4..];
+                                            let tile_data: Result<TileData, io::Error> =
+                                                TileData::deserialize_fields(
+                                                    &mut tile_material_data,
+                                                    &mut tile_appearance_data,
+                                                    &mut tile_integrity_data,
+                                                    &mut tile_amount_data,
+                                                    &mut tile_temperature_data,
+                                                );
+                                            drop(mapped_data);
+                                            mapped_tile_download_buffer.unmap();
+                                            tile_data
+                                        }
+                                        Err(error) => {
+                                            mapped_tile_download_buffer.unmap();
+                                            Err(io::Error::other(error.to_string()))
+                                        }
+                                    }
                                 }
-                                Err(error) => {
-                                    mapped_buffer.unmap();
-                                    Err(io::Error::other(error.to_string()))
-                                }
-                            },
-                            Err(_) => Err(io::Error::other("Tile download failed")),
-                        };
+                                Err(_) => Err(io::Error::other("Tile download failed")),
+                            };
                         let mut download: std::sync::MutexGuard<TileDownload> =
                             download.lock().unwrap();
-                        download.result = Some(result);
+                        download.result = Some(tile_download_result);
                         download.is_complete = true;
                         if let Some(waker) = download.waker.take() {
                             waker.wake();
                         }
-                    });
+                    },
+                );
             }
         }
         Ok(())
@@ -370,23 +392,23 @@ impl Scene {
     /// Submits queued Accelerator tile uploads
     pub(super) fn tile_uploads_submit(&self) -> Result<(), io::Error> {
         // acquire the pending upload queue
-        let uploads = self
+        let uploads: std::sync::MutexGuard<'_, Vec<Arc<Mutex<TileUpload>>>> = self
             .tile_uploads
             .lock()
             .map_err(|_| io::Error::other("Tile upload queue is unavailable"))?;
         // process each incomplete upload
         for upload in uploads.iter() {
-            let mut state: std::sync::MutexGuard<TileUpload> = upload.lock().unwrap();
-            if state.result.is_some() {
+            let mut tile_transfer_state: std::sync::MutexGuard<TileUpload> = upload.lock().unwrap();
+            if tile_transfer_state.result.is_some() {
                 continue;
             }
-            let Some(tile) = self.tile_at(state.coordinates) else {
-                state.result = Some(Err(io::Error::new(
+            let Some(tile) = self.tile_at(tile_transfer_state.coordinates) else {
+                tile_transfer_state.result = Some(Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     "Tile is outside the Accelerator buffer",
                 )));
-                state.is_complete = true;
-                if let Some(waker) = state.waker.take() {
+                tile_transfer_state.is_complete = true;
+                if let Some(waker) = tile_transfer_state.waker.take() {
                     waker.wake();
                 }
                 continue;
@@ -394,27 +416,27 @@ impl Scene {
             self.accelerator.wgpu_queue().write_buffer(
                 self.cellular_material_identifiers.wgpu_buffer(),
                 tile.0 as u64 * TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
-                &state.material_identifiers,
+                &tile_transfer_state.material_identifiers,
             );
             self.accelerator.wgpu_queue().write_buffer(
                 self.cellular_appearances.wgpu_buffer(),
                 tile.0 as u64 * TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
-                &state.appearances,
+                &tile_transfer_state.appearances,
             );
             self.accelerator.wgpu_queue().write_buffer(
                 self.cellular_integrities.wgpu_buffer(),
                 tile.0 as u64 * TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
-                &state.integrities,
+                &tile_transfer_state.integrities,
             );
             self.accelerator.wgpu_queue().write_buffer(
                 self.cellular_amounts.wgpu_buffer(),
                 tile.0 as u64 * TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
-                &state.amounts,
+                &tile_transfer_state.amounts,
             );
             self.accelerator.wgpu_queue().write_buffer(
                 self.cellular_temperatures.wgpu_buffer(),
                 tile.0 as u64 * TileData::CELL_FIELD_SERIALIZED_SIZE as u64,
-                &state.temperatures,
+                &tile_transfer_state.temperatures,
             );
             self.cellular_dynamic.clear_cellular_dynamic_kinematics(
                 self.accelerator.as_ref(),
@@ -426,9 +448,9 @@ impl Scene {
                 tile.0 as usize * 64,
                 64,
             );
-            state.result = Some(Ok(()));
-            state.is_complete = true;
-            if let Some(waker) = state.waker.take() {
+            tile_transfer_state.result = Some(Ok(()));
+            tile_transfer_state.is_complete = true;
+            if let Some(waker) = tile_transfer_state.waker.take() {
                 waker.wake();
             }
         }

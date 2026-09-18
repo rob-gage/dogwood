@@ -1,6 +1,9 @@
 // Copyright Rob Gage 2026
 
-use super::*;
+use super::Scene;
+use super::ScenePosition;
+use crate::actors::Actor;
+use crate::actors::ActorRegistry;
 
 impl Scene {
     /// Returns the `ActorRegistry` for this `Scene`

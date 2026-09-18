@@ -1,7 +1,9 @@
 // Copyright Rob Gage 2026
 
+use std::sync::Arc;
+use std::sync::Mutex;
+
 use super::rigid_granular_readback_status::RigidGranularReadbackStatus;
-use std::sync::{Arc, Mutex};
 
 /// One reusable staging allocation for ordered rigid/granular reactions
 pub(crate) struct RigidGranularReadbackSlot {

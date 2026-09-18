@@ -14,22 +14,22 @@ struct ThermalConductionParameters {
 @group(0) @binding(2) var<storage, read_write> face_conductance: array<vec2<f32>>;
 @group(0) @binding(3) var<storage, read_write> conductance_sum: array<f32>;
 @group(0) @binding(4) var<storage, read_write> solved: array<vec4<f32>>;
-@group(0) @binding(5) var<uniform> parameters: ThermalConductionParameters;
+@group(0) @binding(5) var<uniform> thermal_conduction_parameters: ThermalConductionParameters;
 
-fn index(c: vec2<i32>) -> u32 {
+fn thermal_conduction_physical_cell_index(c: vec2<i32>) -> u32 {
     return
         physical_cell_index_from_world_cell(
             c,
-            parameters.origin,
-            parameters.tiles,
-            parameters.ring,
+            thermal_conduction_parameters.origin,
+            thermal_conduction_parameters.tiles,
+            thermal_conduction_parameters.ring,
         );
 }
 
 fn inside(c: vec2<i32>) -> bool {
     return
-        all(c >= parameters.origin * 8) && all(
-            c < (parameters.origin + vec2<i32>(parameters.tiles)) * 8,
+        all(c >= thermal_conduction_parameters.origin * 8) && all(
+            c < (thermal_conduction_parameters.origin + vec2<i32>(thermal_conduction_parameters.tiles)) * 8,
         );
 }
 
@@ -39,58 +39,58 @@ fn base(a: u32, b: u32) -> f32 {
     if (A.x <= 0.000001 || B.x <= 0.000001 || A.z <= 0.000001 || B.z <= 0.000001) {
         return 0.0;
     }
-    return (2.0 * A.z * B.z / (A.z + B.z)) * parameters.delta_time;
+    return (2.0 * A.z * B.z / (A.z + B.z)) * thermal_conduction_parameters.delta_time;
 }
 
 @compute @workgroup_size(64)
 fn calculate_thermal_face_flux(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    if (invocation.x >= parameters.cell_count) {
+    if (invocation.x >= thermal_conduction_parameters.cell_count) {
         return;
     }
     let c =
-        world_cell_from_logical_tile_major_index(invocation.x, parameters.origin, parameters.tiles);
-    let i = index(c);
+        world_cell_from_logical_tile_major_index(invocation.x, thermal_conduction_parameters.origin, thermal_conduction_parameters.tiles);
+    let i = thermal_conduction_physical_cell_index(c);
     var x = 0.0;
     var y = 0.0;
     if (inside(c + vec2<i32>(1, 0))) {
-        x = base(i, index(c + vec2<i32>(1, 0)));
+        x = base(i, thermal_conduction_physical_cell_index(c + vec2<i32>(1, 0)));
     }
     if (inside(c + vec2<i32>(0, 1))) {
-        y = base(i, index(c + vec2<i32>(0, 1)));
+        y = base(i, thermal_conduction_physical_cell_index(c + vec2<i32>(0, 1)));
     }
     face_conductance[i] = vec2<f32>(x, y);
 }
 
 @compute @workgroup_size(64)
 fn calculate_thermal_conductance_sum(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    if (invocation.x >= parameters.cell_count) {
+    if (invocation.x >= thermal_conduction_parameters.cell_count) {
         return;
     }
     let c =
-        world_cell_from_logical_tile_major_index(invocation.x, parameters.origin, parameters.tiles);
-    let i = index(c);
+        world_cell_from_logical_tile_major_index(invocation.x, thermal_conduction_parameters.origin, thermal_conduction_parameters.tiles);
+    let i = thermal_conduction_physical_cell_index(c);
     var s = face_conductance[i].x + face_conductance[i].y;
     if (inside(c - vec2<i32>(1, 0))) {
-        s += face_conductance[index(c - vec2<i32>(1, 0))].x;
+        s += face_conductance[thermal_conduction_physical_cell_index(c - vec2<i32>(1, 0))].x;
     }
     if (inside(c - vec2<i32>(0, 1))) {
-        s += face_conductance[index(c - vec2<i32>(0, 1))].y;
+        s += face_conductance[thermal_conduction_physical_cell_index(c - vec2<i32>(0, 1))].y;
     }
     conductance_sum[i] = s;
 }
 
 @compute @workgroup_size(64)
 fn calculate_thermal_actual_flux(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    if (invocation.x >= parameters.cell_count) {
+    if (invocation.x >= thermal_conduction_parameters.cell_count) {
         return;
     }
     let c =
-        world_cell_from_logical_tile_major_index(invocation.x, parameters.origin, parameters.tiles);
-    let i = index(c);
+        world_cell_from_logical_tile_major_index(invocation.x, thermal_conduction_parameters.origin, thermal_conduction_parameters.tiles);
+    let i = thermal_conduction_physical_cell_index(c);
     let A = interaction[i];
     var out = vec2<f32>(0.0);
     if (inside(c + vec2<i32>(1, 0))) {
-        let j = index(c + vec2<i32>(1, 0));
+        let j = thermal_conduction_physical_cell_index(c + vec2<i32>(1, 0));
         let B = interaction[j];
         let scale =
             min(
@@ -105,7 +105,7 @@ fn calculate_thermal_actual_flux(@builtin(global_invocation_id) invocation: vec3
         out.x = sign(raw) * min(abs(raw), eq);
     }
     if (inside(c + vec2<i32>(0, 1))) {
-        let j = index(c + vec2<i32>(0, 1));
+        let j = thermal_conduction_physical_cell_index(c + vec2<i32>(0, 1));
         let B = interaction[j];
         let scale =
             min(
@@ -124,19 +124,19 @@ fn calculate_thermal_actual_flux(@builtin(global_invocation_id) invocation: vec3
 
 @compute @workgroup_size(64)
 fn resolve_thermal_conduction(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    if (invocation.x >= parameters.cell_count) {
+    if (invocation.x >= thermal_conduction_parameters.cell_count) {
         return;
     }
     let c =
-        world_cell_from_logical_tile_major_index(invocation.x, parameters.origin, parameters.tiles);
-    let i = index(c);
+        world_cell_from_logical_tile_major_index(invocation.x, thermal_conduction_parameters.origin, thermal_conduction_parameters.tiles);
+    let i = thermal_conduction_physical_cell_index(c);
     let own = face_flux[i];
     var incoming = 0.0;
     if (inside(c - vec2<i32>(1, 0))) {
-        incoming += face_flux[index(c - vec2<i32>(1, 0))].x;
+        incoming += face_flux[thermal_conduction_physical_cell_index(c - vec2<i32>(1, 0))].x;
     }
     if (inside(c - vec2<i32>(0, 1))) {
-        incoming += face_flux[index(c - vec2<i32>(0, 1))].y;
+        incoming += face_flux[thermal_conduction_physical_cell_index(c - vec2<i32>(0, 1))].y;
     }
     let src = interaction[i];
     let e = max(src.y + incoming - own.x - own.y, 0.0);

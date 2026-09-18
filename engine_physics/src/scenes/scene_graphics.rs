@@ -1,7 +1,9 @@
 // Copyright Rob Gage 2026
 
+use engine_graphics::SceneActorGraphics;
+use engine_graphics::SceneGraphics;
+
 use super::Scene;
-use engine_graphics::{SceneActorGraphics, SceneGraphics};
 
 impl Scene {
     /// Returns graphics information for this scene

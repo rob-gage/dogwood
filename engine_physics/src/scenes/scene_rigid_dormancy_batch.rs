@@ -1,7 +1,8 @@
 // Copyright Rob Gage 2026
 
-use super::scene_pending_rigid_dormancy::ScenePendingRigidDormancy;
 use std::sync::mpsc::Receiver;
+
+use super::scene_pending_rigid_dormancy::ScenePendingRigidDormancy;
 
 pub(super) struct SceneRigidDormancyBatch {
     pub(super) bodies: Vec<ScenePendingRigidDormancy>,

@@ -1,6 +1,10 @@
 // Copyright Rob Gage 2026
 
-use super::*;
+use engine_compute::Accelerator;
+use engine_compute::AcceleratorBuffer;
+
+use super::Fluids;
+use crate::simulation::simulation_constants::SUPPORT_RADIUS_CELLS;
 
 impl Fluids {
     /// Creates the authoritative fluid particle store and solver resources.
@@ -78,11 +82,12 @@ impl Fluids {
             0,
             &particle_capacity.to_le_bytes(),
         );
-        let parameters: wgpu::Buffer = crate::simulation::create_simulation_uniform_buffer(
-            device,
-            "fluid simulation parameters",
-            128,
-        );
+        let fluid_simulation_parameters: wgpu::Buffer =
+            crate::simulation::create_simulation_uniform_buffer(
+                device,
+                "fluid simulation parameters",
+                128,
+            );
         let storage: fn(u32, bool) -> wgpu::BindGroupLayoutEntry =
             crate::simulation::storage_bind_group_layout_entry;
         let layout: wgpu::BindGroupLayout =
@@ -138,7 +143,7 @@ impl Fluids {
                 Self::binding(11, external_body_velocity),
                 wgpu::BindGroupEntry {
                     binding: 12,
-                    resource: parameters.as_entire_binding(),
+                    resource: fluid_simulation_parameters.as_entire_binding(),
                 },
                 Self::binding(13, &predicted_positions),
                 Self::binding(14, &lambdas),
@@ -200,16 +205,17 @@ impl Fluids {
                 bind_group_layouts: &[Some(&layout), Some(&accelerator_edit_prepare_layout)],
                 immediate_size: 0,
             });
-        let pipeline = |entry_point: &'static str, label: &'static str| -> wgpu::ComputePipeline {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(label),
-                layout: Some(&pipeline_layout),
-                module: &shader,
-                entry_point: Some(entry_point),
-                compilation_options: Default::default(),
-                cache: None,
-            })
-        };
+        let pipeline: &dyn Fn(&'static str, &'static str) -> wgpu::ComputePipeline =
+            &|entry_point: &'static str, label: &'static str| -> wgpu::ComputePipeline {
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some(label),
+                    layout: Some(&pipeline_layout),
+                    module: &shader,
+                    entry_point: Some(entry_point),
+                    compilation_options: Default::default(),
+                    cache: None,
+                })
+            };
         let prepare_accelerator_edits_pipeline: wgpu::ComputePipeline = device
             .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some("Accelerator fluid edit preparation pipeline"),
@@ -242,7 +248,7 @@ impl Fluids {
             streaming_count,
             streaming_results,
             sample_output,
-            parameters,
+            fluid_simulation_parameters,
             bind_group,
             accelerator_edit_prepare_bind_group,
             edit_remove_pipeline: pipeline(

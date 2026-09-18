@@ -103,7 +103,7 @@ struct MechanicalFluidCell {
 @group(0) @binding(9) var<storage, read_write> retained_pressure: array<vec4<f32>>;
 @group(0) @binding(10) var<storage, read> external_body_occupancy: array<u32>;
 @group(0) @binding(11) var<storage, read> external_body_velocity: array<vec4<f32>>;
-@group(0) @binding(13) var<uniform> parameters: CellularPressureParameters;
+@group(0) @binding(13) var<uniform> cellular_pressure_parameters: CellularPressureParameters;
 @group(0) @binding(14) var<storage, read_write> active_pressure_tiles: array<atomic<u32>>;
 @group(0) @binding(15) var<storage, read_write> active_pressure_tile_indices: array<u32>;
 @group(0) @binding(16) var<storage, read_write> mechanical_fluid_cells: array<MechanicalFluidCell>;

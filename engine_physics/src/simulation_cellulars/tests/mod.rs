@@ -1,24 +1,27 @@
 // Copyright Rob Gage 2026
 
-use crate::simulation::tests::new_accelerator_test;
+use std::sync::mpsc;
+use std::time::Duration;
+use std::time::Instant;
+
+use engine_graphics::Color;
+use engine_graphics::MaterialAppearance;
+use rapier2d::prelude::RigidBodyHandle;
 
 use super::*;
-use crate::materials::{Material, MaterialRegistry};
+use crate::actors::ActorCellularProxyState;
+use crate::actors::ActorCollisionShape;
+use crate::materials::Material;
+use crate::materials::MaterialForm;
+use crate::materials::MaterialIdentifier;
+use crate::materials::MaterialRegistry;
 use crate::simulation::simulation_constants::RIGID_REACTION_READBACK_SLOT_COUNT;
+use crate::simulation::tests::new_accelerator_test;
 use crate::simulation_cellulars::CellularPressure;
-use crate::{
-    actors::{ActorCellularProxyState, ActorCollisionShape},
-    materials::{MaterialForm, MaterialIdentifier},
-    simulation_rigid_bodies::{RigidCellularBody, RigidCellularBodyState},
-    tiles::{CellularAppearance, TileCoordinates},
-};
-use rapier2d::prelude::RigidBodyHandle;
-use std::{
-    sync::mpsc,
-    time::{Duration, Instant},
-};
-
-use engine_graphics::{Color, MaterialAppearance};
+use crate::simulation_rigid_bodies::RigidCellularBody;
+use crate::simulation_rigid_bodies::RigidCellularBodyState;
+use crate::tiles::CellularAppearance;
+use crate::tiles::TileCoordinates;
 
 #[test]
 fn test_colored_face_pipelines_compile_on_accelerator() {

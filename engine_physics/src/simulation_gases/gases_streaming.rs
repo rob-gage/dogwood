@@ -1,6 +1,18 @@
 // Copyright Rob Gage 2026
 
-use super::*;
+use engine_compute::Accelerator;
+use engine_compute::AcceleratorBuffer;
+
+use super::Gases;
+use crate::scenes::GasDownload;
+use crate::scenes::GasUpload;
+use crate::simulation::simulation_constants::AMBIENT_DENSITY;
+use crate::simulation::simulation_constants::BUOYANCY_COEFFICIENT;
+use crate::simulation::simulation_constants::FLUID_OBSTACLE_COVERAGE;
+use crate::simulation::simulation_constants::MAXIMUM_SPEED_CELLS_PER_SECOND;
+use crate::simulation::simulation_constants::VORTICITY_CONFINEMENT;
+use crate::tiles::TileArea;
+use crate::tiles::TileCoordinates;
 
 impl Gases {
     /// Restores validated dormant gas directly into its dense authoritative slots
@@ -27,12 +39,12 @@ impl Gases {
                 &cell.temperature.to_bits().to_le_bytes(),
             );
             for (identifier, concentration) in &cell.species {
-                let index: u64 = u64::from(identifier.index())
+                let gas_concentration_buffer_index: u64 = u64::from(identifier.index())
                     * u64::from(self.buffered_cell_count)
                     + *physical_index as u64;
                 accelerator.wgpu_queue().write_buffer(
                     self.concentrations.wgpu_buffer(),
-                    index * 4,
+                    gas_concentration_buffer_index * 4,
                     &concentration.to_bits().to_le_bytes(),
                 );
             }
@@ -62,8 +74,9 @@ impl Gases {
             Some(download.area),
         );
         let dimensions: [u16; 2] = download.area.dimensions();
-        let count: u32 = u32::from(dimensions[0]) * u32::from(dimensions[1]) * 64;
-        let byte_count: u64 = u64::from(count) * u64::from(5 + self.gas_count) * 4;
+        let streamed_gas_cell_count: u32 = u32::from(dimensions[0]) * u32::from(dimensions[1]) * 64;
+        let streamed_gas_byte_count: u64 =
+            u64::from(streamed_gas_cell_count) * u64::from(5 + self.gas_count) * 4;
         let mut encoder: wgpu::CommandEncoder =
             accelerator
                 .wgpu_device()
@@ -74,7 +87,7 @@ impl Gases {
             accelerator,
             &mut encoder,
             &self.export_pipeline,
-            count,
+            streamed_gas_cell_count,
             "export outgoing gas area",
         );
         encoder.copy_buffer_to_buffer(
@@ -82,7 +95,7 @@ impl Gases {
             0,
             &download.buffer,
             0,
-            byte_count,
+            streamed_gas_byte_count,
         );
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
@@ -95,10 +108,11 @@ impl Gases {
         count: u32,
         label: &str,
     ) {
-        let mut pass: wgpu::ComputePass<'_> = accelerator.begin_compute_pass(encoder, label);
-        pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.dispatch_workgroups(count.div_ceil(64), 1, 1);
+        let mut gas_streaming_compute_pass: wgpu::ComputePass<'_> =
+            accelerator.begin_compute_pass(encoder, label);
+        gas_streaming_compute_pass.set_pipeline(pipeline);
+        gas_streaming_compute_pass.set_bind_group(0, &self.bind_group, &[]);
+        gas_streaming_compute_pass.dispatch_workgroups(count.div_ceil(64), 1, 1);
     }
 
     pub(super) fn write_parameters(
@@ -118,7 +132,7 @@ impl Gases {
         let streaming_dimensions: [u16; 2] = streaming_area.map_or([0, 0], TileArea::dimensions);
         let streaming_cell_count: u32 =
             u32::from(streaming_dimensions[0]) * u32::from(streaming_dimensions[1]) * 64;
-        let values: [u32; 24] = [
+        let gas_streaming_parameter_values: [u32; 24] = [
             buffered_origin.x as u32,
             buffered_origin.y as u32,
             u32::from(buffered_width),
@@ -144,16 +158,24 @@ impl Gases {
             0,
             0,
         ];
-        let bytes: Vec<u8> = values.into_iter().flat_map(u32::to_le_bytes).collect();
-        accelerator
-            .wgpu_queue()
-            .write_buffer(&self.parameters, 0, &bytes);
+        let gas_streaming_parameter_bytes: Vec<u8> = gas_streaming_parameter_values
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect();
+        accelerator.wgpu_queue().write_buffer(
+            &self.gas_simulation_parameters,
+            0,
+            &gas_streaming_parameter_bytes,
+        );
     }
 
-    pub(super) fn binding(binding: u32, buffer: &AcceleratorBuffer) -> wgpu::BindGroupEntry<'_> {
+    pub(super) fn binding(
+        binding: u32,
+        gas_buffer: &AcceleratorBuffer,
+    ) -> wgpu::BindGroupEntry<'_> {
         wgpu::BindGroupEntry {
             binding,
-            resource: buffer.wgpu_buffer().as_entire_binding(),
+            resource: gas_buffer.wgpu_buffer().as_entire_binding(),
         }
     }
 }

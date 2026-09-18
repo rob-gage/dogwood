@@ -1,6 +1,11 @@
-use crate::simulation::simulation_constants::*;
-use engine_compute::{Accelerator, AcceleratorBuffer};
-use std::sync::mpsc::{Receiver, sync_channel};
+use std::sync::mpsc::Receiver;
+use std::sync::mpsc::sync_channel;
+
+use engine_compute::Accelerator;
+use engine_compute::AcceleratorBuffer;
+
+use crate::simulation::simulation_constants::RIGID_PHASE_CANDIDATE_SIZE;
+use crate::simulation::simulation_constants::RIGID_PHASE_CANDIDATES_OFFSET;
 
 pub(crate) fn rigid_phase_readback_len(rigid_count: u32) -> u64 {
     RIGID_PHASE_CANDIDATES_OFFSET + u64::from(rigid_count) * RIGID_PHASE_CANDIDATE_SIZE
@@ -8,7 +13,7 @@ pub(crate) fn rigid_phase_readback_len(rigid_count: u32) -> u64 {
 
 /// Evaluates declarative phase metadata after scatter; mutation application remains shared.
 pub(crate) struct ThermalPhaseTransitions {
-    parameters: wgpu::Buffer,
+    thermal_phase_transition_parameters: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     cells: wgpu::ComputePipeline,
     particles: wgpu::ComputePipeline,
@@ -42,18 +47,19 @@ impl ThermalPhaseTransitions {
             self.clear_rigid_candidates(accelerator);
         }
         self.write_parameters(accelerator, origin, tiles, ring, rigid_count);
-        let mut pass = accelerator.begin_compute_pass(encoder, "thermal phase transitions");
-        pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.set_pipeline(&self.cells);
-        pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
-        pass.set_pipeline(&self.particles);
-        pass.dispatch_workgroups(self.particle_count.div_ceil(64), 1, 1);
-        pass.set_pipeline(&self.gases);
-        pass.dispatch_workgroups(self.cell_count / 64, self.gas_count, 2);
+        let mut thermal_phase_compute_pass: wgpu::ComputePass<'_> =
+            accelerator.begin_compute_pass(encoder, "thermal phase transitions");
+        thermal_phase_compute_pass.set_bind_group(0, &self.bind_group, &[]);
+        thermal_phase_compute_pass.set_pipeline(&self.cells);
+        thermal_phase_compute_pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+        thermal_phase_compute_pass.set_pipeline(&self.particles);
+        thermal_phase_compute_pass.dispatch_workgroups(self.particle_count.div_ceil(64), 1, 1);
+        thermal_phase_compute_pass.set_pipeline(&self.gases);
+        thermal_phase_compute_pass.dispatch_workgroups(self.cell_count / 64, self.gas_count, 2);
         if self.rigid_phase_readback_result.is_none() {
-            pass.set_pipeline(&self.rigid);
+            thermal_phase_compute_pass.set_pipeline(&self.rigid);
             if rigid_count > 0 {
-                pass.dispatch_workgroups(rigid_count.div_ceil(64), 1, 1);
+                thermal_phase_compute_pass.dispatch_workgroups(rigid_count.div_ceil(64), 1, 1);
             }
         }
     }
@@ -81,36 +87,43 @@ impl ThermalPhaseTransitions {
         fluid_free_indices: &AcceleratorBuffer,
         fluid_free_count: &AcceleratorBuffer,
     ) -> Self {
-        let device = accelerator.wgpu_device();
-        let parameters = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("thermal phase parameters"),
-            size: 48,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let storage = crate::simulation::storage_bind_group_layout_entry;
-        let mut entries: Vec<_> = (0..10)
+        let device: &wgpu::Device = accelerator.wgpu_device();
+        let thermal_phase_transition_parameters: wgpu::Buffer =
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("thermal phase parameters"),
+                size: 48,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        let storage: fn(u32, bool) -> wgpu::BindGroupLayoutEntry =
+            crate::simulation::storage_bind_group_layout_entry;
+        let mut thermal_phase_transition_bind_group_layout_entries: Vec<
+            wgpu::BindGroupLayoutEntry,
+        > = (0..10)
             .filter(|binding| *binding != 7)
             .map(|binding| storage(binding, !matches!(binding, 8 | 9)))
             .collect();
-        entries.push(crate::simulation::uniform_bind_group_layout_entry(7));
-        entries.push(storage(11, true));
-        entries.push(storage(12, false));
-        entries.push(storage(13, true));
-        entries.push(storage(14, true));
-        entries.push(storage(15, true));
-        entries.push(storage(16, false));
-        entries.push(storage(17, false));
-        entries.push(storage(18, false));
-        entries.push(storage(19, false));
-        entries.push(storage(20, true));
-        entries.push(storage(21, true));
-        entries.push(crate::simulation::uniform_bind_group_layout_entry(10));
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("thermal phase"),
-            entries: &entries,
-        });
-        let buffers = [
+        thermal_phase_transition_bind_group_layout_entries
+            .push(crate::simulation::uniform_bind_group_layout_entry(7));
+        thermal_phase_transition_bind_group_layout_entries.push(storage(11, true));
+        thermal_phase_transition_bind_group_layout_entries.push(storage(12, false));
+        thermal_phase_transition_bind_group_layout_entries.push(storage(13, true));
+        thermal_phase_transition_bind_group_layout_entries.push(storage(14, true));
+        thermal_phase_transition_bind_group_layout_entries.push(storage(15, true));
+        thermal_phase_transition_bind_group_layout_entries.push(storage(16, false));
+        thermal_phase_transition_bind_group_layout_entries.push(storage(17, false));
+        thermal_phase_transition_bind_group_layout_entries.push(storage(18, false));
+        thermal_phase_transition_bind_group_layout_entries.push(storage(19, false));
+        thermal_phase_transition_bind_group_layout_entries.push(storage(20, true));
+        thermal_phase_transition_bind_group_layout_entries.push(storage(21, true));
+        thermal_phase_transition_bind_group_layout_entries
+            .push(crate::simulation::uniform_bind_group_layout_entry(10));
+        let layout: wgpu::BindGroupLayout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("thermal phase"),
+                entries: &thermal_phase_transition_bind_group_layout_entries,
+            });
+        let buffers: [&AcceleratorBuffer; 7] = [
             cells,
             amounts,
             temperatures,
@@ -119,7 +132,7 @@ impl ThermalPhaseTransitions {
             gas_temperatures,
             properties,
         ];
-        let mut bind_group_entries: Vec<_> = buffers
+        let mut bind_group_entries: Vec<wgpu::BindGroupEntry<'_>> = buffers
             .iter()
             .enumerate()
             .map(|(binding_index, buffer)| wgpu::BindGroupEntry {
@@ -140,7 +153,7 @@ impl ThermalPhaseTransitions {
         ));
         bind_group_entries.push(wgpu::BindGroupEntry {
             binding: 10,
-            resource: parameters.as_entire_binding(),
+            resource: thermal_phase_transition_parameters.as_entire_binding(),
         });
         bind_group_entries.push(crate::simulation::accelerator_buffer_bind_group_entry(
             11,
@@ -150,16 +163,17 @@ impl ThermalPhaseTransitions {
             12,
             gas_fluid_candidates,
         ));
-        let rigid_phase_candidates = accelerator.allocate::<[u32; 10]>(cell_count as usize);
-        let rigid_phase_count = accelerator.allocate::<u32>(1);
-        let rigid_phase_readback = device.create_buffer(&wgpu::BufferDescriptor {
+        let rigid_phase_candidates: AcceleratorBuffer =
+            accelerator.allocate::<[u32; 10]>(cell_count as usize);
+        let rigid_phase_count: AcceleratorBuffer = accelerator.allocate::<u32>(1);
+        let rigid_phase_readback: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("rigid thermal phase readback"),
             size: 256 + cell_count as u64 * 40,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-        let rollback_slots = accelerator.allocate::<u32>(cell_count as usize);
-        let rollback_count = accelerator.allocate::<u32>(1);
+        let rollback_slots: AcceleratorBuffer = accelerator.allocate::<u32>(cell_count as usize);
+        let rollback_count: AcceleratorBuffer = accelerator.allocate::<u32>(1);
         accelerator.wgpu_queue().write_buffer(
             rigid_phase_count.wgpu_buffer(),
             0,
@@ -193,12 +207,12 @@ impl ThermalPhaseTransitions {
             21,
             &rollback_count,
         ));
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("thermal phase"),
             layout: &layout,
             entries: &bind_group_entries,
         });
-        let shader = crate::simulation::create_simulation_shader_module(
+        let shader: wgpu::ShaderModule = crate::simulation::create_simulation_shader_module(
             device,
             "thermal phase shader",
             concat!(
@@ -207,23 +221,25 @@ impl ThermalPhaseTransitions {
             ),
             "engine_physics/src/simulation_thermal/thermal_phase_transitions.wgsl",
         );
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("thermal phase"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
-        let create_compute_pipeline = |entry| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(entry),
-                layout: Some(&pipeline_layout),
-                module: &shader,
-                entry_point: Some(entry),
-                compilation_options: Default::default(),
-                cache: None,
-            })
-        };
+        let pipeline_layout: wgpu::PipelineLayout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("thermal phase"),
+                bind_group_layouts: &[Some(&layout)],
+                immediate_size: 0,
+            });
+        let create_compute_pipeline: &dyn Fn(&'static str) -> wgpu::ComputePipeline =
+            &|entry: &'static str| -> wgpu::ComputePipeline {
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some(entry),
+                    layout: Some(&pipeline_layout),
+                    module: &shader,
+                    entry_point: Some(entry),
+                    compilation_options: Default::default(),
+                    cache: None,
+                })
+            };
         Self {
-            parameters,
+            thermal_phase_transition_parameters,
             bind_group,
             cells: create_compute_pipeline("phase_cells"),
             particles: create_compute_pipeline("phase_particles"),
@@ -264,7 +280,7 @@ impl ThermalPhaseTransitions {
         if self.rigid_phase_readback_result.is_some() {
             return;
         }
-        let mut encoder =
+        let mut encoder: wgpu::CommandEncoder =
             accelerator
                 .wgpu_device()
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -278,8 +294,8 @@ impl ThermalPhaseTransitions {
             4,
         );
         self.rigid_phase_readback_capacity = rigid_count.min(self.cell_count);
-        let rigid_count = self.rigid_phase_readback_capacity;
-        let readback_len = rigid_phase_readback_len(rigid_count);
+        let rigid_count: u32 = self.rigid_phase_readback_capacity;
+        let readback_len: u64 = rigid_phase_readback_len(rigid_count);
         if rigid_count > 0 {
             encoder.copy_buffer_to_buffer(
                 self.rigid_phase_candidates.wgpu_buffer(),
@@ -294,57 +310,64 @@ impl ThermalPhaseTransitions {
         let (sender, receiver) = sync_channel(1);
         self.rigid_phase_readback.slice(0..readback_len).map_async(
             wgpu::MapMode::Read,
-            move |result| {
-                let _ = sender.send(result);
+            move |readback_result| {
+                sender.send(readback_result).ok();
             },
         );
         self.rigid_phase_readback_result = Some(receiver);
     }
     pub(crate) fn take_rigid_candidates(&mut self) -> Option<Vec<[u32; 10]>> {
-        let result = self.rigid_phase_readback_result.as_ref()?.try_recv().ok()?;
+        let rigid_phase_readback_result: Result<(), wgpu::BufferAsyncError> =
+            self.rigid_phase_readback_result.as_ref()?.try_recv().ok()?;
         self.rigid_phase_readback_result = None;
-        if result.is_err() {
+        if rigid_phase_readback_result.is_err() {
             self.rigid_phase_readback.unmap();
             return Some(Vec::new());
         }
-        let bytes = self
+        let rigid_phase_readback_bytes: wgpu::BufferView = self
             .rigid_phase_readback
             .slice(0..self.rigid_phase_readback_len)
             .get_mapped_range()
             .ok()?;
-        let count = u32::from_le_bytes(bytes[..4].try_into().ok()?)
-            .min(self.rigid_phase_readback_capacity) as usize;
-        if count == 0 {
-            drop(bytes);
+        let rigid_phase_candidate_count: usize =
+            u32::from_le_bytes(rigid_phase_readback_bytes[..4].try_into().ok()?)
+                .min(self.rigid_phase_readback_capacity) as usize;
+        if rigid_phase_candidate_count == 0 {
+            drop(rigid_phase_readback_bytes);
             self.rigid_phase_readback.unmap();
             return Some(Vec::new());
         }
-        let records = bytes[usize::try_from(RIGID_PHASE_CANDIDATES_OFFSET).unwrap()..]
+        let rigid_phase_candidate_records: Vec<[u32; 10]> = rigid_phase_readback_bytes
+            [usize::try_from(RIGID_PHASE_CANDIDATES_OFFSET).unwrap()..]
             .as_chunks::<40>()
             .0
             .iter()
-            .take(count)
+            .take(rigid_phase_candidate_count)
             .map(|record_bytes| {
-                let mut record = [0u32; 10];
-                for (word, value) in record.iter_mut().zip(record_bytes.as_chunks::<4>().0) {
-                    *word = u32::from_le_bytes(*value);
+                let mut rigid_phase_candidate_record: [u32; 10] = [0u32; 10];
+                for (record_word, record_word_bytes) in rigid_phase_candidate_record
+                    .iter_mut()
+                    .zip(record_bytes.as_chunks::<4>().0)
+                {
+                    *record_word = u32::from_le_bytes(*record_word_bytes);
                 }
-                record
+                rigid_phase_candidate_record
             })
             .collect();
-        drop(bytes);
+        drop(rigid_phase_readback_bytes);
         self.rigid_phase_readback.unmap();
-        Some(records)
+        Some(rigid_phase_candidate_records)
     }
     pub(crate) fn rollback_rigid_reservations(&self, accelerator: &Accelerator, slots: &[u32]) {
         if slots.is_empty() {
             return;
         }
-        let count = slots.len().min(self.cell_count as usize) as u32;
+        let rigid_thermal_rollback_slot_count: u32 =
+            slots.len().min(self.cell_count as usize) as u32;
         accelerator.wgpu_queue().write_buffer(
             self.rollback_slots.wgpu_buffer(),
             0,
-            &slots[..count as usize]
+            &slots[..rigid_thermal_rollback_slot_count as usize]
                 .iter()
                 .flat_map(|value| value.to_le_bytes())
                 .collect::<Vec<_>>(),
@@ -352,20 +375,24 @@ impl ThermalPhaseTransitions {
         accelerator.wgpu_queue().write_buffer(
             self.rollback_count.wgpu_buffer(),
             0,
-            &count.to_le_bytes(),
+            &rigid_thermal_rollback_slot_count.to_le_bytes(),
         );
-        let mut encoder =
+        let mut encoder: wgpu::CommandEncoder =
             accelerator
                 .wgpu_device()
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("rollback rigid thermal reservations"),
                 });
-        let mut pass =
+        let mut thermal_phase_rollback_compute_pass: wgpu::ComputePass<'_> =
             accelerator.begin_compute_pass(&mut encoder, "rollback rigid thermal reservations");
-        pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.set_pipeline(&self.rollback);
-        pass.dispatch_workgroups(count.div_ceil(64), 1, 1);
-        drop(pass);
+        thermal_phase_rollback_compute_pass.set_bind_group(0, &self.bind_group, &[]);
+        thermal_phase_rollback_compute_pass.set_pipeline(&self.rollback);
+        thermal_phase_rollback_compute_pass.dispatch_workgroups(
+            rigid_thermal_rollback_slot_count.div_ceil(64),
+            1,
+            1,
+        );
+        drop(thermal_phase_rollback_compute_pass);
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
     pub(crate) fn evaluate(
@@ -380,28 +407,30 @@ impl ThermalPhaseTransitions {
             self.clear_rigid_candidates(accelerator);
         }
         self.write_parameters(accelerator, origin, tiles, ring, rigid_count);
-        let mut e =
-            accelerator
-                .wgpu_device()
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("thermal phase transitions"),
-                });
-        let mut p = accelerator.begin_compute_pass(&mut e, "thermal phase transitions");
-        p.set_bind_group(0, &self.bind_group, &[]);
-        p.set_pipeline(&self.cells);
-        p.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
-        p.set_pipeline(&self.particles);
-        p.dispatch_workgroups(self.particle_count.div_ceil(64), 1, 1);
-        p.set_pipeline(&self.gases);
-        p.dispatch_workgroups(self.cell_count / 64, self.gas_count, 2);
+        let mut thermal_command_encoder: wgpu::CommandEncoder = accelerator
+            .wgpu_device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("thermal phase transitions"),
+            });
+        let mut thermal_compute_pass: wgpu::ComputePass<'_> = accelerator
+            .begin_compute_pass(&mut thermal_command_encoder, "thermal phase transitions");
+        thermal_compute_pass.set_bind_group(0, &self.bind_group, &[]);
+        thermal_compute_pass.set_pipeline(&self.cells);
+        thermal_compute_pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+        thermal_compute_pass.set_pipeline(&self.particles);
+        thermal_compute_pass.dispatch_workgroups(self.particle_count.div_ceil(64), 1, 1);
+        thermal_compute_pass.set_pipeline(&self.gases);
+        thermal_compute_pass.dispatch_workgroups(self.cell_count / 64, self.gas_count, 2);
         if self.rigid_phase_readback_result.is_none() {
-            p.set_pipeline(&self.rigid);
+            thermal_compute_pass.set_pipeline(&self.rigid);
             if rigid_count > 0 {
-                p.dispatch_workgroups(rigid_count.div_ceil(64), 1, 1);
+                thermal_compute_pass.dispatch_workgroups(rigid_count.div_ceil(64), 1, 1);
             }
         }
-        drop(p);
-        accelerator.wgpu_queue().submit(Some(e.finish()));
+        drop(thermal_compute_pass);
+        accelerator
+            .wgpu_queue()
+            .submit(Some(thermal_command_encoder.finish()));
     }
 
     fn write_parameters(
@@ -412,7 +441,7 @@ impl ThermalPhaseTransitions {
         ring: [u32; 2],
         rigid_count: u32,
     ) {
-        let parameter_values = [
+        let parameter_values: [u32; 12] = [
             origin[0] as u32,
             origin[1] as u32,
             tiles[0],
@@ -427,7 +456,7 @@ impl ThermalPhaseTransitions {
             0,
         ];
         accelerator.wgpu_queue().write_buffer(
-            &self.parameters,
+            &self.thermal_phase_transition_parameters,
             0,
             &parameter_values
                 .iter()
@@ -439,7 +468,7 @@ impl ThermalPhaseTransitions {
 }
 impl Drop for ThermalPhaseTransitions {
     fn drop(&mut self) {
-        self.parameters.destroy();
+        self.thermal_phase_transition_parameters.destroy();
         self.rigid_phase_candidates.free();
         self.rigid_phase_count.free();
         self.rigid_phase_readback.destroy();

@@ -1,6 +1,12 @@
 // Copyright Rob Gage 2026
 
-use super::*;
+use engine_compute::Accelerator;
+
+use super::Fluids;
+use crate::actors::ActorCollisionShape;
+use crate::simulation::simulation_constants::PBF_CONSTRAINT_ITERATION_COUNT;
+use crate::simulation::simulation_constants::PBF_SUBSTEP_COUNT;
+use crate::tiles::TileCoordinates;
 
 impl Fluids {
     /// Finalizes a slot reserved by an asynchronous producer.  The slot was
@@ -19,7 +25,7 @@ impl Fluids {
         if slot >= self.particle_capacity {
             return;
         }
-        let record = [
+        let record: [u32; 10] = [
             material,
             1,
             position[0].to_bits(),
@@ -40,27 +46,6 @@ impl Fluids {
                 .collect::<Vec<_>>(),
         );
     }
-    pub(crate) const fn free_indices_buffer(&self) -> &AcceleratorBuffer {
-        &self.free_indices
-    }
-    pub(crate) const fn free_count_buffer(&self) -> &AcceleratorBuffer {
-        &self.free_count
-    }
-
-    pub(crate) const fn edit_cells_buffer(&self) -> &AcceleratorBuffer {
-        &self.edit_cells
-    }
-    pub(crate) const fn edit_amounts_buffer(&self) -> &AcceleratorBuffer {
-        &self.edit_amounts
-    }
-    pub(crate) const fn edit_temperatures_buffer(&self) -> &AcceleratorBuffer {
-        &self.edit_temperatures
-    }
-
-    pub(crate) const fn accelerator_edits_pending_buffer(&self) -> &AcceleratorBuffer {
-        &self.accelerator_edits_pending
-    }
-
     /// Consumes edits written by another Accelerator subsystem using the same authoritative pool.
     pub(crate) fn consume_accelerator_edits(
         &self,
@@ -89,19 +74,23 @@ impl Fluids {
             0.0,
             None,
         );
-        let mut encoder =
+        let mut encoder: wgpu::CommandEncoder =
             accelerator
                 .wgpu_device()
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("Accelerator fluid edits"),
                 });
         {
-            let mut pass =
+            let mut fluid_operation_compute_pass: wgpu::ComputePass<'_> =
                 accelerator.begin_compute_pass(&mut encoder, "prepare Accelerator fluid edits");
-            pass.set_pipeline(&self.prepare_accelerator_edits_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.set_bind_group(1, &self.accelerator_edit_prepare_bind_group, &[]);
-            pass.dispatch_workgroups(1, 1, 1);
+            fluid_operation_compute_pass.set_pipeline(&self.prepare_accelerator_edits_pipeline);
+            fluid_operation_compute_pass.set_bind_group(0, &self.bind_group, &[]);
+            fluid_operation_compute_pass.set_bind_group(
+                1,
+                &self.accelerator_edit_prepare_bind_group,
+                &[],
+            );
+            fluid_operation_compute_pass.dispatch_workgroups(1, 1, 1);
         }
         self.dispatch_indirect(
             accelerator,
@@ -144,19 +133,24 @@ impl Fluids {
     ) {
         // one bounded upload per aggregate scene-edit flush. The edit shader already
         // scans this dense ring buffer, so a sparse sequence of tiny writes buys nothing.
-        let mut cells = vec![
+        let mut fluid_edit_cell_material_identifiers: Vec<u32> = vec![
             crate::materials::MaterialIdentifier::NULL.as_u32();
             self.buffered_cell_count as usize
         ];
         for (index, material_identifier, _, _) in edits {
-            cells[*index] = *material_identifier;
+            fluid_edit_cell_material_identifiers[*index] = *material_identifier;
         }
-        let bytes: Vec<u8> = cells.into_iter().flat_map(u32::to_le_bytes).collect();
-        accelerator
-            .wgpu_queue()
-            .write_buffer(self.edit_cells.wgpu_buffer(), 0, &bytes);
-        let mut amounts = vec![0.0f32.to_bits(); self.buffered_cell_count as usize];
-        let mut temperatures = vec![0.0f32.to_bits(); self.buffered_cell_count as usize];
+        let fluid_edit_cell_material_bytes: Vec<u8> = fluid_edit_cell_material_identifiers
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect();
+        accelerator.wgpu_queue().write_buffer(
+            self.edit_cells.wgpu_buffer(),
+            0,
+            &fluid_edit_cell_material_bytes,
+        );
+        let mut amounts: Vec<u32> = vec![0.0f32.to_bits(); self.buffered_cell_count as usize];
+        let mut temperatures: Vec<u32> = vec![0.0f32.to_bits(); self.buffered_cell_count as usize];
         for (index, _, amount, temperature) in edits {
             amounts[*index] = amount.to_bits();
             temperatures[*index] = temperature.to_bits();

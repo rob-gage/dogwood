@@ -1,10 +1,10 @@
 // Copyright Rob Gage 2026
 
-use super::{SceneEdit, SceneEditCellPlacement};
-use crate::{
-    materials::MaterialIdentifier,
-    tiles::{CellCoordinates, CellularAppearance},
-};
+use super::SceneEdit;
+use super::SceneEditCellPlacement;
+use crate::materials::MaterialIdentifier;
+use crate::tiles::CellCoordinates;
+use crate::tiles::CellularAppearance;
 
 /// Pending requested material mutations of a `Scene`
 pub struct SceneEditBatch {

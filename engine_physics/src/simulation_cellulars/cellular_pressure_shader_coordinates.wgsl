@@ -25,8 +25,8 @@ fn cellular_pressure_world_cell_from_logical_index(logical_index: u32) -> vec2<i
     return
         world_cell_from_logical_tile_major_index(
             logical_index,
-            parameters.buffered_origin,
-            parameters.buffered_tile_size,
+            cellular_pressure_parameters.buffered_origin,
+            cellular_pressure_parameters.buffered_tile_size,
         );
 }
 
@@ -35,9 +35,9 @@ fn cellular_pressure_physical_cell_index_from_world_cell(world_cell: vec2<i32>) 
     return
         physical_cell_index_from_world_cell(
             world_cell,
-            parameters.buffered_origin,
-            parameters.buffered_tile_size,
-            parameters.ring_offset,
+            cellular_pressure_parameters.buffered_origin,
+            cellular_pressure_parameters.buffered_tile_size,
+            cellular_pressure_parameters.ring_offset,
         );
 }
 

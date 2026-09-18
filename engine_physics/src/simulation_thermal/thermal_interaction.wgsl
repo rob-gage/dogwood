@@ -88,7 +88,7 @@ struct RigidCell {
 @group(0) @binding(11) var<storage, read> external_occupancy: array<u32>;
 @group(0) @binding(12) var<storage, read> fluid_coverage: array<f32>;
 @group(0) @binding(13) var<storage, read_write> interaction: array<vec4<f32>>;
-@group(0) @binding(14) var<uniform> parameters: ThermalInteractionParameters;
+@group(0) @binding(14) var<uniform> thermal_interaction_parameters: ThermalInteractionParameters;
 @group(0) @binding(15) var<uniform> material_parameters: ThermalMaterialParameters;
 @group(0) @binding(16) var<storage, read_write> rigid_raster_claim_counts: array<atomic<u32>>;
 @group(0) @binding(17) var<storage, read_write> reaction_energy: array<f32>;
@@ -102,23 +102,23 @@ fn clear_rigid_claim_counts(@builtin(global_invocation_id) invocation: vec3<u32>
 
 @compute @workgroup_size(64)
 fn count_rigid_claims(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    if (invocation.x >= parameters.cell_count) {
+    if (invocation.x >= thermal_interaction_parameters.cell_count) {
         return;
     }
     let cell =
         world_cell_from_logical_tile_major_index(
             invocation.x,
-            parameters.buffered_origin,
-            parameters.buffered_tiles,
+            thermal_interaction_parameters.buffered_origin,
+            thermal_interaction_parameters.buffered_tiles,
         );
-    let index =
+    let thermal_interaction_cell_index =
         physical_cell_index_from_world_cell(
             cell,
-            parameters.buffered_origin,
-            parameters.buffered_tiles,
-            parameters.ring_offset,
+            thermal_interaction_parameters.buffered_origin,
+            thermal_interaction_parameters.buffered_tiles,
+            thermal_interaction_parameters.ring_offset,
         );
-    let claim = rigid_claims[index];
+    let claim = rigid_claims[thermal_interaction_cell_index];
     if (claim >= arrayLength(&rigid_cells)) {
         return;
     }
@@ -130,26 +130,26 @@ fn count_rigid_claims(@builtin(global_invocation_id) invocation: vec3<u32>) {
 
 @compute @workgroup_size(64)
 fn gather_thermal_interaction(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    if (invocation.x >= parameters.cell_count) {
+    if (invocation.x >= thermal_interaction_parameters.cell_count) {
         return;
     }
     let cell =
         world_cell_from_logical_tile_major_index(
             invocation.x,
-            parameters.buffered_origin,
-            parameters.buffered_tiles,
+            thermal_interaction_parameters.buffered_origin,
+            thermal_interaction_parameters.buffered_tiles,
         );
-    let index =
+    let thermal_interaction_cell_index =
         physical_cell_index_from_world_cell(
             cell,
-            parameters.buffered_origin,
-            parameters.buffered_tiles,
-            parameters.ring_offset,
+            thermal_interaction_parameters.buffered_origin,
+            thermal_interaction_parameters.buffered_tiles,
+            thermal_interaction_parameters.ring_offset,
         );
     var capacity = 0.0;
     var energy = 0.0;
     var conductivity = 0.0;
-    let canonical = cellular_materials[index];
+    let canonical = cellular_materials[thermal_interaction_cell_index];
     if (canonical != EMPTY_MATERIAL_IDENTIFIER) {
         let dense =
             material_dense_index(
@@ -157,16 +157,16 @@ fn gather_thermal_interaction(@builtin(global_invocation_id) invocation: vec3<u3
                 material_parameters.offsets,
                 material_parameters.counts,
             );
-        let amount = max(cellular_amounts[index], 0.0);
+        let amount = max(cellular_amounts[thermal_interaction_cell_index], 0.0);
         if (dense != 0xffffffffu && dense < arrayLength(&thermal_properties) && amount > 0.000001) {
             let record = thermal_properties[dense];
             let c = amount * thermal_material_specific_heat_capacity(record);
             capacity += c;
-            energy += c * cellular_temperatures[index];
+            energy += c * cellular_temperatures[thermal_interaction_cell_index];
             conductivity += thermal_material_conductivity(record);
         }
     }
-    let claim = rigid_claims[index];
+    let claim = rigid_claims[thermal_interaction_cell_index];
     if (claim < arrayLength(&rigid_cells)) {
         let rigid = rigid_cells[claim];
         let dense =
@@ -192,17 +192,17 @@ fn gather_thermal_interaction(@builtin(global_invocation_id) invocation: vec3<u3
             }
         }
     }
-    let fluid = fluid_thermal[index];
+    let fluid = fluid_thermal[thermal_interaction_cell_index];
     capacity += fluid.x;
     energy += fluid.y;
     conductivity += fluid.z;
-    energy += reaction_energy[index];
-    reaction_energy[index] = 0.0;
+    energy += reaction_energy[thermal_interaction_cell_index];
+    reaction_energy[thermal_interaction_cell_index] = 0.0;
     var gas_amount = 0.0;
     var gas_capacity = 0.0;
     var gas_conductivity = 0.0;
-    for (var species: u32 = 0u; species < parameters.gas_count; species++) {
-        let amount = max(gas_concentrations[species * parameters.cell_count + index], 0.0);
+    for (var species: u32 = 0u; species < thermal_interaction_parameters.gas_count; species++) {
+        let amount = max(gas_concentrations[species * thermal_interaction_parameters.cell_count + thermal_interaction_cell_index], 0.0);
         gas_amount += amount;
         let dense =
             material_dense_index(
@@ -218,17 +218,17 @@ fn gather_thermal_interaction(@builtin(global_invocation_id) invocation: vec3<u3
     }
     let available =
         select(
-            1.0 - clamp(fluid_coverage[index], 0.0, 1.0),
+            1.0 - clamp(fluid_coverage[thermal_interaction_cell_index], 0.0, 1.0),
             0.0,
             canonical != EMPTY_MATERIAL_IDENTIFIER
                 || claim < arrayLength(&rigid_cells)
-                || external_occupancy[index] == 1u
-                || external_occupancy[index] == 3u,
+                || external_occupancy[thermal_interaction_cell_index] == 1u
+                || external_occupancy[thermal_interaction_cell_index] == 3u,
         );
     let air = clamp(available - gas_amount, 0.0, 1.0);
-    capacity += gas_capacity + air * parameters.empty_capacity;
-    energy += (gas_capacity + air * parameters.empty_capacity) * gas_temperatures[index];
-    conductivity += gas_conductivity + air * parameters.empty_k;
-    let equilibrium = select(parameters.ambient, energy / capacity, capacity > 0.000001);
-    interaction[index] = vec4<f32>(capacity, energy, conductivity, max(equilibrium, 0.0));
+    capacity += gas_capacity + air * thermal_interaction_parameters.empty_capacity;
+    energy += (gas_capacity + air * thermal_interaction_parameters.empty_capacity) * gas_temperatures[thermal_interaction_cell_index];
+    conductivity += gas_conductivity + air * thermal_interaction_parameters.empty_k;
+    let equilibrium = select(thermal_interaction_parameters.ambient, energy / capacity, capacity > 0.000001);
+    interaction[thermal_interaction_cell_index] = vec4<f32>(capacity, energy, conductivity, max(equilibrium, 0.0));
 }

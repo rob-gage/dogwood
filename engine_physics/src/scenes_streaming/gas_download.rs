@@ -1,12 +1,13 @@
 // Copyright Rob Gage 2026
 
-use crate::{
-    chunks::ChunkGasCell,
-    materials::MaterialIdentifier,
-    tiles::{CellCoordinates, TileArea},
-};
-use engine_compute::Accelerator;
 use std::io;
+
+use engine_compute::Accelerator;
+
+use crate::chunks::ChunkGasCell;
+use crate::materials::MaterialIdentifier;
+use crate::tiles::CellCoordinates;
+use crate::tiles::TileArea;
 
 const STREAMING_CONCENTRATION_EPSILON: f32 = 0.0001;
 
@@ -59,50 +60,58 @@ impl GasDownload {
         gas_identifiers: &[MaterialIdentifier],
     ) -> Result<Vec<ChunkGasCell>, io::Error> {
         let dimensions: [u16; 2] = area.dimensions();
-        let cell_count: usize = usize::from(dimensions[0]) * usize::from(dimensions[1]) * 64;
-        let stride: usize = 5 + gas_identifiers.len();
-        if bytes.len() != cell_count * stride * 4 {
+        let gas_cell_count: usize = usize::from(dimensions[0]) * usize::from(dimensions[1]) * 64;
+        let gas_record_stride: usize = 5 + gas_identifiers.len();
+        if bytes.len() != gas_cell_count * gas_record_stride * 4 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Invalid gas download size",
             ));
         }
-        let mut cells: Vec<ChunkGasCell> = Vec::new();
-        for cell_index in 0..cell_count {
-            let offset: usize = cell_index * stride * 4;
-            let coordinates: CellCoordinates = CellCoordinates {
-                x: crate::binary_reader::read_u32_at(bytes, offset) as i32,
-                y: crate::binary_reader::read_u32_at(bytes, offset + 4) as i32,
+        let mut gas_cells: Vec<ChunkGasCell> = Vec::new();
+        for gas_cell_index in 0..gas_cell_count {
+            let gas_record_offset: usize = gas_cell_index * gas_record_stride * 4;
+            let gas_cell_coordinates: CellCoordinates = CellCoordinates {
+                x: crate::binary_reader::read_u32_at(bytes, gas_record_offset) as i32,
+                y: crate::binary_reader::read_u32_at(bytes, gas_record_offset + 4) as i32,
             };
-            if !area.contains(coordinates.tile_coordinates()) {
+            if !area.contains(gas_cell_coordinates.tile_coordinates()) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "Downloaded gas cell is outside its transfer area",
                 ));
             }
-            let velocity: [f32; 2] = [
-                f32::from_bits(crate::binary_reader::read_u32_at(bytes, offset + 8)),
-                f32::from_bits(crate::binary_reader::read_u32_at(bytes, offset + 12)),
+            let gas_cell_velocity: [f32; 2] = [
+                f32::from_bits(crate::binary_reader::read_u32_at(
+                    bytes,
+                    gas_record_offset + 8,
+                )),
+                f32::from_bits(crate::binary_reader::read_u32_at(
+                    bytes,
+                    gas_record_offset + 12,
+                )),
             ];
-            let temperature: f32 =
-                f32::from_bits(crate::binary_reader::read_u32_at(bytes, offset + 16));
-            if !velocity.into_iter().all(f32::is_finite) {
+            let gas_cell_temperature: f32 = f32::from_bits(crate::binary_reader::read_u32_at(
+                bytes,
+                gas_record_offset + 16,
+            ));
+            if !gas_cell_velocity.into_iter().all(f32::is_finite) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "Downloaded gas velocity is not finite",
                 ));
             }
-            if !temperature.is_finite() || temperature < 0.0 {
+            if !gas_cell_temperature.is_finite() || gas_cell_temperature < 0.0 {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "Downloaded gas temperature is invalid",
                 ));
             }
-            let mut species: Vec<(MaterialIdentifier, f32)> = Vec::new();
-            for (species_index, identifier) in gas_identifiers.iter().enumerate() {
+            let mut gas_species: Vec<(MaterialIdentifier, f32)> = Vec::new();
+            for (gas_species_index, gas_identifier) in gas_identifiers.iter().enumerate() {
                 let concentration: f32 = f32::from_bits(crate::binary_reader::read_u32_at(
                     bytes,
-                    offset + (5 + species_index) * 4,
+                    gas_record_offset + (5 + gas_species_index) * 4,
                 ));
                 if !concentration.is_finite() || concentration < 0.0 {
                     return Err(io::Error::new(
@@ -111,18 +120,18 @@ impl GasDownload {
                     ));
                 }
                 if concentration > STREAMING_CONCENTRATION_EPSILON {
-                    species.push((*identifier, concentration));
+                    gas_species.push((*gas_identifier, concentration));
                 }
             }
-            if !species.is_empty() {
-                cells.push(ChunkGasCell {
-                    coordinates,
-                    velocity,
-                    temperature,
-                    species,
+            if !gas_species.is_empty() {
+                gas_cells.push(ChunkGasCell {
+                    coordinates: gas_cell_coordinates,
+                    velocity: gas_cell_velocity,
+                    temperature: gas_cell_temperature,
+                    species: gas_species,
                 });
             }
         }
-        Ok(cells)
+        Ok(gas_cells)
     }
 }

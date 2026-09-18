@@ -3,17 +3,21 @@ mod rigid_body_test_actor_terrain;
 mod rigid_body_test_material;
 mod rigid_body_test_patch_bounds;
 
-use crate::simulation_rigid_bodies::ScenePhysicsWorld;
-use crate::{
-    actors::{Actor, ActorCellularProxyState, ActorCollisionShape, ActorPhysicsProxyState},
-    simulation::CollisionOccupancySnapshot,
-    tiles::TileCoordinates,
-};
-use crate::{materials::MaterialRegistry, tiles::CellularAppearance};
 use bevy_ecs::entity::Entity;
-use rapier2d::prelude::{Pose, Vector};
+use rapier2d::prelude::Pose;
+use rapier2d::prelude::Vector;
 use rigid_body_test_actor_terrain::prepare_actor_terrain;
 use rigid_body_test_material::register_test_stone_material;
+
+use crate::actors::Actor;
+use crate::actors::ActorCellularProxyState;
+use crate::actors::ActorCollisionShape;
+use crate::actors::ActorPhysicsProxyState;
+use crate::materials::MaterialRegistry;
+use crate::simulation::CollisionOccupancySnapshot;
+use crate::simulation_rigid_bodies::ScenePhysicsWorld;
+use crate::tiles::CellularAppearance;
+use crate::tiles::TileCoordinates;
 
 #[test]
 fn test_every_actor_primitive_casts_against_static_terrain_patches() {

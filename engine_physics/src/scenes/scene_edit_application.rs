@@ -1,6 +1,22 @@
 // Copyright Rob Gage 2026
 
-use super::*;
+use std::collections::BTreeMap;
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::io;
+
+use super::Scene;
+use crate::chunks::ChunkEntry;
+use crate::materials::Material;
+use crate::materials::MaterialIdentifier;
+use crate::scene_editing::SceneEdit;
+use crate::scene_editing::SceneEditBatch;
+use crate::scene_editing::SceneEditCellPlacement;
+use crate::simulation_fluids::Fluids;
+use crate::tiles::CellCoordinates;
+use crate::tiles::CellularAppearance;
+use crate::tiles::TileArea;
+use crate::tiles::TileCoordinates;
 
 impl Scene {
     /// Queues mandatory runtime material edits for one coalesced update-time flush.
@@ -21,10 +37,10 @@ impl Scene {
         let mut gas_edits: BTreeMap<(usize, u32), f32> = BTreeMap::new();
         let mut gas_clear_cells: HashSet<usize> = HashSet::new();
         let mut thermal_edits: BTreeMap<usize, f32> = BTreeMap::new();
-        let mut rigid_destroy_indices = Vec::new();
-        let mut deferred = SceneEditBatch::new();
+        let mut rigid_destroy_indices: Vec<usize> = Vec::new();
+        let mut deferred: SceneEditBatch = SceneEditBatch::new();
         for edit in edits.drain() {
-            let destroy_cells = matches!(&edit, SceneEdit::DestroyCells { .. });
+            let destroy_cells: bool = matches!(&edit, SceneEdit::DestroyCells { .. });
             match edit {
                 SceneEdit::PlaceRigidBody { cells } => {
                     if cells.is_empty() {
@@ -231,8 +247,8 @@ impl Scene {
             let mut fluid_edits: Vec<(usize, u32, f32, f32)> = fluid_edits
                 .into_iter()
                 .map(|(index, material)| {
-                    let identifier = MaterialIdentifier::from_u32(material);
-                    let temperature = if identifier == MaterialIdentifier::NULL {
+                    let identifier: MaterialIdentifier = MaterialIdentifier::from_u32(material);
+                    let temperature: f32 = if identifier == MaterialIdentifier::NULL {
                         0.0
                     } else {
                         self.initial_temperature(identifier)
@@ -262,18 +278,24 @@ impl Scene {
             );
         }
         if !gas_edits.is_empty() || !gas_clear_cells.is_empty() {
-            let mut authored_temperature_by_cell = BTreeMap::<usize, (f32, usize)>::new();
+            let mut authored_temperature_by_cell: BTreeMap<usize, (f32, usize)> = BTreeMap::new();
             // btreemap ordering plus this average keeps shared-cell gas temperature deterministic.
             for (&(cell, _), &temperature) in &gas_edits {
-                let entry = authored_temperature_by_cell.entry(cell).or_insert((0.0, 0));
+                let entry: &mut (f32, usize) =
+                    authored_temperature_by_cell.entry(cell).or_insert((0.0, 0));
                 entry.0 += temperature;
                 entry.1 += 1;
             }
             let gas_edits: Vec<(usize, u32, f32)> = gas_edits
                 .into_iter()
                 .map(|((cell, species), _)| {
-                    let (sum, count) = authored_temperature_by_cell[&cell];
-                    (cell, species, sum / count as f32)
+                    let (authored_temperature_sum, authored_temperature_count): (f32, usize) =
+                        authored_temperature_by_cell[&cell];
+                    (
+                        cell,
+                        species,
+                        authored_temperature_sum / authored_temperature_count as f32,
+                    )
                 })
                 .collect();
             let mut gas_clear_cells: Vec<usize> = gas_clear_cells.into_iter().collect();

@@ -1,6 +1,18 @@
 // Copyright Rob Gage 2026
 
-use super::*;
+use std::io;
+use std::sync::Arc;
+use std::sync::Mutex;
+
+use super::Scene;
+use crate::chunks::ChunkEntry;
+use crate::chunks::ChunkGasCell;
+use crate::materials::Material;
+use crate::materials::MaterialIdentifier;
+use crate::scenes::GasDownload;
+use crate::scenes::GasUpload;
+use crate::tiles::TileArea;
+use crate::tiles::TileCoordinates;
 
 impl Scene {
     pub(super) fn gas_downloads_queue(&mut self, area: TileArea) {
@@ -87,7 +99,7 @@ impl Scene {
                 return Err(io::Error::other("Incoming gas chunk is not active"));
             }
         }
-        let mut cells: Vec<ChunkGasCell> = Vec::new();
+        let mut gas_upload_cells: Vec<ChunkGasCell> = Vec::new();
         for coordinates in chunk_coordinates {
             let Some(ChunkEntry::Active { chunk, is_dirty }) = self.chunks.get_mut(&coordinates)
             else {
@@ -97,17 +109,17 @@ impl Scene {
             if !chunk_cells.is_empty() {
                 *is_dirty = true;
             }
-            cells.append(&mut chunk_cells);
+            gas_upload_cells.append(&mut chunk_cells);
         }
-        if cells.is_empty() {
+        if gas_upload_cells.is_empty() {
             return Ok(());
         }
-        for cell in &mut cells {
+        for cell in &mut gas_upload_cells {
             if !cell.temperature.is_finite() {
                 cell.temperature = self.ambient_temperature;
             }
         }
-        let upload: GasUpload = GasUpload::new(area, cells);
+        let upload: GasUpload = GasUpload::new(area, gas_upload_cells);
         if let Err(error) = upload.validate(self.data.materials()) {
             self.gas_cells_restore(upload.cells)?;
             return Err(error);
@@ -129,8 +141,11 @@ impl Scene {
     }
 
     /// Returns sparse gas cells to their owning CPU chunks after a failed import validation
-    pub(super) fn gas_cells_restore(&mut self, cells: Vec<ChunkGasCell>) -> Result<(), io::Error> {
-        for cell in cells {
+    pub(super) fn gas_cells_restore(
+        &mut self,
+        gas_cells: Vec<ChunkGasCell>,
+    ) -> Result<(), io::Error> {
+        for cell in gas_cells {
             let coordinates: TileCoordinates = cell.tile_coordinates().chunk_coordinates();
             let Some(ChunkEntry::Active { chunk, is_dirty }) = self.chunks.get_mut(&coordinates)
             else {
@@ -146,13 +161,14 @@ impl Scene {
 
     /// Applies completed gas exports to their world-position CPU chunks
     pub(super) fn gas_downloads_apply_completed(&mut self) -> Result<(), io::Error> {
-        let mut index: usize = 0;
-        while index < self.gas_downloads.len() {
-            let mut download = self.gas_downloads[index]
+        let mut gas_download_index: usize = 0;
+        while gas_download_index < self.gas_downloads.len() {
+            let mut download: std::sync::MutexGuard<'_, GasDownload> = self.gas_downloads
+                [gas_download_index]
                 .lock()
                 .map_err(|_| io::Error::other("Gas download is unavailable"))?;
             let Some(result) = download.result.as_ref() else {
-                index += 1;
+                gas_download_index += 1;
                 continue;
             };
             if let Err(error) = result {
@@ -172,10 +188,11 @@ impl Scene {
                     ));
                 }
             }
-            let cells: Vec<ChunkGasCell> = download.result.take().unwrap().unwrap();
+            let restored_gas_cells: Vec<ChunkGasCell> = download.result.take().unwrap().unwrap();
             drop(download);
-            self.gas_cells_restore(cells)?;
-            let download: Arc<Mutex<GasDownload>> = self.gas_downloads.swap_remove(index);
+            self.gas_cells_restore(restored_gas_cells)?;
+            let download: Arc<Mutex<GasDownload>> =
+                self.gas_downloads.swap_remove(gas_download_index);
             self.gas_download_pool.push(download);
         }
         Ok(())
@@ -184,27 +201,27 @@ impl Scene {
     /// Submits queued gas exports and begins their asynchronous readbacks
     pub(super) fn gas_downloads_submit(&self) -> Result<(), io::Error> {
         for download in &self.gas_downloads {
-            let mut state = download
+            let mut gas_transfer_state: std::sync::MutexGuard<'_, GasDownload> = download
                 .lock()
                 .map_err(|_| io::Error::other("Gas download is unavailable"))?;
-            if state.is_started {
+            if gas_transfer_state.is_started {
                 continue;
             }
             let buffered_area: TileArea = self.area_buffered();
             let buffered_dimensions: [u16; 2] = buffered_area.dimensions();
             self.gases.export(
                 self.accelerator.as_ref(),
-                &state,
+                &gas_transfer_state,
                 buffered_area.origin(),
                 buffered_dimensions[0],
                 buffered_dimensions[1],
                 self.tiles_ring_offset_x,
                 self.tiles_ring_offset_y,
             );
-            state.is_started = true;
-            let area: TileArea = state.area;
+            gas_transfer_state.is_started = true;
+            let area: TileArea = gas_transfer_state.area;
             let dimensions: [u16; 2] = area.dimensions();
-            let byte_count: usize = usize::from(dimensions[0])
+            let gas_download_byte_count: usize = usize::from(dimensions[0])
                 * usize::from(dimensions[1])
                 * 64
                 * (5 + self.gases.gas_count() as usize)
@@ -217,37 +234,45 @@ impl Scene {
                     matches!(material, Material::Gas { .. }).then_some(identifier)
                 })
                 .collect();
-            let buffer: wgpu::Buffer = state.buffer.clone();
-            let mapped_buffer: wgpu::Buffer = buffer.clone();
+            let gas_download_buffer: wgpu::Buffer = gas_transfer_state.buffer.clone();
+            let mapped_gas_download_buffer: wgpu::Buffer = gas_download_buffer.clone();
             let download: Arc<Mutex<GasDownload>> = download.clone();
-            drop(state);
-            buffer
-                .slice(0..byte_count as u64)
-                .map_async(wgpu::MapMode::Read, move |result| {
-                    let bytes: Result<Vec<u8>, io::Error> = match result {
-                        Ok(()) => {
-                            match mapped_buffer.slice(0..byte_count as u64).get_mapped_range() {
-                                Ok(mapped_data) => {
-                                    let bytes: Vec<u8> = mapped_data.to_vec();
-                                    drop(mapped_data);
-                                    mapped_buffer.unmap();
-                                    Ok(bytes)
-                                }
-                                Err(error) => {
-                                    mapped_buffer.unmap();
-                                    Err(io::Error::other(error.to_string()))
+            drop(gas_transfer_state);
+            gas_download_buffer
+                .slice(0..gas_download_byte_count as u64)
+                .map_async(wgpu::MapMode::Read, move |gas_download_mapping_result| {
+                    let gas_download_bytes_result: Result<Vec<u8>, io::Error> =
+                        match gas_download_mapping_result {
+                            Ok(()) => {
+                                match mapped_gas_download_buffer
+                                    .slice(0..gas_download_byte_count as u64)
+                                    .get_mapped_range()
+                                {
+                                    Ok(mapped_data) => {
+                                        let gas_download_bytes: Vec<u8> = mapped_data.to_vec();
+                                        drop(mapped_data);
+                                        mapped_gas_download_buffer.unmap();
+                                        Ok(gas_download_bytes)
+                                    }
+                                    Err(error) => {
+                                        mapped_gas_download_buffer.unmap();
+                                        Err(io::Error::other(error.to_string()))
+                                    }
                                 }
                             }
-                        }
-                        Err(_) => Err(io::Error::other("Gas download failed")),
-                    };
+                            Err(_) => Err(io::Error::other("Gas download failed")),
+                        };
                     std::thread::spawn(move || {
-                        let result: Result<Vec<ChunkGasCell>, io::Error> =
-                            bytes.and_then(|bytes| {
-                                GasDownload::deserialize(&bytes, area, &gas_identifiers)
+                        let gas_download_result: Result<Vec<ChunkGasCell>, io::Error> =
+                            gas_download_bytes_result.and_then(|gas_download_bytes| {
+                                GasDownload::deserialize(
+                                    &gas_download_bytes,
+                                    area,
+                                    &gas_identifiers,
+                                )
                             });
-                        if let Ok(mut state) = download.lock() {
-                            state.result = Some(result);
+                        if let Ok(mut gas_transfer_state) = download.lock() {
+                            gas_transfer_state.result = Some(gas_download_result);
                         }
                     });
                 });

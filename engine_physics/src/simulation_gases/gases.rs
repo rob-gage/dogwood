@@ -1,12 +1,6 @@
 // Copyright Rob Gage 2026
 
-use crate::simulation::simulation_constants::*;
-use crate::{
-    materials::{Material, MaterialRegistry},
-    scenes::{GasDownload, GasUpload},
-    tiles::{TileArea, TileCoordinates},
-};
-use engine_compute::{Accelerator, AcceleratorBuffer};
+use engine_compute::AcceleratorBuffer;
 
 /// Owns the shared Eulerian gas velocity and per-species concentration fields
 pub struct Gases {
@@ -31,7 +25,7 @@ pub struct Gases {
     /// Dense fixed-stride records used only during residency export
     streaming_data: AcceleratorBuffer,
     /// Buffered ring mapping, gravity, and solver constants
-    parameters: wgpu::Buffer,
+    gas_simulation_parameters: wgpu::Buffer,
     /// All concrete gas solver bindings
     bind_group: wgpu::BindGroup,
     advect_velocity_pipeline: wgpu::ComputePipeline,
@@ -90,6 +84,6 @@ impl Drop for Gases {
         self.pressure_b.free();
         self.curl.free();
         self.streaming_data.free();
-        self.parameters.destroy();
+        self.gas_simulation_parameters.destroy();
     }
 }

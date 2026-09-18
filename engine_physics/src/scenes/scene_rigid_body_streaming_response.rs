@@ -1,9 +1,10 @@
 // Copyright Rob Gage 2026
 
+use std::io;
+
 use super::scene_rigid_persistence_request::SceneRigidPersistenceRequest;
 use crate::scenes::SceneDormantRigidBody;
 use crate::tiles::TileCoordinates;
-use std::io;
 
 pub(super) enum SceneRigidBodyStreamingResponse {
     Loaded {

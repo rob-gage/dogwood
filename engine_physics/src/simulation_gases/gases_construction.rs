@@ -1,6 +1,11 @@
 // Copyright Rob Gage 2026
 
-use super::*;
+use engine_compute::Accelerator;
+use engine_compute::AcceleratorBuffer;
+
+use super::Gases;
+use crate::materials::Material;
+use crate::materials::MaterialRegistry;
 
 impl Gases {
     /// Creates dense gas fields matching the physical cellular tile ring
@@ -52,11 +57,12 @@ impl Gases {
         let curl: AcceleratorBuffer = accelerator.allocate::<f32>(buffered_cell_count as usize);
         let streaming_data: AcceleratorBuffer =
             accelerator.allocate::<u32>(streaming_value_count as usize);
-        let parameters: wgpu::Buffer = crate::simulation::create_simulation_uniform_buffer(
-            device,
-            "gas simulation parameters",
-            96,
-        );
+        let gas_simulation_parameters: wgpu::Buffer =
+            crate::simulation::create_simulation_uniform_buffer(
+                device,
+                "gas simulation parameters",
+                96,
+            );
         let storage: fn(u32, bool) -> wgpu::BindGroupLayoutEntry =
             crate::simulation::storage_bind_group_layout_entry;
         let layout: wgpu::BindGroupLayout =
@@ -100,7 +106,7 @@ impl Gases {
                 Self::binding(14, &gas_temperature),
                 wgpu::BindGroupEntry {
                     binding: 13,
-                    resource: parameters.as_entire_binding(),
+                    resource: gas_simulation_parameters.as_entire_binding(),
                 },
             ],
         });
@@ -121,16 +127,17 @@ impl Gases {
                 bind_group_layouts: &[Some(&layout)],
                 immediate_size: 0,
             });
-        let pipeline = |entry_point: &'static str, label: &'static str| -> wgpu::ComputePipeline {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(label),
-                layout: Some(&pipeline_layout),
-                module: &shader,
-                entry_point: Some(entry_point),
-                compilation_options: Default::default(),
-                cache: None,
-            })
-        };
+        let pipeline: &dyn Fn(&'static str, &'static str) -> wgpu::ComputePipeline =
+            &|entry_point: &'static str, label: &'static str| -> wgpu::ComputePipeline {
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some(label),
+                    layout: Some(&pipeline_layout),
+                    module: &shader,
+                    entry_point: Some(entry_point),
+                    compilation_options: Default::default(),
+                    cache: None,
+                })
+            };
         Self {
             velocity,
             velocity_scratch,
@@ -142,7 +149,7 @@ impl Gases {
             pressure_b,
             curl,
             streaming_data,
-            parameters,
+            gas_simulation_parameters,
             bind_group,
             advect_velocity_pipeline: pipeline(
                 "advect_gas_velocity",

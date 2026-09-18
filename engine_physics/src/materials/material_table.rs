@@ -1,11 +1,14 @@
 // Copyright Rob Gage 2026
 
-use super::{
-    CompiledMaterialReaction, MaterialForm, MaterialRegistry, MaterialThermalProperties,
-    MaterialThermalTransition,
-};
-use engine_compute::{Accelerator, AcceleratorBuffer};
+use engine_compute::Accelerator;
+use engine_compute::AcceleratorBuffer;
 use engine_graphics::MaterialGraphics;
+
+use super::CompiledMaterialReaction;
+use super::MaterialForm;
+use super::MaterialRegistry;
+use super::MaterialThermalProperties;
+use super::MaterialThermalTransition;
 
 /// All immutable derived material properties uploaded to the Accelerator.
 ///
@@ -24,7 +27,7 @@ impl MaterialTable {
         let material_graphics: MaterialGraphics = registry.build_material_graphics(accelerator);
         // four vec4-compatible groups (conductivity/heat capacity, cold transition,
         // hot transition, and padding) keep the WGSL record naturally 16-byte aligned.
-        let records: Vec<[u32; 16]> = registry
+        let thermal_material_records: Vec<[u32; 16]> = registry
             .iter()
             .map(|(material_identifier, _)| {
                 let properties: MaterialThermalProperties = registry
@@ -65,16 +68,16 @@ impl MaterialTable {
             })
             .collect();
         let thermal_properties_buffer: AcceleratorBuffer =
-            accelerator.allocate::<[u32; 16]>(records.len().max(1));
-        if !records.is_empty() {
-            let bytes: Vec<u8> = records
+            accelerator.allocate::<[u32; 16]>(thermal_material_records.len().max(1));
+        if !thermal_material_records.is_empty() {
+            let thermal_properties_bytes: Vec<u8> = thermal_material_records
                 .iter()
                 .flat_map(|record| record.iter().flat_map(|v| v.to_le_bytes()))
                 .collect();
             accelerator.wgpu_queue().write_buffer(
                 thermal_properties_buffer.wgpu_buffer(),
                 0,
-                &bytes,
+                &thermal_properties_bytes,
             );
         }
         let static_count: u32 = registry
@@ -97,7 +100,7 @@ impl MaterialTable {
             .iter()
             .filter(|(material_identifier, _)| material_identifier.form() == MaterialForm::Gas)
             .count() as u32;
-        let offsets: [u32; 8] = [
+        let thermal_material_table_offsets: [u32; 8] = [
             static_count + dynamic_count + fluid_count,
             0,
             static_count,
@@ -107,19 +110,18 @@ impl MaterialTable {
             dynamic_count,
             fluid_count,
         ];
-        let parameters: wgpu::Buffer =
-            accelerator
-                .wgpu_device()
-                .create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("thermal material table parameters"),
-                    size: 32,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
+        let thermal_material_table_parameters: wgpu::Buffer = accelerator
+            .wgpu_device()
+            .create_buffer(&wgpu::BufferDescriptor {
+                label: Some("thermal material table parameters"),
+                size: 32,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
         accelerator.wgpu_queue().write_buffer(
-            &parameters,
+            &thermal_material_table_parameters,
             0,
-            &offsets
+            &thermal_material_table_offsets
                 .iter()
                 .flat_map(|v| v.to_le_bytes())
                 .collect::<Vec<_>>(),
@@ -129,7 +131,7 @@ impl MaterialTable {
         Self {
             material_graphics,
             thermal_properties: thermal_properties_buffer,
-            thermal_parameters: parameters,
+            thermal_parameters: thermal_material_table_parameters,
             reaction_records,
             reaction_selector_members,
         }
@@ -161,7 +163,7 @@ impl MaterialTable {
         accelerator: &Accelerator,
         materials: &MaterialRegistry,
     ) -> (AcceleratorBuffer, AcceleratorBuffer) {
-        let records: AcceleratorBuffer = accelerator
+        let material_reaction_records: AcceleratorBuffer = accelerator
             .allocate::<[u32; CompiledMaterialReaction::WORD_COUNT]>(
                 materials.reactions().len().max(1),
             );
@@ -240,7 +242,7 @@ impl MaterialTable {
             .collect();
         if !encoded.is_empty() {
             accelerator.wgpu_queue().write_buffer(
-                records.wgpu_buffer(),
+                material_reaction_records.wgpu_buffer(),
                 0,
                 &encoded
                     .iter()
@@ -263,7 +265,7 @@ impl MaterialTable {
                     .collect::<Vec<_>>(),
             );
         }
-        (records, selector_members)
+        (material_reaction_records, selector_members)
     }
     pub const fn records_buffer(&self) -> &AcceleratorBuffer {
         &self.reaction_records

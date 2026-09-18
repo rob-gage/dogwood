@@ -46,7 +46,7 @@ fn gather_rigid_contacts(
 ) {
     let logical_index: u32 =
         logical_cell_index_from_active_pressure_workgroup(workgroup.x, local_index);
-    if logical_index >= parameters.buffered_cell_count {
+    if logical_index >= cellular_pressure_parameters.buffered_cell_count {
         return;
     }
     let cell: vec2<i32> = cellular_pressure_world_cell_from_logical_index(logical_index);

@@ -7,14 +7,19 @@ mod reaction_extent;
 mod reaction_implicit_air;
 mod reaction_rule_tests;
 
+use engine_graphics::Color;
+use engine_graphics::MaterialAppearance;
+use material_mutation_test_readback::read_u32;
+
 use super::MaterialMutations;
-use crate::materials::{Material, MaterialIdentifier, MaterialRegistry, MaterialTable};
+use crate::materials::Material;
+use crate::materials::MaterialIdentifier;
+use crate::materials::MaterialRegistry;
+use crate::materials::MaterialTable;
 use crate::simulation::Fluids;
 use crate::simulation::tests::new_accelerator_test;
 use crate::simulation_fluids::FluidAuthorityView;
 use crate::simulation_materials::material_reactions::MaterialReactions;
-use engine_graphics::{Color, MaterialAppearance};
-use material_mutation_test_readback::read_u32;
 
 #[test]
 fn test_resolver_pipeline_compiles() {

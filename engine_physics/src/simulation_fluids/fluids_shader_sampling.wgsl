@@ -25,7 +25,7 @@ fn gather_fluid_particle_sample_for_cell(center: vec2<f32>) -> DerivedFluidCellS
             var particle_index: u32 = atomicLoad(&bucket_heads[bucket_index]);
             for (
                 var chain_length: u32 = 0u;
-                particle_index != INVALID_FLUID_PARTICLE_INDEX && chain_length < parameters.particle_capacity;
+                particle_index != INVALID_FLUID_PARTICLE_INDEX && chain_length < fluid_simulation_parameters.particle_capacity;
                 chain_length++
             ) {
                 let particle: Particle = particles[particle_index];
@@ -106,16 +106,16 @@ fn sample_fluid_state_inside_pawn_capsule(@builtin(global_invocation_id) invocat
     }
     let shape: ActorShape =
         actor_shape_from_parameters(
-            parameters.sample_center,
-            parameters.gravity,
-            parameters.sample_shape_parameters,
-            parameters.sample_shape_kind,
+            fluid_simulation_parameters.sample_center,
+            fluid_simulation_parameters.gravity,
+            fluid_simulation_parameters.sample_shape_parameters,
+            fluid_simulation_parameters.sample_shape_kind,
         );
     let extent: vec2<f32> = actor_shape_world_extent(shape);
     let minimum: vec2<i32> =
-        vec2<i32>(floor((parameters.sample_center - extent) * CELLS_PER_TILE_FLOAT));
+        vec2<i32>(floor((fluid_simulation_parameters.sample_center - extent) * CELLS_PER_TILE_FLOAT));
     let maximum: vec2<i32> =
-        vec2<i32>(floor((parameters.sample_center + extent) * CELLS_PER_TILE_FLOAT));
+        vec2<i32>(floor((fluid_simulation_parameters.sample_center + extent) * CELLS_PER_TILE_FLOAT));
     let sample: DerivedFluidActorSample =
         gather_derived_fluid_sample_inside_actor(shape, minimum, maximum);
     let divisor: f32 = max(sample.coverage_sum, 0.000001);
@@ -149,17 +149,17 @@ fn gather_derived_fluid_sample_inside_actor(
                 continue;
             }
             capsule_cell_count += 1.0;
-            let index: u32 = fluid_physical_cell_index_from_world_cell(cell);
+            let fluid_physical_cell_index: u32 = fluid_physical_cell_index_from_world_cell(cell);
             if
-                index == INVALID_PHYSICAL_CELL_INDEX || derived_material_identifiers[index] == EMPTY_MATERIAL_IDENTIFIER
+                fluid_physical_cell_index == INVALID_PHYSICAL_CELL_INDEX || derived_material_identifiers[fluid_physical_cell_index] == EMPTY_MATERIAL_IDENTIFIER
             {
                 continue;
             }
-            let coverage: f32 = clamp(derived_coverage[index], 0.0, 1.0);
+            let coverage: f32 = clamp(derived_coverage[fluid_physical_cell_index], 0.0, 1.0);
             let properties: vec2<f32> =
-                fluid_physical_properties_from_identifier(derived_material_identifiers[index]);
+                fluid_physical_properties_from_identifier(derived_material_identifiers[fluid_physical_cell_index]);
             coverage_sum += coverage;
-            velocity_sum += derived_velocity[index].xy * coverage;
+            velocity_sum += derived_velocity[fluid_physical_cell_index].xy * coverage;
             density_sum += properties.x * coverage;
             viscosity_sum += properties.y * coverage;
         }
@@ -194,7 +194,7 @@ fn calculate_fluid_particle_velocity_smoothing(particle_index: u32, particle: Pa
             var neighbor_index: u32 = atomicLoad(&bucket_heads[bucket_index]);
             for (
                 var chain_length: u32 = 0u;
-                neighbor_index != INVALID_FLUID_PARTICLE_INDEX && chain_length < parameters.particle_capacity;
+                neighbor_index != INVALID_FLUID_PARTICLE_INDEX && chain_length < fluid_simulation_parameters.particle_capacity;
                 chain_length++
             ) {
                 if neighbor_index != particle_index {
@@ -240,14 +240,14 @@ fn calculate_fluid_density_constraint_lambda(
             var neighbor_index: u32 = atomicLoad(&bucket_heads[bucket_index]);
             for (
                 var chain_length: u32 = 0u;
-                neighbor_index != INVALID_FLUID_PARTICLE_INDEX && chain_length < parameters.particle_capacity;
+                neighbor_index != INVALID_FLUID_PARTICLE_INDEX && chain_length < fluid_simulation_parameters.particle_capacity;
                 chain_length++
             ) {
                 if neighbor_index != particle_index {
                     let separation: vec2<f32> =
                         (position - predicted_positions[neighbor_index]) * CELLS_PER_TILE_FLOAT;
                     let distance: f32 = length(separation);
-                    if distance < parameters.support_radius_cells {
+                    if distance < fluid_simulation_parameters.support_radius_cells {
                         density += fluid_poly6_kernel_weight(distance);
                         let gradient: vec2<f32> =
                             fluid_spiky_kernel_gradient(separation, distance) / rest_density;
@@ -286,14 +286,14 @@ fn calculate_fluid_particle_position_correction_cells(
             var neighbor_index: u32 = atomicLoad(&bucket_heads[bucket_index]);
             for (
                 var chain_length: u32 = 0u;
-                neighbor_index != INVALID_FLUID_PARTICLE_INDEX && chain_length < parameters.particle_capacity;
+                neighbor_index != INVALID_FLUID_PARTICLE_INDEX && chain_length < fluid_simulation_parameters.particle_capacity;
                 chain_length++
             ) {
                 if neighbor_index != particle_index {
                     let separation: vec2<f32> =
                         (position - predicted_positions[neighbor_index]) * CELLS_PER_TILE_FLOAT;
                     let distance: f32 = length(separation);
-                    if distance > 0.000001 && distance < parameters.support_radius_cells {
+                    if distance > 0.000001 && distance < fluid_simulation_parameters.support_radius_cells {
                         correction_cells +=
                             (lambdas[particle_index]
                                 + lambdas[neighbor_index]
@@ -314,7 +314,7 @@ fn calculate_fluid_particle_position_correction_cells(
 
 // Evaluates the two-dimensional particle-fluid poly6 density kernel
 fn fluid_poly6_kernel_weight(distance: f32) -> f32 {
-    let h: f32 = parameters.support_radius_cells;
+    let h: f32 = fluid_simulation_parameters.support_radius_cells;
     if distance >= h {
         return 0.0;
     }
@@ -324,7 +324,7 @@ fn fluid_poly6_kernel_weight(distance: f32) -> f32 {
 
 // Evaluates the two-dimensional particle-fluid spiky-kernel gradient
 fn fluid_spiky_kernel_gradient(separation: vec2<f32>, distance: f32) -> vec2<f32> {
-    let h: f32 = parameters.support_radius_cells;
+    let h: f32 = fluid_simulation_parameters.support_radius_cells;
     if distance <= 0.000001 || distance >= h {
         return vec2<f32>(0.0);
     }
@@ -336,7 +336,7 @@ fn fluid_spiky_kernel_gradient(separation: vec2<f32>, distance: f32) -> vec2<f32
 fn calculate_fluid_artificial_pressure(distance: f32, material_identifier: u32) -> f32 {
     let reference: f32 =
         fluid_poly6_kernel_weight(
-            ARTIFICIAL_PRESSURE_DELTA_Q_RATIO * parameters.support_radius_cells,
+            ARTIFICIAL_PRESSURE_DELTA_Q_RATIO * fluid_simulation_parameters.support_radius_cells,
         );
     let ratio: f32 = fluid_poly6_kernel_weight(distance) / max(reference, 0.000001);
     let squared: f32 = ratio * ratio;

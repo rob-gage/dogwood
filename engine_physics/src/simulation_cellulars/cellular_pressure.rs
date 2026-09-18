@@ -1,19 +1,11 @@
 // Copyright Rob Gage 2026
 
-use crate::simulation::simulation_constants::*;
-use crate::simulation::{
-    RigidGranularReactionBatch, RigidGranularReadbackSlot, RigidGranularReadbackStatus,
-};
-use crate::{
-    materials::{Material, MaterialIdentifier, MaterialRegistry},
-    tiles::{CellCoordinates, TileCoordinates},
-};
-use engine_compute::{Accelerator, AcceleratorBuffer};
-use std::{
-    collections::BTreeMap,
-    io,
-    sync::{Arc, Mutex},
-};
+use std::collections::BTreeMap;
+
+use engine_compute::AcceleratorBuffer;
+
+use crate::simulation::RigidGranularReactionBatch;
+use crate::simulation::RigidGranularReadbackSlot;
 
 /// Applies transient directional cellular pressure and static integrity damage
 pub struct CellularPressure {
@@ -43,7 +35,7 @@ pub struct CellularPressure {
     rigid_reaction_sequence_apply_next: u64,
     rigid_topology_revision: u64,
     rigid_fracture_word_count: u64,
-    parameters: wgpu::Buffer,
+    cellular_pressure_parameters: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     bind_group_layout: wgpu::BindGroupLayout,
     bound_buffers: Vec<(u32, wgpu::Buffer)>,
@@ -78,6 +70,10 @@ pub struct CellularPressure {
 mod cellular_pressure_construction;
 #[path = "cellular_pressure_operations.rs"]
 mod cellular_pressure_operations;
+#[path = "cellular_pressure_reaction_decode.rs"]
+mod cellular_pressure_reaction_decode;
+#[path = "cellular_pressure_readback.rs"]
+mod cellular_pressure_readback;
 #[path = "cellular_pressure_runtime.rs"]
 mod cellular_pressure_runtime;
 #[path = "cellular_pressure_simulation.rs"]
@@ -114,7 +110,7 @@ impl Drop for CellularPressure {
         self.indirect_dispatch.destroy();
         self.rigid_damage_dispatch.destroy();
         self.rigid_fracture_count.destroy();
-        self.parameters.destroy();
+        self.cellular_pressure_parameters.destroy();
         for slot in &self.rigid_reaction_readback_slots {
             slot.buffer.destroy();
         }

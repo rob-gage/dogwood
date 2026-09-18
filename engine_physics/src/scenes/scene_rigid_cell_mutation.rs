@@ -1,6 +1,17 @@
 // Copyright Rob Gage 2026
 
-use super::*;
+use std::collections::HashMap;
+use std::collections::HashSet;
+
+use rapier2d::prelude::Vector;
+
+use super::Scene;
+use super::SceneRigidCellRemovalCause;
+use crate::materials::Material;
+use crate::materials::MaterialIdentifier;
+use crate::scene_editing::SceneEditCellPlacement;
+use crate::simulation::RigidCellularBody;
+use crate::simulation::RigidCellularBodyCell;
 
 impl Scene {
     /// Applies Accelerator-detected rigid phase candidates after their bounded async
@@ -13,7 +24,7 @@ impl Scene {
         let mut removals: HashMap<usize, HashSet<[i32; 2]>> = HashMap::new();
         let mut rollback: Vec<u32> = Vec::new();
         for candidate in candidates {
-            let slot: u32 = candidate[0];
+            let rigid_cell_state_slot: u32 = candidate[0];
             let generation: u32 = candidate[1];
             let expected: MaterialIdentifier = MaterialIdentifier::from_u32(candidate[2]);
             let replacement: u32 = candidate[3];
@@ -37,7 +48,7 @@ impl Scene {
                         body.cells
                             .iter()
                             .find(|cell| {
-                                cell.state_slot == slot
+                                cell.state_slot == rigid_cell_state_slot
                                     && cell.state_generation == generation
                                     && cell.material == expected
                             })
@@ -51,44 +62,48 @@ impl Scene {
             if !(0.999..=1.001).contains(&amount)
                 || self
                     .rigid_cell_state_generations
-                    .get(slot as usize)
+                    .get(rigid_cell_state_slot as usize)
                     .copied()
                     != Some(generation)
             {
                 rollback.push(reserved);
                 continue;
             }
-            let Some(state) = self
+            let Some(rigid_body_state) = self
                 .physics_world
                 .rigid_cellular_body_state(&self.rigid_cellular_bodies[body_index])
             else {
                 rollback.push(reserved);
                 continue;
             };
-            let local: [f32; 2] = [
+            let rigid_cell_local_position: [f32; 2] = [
                 (cell.local[0] as f32 + 0.5) / 8.0,
                 (cell.local[1] as f32 + 0.5) / 8.0,
             ];
-            let offset: [f32; 2] = [
-                state.angle.cos() * local[0] - state.angle.sin() * local[1],
-                state.angle.sin() * local[0] + state.angle.cos() * local[1],
+            let rigid_cell_world_offset: [f32; 2] = [
+                rigid_body_state.angle.cos() * rigid_cell_local_position[0]
+                    - rigid_body_state.angle.sin() * rigid_cell_local_position[1],
+                rigid_body_state.angle.sin() * rigid_cell_local_position[0]
+                    + rigid_body_state.angle.cos() * rigid_cell_local_position[1],
             ];
-            let position: [f32; 2] = [
-                state.translation[0] + offset[0],
-                state.translation[1] + offset[1],
+            let rigid_cell_world_position: [f32; 2] = [
+                rigid_body_state.translation[0] + rigid_cell_world_offset[0],
+                rigid_body_state.translation[1] + rigid_cell_world_offset[1],
             ];
-            let velocity: [f32; 2] = [
-                state.linear_velocity[0]
-                    - state.angular_velocity * (position[1] - state.center_of_mass[1]),
-                state.linear_velocity[1]
-                    + state.angular_velocity * (position[0] - state.center_of_mass[0]),
+            let rigid_cell_world_velocity: [f32; 2] = [
+                rigid_body_state.linear_velocity[0]
+                    - rigid_body_state.angular_velocity
+                        * (rigid_cell_world_position[1] - rigid_body_state.center_of_mass[1]),
+                rigid_body_state.linear_velocity[1]
+                    + rigid_body_state.angular_velocity
+                        * (rigid_cell_world_position[0] - rigid_body_state.center_of_mass[0]),
             ];
             self.fluids.commit_reserved_particle(
                 self.accelerator.as_ref(),
                 reserved,
                 replacement,
-                position,
-                velocity,
+                rigid_cell_world_position,
+                rigid_cell_world_velocity,
                 amount,
                 temperature,
             );
@@ -119,36 +134,40 @@ impl Scene {
         if body_index >= self.rigid_cellular_bodies.len() || removed.is_empty() {
             return;
         }
-        let Some(state) = self
+        let Some(rigid_body_state) = self
             .physics_world
             .rigid_cellular_body_state(&self.rigid_cellular_bodies[body_index])
         else {
             return;
         };
-        let body: RigidCellularBody = self.rigid_cellular_bodies.swap_remove(body_index);
-        self.rigid_activation_pending.remove(&body.identifier);
-        self.rigid_sleeping_pending.remove(&body.identifier);
+        let removed_rigid_cellular_body: RigidCellularBody =
+            self.rigid_cellular_bodies.swap_remove(body_index);
+        self.rigid_activation_pending
+            .remove(&removed_rigid_cellular_body.identifier);
+        self.rigid_sleeping_pending
+            .remove(&removed_rigid_cellular_body.identifier);
         self.rigid_cellular_topology_revision =
             self.rigid_cellular_topology_revision.wrapping_add(1);
         self.rigid_cellular_support.clear();
         self.rigid_cellular_recovery.clear();
         self.rigid_cellular_contact_active.clear();
         self.rigid_granular_contact_active.clear();
-        self.physics_world.remove_rigid_cellular_body(&body);
+        self.physics_world
+            .remove_rigid_cellular_body(&removed_rigid_cellular_body);
         let mut debris: Vec<SceneEditCellPlacement> = Vec::new();
-        for cell in body
+        for cell in removed_rigid_cellular_body
             .cells
             .iter()
             .filter(|cell| removed.contains(&cell.local))
         {
             if cause == SceneRigidCellRemovalCause::Fracture
-                && let Some(placement) = self.rigid_cell_debris_placement(&state, cell)
+                && let Some(placement) = self.rigid_cell_debris_placement(&rigid_body_state, cell)
             {
                 debris.push(placement);
             }
             self.release_rigid_cell_state(cell.state_slot);
         }
-        let remaining: Vec<RigidCellularBodyCell> = body
+        let remaining: Vec<RigidCellularBodyCell> = removed_rigid_cellular_body
             .cells
             .into_iter()
             .filter(|cell| !removed.contains(&cell.local))
@@ -159,42 +178,49 @@ impl Scene {
             }
             if cells.len() < self.rigid_component_minimum(&cells) {
                 for cell in cells {
-                    if let Some(placement) = self.rigid_cell_debris_placement(&state, &cell) {
+                    if let Some(placement) =
+                        self.rigid_cell_debris_placement(&rigid_body_state, &cell)
+                    {
                         debris.push(placement);
                     }
                     self.release_rigid_cell_state(cell.state_slot);
                 }
                 continue;
             }
-            let local_center =
+            let local_center: Vector =
                 RigidCellularBody::mass_properties(&cells, self.data.materials()).local_com;
             let child_center: [f32; 2] = [
-                state.translation[0] + state.angle.cos() * local_center.x
-                    - state.angle.sin() * local_center.y,
-                state.translation[1]
-                    + state.angle.sin() * local_center.x
-                    + state.angle.cos() * local_center.y,
+                rigid_body_state.translation[0] + rigid_body_state.angle.cos() * local_center.x
+                    - rigid_body_state.angle.sin() * local_center.y,
+                rigid_body_state.translation[1]
+                    + rigid_body_state.angle.sin() * local_center.x
+                    + rigid_body_state.angle.cos() * local_center.y,
             ];
-            let offset: [f32; 2] = [
-                child_center[0] - state.center_of_mass[0],
-                child_center[1] - state.center_of_mass[1],
+            let child_center_offset: [f32; 2] = [
+                child_center[0] - rigid_body_state.center_of_mass[0],
+                child_center[1] - rigid_body_state.center_of_mass[1],
             ];
             let child_velocity: [f32; 2] = [
-                state.linear_velocity[0] - state.angular_velocity * offset[1],
-                state.linear_velocity[1] + state.angular_velocity * offset[0],
+                rigid_body_state.linear_velocity[0]
+                    - rigid_body_state.angular_velocity * child_center_offset[1],
+                rigid_body_state.linear_velocity[1]
+                    + rigid_body_state.angular_velocity * child_center_offset[0],
             ];
-            let (rebased_position, cells) =
-                Self::rebase_rigid_cells(cells, state.translation, state.angle);
+            let (rebased_position, cells) = Self::rebase_rigid_cells(
+                cells,
+                rigid_body_state.translation,
+                rigid_body_state.angle,
+            );
             let (friction, restitution) = self.rigid_cellular_material_response(&cells);
-            let mut child = self.physics_world.insert_rigid_cellular_body(
+            let mut child: RigidCellularBody = self.physics_world.insert_rigid_cellular_body(
                 rebased_position,
-                state.angle,
+                rigid_body_state.angle,
                 self.data.materials(),
                 cells,
                 friction,
                 restitution,
                 child_velocity,
-                state.angular_velocity,
+                rigid_body_state.angular_velocity,
             );
             child.identifier = self.next_rigid_cellular_body_identifier();
             self.rigid_cellular_bodies.push(child);
@@ -211,52 +237,64 @@ impl Scene {
 
     /// Rebase a split component while preserving every cell's world position.
     fn rebase_rigid_cells(
-        mut cells: Vec<RigidCellularBodyCell>,
+        mut rigid_cellular_body_cells: Vec<RigidCellularBodyCell>,
         position: [f32; 2],
         angle: f32,
     ) -> ([f32; 2], Vec<RigidCellularBodyCell>) {
-        let offset: [i32; 2] = cells
+        let rigid_cell_rebase_offset: [i32; 2] = rigid_cellular_body_cells
             .iter()
             .map(|cell| cell.local)
             .fold([i32::MAX, i32::MAX], |[min_x, min_y], [x, y]| {
                 [min_x.min(x), min_y.min(y)]
             });
-        for cell in &mut cells {
-            cell.local[0] -= offset[0];
-            cell.local[1] -= offset[1];
+        for cell in &mut rigid_cellular_body_cells {
+            cell.local[0] -= rigid_cell_rebase_offset[0];
+            cell.local[1] -= rigid_cell_rebase_offset[1];
         }
         let (sin, cos): (f32, f32) = angle.sin_cos();
         (
             [
-                position[0] + (cos * offset[0] as f32 - sin * offset[1] as f32) / 8.0,
-                position[1] + (sin * offset[0] as f32 + cos * offset[1] as f32) / 8.0,
+                position[0]
+                    + (cos * rigid_cell_rebase_offset[0] as f32
+                        - sin * rigid_cell_rebase_offset[1] as f32)
+                        / 8.0,
+                position[1]
+                    + (sin * rigid_cell_rebase_offset[0] as f32
+                        + cos * rigid_cell_rebase_offset[1] as f32)
+                        / 8.0,
             ],
-            cells,
+            rigid_cellular_body_cells,
         )
     }
 
     /// Averages the existing static material response for one concrete body
     pub(super) fn rigid_cellular_material_response(
         &self,
-        cells: &[RigidCellularBodyCell],
+        rigid_cellular_body_cells: &[RigidCellularBodyCell],
     ) -> (f32, f32) {
-        let (friction, restitution) = cells.iter().fold((0.0, 0.0), |sum, cell| {
-            match self.data.materials().get(cell.material) {
-                Some(Material::CellularStatic {
-                    friction,
-                    restitution,
-                    ..
-                }) => (sum.0 + friction, sum.1 + restitution),
-                _ => sum,
-            }
-        });
-        let divisor: f32 = cells.len().max(1) as f32;
+        let (friction, restitution) =
+            rigid_cellular_body_cells
+                .iter()
+                .fold((0.0, 0.0), |sum, cell| {
+                    match self.data.materials().get(cell.material) {
+                        Some(Material::CellularStatic {
+                            friction,
+                            restitution,
+                            ..
+                        }) => (sum.0 + friction, sum.1 + restitution),
+                        _ => sum,
+                    }
+                });
+        let divisor: f32 = rigid_cellular_body_cells.len().max(1) as f32;
         (friction / divisor, restitution / divisor)
     }
 
     /// The strictest material in a mixed component controls its minimum size.
-    pub(super) fn rigid_component_minimum(&self, cells: &[RigidCellularBodyCell]) -> usize {
-        cells
+    pub(super) fn rigid_component_minimum(
+        &self,
+        rigid_cellular_body_cells: &[RigidCellularBodyCell],
+    ) -> usize {
+        rigid_cellular_body_cells
             .iter()
             .filter_map(|cell| match self.data.materials().get(cell.material) {
                 Some(Material::CellularStatic {
@@ -269,10 +307,11 @@ impl Scene {
             .unwrap_or(1)
     }
 
-    pub(super) fn release_rigid_cell_state(&mut self, slot: u32) {
-        let generation: &mut u32 = &mut self.rigid_cell_state_generations[slot as usize];
+    pub(super) fn release_rigid_cell_state(&mut self, rigid_cell_state_slot: u32) {
+        let generation: &mut u32 =
+            &mut self.rigid_cell_state_generations[rigid_cell_state_slot as usize];
         *generation = generation.wrapping_add(1);
-        self.rigid_cell_state_free.push(slot);
+        self.rigid_cell_state_free.push(rigid_cell_state_slot);
     }
 
     #[cfg(debug_assertions)]

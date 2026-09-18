@@ -71,7 +71,7 @@ struct MaterialMutationParameters {
 @group(0) @binding(6) var<storage, read_write> cellular_kinematics: array<vec4<f32>>;
 @group(0) @binding(7) var<storage, read_write> fluid_edits: array<u32>;
 @group(0) @binding(8) var<storage, read_write> gas_concentrations: array<f32>;
-@group(0) @binding(9) var<uniform> parameters: MaterialMutationParameters;
+@group(0) @binding(9) var<uniform> material_mutation_parameters: MaterialMutationParameters;
 @group(0) @binding(10) var<storage, read_write> fluid_edits_pending: array<atomic<u32>>;
 @group(0) @binding(11) var<storage, read_write> cellular_amounts: array<f32>;
 @group(0) @binding(12) var<storage, read_write> cellular_temperatures: array<f32>;
@@ -123,7 +123,7 @@ fn resolve_material_mutations_nonallocating(@builtin(global_invocation_id) invoc
         return;
     }
     let request = requests[i];
-    if (request.cell >= parameters.buffered_cell_count) {
+    if (request.cell >= material_mutation_parameters.buffered_cell_count) {
         return;
     }
     if (request.kind == 1u) {
@@ -191,11 +191,11 @@ fn resolve_material_mutations_nonallocating(@builtin(global_invocation_id) invoc
         return;
     }
     let species = material_index_from_identifier(request.replacement);
-    if (species >= parameters.gas_count) {
+    if (species >= material_mutation_parameters.gas_count) {
         return;
     }
     gas_temperatures[request.cell] = result_temperature;
-    gas_concentrations[species * parameters.buffered_cell_count + request.cell] += result_amount;
+    gas_concentrations[species * material_mutation_parameters.buffered_cell_count + request.cell] += result_amount;
     cellular_amounts[request.cell] = 0.0;
     cellular_temperatures[request.cell] = 0.0;
 }
@@ -297,10 +297,10 @@ fn resolve_particle(request: MaterialMutationRequest) {
     }
     if (form == 0u) {
         let s = material_index_from_identifier(request.replacement);
-        if (s >= parameters.gas_count) {
+        if (s >= material_mutation_parameters.gas_count) {
             return;
         }
-        gas_concentrations[s * parameters.buffered_cell_count + request.cell] += p.amount;
+        gas_concentrations[s * material_mutation_parameters.buffered_cell_count + request.cell] += p.amount;
         gas_temperatures[request.cell] = bitcast<f32>(request.temperature);
         release_particle(request.locator);
         return;
@@ -312,10 +312,10 @@ fn resolve_particle(request: MaterialMutationRequest) {
 
 fn resolve_gas_nonallocating(request: MaterialMutationRequest) {
     let source = material_index_from_identifier(request.expected_source);
-    if (source >= parameters.gas_count) {
+    if (source >= material_mutation_parameters.gas_count) {
         return;
     }
-    let at = source * parameters.buffered_cell_count + request.cell;
+    let at = source * material_mutation_parameters.buffered_cell_count + request.cell;
     let requested = bitcast<f32>(request.amount);
     let current = gas_concentrations[at];
     if (!(requested > 0.000001) || current + 0.00001 < requested) {
@@ -327,11 +327,11 @@ fn resolve_gas_nonallocating(request: MaterialMutationRequest) {
     }
     if (target_species == 0u) {
         let species = material_index_from_identifier(request.replacement);
-        if (species >= parameters.gas_count) {
+        if (species >= material_mutation_parameters.gas_count) {
             return;
         }
         gas_concentrations[at] = max(current - requested, 0.0);
-        gas_concentrations[species * parameters.buffered_cell_count + request.cell] += requested;
+        gas_concentrations[species * material_mutation_parameters.buffered_cell_count + request.cell] += requested;
         gas_temperatures[request.cell] = bitcast<f32>(request.temperature);
         return;
     }
@@ -353,7 +353,7 @@ fn resolve_gas_fluid_condensation(
     let lane = local.x;
     let cell = group.x * 64u + lane;
     let candidate_index =
-        (group.z * parameters.gas_count + group.y) * parameters.buffered_cell_count + cell;
+        (group.z * material_mutation_parameters.gas_count + group.y) * material_mutation_parameters.buffered_cell_count + cell;
     let candidate = gas_fluid_candidates[candidate_index];
     let valid = candidate.replacement != EMPTY_MATERIAL_IDENTIFIER && candidate.amount > 0.0;
     condensation_amount[lane] = select(0.0, candidate.amount, valid);
@@ -383,7 +383,7 @@ fn resolve_gas_fluid_condensation(
                     break;
                 }
                 let c =
-                    gas_fluid_candidates[(group.z * parameters.gas_count + group.y) * parameters.buffered_cell_count
+                    gas_fluid_candidates[(group.z * material_mutation_parameters.gas_count + group.y) * material_mutation_parameters.buffered_cell_count
                         + group.x * 64u
                         + i];
                 if (c.replacement != EMPTY_MATERIAL_IDENTIFIER && c.amount > 0.0) {
@@ -409,7 +409,7 @@ fn resolve_gas_fluid_condensation(
     }
     workgroupBarrier();
     if (condensation_index != 0xffffffffu && valid) {
-        let at = group.y * parameters.buffered_cell_count + cell;
+        let at = group.y * material_mutation_parameters.buffered_cell_count + cell;
         gas_concentrations[at] =
             max(gas_concentrations[at] - candidate.amount / condensation_amount[0], 0.0);
     }

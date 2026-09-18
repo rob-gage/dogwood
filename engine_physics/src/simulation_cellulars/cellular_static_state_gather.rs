@@ -1,11 +1,15 @@
+use std::sync::Arc;
+use std::sync::Mutex;
+
+use engine_compute::Accelerator;
+use engine_compute::AcceleratorBuffer;
+
 use super::CellularStaticState;
-use engine_compute::{Accelerator, AcceleratorBuffer};
-use std::sync::{Arc, Mutex};
 
 pub(crate) struct CellularStaticStateGather {
     descriptors: AcceleratorBuffer,
     output: AcceleratorBuffer,
-    count: wgpu::Buffer,
+    cellular_static_state_count_buffer: wgpu::Buffer,
     readback: wgpu::Buffer,
     status: Arc<Mutex<Option<Result<Vec<CellularStaticState>, String>>>>,
     bind_group: wgpu::BindGroup,
@@ -27,11 +31,12 @@ impl CellularStaticStateGather {
         let capacity: usize = capacity.max(1);
         let descriptors: AcceleratorBuffer = accelerator.allocate::<u32>(capacity);
         let output: AcceleratorBuffer = accelerator.allocate::<[u32; 8]>(capacity);
-        let count: wgpu::Buffer = crate::simulation::create_simulation_uniform_buffer(
-            device,
-            "cellular static state gather count",
-            4,
-        );
+        let cellular_static_state_count_buffer: wgpu::Buffer =
+            crate::simulation::create_simulation_uniform_buffer(
+                device,
+                "cellular static state gather count",
+                4,
+            );
         let readback: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("cellular static state gather readback"),
             size: capacity as u64 * 32,
@@ -64,7 +69,7 @@ impl CellularStaticStateGather {
             amounts.wgpu_buffer().as_entire_binding(),
             temperatures.wgpu_buffer().as_entire_binding(),
             output.wgpu_buffer().as_entire_binding(),
-            count.as_entire_binding(),
+            cellular_static_state_count_buffer.as_entire_binding(),
         ];
         let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("cellular static state gather"),
@@ -103,7 +108,7 @@ impl CellularStaticStateGather {
         Self {
             descriptors,
             output,
-            count,
+            cellular_static_state_count_buffer,
             readback,
             status,
             bind_group,
@@ -122,66 +127,93 @@ impl CellularStaticStateGather {
         if status.is_some() {
             return false;
         }
-        let bytes: Vec<u8> = indices
+        let cellular_static_state_index_bytes: Vec<u8> = indices
             .iter()
             .flat_map(|index| index.to_le_bytes())
             .collect();
-        accelerator
-            .wgpu_queue()
-            .write_buffer(self.descriptors.wgpu_buffer(), 0, &bytes);
         accelerator.wgpu_queue().write_buffer(
-            &self.count,
+            self.descriptors.wgpu_buffer(),
+            0,
+            &cellular_static_state_index_bytes,
+        );
+        accelerator.wgpu_queue().write_buffer(
+            &self.cellular_static_state_count_buffer,
             0,
             &(indices.len() as u32).to_le_bytes(),
         );
-        let mut encoder =
+        let mut encoder: wgpu::CommandEncoder =
             accelerator
                 .wgpu_device()
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("cellular static state gather"),
                 });
-        let mut pass = accelerator.begin_compute_pass(&mut encoder, "cellular static state gather");
-        pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.dispatch_workgroups((indices.len() as u32).div_ceil(64), 1, 1);
-        drop(pass);
-        let byte_count = indices.len() as u64 * 32;
-        encoder.copy_buffer_to_buffer(self.output.wgpu_buffer(), 0, &self.readback, 0, byte_count);
+        let mut cellular_static_state_compute_pass: wgpu::ComputePass<'_> =
+            accelerator.begin_compute_pass(&mut encoder, "cellular static state gather");
+        cellular_static_state_compute_pass.set_pipeline(&self.pipeline);
+        cellular_static_state_compute_pass.set_bind_group(0, &self.bind_group, &[]);
+        cellular_static_state_compute_pass.dispatch_workgroups(
+            (indices.len() as u32).div_ceil(64),
+            1,
+            1,
+        );
+        drop(cellular_static_state_compute_pass);
+        let cellular_static_state_readback_byte_count: u64 = indices.len() as u64 * 32;
+        encoder.copy_buffer_to_buffer(
+            self.output.wgpu_buffer(),
+            0,
+            &self.readback,
+            0,
+            cellular_static_state_readback_byte_count,
+        );
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
-        let readback = self.readback.clone();
-        let callback_status = self.status.clone();
+        let readback: wgpu::Buffer = self.readback.clone();
+        let callback_status: Arc<Mutex<Option<Result<Vec<CellularStaticState>, String>>>> =
+            self.status.clone();
         readback
             .clone()
-            .slice(0..byte_count)
-            .map_async(wgpu::MapMode::Read, move |result| {
-                let result = result.map_err(|error| error.to_string()).map(|_| {
-                    let mapped = readback.slice(0..byte_count).get_mapped_range().unwrap();
-                    let values = mapped
-                        .as_chunks::<32>()
-                        .0
-                        .iter()
-                        .map(|bytes| CellularStaticState {
-                            material: u32::from_le_bytes(bytes[0..4].try_into().unwrap()),
-                            appearance: u32::from_le_bytes(bytes[4..8].try_into().unwrap()),
-                            integrity: f32::from_bits(u32::from_le_bytes(
-                                bytes[8..12].try_into().unwrap(),
-                            )),
-                            amount: f32::from_bits(u32::from_le_bytes(
-                                bytes[12..16].try_into().unwrap(),
-                            )),
-                            temperature: f32::from_bits(u32::from_le_bytes(
-                                bytes[16..20].try_into().unwrap(),
-                            )),
-                        })
-                        .collect();
-                    drop(mapped);
-                    readback.unmap();
-                    values
-                });
-                if let Ok(mut status) = callback_status.lock() {
-                    *status = Some(result);
-                }
-            });
+            .slice(0..cellular_static_state_readback_byte_count)
+            .map_async(
+                wgpu::MapMode::Read,
+                move |cellular_static_state_mapping_result| {
+                    let cellular_static_state_result: Result<Vec<CellularStaticState>, String> =
+                        cellular_static_state_mapping_result
+                            .map_err(|error| error.to_string())
+                            .map(|_| {
+                                let mapped: wgpu::BufferView = readback
+                                    .slice(0..cellular_static_state_readback_byte_count)
+                                    .get_mapped_range()
+                                    .unwrap();
+                                let cellular_static_states: Vec<CellularStaticState> = mapped
+                                    .as_chunks::<32>()
+                                    .0
+                                    .iter()
+                                    .map(|bytes| CellularStaticState {
+                                        material: u32::from_le_bytes(
+                                            bytes[0..4].try_into().unwrap(),
+                                        ),
+                                        appearance: u32::from_le_bytes(
+                                            bytes[4..8].try_into().unwrap(),
+                                        ),
+                                        integrity: f32::from_bits(u32::from_le_bytes(
+                                            bytes[8..12].try_into().unwrap(),
+                                        )),
+                                        amount: f32::from_bits(u32::from_le_bytes(
+                                            bytes[12..16].try_into().unwrap(),
+                                        )),
+                                        temperature: f32::from_bits(u32::from_le_bytes(
+                                            bytes[16..20].try_into().unwrap(),
+                                        )),
+                                    })
+                                    .collect();
+                                drop(mapped);
+                                readback.unmap();
+                                cellular_static_states
+                            });
+                    if let Ok(mut status) = callback_status.lock() {
+                        *status = Some(cellular_static_state_result);
+                    }
+                },
+            );
         *status = Some(Err("pending".to_owned()));
         true
     }
@@ -204,7 +236,7 @@ impl Drop for CellularStaticStateGather {
     fn drop(&mut self) {
         self.descriptors.free();
         self.output.free();
-        self.count.destroy();
+        self.cellular_static_state_count_buffer.destroy();
         self.readback.destroy();
     }
 }

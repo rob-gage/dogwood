@@ -1,9 +1,10 @@
 // Copyright Rob Gage 2026
 
-use super::{
-    ActorPawnFlyingConfiguration, ActorPawnMovement, ActorPawnNoclipConfiguration,
-    ActorPawnSwimmingConfiguration, ActorPawnWalkingConfiguration,
-};
+use super::ActorPawnFlyingConfiguration;
+use super::ActorPawnMovement;
+use super::ActorPawnNoclipConfiguration;
+use super::ActorPawnSwimmingConfiguration;
+use super::ActorPawnWalkingConfiguration;
 use crate::actors_utility::ActorCollisionShape;
 
 /// Configures the movement capabilities and active movement of an actor pawn

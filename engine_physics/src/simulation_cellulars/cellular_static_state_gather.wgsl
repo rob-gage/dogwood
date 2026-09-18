@@ -5,11 +5,11 @@
 @group(0) @binding(4) var<storage, read> amounts: array<f32>;
 @group(0) @binding(5) var<storage, read> temperatures: array<f32>;
 @group(0) @binding(6) var<storage, read_write> output: array<vec4<u32>>;
-@group(0) @binding(7) var<uniform> count: u32;
+@group(0) @binding(7) var<uniform> cellular_static_state_record_count: u32;
 
 @compute @workgroup_size(64)
 fn gather(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    if (invocation.x >= count) {
+    if (invocation.x >= cellular_static_state_record_count) {
         return;
     }
     let index = descriptors[invocation.x];

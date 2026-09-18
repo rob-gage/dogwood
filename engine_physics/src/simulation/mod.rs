@@ -118,24 +118,32 @@ pub fn create_physics_shader_module(
     create_simulation_shader_module(device, label, source, file_path)
 }
 
-pub use crate::simulation_actors::{SceneSimulation, SceneSimulationConfiguration};
+pub use crate::simulation_actors::SceneSimulation;
+pub use crate::simulation_actors::SceneSimulationConfiguration;
+pub use crate::simulation_cellulars::CellParticle;
+pub use crate::simulation_cellulars::CellularCollision;
+pub use crate::simulation_cellulars::CellularDynamic;
+pub use crate::simulation_cellulars::CellularPhysicsBodyProxy;
+pub use crate::simulation_cellulars::CellularPressure;
 pub(crate) use crate::simulation_cellulars::CellularStaticStateGather;
-pub use crate::simulation_cellulars::{
-    CellParticle, CellularCollision, CellularDynamic, CellularPhysicsBodyProxy, CellularPressure,
-    CollisionOccupancySnapshot,
-};
+pub use crate::simulation_cellulars::CollisionOccupancySnapshot;
 pub use crate::simulation_fluids::Fluids;
 pub use crate::simulation_gases::Gases;
 pub use crate::simulation_materials::MaterialMutations;
 pub(crate) use crate::simulation_materials::MaterialReactions;
+pub(crate) use crate::simulation_rigid_bodies::RigidCellStateGather;
+pub(crate) use crate::simulation_rigid_bodies::RigidCellStateUpload;
+pub(crate) use crate::simulation_rigid_bodies::RigidCellularBody;
+pub(crate) use crate::simulation_rigid_bodies::RigidCellularBodyCell;
+pub(crate) use crate::simulation_rigid_bodies::RigidCellularBodyState;
+pub(crate) use crate::simulation_rigid_bodies::RigidGranularReactionBatch;
+pub(crate) use crate::simulation_rigid_bodies::RigidGranularReadbackSlot;
+pub(crate) use crate::simulation_rigid_bodies::RigidGranularReadbackStatus;
 pub use crate::simulation_rigid_bodies::ScenePhysicsWorld;
-pub(crate) use crate::simulation_rigid_bodies::{
-    RigidCellStateGather, RigidCellStateUpload, RigidCellularBody, RigidCellularBodyCell,
-    RigidCellularBodyState, RigidGranularReactionBatch, RigidGranularReadbackSlot,
-    RigidGranularReadbackStatus,
-};
+pub(crate) use crate::simulation_thermal::ThermalConduction;
+pub(crate) use crate::simulation_thermal::ThermalEdits;
+pub(crate) use crate::simulation_thermal::ThermalInteraction;
+pub(crate) use crate::simulation_thermal::ThermalPhaseTransitions;
+pub(crate) use crate::simulation_thermal::ThermalScatter;
 #[cfg(test)]
 pub(crate) use crate::simulation_thermal::test_rigid_phase_readback_len;
-pub(crate) use crate::simulation_thermal::{
-    ThermalConduction, ThermalEdits, ThermalInteraction, ThermalPhaseTransitions, ThermalScatter,
-};

@@ -1,7 +1,8 @@
 // Copyright Rob Gage 2026
 
-use super::Chunk;
 use std::error::Error;
+
+use super::Chunk;
 
 /// A `Chunk` and its current streaming state
 pub enum ChunkEntry {

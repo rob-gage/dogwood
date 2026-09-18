@@ -1,13 +1,14 @@
 // Copyright Rob Gage 2026
 
-use engine_compute::{Accelerator, AcceleratorBuffer};
+use engine_compute::Accelerator;
+use engine_compute::AcceleratorBuffer;
 
 pub(crate) struct ThermalConduction {
     solved: AcceleratorBuffer,
     face_flux: AcceleratorBuffer,
     face_conductance: AcceleratorBuffer,
     conductance_sum: AcceleratorBuffer,
-    parameters: wgpu::Buffer,
+    thermal_conduction_parameters: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     flux_pipeline: wgpu::ComputePipeline,
     sum_pipeline: wgpu::ComputePipeline,
@@ -37,24 +38,24 @@ impl ThermalConduction {
             ring[1],
         ];
         accelerator.wgpu_queue().write_buffer(
-            &self.parameters,
+            &self.thermal_conduction_parameters,
             0,
             &parameter_values
                 .iter()
                 .flat_map(|value| value.to_le_bytes())
                 .collect::<Vec<_>>(),
         );
-        let mut pass: wgpu::ComputePass<'_> =
+        let mut thermal_conduction_compute_pass: wgpu::ComputePass<'_> =
             accelerator.begin_compute_pass(encoder, "thermal conduction");
-        pass.set_bind_group(0, &self.bind_group, &[]);
+        thermal_conduction_compute_pass.set_bind_group(0, &self.bind_group, &[]);
         for pipeline in [
             &self.flux_pipeline,
             &self.sum_pipeline,
             &self.actual_flux_pipeline,
             &self.resolve_pipeline,
         ] {
-            pass.set_pipeline(pipeline);
-            pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+            thermal_conduction_compute_pass.set_pipeline(pipeline);
+            thermal_conduction_compute_pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
         }
     }
     pub(crate) fn new(
@@ -68,11 +69,12 @@ impl ThermalConduction {
         let face_conductance: AcceleratorBuffer =
             accelerator.allocate::<[f32; 2]>(cell_count as usize);
         let conductance_sum: AcceleratorBuffer = accelerator.allocate::<f32>(cell_count as usize);
-        let parameters: wgpu::Buffer = crate::simulation::create_simulation_uniform_buffer(
-            device,
-            "thermal conduction parameters",
-            64,
-        );
+        let thermal_conduction_parameters: wgpu::Buffer =
+            crate::simulation::create_simulation_uniform_buffer(
+                device,
+                "thermal conduction parameters",
+                64,
+            );
         let storage: fn(u32, bool) -> wgpu::BindGroupLayoutEntry =
             crate::simulation::storage_bind_group_layout_entry;
         let layout: wgpu::BindGroupLayout =
@@ -98,7 +100,7 @@ impl ThermalConduction {
                 crate::simulation::accelerator_buffer_bind_group_entry(4, &solved),
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: parameters.as_entire_binding(),
+                    resource: thermal_conduction_parameters.as_entire_binding(),
                 },
             ],
         });
@@ -129,7 +131,7 @@ impl ThermalConduction {
             face_flux,
             face_conductance,
             conductance_sum,
-            parameters,
+            thermal_conduction_parameters,
             bind_group,
             flux_pipeline: pipeline("calculate_thermal_face_flux"),
             sum_pipeline: pipeline("calculate_thermal_conductance_sum"),
@@ -157,7 +159,7 @@ impl ThermalConduction {
             ring[1],
         ];
         accelerator.wgpu_queue().write_buffer(
-            &self.parameters,
+            &self.thermal_conduction_parameters,
             0,
             &parameter_values
                 .iter()
@@ -170,18 +172,18 @@ impl ThermalConduction {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("thermal conduction"),
                 });
-        let mut pass: wgpu::ComputePass<'_> =
+        let mut thermal_conduction_compute_pass: wgpu::ComputePass<'_> =
             accelerator.begin_compute_pass(&mut encoder, "thermal conduction flux");
-        pass.set_pipeline(&self.flux_pipeline);
-        pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
-        pass.set_pipeline(&self.sum_pipeline);
-        pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
-        pass.set_pipeline(&self.actual_flux_pipeline);
-        pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
-        pass.set_pipeline(&self.resolve_pipeline);
-        pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
-        drop(pass);
+        thermal_conduction_compute_pass.set_pipeline(&self.flux_pipeline);
+        thermal_conduction_compute_pass.set_bind_group(0, &self.bind_group, &[]);
+        thermal_conduction_compute_pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+        thermal_conduction_compute_pass.set_pipeline(&self.sum_pipeline);
+        thermal_conduction_compute_pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+        thermal_conduction_compute_pass.set_pipeline(&self.actual_flux_pipeline);
+        thermal_conduction_compute_pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+        thermal_conduction_compute_pass.set_pipeline(&self.resolve_pipeline);
+        thermal_conduction_compute_pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+        drop(thermal_conduction_compute_pass);
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
     pub(crate) const fn solved_buffer(&self) -> &AcceleratorBuffer {
@@ -194,6 +196,6 @@ impl Drop for ThermalConduction {
         self.face_flux.free();
         self.face_conductance.free();
         self.conductance_sum.free();
-        self.parameters.destroy();
+        self.thermal_conduction_parameters.destroy();
     }
 }

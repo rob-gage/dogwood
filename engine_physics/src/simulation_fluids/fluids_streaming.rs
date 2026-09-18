@@ -1,6 +1,21 @@
 // Copyright Rob Gage 2026
 
-use super::*;
+use std::io;
+
+use engine_compute::Accelerator;
+use engine_compute::AcceleratorBuffer;
+
+use super::Fluids;
+use crate::actors::ActorCollisionShape;
+use crate::chunks::ChunkFluidParticle;
+use crate::scenes::FluidDownload;
+use crate::scenes::FluidUpload;
+use crate::simulation::simulation_constants::FLUID_EDIT_ERASE;
+use crate::simulation::simulation_constants::MAXIMUM_MOVEMENT_CELLS;
+use crate::simulation::simulation_constants::PARTICLE_RADIUS_CELLS;
+use crate::simulation::simulation_constants::SUPPORT_RADIUS_CELLS;
+use crate::tiles::TileArea;
+use crate::tiles::TileCoordinates;
 
 impl Fluids {
     /// Compacts outgoing authoritative records, releases their slots, and copies them for readback
@@ -81,14 +96,16 @@ impl Fluids {
         ring_offset_x: u16,
         ring_offset_y: u16,
     ) -> Result<(), io::Error> {
-        let mut bytes: Vec<u8> =
+        let mut fluid_particle_upload_bytes: Vec<u8> =
             Vec::with_capacity(upload.particles.len() * ChunkFluidParticle::GPU_SIZE);
         for particle in &upload.particles {
-            particle.serialize_gpu(&mut bytes)?;
+            particle.serialize_gpu(&mut fluid_particle_upload_bytes)?;
         }
-        accelerator
-            .wgpu_queue()
-            .write_buffer(self.streaming_particles.wgpu_buffer(), 0, &bytes);
+        accelerator.wgpu_queue().write_buffer(
+            self.streaming_particles.wgpu_buffer(),
+            0,
+            &fluid_particle_upload_bytes,
+        );
         accelerator.wgpu_queue().write_buffer(
             self.streaming_count.wgpu_buffer(),
             0,
@@ -198,10 +215,11 @@ impl Fluids {
         count: u32,
         label: &str,
     ) {
-        let mut pass: wgpu::ComputePass<'_> = accelerator.begin_compute_pass(encoder, label);
-        pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.dispatch_workgroups(count.div_ceil(64), 1, 1);
+        let mut fluid_compute_pass: wgpu::ComputePass<'_> =
+            accelerator.begin_compute_pass(encoder, label);
+        fluid_compute_pass.set_pipeline(pipeline);
+        fluid_compute_pass.set_bind_group(0, &self.bind_group, &[]);
+        fluid_compute_pass.dispatch_workgroups(count.div_ceil(64), 1, 1);
     }
 
     pub(super) fn dispatch_indirect(
@@ -212,10 +230,11 @@ impl Fluids {
         offset: u64,
         label: &str,
     ) {
-        let mut pass: wgpu::ComputePass<'_> = accelerator.begin_compute_pass(encoder, label);
-        pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.dispatch_workgroups_indirect(&self.accelerator_edit_dispatch, offset);
+        let mut fluid_compute_pass: wgpu::ComputePass<'_> =
+            accelerator.begin_compute_pass(encoder, label);
+        fluid_compute_pass.set_pipeline(pipeline);
+        fluid_compute_pass.set_bind_group(0, &self.bind_group, &[]);
+        fluid_compute_pass.dispatch_workgroups_indirect(&self.accelerator_edit_dispatch, offset);
     }
 
     pub(super) fn write_parameters(
@@ -237,12 +256,16 @@ impl Fluids {
         let streaming_origin: TileCoordinates =
             streaming_area.map_or(TileCoordinates { x: 0, y: 0 }, TileArea::origin);
         let streaming_dimensions: [u16; 2] = streaming_area.map_or([0, 0], TileArea::dimensions);
-        let (sample_center, sample_kind, sample_parameters) =
-            sample.map_or(([0.0; 2], 0, [0.0; 2]), |(center, shape)| {
-                let (kind, parameters) = shape.accelerator_parameters();
-                (center, kind, parameters)
-            });
-        let values: [u32; 32] = [
+        let (fluid_sample_center, fluid_sample_kind, fluid_sample_parameters): (
+            [f32; 2],
+            u32,
+            [f32; 2],
+        ) = sample.map_or(([0.0; 2], 0, [0.0; 2]), |(center, shape)| {
+            let (fluid_sample_kind, fluid_sample_parameters): (u32, [f32; 2]) =
+                shape.accelerator_parameters();
+            (center, fluid_sample_kind, fluid_sample_parameters)
+        });
+        let fluid_streaming_parameter_values: [u32; 32] = [
             buffered_origin.x as u32,
             buffered_origin.y as u32,
             u32::from(buffered_width),
@@ -269,17 +292,22 @@ impl Fluids {
             PARTICLE_RADIUS_CELLS.to_bits(),
             MAXIMUM_MOVEMENT_CELLS,
             0,
-            sample_center[0].to_bits(),
-            sample_center[1].to_bits(),
-            sample_parameters[0].to_bits(),
-            sample_parameters[1].to_bits(),
-            sample_kind,
+            fluid_sample_center[0].to_bits(),
+            fluid_sample_center[1].to_bits(),
+            fluid_sample_parameters[0].to_bits(),
+            fluid_sample_parameters[1].to_bits(),
+            fluid_sample_kind,
             0,
         ];
-        let bytes: Vec<u8> = values.into_iter().flat_map(u32::to_le_bytes).collect();
-        accelerator
-            .wgpu_queue()
-            .write_buffer(&self.parameters, 0, &bytes);
+        let fluid_streaming_parameter_bytes: Vec<u8> = fluid_streaming_parameter_values
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect();
+        accelerator.wgpu_queue().write_buffer(
+            &self.fluid_simulation_parameters,
+            0,
+            &fluid_streaming_parameter_bytes,
+        );
     }
 
     pub(super) fn binding<'a>(

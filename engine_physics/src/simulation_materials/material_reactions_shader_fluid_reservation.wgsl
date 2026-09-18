@@ -97,16 +97,16 @@ fn reserve_fluid_plan(
 }
 
 fn reserve_fluid_slot() -> u32 {
-    var count = atomicLoad(&fluid_free_count[0]);
+    var fluid_free_slot_count = atomicLoad(&fluid_free_count[0]);
     loop {
-        if (count == 0u) {
+        if (fluid_free_slot_count == 0u) {
             return 0xffffffffu;
         }
-        let result = atomicCompareExchangeWeak(&fluid_free_count[0], count, count - 1u);
+        let result = atomicCompareExchangeWeak(&fluid_free_count[0], fluid_free_slot_count, fluid_free_slot_count - 1u);
         if (result.exchanged) {
-            return fluid_free_indices[count - 1u];
+            return fluid_free_indices[fluid_free_slot_count - 1u];
         }
-        count = result.old_value;
+        fluid_free_slot_count = result.old_value;
     }
     return 0xffffffffu;
 }
@@ -138,34 +138,34 @@ fn fluid_source_cell(cell: u32, source_cell: u32, commit: bool) {
             if (bucket == 0xffffffffu) {
                 continue;
             }
-            var index = atomicLoad(&fluid_bucket_heads[bucket]);
+            var fluid_particle_index = atomicLoad(&fluid_bucket_heads[bucket]);
             for (
                 var n = 0u;
-                index != 0xffffffffu && n < fluid_spatial_parameters.particle_capacity;
+                fluid_particle_index != 0xffffffffu && n < fluid_spatial_parameters.particle_capacity;
                 n += 1u
             ) {
-                if (atomicLoad(&fluid_reservation_owners[index]) == cell) {
+                if (atomicLoad(&fluid_reservation_owners[fluid_particle_index]) == cell) {
                     if (commit) {
                         let amount =
-                            f32(atomicLoad(&fluid_reservations[index])) / RESERVATION_SCALE;
-                        let next_amount = max(fluid_particles[index].amount - amount, 0.0);
-                        fluid_particles[index].amount = next_amount;
-                        atomicStore(&fluid_reservations[index], 0u);
-                        atomicStore(&fluid_reservation_owners[index], 0xffffffffu);
+                            f32(atomicLoad(&fluid_reservations[fluid_particle_index])) / RESERVATION_SCALE;
+                        let next_amount = max(fluid_particles[fluid_particle_index].amount - amount, 0.0);
+                        fluid_particles[fluid_particle_index].amount = next_amount;
+                        atomicStore(&fluid_reservations[fluid_particle_index], 0u);
+                        atomicStore(&fluid_reservation_owners[fluid_particle_index], 0xffffffffu);
                         if (next_amount <= 0.000001) {
-                            fluid_particles[index].material_identifier = EMPTY_MATERIAL_IDENTIFIER;
-                            fluid_particles[index].is_active = 0u;
+                            fluid_particles[fluid_particle_index].material_identifier = EMPTY_MATERIAL_IDENTIFIER;
+                            fluid_particles[fluid_particle_index].is_active = 0u;
                             let free = atomicAdd(&fluid_free_count[0], 1u);
                             if (free < arrayLength(&fluid_free_indices)) {
-                                fluid_free_indices[free] = index;
+                                fluid_free_indices[free] = fluid_particle_index;
                             }
                         }
                     } else {
-                        atomicStore(&fluid_reservations[index], 0u);
-                        atomicStore(&fluid_reservation_owners[index], 0xffffffffu);
+                        atomicStore(&fluid_reservations[fluid_particle_index], 0u);
+                        atomicStore(&fluid_reservation_owners[fluid_particle_index], 0xffffffffu);
                     }
                 }
-                index = fluid_next_particle[index];
+                fluid_particle_index = fluid_next_particle[fluid_particle_index];
             }
         }
     }

@@ -1,10 +1,11 @@
 // Copyright Rob Gage 2026
 
-use crate::{
-    materials::{MaterialForm, MaterialIdentifier},
-    tiles::{CellCoordinates, TileCoordinates},
-};
 use std::io;
+
+use crate::materials::MaterialForm;
+use crate::materials::MaterialIdentifier;
+use crate::tiles::CellCoordinates;
+use crate::tiles::TileCoordinates;
 
 /// Sparse authoritative gas state for one nonresident world cell
 #[derive(Clone)]
@@ -36,15 +37,15 @@ impl ChunkGasCell {
             f32::from_bits(crate::binary_reader::read_u32(reader)?),
         ];
         let temperature: f32 = f32::from_bits(crate::binary_reader::read_u32(reader)?);
-        let count: usize = crate::binary_reader::read_u32(reader)? as usize;
+        let gas_species_count: usize = crate::binary_reader::read_u32(reader)? as usize;
         let mut species: Vec<(MaterialIdentifier, f32)> = Vec::new();
-        species.try_reserve_exact(count).map_err(|_| {
+        species.try_reserve_exact(gas_species_count).map_err(|_| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Dormant gas species count is too large",
             )
         })?;
-        for _ in 0..count {
+        for _ in 0..gas_species_count {
             species.push((
                 MaterialIdentifier::from_u32(crate::binary_reader::read_u32(reader)?),
                 f32::from_bits(crate::binary_reader::read_u32(reader)?),
@@ -70,15 +71,17 @@ impl ChunkGasCell {
             f32::from_bits(crate::binary_reader::read_u32(reader)?),
             f32::from_bits(crate::binary_reader::read_u32(reader)?),
         ];
-        let count: usize = crate::binary_reader::read_u32(reader)? as usize;
+        let legacy_gas_species_count: usize = crate::binary_reader::read_u32(reader)? as usize;
         let mut species: Vec<(MaterialIdentifier, f32)> = Vec::new();
-        species.try_reserve_exact(count).map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Dormant gas species count is too large",
-            )
-        })?;
-        for _ in 0..count {
+        species
+            .try_reserve_exact(legacy_gas_species_count)
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Dormant gas species count is too large",
+                )
+            })?;
+        for _ in 0..legacy_gas_species_count {
             species.push((
                 MaterialIdentifier::from_u32(crate::binary_reader::read_u32(reader)?),
                 f32::from_bits(crate::binary_reader::read_u32(reader)?),
@@ -103,10 +106,10 @@ impl ChunkGasCell {
             writer.write_all(&velocity.to_bits().to_le_bytes())?;
         }
         writer.write_all(&self.temperature.to_bits().to_le_bytes())?;
-        let count: u32 = self.species.len().try_into().map_err(|_| {
+        let gas_species_count: u32 = self.species.len().try_into().map_err(|_| {
             io::Error::new(io::ErrorKind::InvalidData, "Too many dormant gas species")
         })?;
-        writer.write_all(&count.to_le_bytes())?;
+        writer.write_all(&gas_species_count.to_le_bytes())?;
         for (identifier, concentration) in &self.species {
             writer.write_all(&identifier.as_u32().to_le_bytes())?;
             writer.write_all(&concentration.to_bits().to_le_bytes())?;

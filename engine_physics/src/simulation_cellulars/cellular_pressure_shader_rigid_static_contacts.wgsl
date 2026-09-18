@@ -1,10 +1,10 @@
 fn find_rigid_static_contact(source: u32) -> RigidStaticContact {
-    if source >= parameters.rigid_cell_count {
+    if source >= cellular_pressure_parameters.rigid_cell_count {
         return empty_rigid_static_contact();
     }
     let cell: vec4<u32> = rigid_cells[source * 2u];
     let body: u32 = cell.z;
-    if body >= parameters.rigid_body_count {
+    if body >= cellular_pressure_parameters.rigid_body_count {
         return empty_rigid_static_contact();
     }
     let pose: vec4<f32> = rigid_transforms[body * 3u];
@@ -14,7 +14,7 @@ fn find_rigid_static_contact(source: u32) -> RigidStaticContact {
     let axis_x: vec2<f32> = pose.zw;
     let axis_y: vec2<f32> = vec2<f32>(-axis_x.y, axis_x.x);
     let current: vec2<f32> = pose.xy + axis_x * local_center.x + axis_y * local_center.y;
-    let angle_step: f32 = clamp(motion.z * parameters.delta_time, -3.14159265, 3.14159265);
+    let angle_step: f32 = clamp(motion.z * cellular_pressure_parameters.delta_time, -3.14159265, 3.14159265);
     let previous_axis_x: vec2<f32> =
         vec2<f32>(
             axis_x.x * cos(angle_step) + axis_x.y * sin(angle_step),
@@ -23,7 +23,7 @@ fn find_rigid_static_contact(source: u32) -> RigidStaticContact {
     let previous_axis_y: vec2<f32> = vec2<f32>(-previous_axis_x.y, previous_axis_x.x);
     let previous_unbounded: vec2<f32> =
         pose.xy
-            - motion.xy * parameters.delta_time
+            - motion.xy * cellular_pressure_parameters.delta_time
             + previous_axis_x * local_center.x
             + previous_axis_y * local_center.y;
     let sweep: vec2<f32> = current - previous_unbounded;
@@ -42,15 +42,15 @@ fn find_rigid_static_contact(source: u32) -> RigidStaticContact {
     let inward_motion: vec2<f32> =
         motion.xy
             + motion.z * vec2<f32>(-radius.y, radius.x)
-            + parameters.gravity * parameters.delta_time;
+            + cellular_pressure_parameters.gravity * cellular_pressure_parameters.delta_time;
     for (var y: i32 = minimum.y; y <= maximum.y; y++) {
         for (var x: i32 = minimum.x; x <= maximum.x; x++) {
             let world_cell: vec2<i32> = vec2<i32>(x, y);
-            let index: u32 = cellular_pressure_physical_cell_index_from_world_cell(world_cell);
-            if index == INVALID_PHYSICAL_CELL_INDEX {
+            let cellular_pressure_physical_cell_index: u32 = cellular_pressure_physical_cell_index_from_world_cell(world_cell);
+            if cellular_pressure_physical_cell_index == INVALID_PHYSICAL_CELL_INDEX {
                 continue;
             }
-            let material: u32 = cellular_material_identifiers[index];
+            let material: u32 = cellular_material_identifiers[cellular_pressure_physical_cell_index];
             if material_form_from_identifier(material) != CELLULAR_STATIC_MATERIAL_FORM {
                 continue;
             }
@@ -70,7 +70,7 @@ fn find_rigid_static_contact(source: u32) -> RigidStaticContact {
                             body,
                             material,
                             dominant_cardinal_channel(normal),
-                            index,
+                            cellular_pressure_physical_cell_index,
                             normal,
                             current
                                 - axis_x * sign(dot(axis_x, normal)) * CELL_HALF
@@ -93,7 +93,7 @@ fn find_rigid_static_contact(source: u32) -> RigidStaticContact {
                         body,
                         material,
                         dominant_cardinal_channel(normal),
-                        index,
+                        cellular_pressure_physical_cell_index,
                         normal,
                         point_center
                             - axis_x * sign(dot(axis_x, normal)) * CELL_HALF
@@ -120,8 +120,8 @@ fn rigid_static_overlap_contact(
     var best_penetration: f32 = 3.402823e+38;
     let axes: array<vec2<f32>, 4> =
         array<vec2<f32>, 4>(vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 1.0), axis_x, axis_y);
-    for (var index: u32 = 0u; index < 4u; index++) {
-        let axis: vec2<f32> = axes[index];
+    for (var cellular_pressure_physical_cell_index: u32 = 0u; cellular_pressure_physical_cell_index < 4u; cellular_pressure_physical_cell_index++) {
+        let axis: vec2<f32> = axes[cellular_pressure_physical_cell_index];
         let rigid_radius: f32 = CELL_HALF * (abs(dot(axis_x, axis)) + abs(dot(axis_y, axis)));
         let static_radius: f32 = CELL_HALF * (abs(axis.x) + abs(axis.y));
         let penetration: f32 = rigid_radius + static_radius - abs(dot(difference, axis));

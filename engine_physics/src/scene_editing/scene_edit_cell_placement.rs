@@ -1,9 +1,8 @@
 // Copyright Rob Gage 2026
 
-use crate::{
-    materials::MaterialIdentifier,
-    tiles::{CellCoordinates, CellularAppearance},
-};
+use crate::materials::MaterialIdentifier;
+use crate::tiles::CellCoordinates;
+use crate::tiles::CellularAppearance;
 
 /// Explicit material state to place in one `Scene` cell
 pub struct SceneEditCellPlacement {

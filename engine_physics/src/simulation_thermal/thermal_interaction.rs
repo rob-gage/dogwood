@@ -1,13 +1,15 @@
 // Copyright Rob Gage 2026
 
+use engine_compute::Accelerator;
+use engine_compute::AcceleratorBuffer;
+
 use crate::materials::MaterialRegistry;
-use engine_compute::{Accelerator, AcceleratorBuffer};
 
 /// Immutable per-cell thermal contribution snapshot for later conduction passes.
 pub(crate) struct ThermalInteraction {
     interaction: AcceleratorBuffer,
     rigid_raster_claim_counts: AcceleratorBuffer,
-    parameters: wgpu::Buffer,
+    thermal_interaction_parameters: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     clear_pipeline: wgpu::ComputePipeline,
     count_pipeline: wgpu::ComputePipeline,
@@ -35,28 +37,36 @@ impl ThermalInteraction {
             ring_offset[1],
         ];
         accelerator.wgpu_queue().write_buffer(
-            &self.parameters,
+            &self.thermal_interaction_parameters,
             32,
             &parameter_values
                 .iter()
                 .flat_map(|value| value.to_le_bytes())
                 .collect::<Vec<_>>(),
         );
-        let mut pass: wgpu::ComputePass<'_> =
+        let mut thermal_interaction_compute_pass: wgpu::ComputePass<'_> =
             accelerator.begin_compute_pass(encoder, "thermal interaction");
-        pass.set_bind_group(0, &self.bind_group, &[]);
+        thermal_interaction_compute_pass.set_bind_group(0, &self.bind_group, &[]);
         if has_rigid {
-            pass.set_pipeline(&self.clear_pipeline);
-            pass.dispatch_workgroups(self.rigid_capacity.div_ceil(64), 1, 1);
-            pass.set_pipeline(&self.count_pipeline);
-            pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+            thermal_interaction_compute_pass.set_pipeline(&self.clear_pipeline);
+            thermal_interaction_compute_pass.dispatch_workgroups(
+                self.rigid_capacity.div_ceil(64),
+                1,
+                1,
+            );
+            thermal_interaction_compute_pass.set_pipeline(&self.count_pipeline);
+            thermal_interaction_compute_pass.dispatch_workgroups(
+                self.cell_count.div_ceil(64),
+                1,
+                1,
+            );
         }
-        pass.set_pipeline(&self.gather_pipeline);
-        pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+        thermal_interaction_compute_pass.set_pipeline(&self.gather_pipeline);
+        thermal_interaction_compute_pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
     }
     pub(crate) fn new(
         accelerator: &Accelerator,
-        materials: &MaterialRegistry,
+        _materials: &MaterialRegistry,
         cellular_materials: &AcceleratorBuffer,
         cellular_amounts: &AcceleratorBuffer,
         cellular_temperatures: &AcceleratorBuffer,
@@ -83,11 +93,12 @@ impl ThermalInteraction {
         let interaction: AcceleratorBuffer = accelerator.allocate::<[f32; 4]>(cell_count as usize);
         let rigid_raster_claim_counts: AcceleratorBuffer =
             accelerator.allocate::<u32>(rigid_capacity as usize);
-        let parameters: wgpu::Buffer = crate::simulation::create_simulation_uniform_buffer(
-            device,
-            "thermal interaction parameters",
-            64,
-        );
+        let thermal_interaction_parameters: wgpu::Buffer =
+            crate::simulation::create_simulation_uniform_buffer(
+                device,
+                "thermal interaction parameters",
+                64,
+            );
         let parameter_values: [u32; 7] = [
             ambient_temperature.to_bits(),
             empty_space_conductivity.to_bits(),
@@ -98,7 +109,7 @@ impl ThermalInteraction {
             0,
         ];
         accelerator.wgpu_queue().write_buffer(
-            &parameters,
+            &thermal_interaction_parameters,
             0,
             &parameter_values
                 .iter()
@@ -107,19 +118,22 @@ impl ThermalInteraction {
         );
         let storage: fn(u32, bool) -> wgpu::BindGroupLayoutEntry =
             crate::simulation::storage_bind_group_layout_entry;
-        let mut entries: Vec<wgpu::BindGroupLayoutEntry> = (0u32..14)
-            .map(|binding: u32| storage(binding, binding != 13))
-            .collect();
-        entries[12] = storage(12, true);
-        entries[13] = storage(13, false);
-        entries.push(crate::simulation::uniform_bind_group_layout_entry(14));
-        entries.push(crate::simulation::uniform_bind_group_layout_entry(15));
-        entries.push(storage(16, false));
-        entries.push(storage(17, false));
+        let mut thermal_interaction_bind_group_layout_entries: Vec<wgpu::BindGroupLayoutEntry> =
+            (0u32..14)
+                .map(|binding: u32| storage(binding, binding != 13))
+                .collect();
+        thermal_interaction_bind_group_layout_entries[12] = storage(12, true);
+        thermal_interaction_bind_group_layout_entries[13] = storage(13, false);
+        thermal_interaction_bind_group_layout_entries
+            .push(crate::simulation::uniform_bind_group_layout_entry(14));
+        thermal_interaction_bind_group_layout_entries
+            .push(crate::simulation::uniform_bind_group_layout_entry(15));
+        thermal_interaction_bind_group_layout_entries.push(storage(16, false));
+        thermal_interaction_bind_group_layout_entries.push(storage(17, false));
         let layout: wgpu::BindGroupLayout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("thermal interaction"),
-                entries: &entries,
+                entries: &thermal_interaction_bind_group_layout_entries,
             });
         let buffers: [&AcceleratorBuffer; 14] = [
             cellular_materials,
@@ -147,7 +161,7 @@ impl ThermalInteraction {
             .collect();
         bind_entries.push(wgpu::BindGroupEntry {
             binding: 14,
-            resource: parameters.as_entire_binding(),
+            resource: thermal_interaction_parameters.as_entire_binding(),
         });
         bind_entries.push(crate::simulation::accelerator_buffer_bind_group_entry(
             17,
@@ -178,21 +192,21 @@ impl ThermalInteraction {
                 bind_group_layouts: &[Some(&layout)],
                 immediate_size: 0,
             });
-        let pipeline = |entry: &'static str| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(entry),
-                layout: Some(&pipeline_layout),
-                module: &shader,
-                entry_point: Some(entry),
-                compilation_options: Default::default(),
-                cache: None,
-            })
-        };
-        let _ = materials;
+        let pipeline: &dyn Fn(&'static str) -> wgpu::ComputePipeline =
+            &|entry: &'static str| -> wgpu::ComputePipeline {
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some(entry),
+                    layout: Some(&pipeline_layout),
+                    module: &shader,
+                    entry_point: Some(entry),
+                    compilation_options: Default::default(),
+                    cache: None,
+                })
+            };
         Self {
             interaction,
             rigid_raster_claim_counts,
-            parameters,
+            thermal_interaction_parameters,
             bind_group,
             clear_pipeline: pipeline("clear_rigid_claim_counts"),
             count_pipeline: pipeline("count_rigid_claims"),
@@ -219,7 +233,7 @@ impl ThermalInteraction {
             ring_offset[1],
         ];
         accelerator.wgpu_queue().write_buffer(
-            &self.parameters,
+            &self.thermal_interaction_parameters,
             32,
             &parameter_values
                 .iter()
@@ -232,18 +246,26 @@ impl ThermalInteraction {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("thermal interaction"),
                 });
-        let mut pass: wgpu::ComputePass<'_> =
+        let mut thermal_interaction_compute_pass: wgpu::ComputePass<'_> =
             accelerator.begin_compute_pass(&mut encoder, "gather thermal interaction");
-        pass.set_bind_group(0, &self.bind_group, &[]);
+        thermal_interaction_compute_pass.set_bind_group(0, &self.bind_group, &[]);
         if has_rigid {
-            pass.set_pipeline(&self.clear_pipeline);
-            pass.dispatch_workgroups(self.rigid_capacity.div_ceil(64), 1, 1);
-            pass.set_pipeline(&self.count_pipeline);
-            pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+            thermal_interaction_compute_pass.set_pipeline(&self.clear_pipeline);
+            thermal_interaction_compute_pass.dispatch_workgroups(
+                self.rigid_capacity.div_ceil(64),
+                1,
+                1,
+            );
+            thermal_interaction_compute_pass.set_pipeline(&self.count_pipeline);
+            thermal_interaction_compute_pass.dispatch_workgroups(
+                self.cell_count.div_ceil(64),
+                1,
+                1,
+            );
         }
-        pass.set_pipeline(&self.gather_pipeline);
-        pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
-        drop(pass);
+        thermal_interaction_compute_pass.set_pipeline(&self.gather_pipeline);
+        thermal_interaction_compute_pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+        drop(thermal_interaction_compute_pass);
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
     pub(crate) const fn interaction_buffer(&self) -> &AcceleratorBuffer {
@@ -258,6 +280,6 @@ impl Drop for ThermalInteraction {
     fn drop(&mut self) {
         self.interaction.free();
         self.rigid_raster_claim_counts.free();
-        self.parameters.destroy();
+        self.thermal_interaction_parameters.destroy();
     }
 }

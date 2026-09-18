@@ -1,6 +1,7 @@
 // Copyright Rob Gage 2026
 
-use crate::actors::{ActorCellularProxyState, ActorCollisionShape};
+use crate::actors::ActorCellularProxyState;
+use crate::actors::ActorCollisionShape;
 use crate::simulation_rigid_bodies::ScenePhysicsWorld;
 
 pub(super) fn prepare_actor_terrain(physics: &mut ScenePhysicsWorld, shape: ActorCollisionShape) {

@@ -1,17 +1,23 @@
 // Copyright Rob Gage 2026
 
-use super::scene_data_dormant_rigid::{SceneDormantRigidBody, owner_chunk};
-use crate::{chunks::Chunk, materials::MaterialRegistry, tiles::TileCoordinates};
-use std::{
-    collections::HashSet,
-    fs::{File, create_dir, create_dir_all, metadata},
-    io::{self, Read, Write},
-    path::PathBuf,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-};
+use std::collections::HashSet;
+use std::fs::File;
+use std::fs::create_dir;
+use std::fs::create_dir_all;
+use std::fs::metadata;
+use std::io;
+use std::io::Read;
+use std::io::Write;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
+
+use super::scene_data_dormant_rigid::SceneDormantRigidBody;
+use super::scene_data_dormant_rigid::owner_chunk;
+use crate::chunks::Chunk;
+use crate::materials::MaterialRegistry;
+use crate::tiles::TileCoordinates;
 
 /// The identifier assigned to the next temporary scene-data directory
 static TEMPORARY_IDENTIFIER: AtomicU64 = AtomicU64::new(0);
@@ -48,22 +54,24 @@ impl SceneData {
     /// Creates empty scene data in a new temporary directory
     pub fn new_temporary(materials: MaterialRegistry) -> Result<Self, io::Error> {
         let materials: Arc<MaterialRegistry> = Arc::new(materials);
-        let home: PathBuf = std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| {
-            io::Error::new(io::ErrorKind::NotFound, "Home directory is unavailable")
-        })?;
-        let save_directory: PathBuf = home.join(".DOGWOOD");
+        let user_home_directory: PathBuf =
+            std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotFound, "Home directory is unavailable")
+            })?;
+        let save_directory: PathBuf = user_home_directory.join(".DOGWOOD");
         create_dir_all(&save_directory)?;
         loop {
             let identifier: u64 = TEMPORARY_IDENTIFIER.fetch_add(1, Ordering::Relaxed);
-            let path: PathBuf =
+            let temporary_scene_path: PathBuf =
                 save_directory.join(format!("dogwood-scene-{}-{identifier}", std::process::id(),));
-            match create_dir(&path) {
+            match create_dir(&temporary_scene_path) {
                 Ok(()) => {
-                    let mut materials_file: File = File::create(path.join("materials"))?;
+                    let mut materials_file: File =
+                        File::create(temporary_scene_path.join("materials"))?;
                     materials.serialize(&mut materials_file)?;
                     return Ok(Self {
                         materials,
-                        path: Arc::new(path),
+                        path: Arc::new(temporary_scene_path),
                         is_temporary: true,
                     });
                 }
@@ -122,26 +130,29 @@ impl SceneData {
                 ));
             }
         };
-        let mut count: [u8; 4] = [0; 4];
-        file.read_exact(&mut count)?;
-        let count: usize = usize::try_from(u32::from_le_bytes(count)).map_err(|_| {
-            io::Error::new(io::ErrorKind::InvalidData, "dormant rigid count overflow")
-        })?;
-        if count > 1_024 {
+        let mut dormant_rigid_record_count_bytes: [u8; 4] = [0; 4];
+        file.read_exact(&mut dormant_rigid_record_count_bytes)?;
+        let dormant_rigid_record_count: usize = usize::try_from(u32::from_le_bytes(
+            dormant_rigid_record_count_bytes,
+        ))
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "dormant rigid count overflow"))?;
+        if dormant_rigid_record_count > 1_024 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "too many dormant rigid bodies",
             ));
         }
-        let mut records: Vec<SceneDormantRigidBody> = Vec::new();
-        let mut ids: HashSet<u64> = HashSet::new();
-        records.try_reserve_exact(count).map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "dormant rigid allocation failed",
-            )
-        })?;
-        for _ in 0..count {
+        let mut dormant_rigid_records: Vec<SceneDormantRigidBody> = Vec::new();
+        let mut dormant_rigid_identifiers: HashSet<u64> = HashSet::new();
+        dormant_rigid_records
+            .try_reserve_exact(dormant_rigid_record_count)
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "dormant rigid allocation failed",
+                )
+            })?;
+        for _ in 0..dormant_rigid_record_count {
             let record: SceneDormantRigidBody = if legacy {
                 SceneDormantRigidBody::deserialize_legacy(&mut file, self.materials())?
             } else {
@@ -164,15 +175,15 @@ impl SceneData {
                     "dormant rigid is in the wrong owner file",
                 ));
             }
-            if !ids.insert(record.identifier) {
+            if !dormant_rigid_identifiers.insert(record.identifier) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "duplicate dormant rigid identity",
                 ));
             }
-            records.push(record);
+            dormant_rigid_records.push(record);
         }
-        Ok(records)
+        Ok(dormant_rigid_records)
     }
 
     /// Atomically replaces one canonical owner file.  An empty record set
@@ -195,10 +206,10 @@ impl SceneData {
         {
             let mut file: File = File::create(&temporary)?;
             file.write_all(b"dwrigid2")?;
-            let count: u32 = u32::try_from(records.len()).map_err(|_| {
+            let dormant_rigid_record_count: u32 = u32::try_from(records.len()).map_err(|_| {
                 io::Error::new(io::ErrorKind::InvalidData, "too many dormant rigid bodies")
             })?;
-            file.write_all(&count.to_le_bytes())?;
+            file.write_all(&dormant_rigid_record_count.to_le_bytes())?;
             for record in records {
                 record.serialize(&mut file, self.materials())?;
             }
@@ -215,13 +226,17 @@ impl SceneData {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(1),
             Err(error) => return Err(error),
         };
-        let mut next: u64 = 1u64;
+        let mut next_dormant_rigid_identifier: u64 = 1u64;
         for entry in entries {
-            let path: PathBuf = entry?.path();
-            if path.extension().and_then(|extension| extension.to_str()) != Some("rigid") {
+            let dormant_rigid_path: PathBuf = entry?.path();
+            if dormant_rigid_path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                != Some("rigid")
+            {
                 continue;
             }
-            let mut file: File = File::open(path)?;
+            let mut file: File = File::open(dormant_rigid_path)?;
             let mut magic: [u8; 8] = [0; 8];
             file.read_exact(&mut magic)?;
             let legacy: bool = match &magic {
@@ -234,27 +249,30 @@ impl SceneData {
                     ));
                 }
             };
-            let mut count: [u8; 4] = [0; 4];
-            file.read_exact(&mut count)?;
-            let count: u32 = u32::from_le_bytes(count);
-            if count > 1_024 {
+            let mut dormant_rigid_record_count_bytes: [u8; 4] = [0; 4];
+            file.read_exact(&mut dormant_rigid_record_count_bytes)?;
+            let dormant_rigid_record_count: u32 =
+                u32::from_le_bytes(dormant_rigid_record_count_bytes);
+            if dormant_rigid_record_count > 1_024 {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "too many dormant rigid bodies",
                 ));
             }
-            for _ in 0..count {
+            for _ in 0..dormant_rigid_record_count {
                 let record: SceneDormantRigidBody = if legacy {
                     SceneDormantRigidBody::deserialize_legacy(&mut file, self.materials())?
                 } else {
                     SceneDormantRigidBody::deserialize(&mut file, self.materials())?
                 };
-                next = next.max(record.identifier.checked_add(1).ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::InvalidData, "rigid identity overflow")
-                })?);
+                next_dormant_rigid_identifier = next_dormant_rigid_identifier.max(
+                    record.identifier.checked_add(1).ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::InvalidData, "rigid identity overflow")
+                    })?,
+                );
             }
         }
-        Ok(next)
+        Ok(next_dormant_rigid_identifier)
     }
 
     /// Returns the `PathBuf` for `Chunk`s in this `SceneData`

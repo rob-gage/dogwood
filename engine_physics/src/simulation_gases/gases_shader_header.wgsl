@@ -82,6 +82,6 @@ struct GasSimulationParameters {
 @group(0) @binding(11) var<storage, read> gas_properties: array<vec4<f32>>;
 @group(0) @binding(12) var<storage, read_write> streaming_data: array<u32>;
 @group(0) @binding(14) var<storage, read_write> gas_temperature: array<f32>;
-@group(0) @binding(13) var<uniform> parameters: GasSimulationParameters;
+@group(0) @binding(13) var<uniform> gas_simulation_parameters: GasSimulationParameters;
 
 // Semi-Lagrangian backtracing from immutable velocity into separate scratch

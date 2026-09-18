@@ -1,8 +1,12 @@
 // Copyright Rob Gage 2026
 
-use super::{Material, MaterialIdentifier, MaterialRegistry};
-use engine_graphics::MaterialAppearance;
 use std::io;
+
+use engine_graphics::MaterialAppearance;
+
+use super::Material;
+use super::MaterialIdentifier;
+use super::MaterialRegistry;
 
 impl MaterialRegistry {
     /// Writes this `MaterialRegistry` in identifier-index order
@@ -112,10 +116,10 @@ impl MaterialRegistry {
         writer: &mut W,
         materials: &[Material],
     ) -> Result<(), io::Error> {
-        let count: u32 = materials.len().try_into().map_err(|_| {
+        let serialized_material_count: u32 = materials.len().try_into().map_err(|_| {
             io::Error::new(io::ErrorKind::InvalidInput, "Too many registered materials")
         })?;
-        writer.write_all(&count.to_le_bytes())?;
+        writer.write_all(&serialized_material_count.to_le_bytes())?;
         for material in materials {
             // store the name as length-prefixed UTF-8.
             let name: &[u8] = material.name().as_bytes();

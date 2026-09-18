@@ -88,20 +88,20 @@ struct RigidCell {
 // authoritative state slot.  Store the lowest raster index, so each slot gets
 // one deterministic logical edit even when it has several raster claims.
 @group(0) @binding(10) var<storage, read_write> rigid_flags: array<atomic<u32>>;
-@group(0) @binding(11) var<uniform> parameters: ThermalEditParameters;
+@group(0) @binding(11) var<uniform> thermal_edit_parameters: ThermalEditParameters;
 
 @compute @workgroup_size(64)
 fn apply_thermal_requests(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    if (invocation.x >= min(request_count[0], parameters.capacity)) {
+    if (invocation.x >= min(request_count[0], thermal_edit_parameters.capacity)) {
         return;
     }
     let request = requests[invocation.x];
     let cell = request.x;
     let delta = bitcast<f32>(request.y);
-    if (cell >= parameters.capacity) {
+    if (cell >= thermal_edit_parameters.capacity) {
         return;
     }
-    deltas[cell] = vec2<u32>(bitcast<u32>(delta), parameters.generation);
+    deltas[cell] = vec2<u32>(bitcast<u32>(delta), thermal_edit_parameters.generation);
     if (cellular_materials[cell] != 0u) {
         cellular_temperatures[cell] = max(0.0, cellular_temperatures[cell] + delta);
     }
@@ -124,20 +124,20 @@ fn apply_thermal_fluid(@builtin(global_invocation_id) invocation: vec3<u32>) {
     }
     let p = particles[invocation.x];
     let cell = fluid_particle_world_cell(p.position, CELLS_PER_TILE_FLOAT);
-    let index =
+    let thermal_edit_physical_cell_index =
         physical_cell_index_from_world_cell(
             cell,
-            parameters.ring_origin,
-            parameters.ring_tiles,
-            parameters.ring_offset,
+            thermal_edit_parameters.ring_origin,
+            thermal_edit_parameters.ring_tiles,
+            thermal_edit_parameters.ring_offset,
         );
     if
-        (index != INVALID_PHYSICAL_CELL_INDEX
-            && index < parameters.capacity
-            && deltas[index].y == parameters.generation)
+        (thermal_edit_physical_cell_index != INVALID_PHYSICAL_CELL_INDEX
+            && thermal_edit_physical_cell_index < thermal_edit_parameters.capacity
+            && deltas[thermal_edit_physical_cell_index].y == thermal_edit_parameters.generation)
     {
         particles[invocation.x].temperature =
-            max(0.0, p.temperature + bitcast<f32>(deltas[index].x));
+            max(0.0, p.temperature + bitcast<f32>(deltas[thermal_edit_physical_cell_index].x));
     }
 }
 
@@ -149,8 +149,8 @@ fn apply_thermal_rigid(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let cell = atomicLoad(&rigid_flags[invocation.x]);
     if
         (cell != 0xffffffffu
-            && cell < parameters.capacity
-            && deltas[cell].y == parameters.generation)
+            && cell < thermal_edit_parameters.capacity
+            && deltas[cell].y == thermal_edit_parameters.generation)
     {
         rigid_temperatures[invocation.x] =
             max(0.0, rigid_temperatures[invocation.x] + bitcast<f32>(deltas[cell].x));

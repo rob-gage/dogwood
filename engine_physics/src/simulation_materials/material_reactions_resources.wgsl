@@ -62,7 +62,7 @@ struct RigidCell {
 @group(0) @binding(8) var<storage, read> external_occupancy: array<u32>;
 @group(0) @binding(9) var<storage, read> rigid_claims: array<atomic<u32>>;
 @group(0) @binding(10) var<storage, read_write> candidates: array<Candidate>;
-@group(0) @binding(11) var<uniform> parameters: MaterialReactionParameters;
+@group(0) @binding(11) var<uniform> material_reaction_parameters: MaterialReactionParameters;
 @group(0) @binding(12) var<storage, read_write> mutation_requests: array<MaterialReactionMutationRequest>;
 @group(0) @binding(13) var<storage, read_write> mutation_request_count: array<atomic<u32>>;
 @group(0) @binding(14) var<storage, read_write> reaction_energy: array<f32>;

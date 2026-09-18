@@ -1,9 +1,16 @@
 // Copyright Rob Gage 2026
 
-use super::RigidCellularBodyCell;
-use crate::materials::{Material, MaterialRegistry};
-use rapier2d::prelude::{MassProperties, Pose, RigidBodyHandle, SharedShape, Vector};
 use std::collections::HashSet;
+
+use rapier2d::prelude::MassProperties;
+use rapier2d::prelude::Pose;
+use rapier2d::prelude::RigidBodyHandle;
+use rapier2d::prelude::SharedShape;
+use rapier2d::prelude::Vector;
+
+use super::RigidCellularBodyCell;
+use crate::materials::Material;
+use crate::materials::MaterialRegistry;
 
 /// Authoritative body-local static cellular matter owned by one Rapier body
 pub(crate) struct RigidCellularBody {
@@ -20,7 +27,7 @@ impl RigidCellularBody {
         cells: &[RigidCellularBodyCell],
         materials: &MaterialRegistry,
     ) -> MassProperties {
-        let (total_mass, weighted_center) =
+        let (total_mass, weighted_center): (f32, [f32; 2]) =
             cells
                 .iter()
                 .fold((0.0, [0.0; 2]), |(total, weighted), cell| {
@@ -28,7 +35,7 @@ impl RigidCellularBody {
                     else {
                         panic!("Rigid cellular body contains a non-static material");
                     };
-                    let center = [
+                    let center: [f32; 2] = [
                         (cell.local[0] as f32 + 0.5) / 8.0,
                         (cell.local[1] as f32 + 0.5) / 8.0,
                     ];
@@ -41,30 +48,38 @@ impl RigidCellularBody {
                     )
                 });
         assert!(total_mass.is_finite() && total_mass > 0.0);
-        let center = [
+        let center: [f32; 2] = [
             weighted_center[0] / total_mass,
             weighted_center[1] / total_mass,
         ];
-        let inertia = cells
+        let inertia: f32 = cells
             .iter()
             .map(|cell| {
                 let Some(Material::CellularStatic { mass, .. }) = materials.get(cell.material)
                 else {
                     unreachable!()
                 };
-                let offset = [
+                let rigid_cell_center_offset: [f32; 2] = [
                     (cell.local[0] as f32 + 0.5) / 8.0 - center[0],
                     (cell.local[1] as f32 + 0.5) / 8.0 - center[1],
                 ];
-                mass / 384.0 + mass * (offset[0] * offset[0] + offset[1] * offset[1])
+                mass / 384.0
+                    + mass
+                        * (rigid_cell_center_offset[0] * rigid_cell_center_offset[0]
+                            + rigid_cell_center_offset[1] * rigid_cell_center_offset[1])
             })
             .sum();
         MassProperties::new(Vector::new(center[0], center[1]), total_mass, inertia)
     }
 
     /// Builds a greedy rectangle compound in body-local tile units
-    pub(crate) fn collision_shape(cells: &[RigidCellularBodyCell]) -> SharedShape {
-        let occupied: HashSet<[i32; 2]> = cells.iter().map(|cell| cell.local).collect();
+    pub(crate) fn collision_shape(
+        rigid_cellular_body_cells: &[RigidCellularBodyCell],
+    ) -> SharedShape {
+        let occupied: HashSet<[i32; 2]> = rigid_cellular_body_cells
+            .iter()
+            .map(|cell| cell.local)
+            .collect();
         let mut consumed: HashSet<[i32; 2]> = HashSet::new();
         let mut ordered: Vec<[i32; 2]> = occupied.iter().copied().collect();
         ordered.sort_unstable_by_key(|cell| (cell[1], cell[0]));
@@ -99,7 +114,7 @@ impl RigidCellularBody {
         }
         #[cfg(debug_assertions)]
         tracing::trace!(
-            cells = cells.len(),
+            cells = rigid_cellular_body_cells.len(),
             compound_children = parts.len(),
             "rigid collider complexity"
         );
@@ -112,14 +127,14 @@ impl RigidCellularBody {
     ) -> Vec<Vec<RigidCellularBodyCell>> {
         let mut remaining: std::collections::HashMap<[i32; 2], RigidCellularBodyCell> =
             cells.into_iter().map(|cell| (cell.local, cell)).collect();
-        let mut components = Vec::new();
+        let mut components: Vec<Vec<RigidCellularBodyCell>> = Vec::new();
         while let Some(start) = remaining
             .keys()
             .min_by_key(|cell| (cell[1], cell[0]))
             .copied()
         {
-            let mut pending = vec![start];
-            let mut component = Vec::new();
+            let mut pending: Vec<[i32; 2]> = vec![start];
+            let mut component: Vec<RigidCellularBodyCell> = Vec::new();
             while let Some(cell) = pending.pop() {
                 let Some(cell) = remaining.remove(&cell) else {
                     continue;

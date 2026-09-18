@@ -1,6 +1,17 @@
 // Copyright Rob Gage 2026
 
-use super::*;
+use std::sync::Arc;
+use std::sync::Mutex;
+
+use engine_compute::Accelerator;
+
+use super::CellularPressure;
+use crate::simulation::RigidGranularReadbackSlot;
+use crate::simulation::RigidGranularReadbackStatus;
+use crate::simulation::simulation_constants::PRESSURE_DAMAGE_RATE;
+use crate::simulation::simulation_constants::RIGID_REACTION_READBACK_SLOT_COUNT;
+use crate::tiles::CellCoordinates;
+use crate::tiles::TileCoordinates;
 
 impl CellularPressure {
     pub(super) fn write_parameters(
@@ -21,7 +32,7 @@ impl CellularPressure {
         impulse_min: CellCoordinates,
         impulse_size: [u32; 2],
     ) {
-        let values: [u32; 24] = [
+        let cellular_pressure_parameter_values: [u32; 24] = [
             origin.x as u32,
             origin.y as u32,
             u32::from(width),
@@ -47,10 +58,15 @@ impl CellularPressure {
             impulse_size[0],
             impulse_size[1],
         ];
-        let bytes: Vec<u8> = values.into_iter().flat_map(u32::to_le_bytes).collect();
-        accelerator
-            .wgpu_queue()
-            .write_buffer(&self.parameters, 0, &bytes);
+        let cellular_pressure_parameter_bytes: Vec<u8> = cellular_pressure_parameter_values
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect();
+        accelerator.wgpu_queue().write_buffer(
+            &self.cellular_pressure_parameters,
+            0,
+            &cellular_pressure_parameter_bytes,
+        );
     }
 
     pub(super) fn ensure_rigid_body_capacity(&mut self, accelerator: &Accelerator, count: usize) {
@@ -78,7 +94,7 @@ impl CellularPressure {
         self.bind_group = Self::create_bind_group(
             accelerator.wgpu_device(),
             &self.bind_group_layout,
-            &self.parameters,
+            &self.cellular_pressure_parameters,
             &self.bound_buffers,
         );
         let size: u64 =
@@ -104,24 +120,25 @@ impl CellularPressure {
     pub(super) fn create_bind_group(
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
-        parameters: &wgpu::Buffer,
-        buffers: &[(u32, wgpu::Buffer)],
+        cellular_pressure_parameters: &wgpu::Buffer,
+        cellular_pressure_buffers: &[(u32, wgpu::Buffer)],
     ) -> wgpu::BindGroup {
-        let mut entries: Vec<wgpu::BindGroupEntry<'_>> = buffers
-            .iter()
-            .map(|(binding, buffer)| wgpu::BindGroupEntry {
-                binding: *binding,
-                resource: buffer.as_entire_binding(),
-            })
-            .collect();
-        entries.push(wgpu::BindGroupEntry {
+        let mut cellular_pressure_bind_group_entries: Vec<wgpu::BindGroupEntry<'_>> =
+            cellular_pressure_buffers
+                .iter()
+                .map(|(binding, buffer)| wgpu::BindGroupEntry {
+                    binding: *binding,
+                    resource: buffer.as_entire_binding(),
+                })
+                .collect();
+        cellular_pressure_bind_group_entries.push(wgpu::BindGroupEntry {
             binding: 13,
-            resource: parameters.as_entire_binding(),
+            resource: cellular_pressure_parameters.as_entire_binding(),
         });
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("cellular pressure bind group"),
             layout,
-            entries: &entries,
+            entries: &cellular_pressure_bind_group_entries,
         })
     }
 

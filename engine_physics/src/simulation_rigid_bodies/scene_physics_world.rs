@@ -1,22 +1,37 @@
 // Copyright Rob Gage 2026
 
-use super::{
-    actor_physics_proxy::ActorPhysicsProxy, dynamic_tile::RigidDynamicCollisionTile,
-    dynamic_tile_key::RigidDynamicCollisionTileKey,
-    terrain_bridge_statistics::TerrainBridgeStatistics, terrain_patch::StaticTerrainCollisionPatch,
-    terrain_patch_key::StaticTerrainCollisionPatchKey,
-};
-use crate::actors::{Actor, ActorContactEvent, ActorContactState};
-use crate::actors_utility::ActorPhysicalProxyState;
-use crate::materials::MaterialRegistry;
-use crate::simulation::{CollisionOccupancySnapshot, RigidCellularBody, RigidCellularBodyState};
-use rapier2d::prelude::{
-    ColliderBuilder, ColliderHandle, LockedAxes, PhysicsWorld, Pose, RigidBodyBuilder,
-    RigidBodyHandle, Vector,
-};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::collections::HashSet;
 #[cfg(debug_assertions)]
 use std::time::Instant;
+
+use rapier2d::prelude::ColliderBuilder;
+use rapier2d::prelude::ColliderHandle;
+use rapier2d::prelude::LockedAxes;
+use rapier2d::prelude::PhysicsWorld;
+use rapier2d::prelude::Pose;
+use rapier2d::prelude::RigidBodyBuilder;
+use rapier2d::prelude::RigidBodyHandle;
+use rapier2d::prelude::Vector;
+
+use super::actor_physics_proxy::ActorPhysicsProxy;
+use super::dynamic_tile::RigidDynamicCollisionTile;
+use super::dynamic_tile_key::RigidDynamicCollisionTileKey;
+use super::terrain_bridge_statistics::TerrainBridgeStatistics;
+use super::terrain_patch::StaticTerrainCollisionPatch;
+use super::terrain_patch_key::StaticTerrainCollisionPatchKey;
+use crate::actors::Actor;
+use crate::actors_utility::ActorPhysicalProxyState;
+use crate::materials::MaterialRegistry;
+use crate::simulation::CollisionOccupancySnapshot;
+use crate::simulation::RigidCellularBody;
+use crate::simulation::RigidCellularBodyState;
+
+#[path = "scene_physics_world_actor_contacts.rs"]
+mod scene_physics_world_actor_contacts;
+#[cfg(test)]
+#[path = "scene_physics_world_test_support.rs"]
+mod scene_physics_world_test_support;
 
 /// Owns Rapier rigid bodies and the CPU-readable cellular collision snapshot
 pub struct ScenePhysicsWorld {
@@ -145,23 +160,23 @@ impl ScenePhysicsWorld {
     }
 
     /// Removes one rigid body and all attached colliders
-    pub(crate) fn remove_rigid_cellular_body(&mut self, body: &RigidCellularBody) {
-        self.rapier.remove_body(body.handle);
+    pub(crate) fn remove_rigid_cellular_body(&mut self, rigid_cellular_body: &RigidCellularBody) {
+        self.rapier.remove_body(rigid_cellular_body.handle);
     }
 
     /// Holds a streamed body outside integration until its cellular support is ready.
     pub(crate) fn set_rigid_cellular_body_enabled(
         &mut self,
-        body: &RigidCellularBody,
+        rigid_cellular_body: &RigidCellularBody,
         enabled: bool,
     ) {
-        if let Some(rigid_body) = self.rapier.bodies.get_mut(body.handle) {
+        if let Some(rigid_body) = self.rapier.bodies.get_mut(rigid_cellular_body.handle) {
             rigid_body.set_enabled(enabled);
         }
     }
 
-    pub(crate) fn sleep_rigid_cellular_body(&mut self, body: &RigidCellularBody) {
-        if let Some(rigid_body) = self.rapier.bodies.get_mut(body.handle) {
+    pub(crate) fn sleep_rigid_cellular_body(&mut self, rigid_cellular_body: &RigidCellularBody) {
+        if let Some(rigid_body) = self.rapier.bodies.get_mut(rigid_cellular_body.handle) {
             rigid_body.sleep();
         }
     }
@@ -204,19 +219,19 @@ impl ScenePhysicsWorld {
                     .unwrap()
                     .set_next_kinematic_position(pose);
             } else {
-                let body: RigidBodyHandle = self
+                let pawn_rigid_body_handle: RigidBodyHandle = self
                     .rapier
                     .insert_body(RigidBodyBuilder::kinematic_position_based().pose(pose));
                 let collider: ColliderHandle = self.rapier.insert_collider(
                     ColliderBuilder::new(state.shape.rapier_shape())
                         .collision_groups(Self::pawn_collision_groups())
                         .solver_groups(Self::pawn_solver_groups()),
-                    Some(body),
+                    Some(pawn_rigid_body_handle),
                 );
                 self.pawn_proxies.insert(
                     state.actor,
                     ActorPhysicsProxy {
-                        body,
+                        body: pawn_rigid_body_handle,
                         collider,
                         shape: state.shape,
                     },
@@ -241,12 +256,13 @@ impl ScenePhysicsWorld {
         for state in states {
             live_actors.insert(state.actor);
             if let Some(proxy) = self.physical_proxies.get(&state.actor) {
-                if let Some(body) = self.rapier.bodies.get_mut(proxy.body) {
-                    body.set_linvel(Vector::new(state.velocity[0], state.velocity[1]), true);
+                if let Some(existing_physical_rigid_body) = self.rapier.bodies.get_mut(proxy.body) {
+                    existing_physical_rigid_body
+                        .set_linvel(Vector::new(state.velocity[0], state.velocity[1]), true);
                 }
                 continue;
             }
-            let body: RigidBodyHandle = self.rapier.insert_body(
+            let physical_rigid_body_handle: RigidBodyHandle = self.rapier.insert_body(
                 RigidBodyBuilder::dynamic()
                     .translation(Vector::new(state.center[0], state.center[1]))
                     .linvel(Vector::new(state.velocity[0], state.velocity[1]))
@@ -258,12 +274,12 @@ impl ScenePhysicsWorld {
                     .restitution(state.restitution)
                     .collision_groups(Self::physical_collision_groups())
                     .solver_groups(Self::physical_solver_groups()),
-                Some(body),
+                Some(physical_rigid_body_handle),
             );
             self.physical_proxies.insert(
                 state.actor,
                 ActorPhysicsProxy {
-                    body,
+                    body: physical_rigid_body_handle,
                     collider,
                     shape: state.shape,
                 },
@@ -280,22 +296,6 @@ impl ScenePhysicsWorld {
                 self.rapier.remove_body(proxy.body);
             }
         }
-    }
-
-    pub(crate) fn physical_proxy_states(&self) -> Vec<(Actor, [f32; 2], [f32; 2])> {
-        self.physical_proxies
-            .iter()
-            .filter_map(|(actor, proxy)| {
-                let body: &rapier2d::dynamics::RigidBody = self.rapier.bodies.get(proxy.body)?;
-                let position: rapier2d::math::Pose = body.position().clone();
-                let velocity: Vector = body.linvel();
-                Some((
-                    *actor,
-                    [position.translation.x, position.translation.y],
-                    [velocity.x, velocity.y],
-                ))
-            })
-            .collect()
     }
 
     /// Advances Rapier's collision world by one fixed scene step
@@ -322,44 +322,6 @@ impl ScenePhysicsWorld {
             elapsed_us = start_time.elapsed().as_micros(),
             "rapier rigid step"
         );
-    }
-
-    pub(crate) fn actor_contact_events(&mut self) -> Vec<ActorContactEvent> {
-        let mut actors_by_collider: HashMap<ColliderHandle, Actor> = HashMap::new();
-        for (actor, proxy) in self.pawn_proxies.iter().chain(self.physical_proxies.iter()) {
-            actors_by_collider.insert(proxy.collider, *actor);
-        }
-        let current: HashSet<(u64, u64)> = self
-            .rapier
-            .contact_pairs()
-            .filter(|pair| pair.has_any_active_contact())
-            .filter_map(|pair| {
-                let first: u64 = actors_by_collider.get(&pair.collider1)?.stable_identifier();
-                let second: u64 = actors_by_collider.get(&pair.collider2)?.stable_identifier();
-                (first != second).then_some(if first < second {
-                    (first, second)
-                } else {
-                    (second, first)
-                })
-            })
-            .collect();
-        let mut events: Vec<ActorContactEvent> = Vec::new();
-        for &(first, second) in current.difference(&self.actor_contacts) {
-            events.push(ActorContactEvent {
-                first: Actor::new(first),
-                second: Actor::new(second),
-                state: ActorContactState::Started,
-            });
-        }
-        for &(first, second) in self.actor_contacts.difference(&current) {
-            events.push(ActorContactEvent {
-                first: Actor::new(first),
-                second: Actor::new(second),
-                state: ActorContactState::Ended,
-            });
-        }
-        self.actor_contacts = current;
-        events
     }
 
     /// Applies one already-integrated Accelerator impulse batch to its authoritative body
@@ -511,44 +473,5 @@ impl ScenePhysicsWorld {
             rigid_body.apply_torque_impulse(angular_impulse * scale, wake);
         }
         true
-    }
-
-    #[cfg(test)]
-    pub(crate) fn test_dynamic_tile_collider(
-        &self,
-        coordinates: [i32; 2],
-    ) -> Option<ColliderHandle> {
-        self.dynamic_tiles
-            .get(&RigidDynamicCollisionTileKey {
-                x: coordinates[0],
-                y: coordinates[1],
-            })
-            .and_then(|tile| tile.collider)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn test_collider_is_enabled(&self, handle: ColliderHandle) -> bool {
-        self.rapier
-            .colliders
-            .get(handle)
-            .is_some_and(|collider| collider.is_enabled())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn test_sleep_rigid_cellular_body(&mut self, body: &RigidCellularBody) {
-        if let Some(rigid_body) = self.rapier.bodies.get_mut(body.handle) {
-            rigid_body.sleep();
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn test_apply_rigid_cellular_body_impulse(
-        &mut self,
-        body: &RigidCellularBody,
-        impulse: [f32; 2],
-    ) {
-        if let Some(rigid_body) = self.rapier.bodies.get_mut(body.handle) {
-            rigid_body.apply_impulse(Vector::new(impulse[0], impulse[1]), true);
-        }
     }
 }

@@ -1,6 +1,6 @@
 fn phase_cells(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if
-        (invocation.x >= parameters.cell_count || atomicLoad(
+        (invocation.x >= thermal_phase_transition_parameters.cell_count || atomicLoad(
             &rigid_claims[invocation.x],
         ) != 0xffffffffu)
     {
@@ -9,12 +9,12 @@ fn phase_cells(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let w =
         world_cell_from_physical_tile_ring_index(
             invocation.x,
-            parameters.origin,
-            parameters.tiles,
-            parameters.ring,
+            thermal_phase_transition_parameters.origin,
+            thermal_phase_transition_parameters.tiles,
+            thermal_phase_transition_parameters.ring,
         );
     transition(
-        cells[invocation.x],
+        thermal_cellular_material_identifiers[invocation.x],
         amounts[invocation.x],
         temperatures[invocation.x],
         invocation.x,
@@ -26,7 +26,7 @@ fn phase_cells(@builtin(global_invocation_id) invocation: vec3<u32>) {
 
 @compute @workgroup_size(64)
 fn phase_rigid(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    if (invocation.x >= parameters.rigid_count || invocation.x >= arrayLength(&rigid_cells)) {
+    if (invocation.x >= thermal_phase_transition_parameters.rigid_count || invocation.x >= arrayLength(&rigid_cells)) {
         return;
     }
     let rigid = rigid_cells[invocation.x];
@@ -122,7 +122,7 @@ fn phase_rigid(@builtin(global_invocation_id) invocation: vec3<u32>) {
 
 @compute @workgroup_size(64)
 fn phase_particles(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    if (invocation.x >= parameters.particle_count) {
+    if (invocation.x >= thermal_phase_transition_parameters.particle_count) {
         return;
     }
     let p = particles[invocation.x];
@@ -133,9 +133,9 @@ fn phase_particles(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let cell =
         physical_cell_index_from_world_cell(
             world,
-            parameters.origin,
-            parameters.tiles,
-            parameters.ring,
+            thermal_phase_transition_parameters.origin,
+            thermal_phase_transition_parameters.tiles,
+            thermal_phase_transition_parameters.ring,
         );
     if (cell == 0xffffffffu) {
         return;
@@ -151,14 +151,14 @@ fn phase_gases(
     let cell = group.x * 64u + local.x;
     let species = group.y;
     let branch = group.z;
-    let slot = (branch * parameters.gas_count + species) * parameters.cell_count + cell;
+    let slot = (branch * thermal_phase_transition_parameters.gas_count + species) * thermal_phase_transition_parameters.cell_count + cell;
     gas_fluid_candidates[slot] =
         GasFluidCandidate(EMPTY_MATERIAL_IDENTIFIER, 0.0, 0.0, vec2<f32>(0.0));
-    if (cell >= parameters.cell_count || species >= parameters.gas_count) {
+    if (cell >= thermal_phase_transition_parameters.cell_count || species >= thermal_phase_transition_parameters.gas_count) {
         return;
     }
     let source = species + 1u;
-    let amount = concentrations[species * parameters.cell_count + cell];
+    let amount = concentrations[species * thermal_phase_transition_parameters.cell_count + cell];
     let temperature = gas_temperatures[cell];
     if (!(amount > 0.000001) || temperature != temperature || abs(temperature) > 3.4e38) {
         return;
@@ -237,9 +237,9 @@ fn phase_gases(
     let world =
         world_cell_from_physical_tile_ring_index(
             cell,
-            parameters.origin,
-            parameters.tiles,
-            parameters.ring,
+            thermal_phase_transition_parameters.origin,
+            thermal_phase_transition_parameters.tiles,
+            thermal_phase_transition_parameters.ring,
         );
     let position = (vec2<f32>(world) + vec2<f32>(0.5)) / CELLS_PER_TILE_FLOAT;
     if (material_form_from_identifier(replacement) == FLUID_MATERIAL_FORM) {

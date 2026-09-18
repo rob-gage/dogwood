@@ -1,7 +1,20 @@
 // Copyright Rob Gage 2026
+use std::collections::HashSet;
+use std::io;
 
-use super::*;
+use super::RIGID_DETACHMENT_MAXIMUM_CELLS;
+use super::Scene;
+use super::ScenePendingStaticDetachment;
+use crate::materials::Material;
+use crate::materials::MaterialIdentifier;
+use crate::scene_editing::SceneEditBatch;
+use crate::scene_editing::SceneEditCellPlacement;
+use crate::simulation::CollisionOccupancySnapshot;
+use crate::simulation::RigidCellularBodyCell;
+use crate::simulation::RigidCellularBodyState;
 use crate::simulation_cellulars::CellularStaticState;
+use crate::tiles::CellCoordinates;
+use crate::tiles::CellularAppearance;
 
 impl Scene {
     /// Transfers newly disconnected static components into authoritative body-local matter
@@ -25,8 +38,12 @@ impl Scene {
             self.pending_static_detachment = Some(pending);
             return Ok(());
         }
-        let states: Vec<CellularStaticState> = match result {
-            Ok(states) if states.len() == pending.indices.len() => states,
+        let static_detachment_states: Vec<CellularStaticState> = match result {
+            Ok(static_detachment_states)
+                if static_detachment_states.len() == pending.indices.len() =>
+            {
+                static_detachment_states
+            }
             _ => {
                 self.pending_static_detachment = Some(pending);
                 return Ok(());
@@ -59,13 +76,20 @@ impl Scene {
             });
             return Ok(());
         }
-        let mut offset: usize = 0;
+        let mut rigid_detachment_state_offset: usize = 0;
         let mut edits: SceneEditBatch = SceneEditBatch::new();
-        let mut rigid_insertions = Vec::new();
+        let mut rigid_insertions: Vec<(
+            [f32; 2],
+            Vec<RigidCellularBodyCell>,
+            f32,
+            f32,
+            Vec<(f32, f32, f32)>,
+        )> = Vec::new();
         for component in pending.components {
-            let end: usize = offset + component.len();
-            let component_states: &[CellularStaticState] = &states[offset..end];
-            offset = end;
+            let rigid_detachment_state_end: usize = rigid_detachment_state_offset + component.len();
+            let component_states: &[CellularStaticState] = &static_detachment_states
+                [rigid_detachment_state_offset..rigid_detachment_state_end];
+            rigid_detachment_state_offset = rigid_detachment_state_end;
             if component_states.iter().any(|state| {
                 state.amount <= 0.000001
                     || !matches!(
@@ -79,7 +103,8 @@ impl Scene {
             }
             let minimum_x: i32 = component.iter().map(|cell| cell.x).min().unwrap();
             let minimum_y: i32 = component.iter().map(|cell| cell.y).min().unwrap();
-            let mut cells: Vec<RigidCellularBodyCell> = Vec::with_capacity(component.len());
+            let mut detached_rigid_cells: Vec<RigidCellularBodyCell> =
+                Vec::with_capacity(component.len());
             let mut integrities: Vec<f32> = Vec::with_capacity(component.len());
             let mut amounts: Vec<f32> = Vec::with_capacity(component.len());
             let mut temperatures: Vec<f32> = Vec::with_capacity(component.len());
@@ -94,12 +119,12 @@ impl Scene {
                     ..
                 }) = self.data.materials().get(material_identifier)
                 else {
-                    cells.clear();
+                    detached_rigid_cells.clear();
                     break;
                 };
                 friction += *cell_friction;
                 restitution += *cell_restitution;
-                cells.push(RigidCellularBodyCell {
+                detached_rigid_cells.push(RigidCellularBodyCell {
                     local: [coordinates.x - minimum_x, coordinates.y - minimum_y],
                     material: material_identifier,
                     appearance: CellularAppearance(state.appearance),
@@ -110,11 +135,11 @@ impl Scene {
                 amounts.push(state.amount);
                 temperatures.push(state.temperature);
             }
-            if cells.len() != component.len() {
+            if detached_rigid_cells.len() != component.len() {
                 continue;
             }
-            if cells.len() < self.rigid_component_minimum(&cells) {
-                let debris: Vec<SceneEditCellPlacement> = cells
+            if detached_rigid_cells.len() < self.rigid_component_minimum(&detached_rigid_cells) {
+                let debris: Vec<SceneEditCellPlacement> = detached_rigid_cells
                     .iter()
                     .filter_map(|cell| match self.data.materials().get(cell.material) {
                         Some(Material::CellularStatic {
@@ -141,11 +166,11 @@ impl Scene {
                 edits.place_cells(debris);
                 continue;
             }
-            let divisor: f32 = cells.len() as f32;
+            let divisor: f32 = detached_rigid_cells.len() as f32;
             edits.erase(component.clone());
             rigid_insertions.push((
                 [minimum_x as f32 / 8.0, minimum_y as f32 / 8.0],
-                cells,
+                detached_rigid_cells,
                 friction / divisor,
                 restitution / divisor,
                 integrities
@@ -159,13 +184,19 @@ impl Scene {
         if !edits.is_empty() {
             self.apply_edits_immediate(&mut edits)?;
         }
-        for (position, cells, friction, restitution, state) in rigid_insertions {
-            self.insert_rigid_cellular_body(position, cells, friction, restitution, Some(&state));
+        for (position, detached_rigid_cells, friction, restitution, state) in rigid_insertions {
+            self.insert_rigid_cellular_body(
+                position,
+                detached_rigid_cells,
+                friction,
+                restitution,
+                Some(&state),
+            );
         }
         #[cfg(debug_assertions)]
         tracing::trace!(
             target: "engine_physics::static_detachment",
-            resolved_cells = offset,
+            resolved_cells = rigid_detachment_state_offset,
             edit_applied = !edits.is_empty(),
             "resolved static detachment batch"
         );
@@ -193,7 +224,6 @@ impl Scene {
             );
         }
     }
-
     pub(super) fn detach_unanchored_static_components(
         &mut self,
         snapshot: &mut CollisionOccupancySnapshot,
@@ -208,7 +238,7 @@ impl Scene {
         {
             self.rigid_detachment_snapshot = Some(snapshot.clone());
             if let Some(pending) = self.pending_static_detachment.take() {
-                let indices = pending
+                let indices: Vec<u32> = pending
                     .components
                     .iter()
                     .flatten()
@@ -238,7 +268,7 @@ impl Scene {
         let width: i32 = i32::from(snapshot.width) * 8;
         let height: i32 = i32::from(snapshot.height) * 8;
         let mut seeds: Vec<CellCoordinates> = Vec::new();
-        let mut changed_bits = 0usize;
+        let mut changed_bits: usize = 0;
         for tile_y in 0..snapshot.height {
             for tile_x in 0..snapshot.width {
                 let tile: usize =
@@ -304,10 +334,10 @@ impl Scene {
             .wrapping_add(1)
             .max(1);
         let visit_generation: u32 = self.static_detachment_visit_generation;
-        let visit_index =
-            |cell: CellCoordinates| ((cell.y - origin_y) * width + cell.x - origin_x) as usize;
+        let visit_index: &dyn Fn(CellCoordinates) -> usize =
+            &|cell: CellCoordinates| ((cell.y - origin_y) * width + cell.x - origin_x) as usize;
         let mut candidates: Vec<Vec<CellCoordinates>> = Vec::new();
-        let mut visited_cells = 0usize;
+        let mut visited_cells: usize = 0;
         for seed in seeds.iter().copied() {
             if snapshot.is_static_cell_occupied(seed.x, seed.y) != Some(true)
                 || self.static_detachment_visit_stamps[visit_index(seed)] == visit_generation
@@ -357,9 +387,12 @@ impl Scene {
                     {
                         continue;
                     }
-                    let index: usize = visit_index(neighbor);
-                    if self.static_detachment_visit_stamps[index] != visit_generation {
-                        self.static_detachment_visit_stamps[index] = visit_generation;
+                    let static_detachment_visit_index: usize = visit_index(neighbor);
+                    if self.static_detachment_visit_stamps[static_detachment_visit_index]
+                        != visit_generation
+                    {
+                        self.static_detachment_visit_stamps[static_detachment_visit_index] =
+                            visit_generation;
                         queue.push(neighbor);
                     }
                 }

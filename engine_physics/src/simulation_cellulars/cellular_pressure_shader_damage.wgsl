@@ -1,9 +1,9 @@
-fn effective_pressure_material(index: u32) -> u32 {
+fn effective_pressure_material(cellular_pressure_cell_index: u32) -> u32 {
     return
         select(
-            cellular_material_identifiers[index],
-            rigid_material_identifiers[index],
-            rigid_owners[index] != 0u,
+            cellular_material_identifiers[cellular_pressure_cell_index],
+            rigid_material_identifiers[cellular_pressure_cell_index],
+            rigid_owners[cellular_pressure_cell_index] != 0u,
         );
 }
 
@@ -14,8 +14,8 @@ fn rigid_cell_state_slot(source: u32) -> u32 {
     return rigid_cells[source * 2u + 1u].y;
 }
 
-fn accumulate_rigid_pressure_damage(index: u32, material: u32, load: vec4<f32>) {
-    let source: u32 = rigid_claims[index];
+fn accumulate_rigid_pressure_damage(cellular_pressure_cell_index: u32, material: u32, load: vec4<f32>) {
+    let source: u32 = rigid_claims[cellular_pressure_cell_index];
     if source == 0xffffffffu {
         return;
     }
@@ -28,7 +28,7 @@ fn accumulate_rigid_pressure_damage(index: u32, material: u32, load: vec4<f32>) 
         max(0.0, load.x + load.y + load.z + load.w - properties.pressure_ignore_threshold);
     atomicMax(&rigid_damage[slot], bitcast<u32>(overload));
     if overload > 0.0 {
-        atomicStore(&rigid_damage_dispatch[0], (parameters.rigid_cell_count + 63u) / 64u);
+        atomicStore(&rigid_damage_dispatch[0], (cellular_pressure_parameters.rigid_cell_count + 63u) / 64u);
         atomicStore(&rigid_damage_dispatch[1], 1u);
         atomicStore(&rigid_damage_dispatch[2], 1u);
     }
@@ -36,7 +36,7 @@ fn accumulate_rigid_pressure_damage(index: u32, material: u32, load: vec4<f32>) 
 
 @compute @workgroup_size(64)
 fn apply_rigid_pressure_damage(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    if invocation.x >= parameters.rigid_cell_count {
+    if invocation.x >= cellular_pressure_parameters.rigid_cell_count {
         return;
     }
     let slot = rigid_cell_state_slot(invocation.x);
@@ -47,7 +47,7 @@ fn apply_rigid_pressure_damage(@builtin(global_invocation_id) invocation: vec3<u
     if overload == 0.0 {
         return;
     }
-    rigid_cell_integrities[slot] -= overload * parameters.delta_time * parameters.damage_rate;
+    rigid_cell_integrities[slot] -= overload * cellular_pressure_parameters.delta_time * cellular_pressure_parameters.damage_rate;
     if rigid_cell_integrities[slot] <= 0.0 {
         let mask = 1u << (slot % 32u);
         if (atomicOr(&rigid_fractures[slot / 32u], mask) & mask) == 0u {
@@ -59,7 +59,7 @@ fn apply_rigid_pressure_damage(@builtin(global_invocation_id) invocation: vec3<u
 @compute @workgroup_size(64)
 fn initialize_rigid_contact_state(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let body: u32 = invocation.x;
-    if body >= parameters.rigid_body_count {
+    if body >= cellular_pressure_parameters.rigid_body_count {
         return;
     }
     atomicStore(&rigid_contact_statistics[body].contact_count, 0u);

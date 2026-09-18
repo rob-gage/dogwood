@@ -1,12 +1,14 @@
 // Copyright Rob Gage 2026
 
-use crate::simulation::ScenePhysicsWorld;
-use crate::{
-    actors::{ActorCollisionShape, ActorPawnSwimmingConfiguration, ActorPawnSwimmingState},
-    scenes::{ScenePosition, SceneVelocity},
-    simulation_actors::scene_simulation_position::integrate_actor_position,
-};
 use rapier2d::prelude::Vector;
+
+use crate::actors::ActorCollisionShape;
+use crate::actors::ActorPawnSwimmingConfiguration;
+use crate::actors::ActorPawnSwimmingState;
+use crate::scenes::ScenePosition;
+use crate::scenes::SceneVelocity;
+use crate::simulation::ScenePhysicsWorld;
+use crate::simulation_actors::scene_simulation_position::integrate_actor_position;
 
 /// Advances one swimmer relative to its asynchronously sampled surrounding fluid
 pub(super) fn simulate_actor_pawn_swimming(
@@ -24,7 +26,7 @@ pub(super) fn simulate_actor_pawn_swimming(
         return;
     };
     let gravity_magnitude: f32 = gravity[0].hypot(gravity[1]);
-    let up: Vector = if gravity_magnitude > 0.0 {
+    let gravity_up_direction: Vector = if gravity_magnitude > 0.0 {
         Vector::new(
             -gravity[0] / gravity_magnitude,
             -gravity[1] / gravity_magnitude,
@@ -32,7 +34,8 @@ pub(super) fn simulate_actor_pawn_swimming(
     } else {
         Vector::Y
     };
-    let tangent: Vector = Vector::new(up.y, -up.x);
+    let gravity_tangent_direction: Vector =
+        Vector::new(gravity_up_direction.y, -gravity_up_direction.x);
     let immersion: f32 = state.immersion.clamp(0.0, 1.0);
     let buoyancy_ratio: f32 = immersion * state.fluid_density / configuration.density;
     velocity.x += gravity[0] * (1.0 - buoyancy_ratio) * delta_time;
@@ -40,14 +43,16 @@ pub(super) fn simulate_actor_pawn_swimming(
 
     let fluid_velocity: Vector = Vector::new(state.fluid_velocity[0], state.fluid_velocity[1]);
     let mut relative_velocity: Vector = Vector::new(velocity.x, velocity.y) - fluid_velocity;
-    let drag: f32 = (-state.fluid_viscosity * configuration.drag * immersion * delta_time).exp();
-    relative_velocity *= drag;
-    let mut input: Vector = tangent * control.locomotion_x + up * control.locomotion_y;
-    let input_magnitude: f32 = input.length();
-    if input_magnitude > 1.0 {
-        input /= input_magnitude;
+    let swimming_drag_factor: f32 =
+        (-state.fluid_viscosity * configuration.drag * immersion * delta_time).exp();
+    relative_velocity *= swimming_drag_factor;
+    let mut movement_input: Vector = gravity_tangent_direction * control.locomotion_x
+        + gravity_up_direction * control.locomotion_y;
+    let movement_input_magnitude: f32 = movement_input.length();
+    if movement_input_magnitude > 1.0 {
+        movement_input /= movement_input_magnitude;
     }
-    relative_velocity += input * configuration.acceleration * delta_time;
+    relative_velocity += movement_input * configuration.acceleration * delta_time;
     let relative_speed: f32 = relative_velocity.length();
     if relative_speed > configuration.maximum_speed {
         relative_velocity *= configuration.maximum_speed / relative_speed;
@@ -62,7 +67,7 @@ pub(super) fn simulate_actor_pawn_swimming(
         collision_shape,
         Vector::new(world_x, world_y),
         Vector::new(velocity.x, velocity.y) * delta_time,
-        up,
+        gravity_up_direction,
         1.0,
         0.0,
         &mut |normal| {

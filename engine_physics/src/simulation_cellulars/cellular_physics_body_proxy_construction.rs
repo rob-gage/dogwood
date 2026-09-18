@@ -1,53 +1,73 @@
 // Copyright Rob Gage 2026
 
-use super::*;
+use std::sync::Arc;
+use std::sync::Mutex;
+
+use engine_compute::Accelerator;
+use engine_compute::AcceleratorBuffer;
+
+use super::CellularPhysicsBodyProxy;
 
 impl CellularPhysicsBodyProxy {
     /// Creates the Accelerator rasterizer and its fixed-capacity readback state.
     pub fn new(accelerator: &Accelerator, buffered_cell_count: usize) -> Self {
-        let device = accelerator.wgpu_device();
-        let buffered_cell_count = buffered_cell_count as u32;
-        let occupancy = accelerator.allocate::<u32>(buffered_cell_count as usize);
-        let velocity = accelerator.allocate::<[f32; 4]>(buffered_cell_count as usize);
-        let actor_capacity = 1;
-        let actor_counts = accelerator.allocate::<u32>(actor_capacity);
-        let actor_claims = accelerator.allocate::<u32>(buffered_cell_count as usize);
-        let actor_proxies = accelerator.allocate::<[u32; 12]>(actor_capacity);
-        let rigid_material_identifiers = accelerator.allocate::<u32>(buffered_cell_count as usize);
-        let rigid_appearances = accelerator.allocate::<u32>(buffered_cell_count as usize);
-        let rigid_claims = accelerator.allocate::<u32>(buffered_cell_count as usize);
-        let rigid_owners = accelerator.allocate::<u32>(buffered_cell_count as usize);
-        let rigid_cells = accelerator.allocate::<[u32; 8]>(buffered_cell_count as usize);
-        let rigid_transforms = accelerator.allocate::<[f32; 12]>(buffered_cell_count as usize);
-        let destroy_requests = accelerator.allocate::<u32>(buffered_cell_count as usize + 1);
-        let destroy_results = accelerator.allocate::<[u32; 2]>(buffered_cell_count as usize);
-        let destroy_completed = Arc::new(Mutex::new(Vec::new()));
-        let parameters = crate::simulation::create_simulation_uniform_buffer(
-            device,
-            "cellular physics body proxy parameters",
-            96,
-        );
-        let storage = crate::simulation::storage_bind_group_layout_entry;
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("cellular physics body proxy bind group layout"),
-            entries: &[
-                storage(0, false),
-                storage(1, false),
-                storage(2, false),
-                crate::simulation::uniform_bind_group_layout_entry(3),
-                storage(4, false),
-                storage(5, false),
-                storage(6, false),
-                storage(7, true),
-                storage(8, true),
-                storage(9, false),
-                storage(10, true),
-                storage(11, false),
-                storage(12, true),
-                storage(13, false),
-            ],
-        });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let device: &wgpu::Device = accelerator.wgpu_device();
+        let buffered_cell_count: u32 = buffered_cell_count as u32;
+        let occupancy: AcceleratorBuffer =
+            accelerator.allocate::<u32>(buffered_cell_count as usize);
+        let velocity: AcceleratorBuffer =
+            accelerator.allocate::<[f32; 4]>(buffered_cell_count as usize);
+        let actor_capacity: usize = 1;
+        let actor_counts: AcceleratorBuffer = accelerator.allocate::<u32>(actor_capacity);
+        let actor_claims: AcceleratorBuffer =
+            accelerator.allocate::<u32>(buffered_cell_count as usize);
+        let actor_proxies: AcceleratorBuffer = accelerator.allocate::<[u32; 12]>(actor_capacity);
+        let rigid_material_identifiers: AcceleratorBuffer =
+            accelerator.allocate::<u32>(buffered_cell_count as usize);
+        let rigid_appearances: AcceleratorBuffer =
+            accelerator.allocate::<u32>(buffered_cell_count as usize);
+        let rigid_claims: AcceleratorBuffer =
+            accelerator.allocate::<u32>(buffered_cell_count as usize);
+        let rigid_owners: AcceleratorBuffer =
+            accelerator.allocate::<u32>(buffered_cell_count as usize);
+        let rigid_cells: AcceleratorBuffer =
+            accelerator.allocate::<[u32; 8]>(buffered_cell_count as usize);
+        let rigid_transforms: AcceleratorBuffer =
+            accelerator.allocate::<[f32; 12]>(buffered_cell_count as usize);
+        let destroy_requests: AcceleratorBuffer =
+            accelerator.allocate::<u32>(buffered_cell_count as usize + 1);
+        let destroy_results: AcceleratorBuffer =
+            accelerator.allocate::<[u32; 2]>(buffered_cell_count as usize);
+        let destroy_completed: Arc<Mutex<Vec<[u32; 2]>>> = Arc::new(Mutex::new(Vec::new()));
+        let cellular_physics_body_proxy_parameters: wgpu::Buffer =
+            crate::simulation::create_simulation_uniform_buffer(
+                device,
+                "cellular physics body proxy parameters",
+                96,
+            );
+        let storage: fn(u32, bool) -> wgpu::BindGroupLayoutEntry =
+            crate::simulation::storage_bind_group_layout_entry;
+        let layout: wgpu::BindGroupLayout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("cellular physics body proxy bind group layout"),
+                entries: &[
+                    storage(0, false),
+                    storage(1, false),
+                    storage(2, false),
+                    crate::simulation::uniform_bind_group_layout_entry(3),
+                    storage(4, false),
+                    storage(5, false),
+                    storage(6, false),
+                    storage(7, true),
+                    storage(8, true),
+                    storage(9, false),
+                    storage(10, true),
+                    storage(11, false),
+                    storage(12, true),
+                    storage(13, false),
+                ],
+            });
+        let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("cellular physics body proxy bind group"),
             layout: &layout,
             entries: &[
@@ -56,7 +76,7 @@ impl CellularPhysicsBodyProxy {
                 crate::simulation::accelerator_buffer_bind_group_entry(2, &actor_counts),
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: parameters.as_entire_binding(),
+                    resource: cellular_physics_body_proxy_parameters.as_entire_binding(),
                 },
                 crate::simulation::accelerator_buffer_bind_group_entry(
                     4,
@@ -73,27 +93,29 @@ impl CellularPhysicsBodyProxy {
                 crate::simulation::accelerator_buffer_bind_group_entry(13, &destroy_results),
             ],
         });
-        let shader = crate::simulation::create_simulation_shader_module(
+        let shader: wgpu::ShaderModule = crate::simulation::create_simulation_shader_module(
             device,
             "cellular physics body proxy shader",
             include_str!("cellular_physics_body_proxy.wgsl"),
             "engine_physics/src/simulation_cellulars/cellular_physics_body_proxy.wgsl",
         );
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("cellular physics body proxy pipeline layout"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
-        let pipeline = |entry_point, label| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(label),
-                layout: Some(&pipeline_layout),
-                module: &shader,
-                entry_point: Some(entry_point),
-                compilation_options: Default::default(),
-                cache: None,
-            })
-        };
+        let pipeline_layout: wgpu::PipelineLayout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("cellular physics body proxy pipeline layout"),
+                bind_group_layouts: &[Some(&layout)],
+                immediate_size: 0,
+            });
+        let pipeline: &dyn Fn(&'static str, &'static str) -> wgpu::ComputePipeline =
+            &|entry_point: &'static str, label: &'static str| -> wgpu::ComputePipeline {
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some(label),
+                    layout: Some(&pipeline_layout),
+                    module: &shader,
+                    entry_point: Some(entry_point),
+                    compilation_options: Default::default(),
+                    cache: None,
+                })
+            };
         Self {
             occupancy,
             velocity,
@@ -109,7 +131,7 @@ impl CellularPhysicsBodyProxy {
             destroy_requests,
             destroy_results,
             destroy_completed,
-            parameters,
+            cellular_physics_body_proxy_parameters,
             bind_group,
             bind_group_layout: layout,
             clear_pipeline: pipeline(

@@ -6,7 +6,7 @@ pub(crate) fn extent(
     available: impl IntoIterator<Item = f32>,
     coefficients: impl IntoIterator<Item = f32>,
 ) -> f32 {
-    let inventory_limit = available
+    let inventory_limit: f32 = available
         .into_iter()
         .zip(coefficients)
         .map(|(amount, coefficient)| amount / coefficient)

@@ -1,6 +1,15 @@
 // Copyright Rob Gage 2026
 
-use super::*;
+use std::io;
+
+use super::Scene;
+use super::ScenePosition;
+use super::SceneRigidOwnerLoad;
+use super::SceneVelocity;
+use crate::chunks::Chunk;
+use crate::chunks::ChunkEntry;
+use crate::tiles::TileArea;
+use crate::tiles::TileCoordinates;
 
 impl Scene {
     /// Sets the automatic active-area target around a world position
@@ -38,7 +47,7 @@ impl Scene {
     }
 
     /// Returns the chunk-aligned area required by the current Accelerator buffer
-    pub(super) fn area_streaming(&self) -> TileArea {
+    pub(crate) fn area_streaming(&self) -> TileArea {
         self.area_buffered().chunk_area()
     }
 

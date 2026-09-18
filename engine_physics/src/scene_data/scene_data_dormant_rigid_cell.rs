@@ -1,6 +1,7 @@
 // Copyright Rob Gage 2026
 
-use crate::{materials::MaterialIdentifier, tiles::CellularAppearance};
+use crate::materials::MaterialIdentifier;
+use crate::tiles::CellularAppearance;
 
 /// One body-local cellular record retained while a rigid body is dormant
 #[derive(Clone)]

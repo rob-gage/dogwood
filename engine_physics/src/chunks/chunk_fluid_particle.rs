@@ -1,10 +1,10 @@
 // Copyright Rob Gage 2026
 
-use crate::{
-    materials::{MaterialForm, MaterialIdentifier},
-    tiles::TileCoordinates,
-};
 use std::io;
+
+use crate::materials::MaterialForm;
+use crate::materials::MaterialIdentifier;
+use crate::tiles::TileCoordinates;
 
 /// Minimum authoritative state of a nonresident fluid particle
 #[derive(Clone, Copy)]

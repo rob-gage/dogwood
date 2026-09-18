@@ -1,7 +1,8 @@
 // Copyright Rob Gage 2026
 
-use super::MaterialIdentifier;
 use engine_graphics::MaterialAppearance;
+
+use super::MaterialIdentifier;
 
 /// A material
 pub enum Material {

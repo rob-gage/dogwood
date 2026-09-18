@@ -1,6 +1,10 @@
 // Copyright Rob Gage 2026
 
-use super::*;
+use engine_compute::Accelerator;
+use engine_graphics::MaterialGraphics;
+
+use super::Material;
+use super::MaterialRegistry;
 
 impl MaterialRegistry {
     /// Builds graphics properties for all registered materials

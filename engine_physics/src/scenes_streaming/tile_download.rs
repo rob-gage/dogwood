@@ -1,8 +1,13 @@
 // Copyright Rob Gage 2026
 
-use crate::tiles::{Tile, TileCoordinates, TileData};
+use std::io;
+use std::task::Waker;
+
 use engine_compute::Accelerator;
-use std::{io, task::Waker};
+
+use crate::tiles::Tile;
+use crate::tiles::TileCoordinates;
+use crate::tiles::TileData;
 
 /// Tracks a nonblocking `Accelerator`-to-native tile download
 pub struct TileDownload {

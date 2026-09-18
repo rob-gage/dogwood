@@ -1,9 +1,14 @@
 // Copyright Rob Gage 2026
 
-use super::*;
-use crate::materials::{MaterialForm, MaterialIdentifier};
-use crate::tiles::{CellularAppearance, TileArea, TileCoordinates, TileData};
 use std::io::Cursor;
+
+use super::*;
+use crate::materials::MaterialForm;
+use crate::materials::MaterialIdentifier;
+use crate::tiles::CellularAppearance;
+use crate::tiles::TileArea;
+use crate::tiles::TileCoordinates;
+use crate::tiles::TileData;
 
 fn particle(index: u32) -> ChunkFluidParticle {
     ChunkFluidParticle {

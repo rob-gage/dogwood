@@ -1,7 +1,10 @@
 // Copyright Rob Gage 2026
 
-use crate::{simulation::simulation_constants::*, tiles::TileCoordinates};
-use engine_compute::{Accelerator, AcceleratorBuffer};
+use engine_compute::Accelerator;
+use engine_compute::AcceleratorBuffer;
+
+use crate::simulation::simulation_constants::MAXIMUM_MOVEMENT_CELLS;
+use crate::tiles::TileCoordinates;
 
 /// Simulates dynamic cellular material in the canonical cellular buffers
 pub struct CellularDynamic {
@@ -18,7 +21,7 @@ pub struct CellularDynamic {
     /// One proposed destination and integrated kinematic state per source cell
     proposals: AcceleratorBuffer,
     /// Buffered/active ring mapping, gravity, delta time, and tick
-    parameters: wgpu::Buffer,
+    cellular_dynamic_parameters: wgpu::Buffer,
     /// All concrete cellular dynamic input, scratch, and output bindings
     bind_group: wgpu::BindGroup,
     /// Clears destination claims before proposals are submitted
@@ -64,18 +67,21 @@ impl CellularDynamic {
             accelerator.allocate::<u32>(buffered_cell_count as usize);
         let appearances_output: AcceleratorBuffer =
             accelerator.allocate::<u32>(buffered_cell_count as usize);
-        let amounts_output = accelerator.allocate::<f32>(buffered_cell_count as usize);
-        let temperatures_output = accelerator.allocate::<f32>(buffered_cell_count as usize);
+        let amounts_output: AcceleratorBuffer =
+            accelerator.allocate::<f32>(buffered_cell_count as usize);
+        let temperatures_output: AcceleratorBuffer =
+            accelerator.allocate::<f32>(buffered_cell_count as usize);
         let destination_claims: AcceleratorBuffer =
             accelerator.allocate::<u32>(buffered_cell_count as usize);
         let proposals: AcceleratorBuffer =
             accelerator.allocate::<[u32; 8]>(buffered_cell_count as usize);
-        // describe the active and buffered ring mapping shared by every pass
-        let parameters = crate::simulation::create_simulation_uniform_buffer(
-            device,
-            "cellular dynamic parameters",
-            96,
-        );
+        // describe the active and buffered ring mapping shared by every cellular_dynamic_compute_pass
+        let cellular_dynamic_parameters: wgpu::Buffer =
+            crate::simulation::create_simulation_uniform_buffer(
+                device,
+                "cellular dynamic parameters",
+                96,
+            );
         let bind_group_layout: wgpu::BindGroupLayout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("cellular dynamic bind group layout"),
@@ -124,11 +130,11 @@ impl CellularDynamic {
                 crate::simulation::accelerator_buffer_bind_group_entry(6, &proposals),
                 wgpu::BindGroupEntry {
                     binding: 7,
-                    resource: parameters.as_entire_binding(),
+                    resource: cellular_dynamic_parameters.as_entire_binding(),
                 },
             ],
         });
-        // build the three explicit pass pipelines from one cellular dynamic shader
+        // build the three explicit cellular_dynamic_compute_pass pipelines from one cellular dynamic shader
         let shader: wgpu::ShaderModule = crate::simulation::create_simulation_shader_module(
             device,
             "cellular dynamic shader",
@@ -173,7 +179,7 @@ impl CellularDynamic {
             temperatures_output,
             destination_claims,
             proposals,
-            parameters,
+            cellular_dynamic_parameters,
             bind_group,
             clear_claims_pipeline,
             propose_pipeline,
@@ -230,11 +236,11 @@ impl CellularDynamic {
                 &self.resolve_pipeline,
             ),
         ] {
-            let mut pass: wgpu::ComputePass<'_> =
+            let mut cellular_dynamic_compute_pass: wgpu::ComputePass<'_> =
                 accelerator.begin_compute_pass(&mut encoder, label);
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.dispatch_workgroups(workgroup_count, 1, 1);
+            cellular_dynamic_compute_pass.set_pipeline(pipeline);
+            cellular_dynamic_compute_pass.set_bind_group(0, &self.bind_group, &[]);
+            cellular_dynamic_compute_pass.dispatch_workgroups(workgroup_count, 1, 1);
         }
         let cell_field_size: u64 = u64::from(self.buffered_cell_count) * 4;
         encoder.copy_buffer_to_buffer(
@@ -281,7 +287,7 @@ impl CellularDynamic {
         delta_time: f32,
     ) {
         // encode signed origins, ring geometry, kinematics inputs, and deterministic tick state
-        let parameters: [u32; 24] = [
+        let cellular_dynamic_parameter_values: [u32; 24] = [
             buffered_origin.x as u32,
             buffered_origin.y as u32,
             u32::from(buffered_width),
@@ -307,13 +313,15 @@ impl CellularDynamic {
             0,
             0,
         ];
-        let mut bytes: Vec<u8> = Vec::with_capacity(96);
-        for value in parameters {
-            bytes.extend_from_slice(&value.to_le_bytes());
+        let mut cellular_dynamic_parameter_bytes: Vec<u8> = Vec::with_capacity(96);
+        for value in cellular_dynamic_parameter_values {
+            cellular_dynamic_parameter_bytes.extend_from_slice(&value.to_le_bytes());
         }
-        accelerator
-            .wgpu_queue()
-            .write_buffer(&self.parameters, 0, &bytes);
+        accelerator.wgpu_queue().write_buffer(
+            &self.cellular_dynamic_parameters,
+            0,
+            &cellular_dynamic_parameter_bytes,
+        );
     }
 
     /// Clears motion state replaced by a CPU cell edit or tile upload
@@ -330,7 +338,7 @@ impl CellularDynamic {
         );
     }
 
-    /// Returns one storage-buffer layout entry used by every concrete pass
+    /// Returns one storage-buffer layout entry used by every concrete cellular_dynamic_compute_pass
     fn cellular_dynamic_storage_layout_entry(
         binding: u32,
         read_only: bool,
@@ -374,6 +382,6 @@ impl Drop for CellularDynamic {
         self.appearances_output.free();
         self.destination_claims.free();
         self.proposals.free();
-        self.parameters.destroy();
+        self.cellular_dynamic_parameters.destroy();
     }
 }

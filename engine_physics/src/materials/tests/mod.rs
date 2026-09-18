@@ -1,12 +1,19 @@
 // Copyright Rob Gage 2026
 
-use super::{MaterialForm, MaterialIdentifier};
-use crate::materials::{
-    Material, MaterialReaction, MaterialReactionProduct, MaterialReactionReactant,
-    MaterialReference, MaterialRegistry, MaterialRegistryBuilder, MaterialThermalProperties,
-    MaterialThermalTransition,
-};
-use engine_graphics::{Color, MaterialAppearance};
+use engine_graphics::Color;
+use engine_graphics::MaterialAppearance;
+
+use super::MaterialForm;
+use super::MaterialIdentifier;
+use crate::materials::Material;
+use crate::materials::MaterialReaction;
+use crate::materials::MaterialReactionProduct;
+use crate::materials::MaterialReactionReactant;
+use crate::materials::MaterialReference;
+use crate::materials::MaterialRegistry;
+use crate::materials::MaterialRegistryBuilder;
+use crate::materials::MaterialThermalProperties;
+use crate::materials::MaterialThermalTransition;
 
 #[test]
 fn test_gas_uses_nonzero_tag_zero_identifiers_without_changing_existing_forms() {
@@ -63,8 +70,8 @@ fn test_gas_round_trips_and_three_form_registry_remains_readable() {
 
 #[test]
 fn test_static_fracture_product_round_trips_for_any_registered_form() {
-    let mut registry = MaterialRegistry::new();
-    let fluid = registry.register(Material::Fluid {
+    let mut registry: MaterialRegistry = MaterialRegistry::new();
+    let fluid: MaterialIdentifier = registry.register(Material::Fluid {
         name: "Water".into(),
         graphics: MaterialAppearance::from_color(Color::new_rgb(1, 2, 3)),
         pressure_transmission: 0.5,
@@ -77,7 +84,7 @@ fn test_static_fracture_product_round_trips_for_any_registered_form() {
         density: 1.0,
         viscosity: 0.0,
     });
-    let stone = registry.register(Material::CellularStatic {
+    let stone: MaterialIdentifier = registry.register(Material::CellularStatic {
         name: "Stone".into(),
         graphics: MaterialAppearance::from_color(Color::new_rgb(4, 5, 6)),
         mass: 1.0,
@@ -90,7 +97,7 @@ fn test_static_fracture_product_round_trips_for_any_registered_form() {
         friction: 0.5,
         restitution: 0.0,
     });
-    let mut bytes = Vec::new();
+    let mut bytes: Vec<u8> = Vec::new();
     registry.serialize(&mut bytes).unwrap();
     assert!(matches!(
         MaterialRegistry::deserialize(&mut bytes.as_slice()).unwrap().get(stone),
@@ -100,8 +107,8 @@ fn test_static_fracture_product_round_trips_for_any_registered_form() {
 
 #[test]
 fn test_builder_compiles_dense_indices_tags_and_thermal_metadata() {
-    let mut builder = MaterialRegistryBuilder::new();
-    let static_id = builder.register(Material::CellularStatic {
+    let mut builder: MaterialRegistryBuilder = MaterialRegistryBuilder::new();
+    let static_id: MaterialIdentifier = builder.register(Material::CellularStatic {
         name: "s".into(),
         graphics: MaterialAppearance::from_color(Color::new_rgb(1, 1, 1)),
         mass: 1.0,
@@ -114,7 +121,7 @@ fn test_builder_compiles_dense_indices_tags_and_thermal_metadata() {
         friction: 0.5,
         restitution: 0.0,
     });
-    let dynamic_id = builder.register(Material::CellularDynamic {
+    let dynamic_id: MaterialIdentifier = builder.register(Material::CellularDynamic {
         name: "d".into(),
         graphics: MaterialAppearance::from_color(Color::new_rgb(1, 1, 1)),
         mass: 1.0,
@@ -122,7 +129,7 @@ fn test_builder_compiles_dense_indices_tags_and_thermal_metadata() {
         friction: 0.5,
         restitution: 0.0,
     });
-    let fluid_id = builder.register(Material::Fluid {
+    let fluid_id: MaterialIdentifier = builder.register(Material::Fluid {
         name: "f".into(),
         graphics: MaterialAppearance::from_color(Color::new_rgb(1, 1, 1)),
         pressure_transmission: 0.5,
@@ -135,7 +142,7 @@ fn test_builder_compiles_dense_indices_tags_and_thermal_metadata() {
         density: 1.0,
         viscosity: 0.0,
     });
-    let gas_id = builder.register(Material::Gas {
+    let gas_id: MaterialIdentifier = builder.register(Material::Gas {
         name: "g".into(),
         graphics: MaterialAppearance::from_color(Color::new_rgb(1, 1, 1)),
         density: 1.0,
@@ -189,7 +196,7 @@ fn test_builder_compiles_dense_indices_tags_and_thermal_metadata() {
             },
         )
         .unwrap();
-    let registry = builder.compile().unwrap();
+    let registry: MaterialRegistry = builder.compile().unwrap();
     for identifier in [static_id, dynamic_id, fluid_id, gas_id] {
         assert_eq!(
             registry.identifier_from_dense_index(registry.dense_index(identifier).unwrap()),
@@ -216,9 +223,9 @@ fn test_builder_compiles_dense_indices_tags_and_thermal_metadata() {
         registry.reaction_selector_members(),
         &[gas_id, static_id, fluid_id]
     );
-    let mut bytes = Vec::new();
+    let mut bytes: Vec<u8> = Vec::new();
     registry.serialize(&mut bytes).unwrap();
-    let loaded = MaterialRegistry::deserialize(&mut bytes.as_slice()).unwrap();
+    let loaded: MaterialRegistry = MaterialRegistry::deserialize(&mut bytes.as_slice()).unwrap();
     assert_eq!(
         loaded.tag_members("mixed").unwrap(),
         &[gas_id, static_id, fluid_id]
@@ -237,8 +244,8 @@ fn test_builder_compiles_dense_indices_tags_and_thermal_metadata() {
 
 #[test]
 fn test_reaction_compiler_rejects_invalid_authoring_and_accepts_pressure_only_rules() {
-    let mut builder = MaterialRegistryBuilder::new();
-    let identifier = builder.register(Material::CellularDynamic {
+    let mut builder: MaterialRegistryBuilder = MaterialRegistryBuilder::new();
+    let identifier: MaterialIdentifier = builder.register(Material::CellularDynamic {
         name: "a".into(),
         graphics: MaterialAppearance::from_color(Color::new_rgb(1, 1, 1)),
         mass: 1.0,
@@ -251,12 +258,14 @@ fn test_reaction_compiler_rejects_invalid_authoring_and_accepts_pressure_only_ru
         pressure_output: 1.0,
         ..Default::default()
     });
-    let registry = builder.compile().unwrap();
+    let registry: MaterialRegistry = builder.compile().unwrap();
     assert_eq!(registry.reactions().len(), 1);
 
-    let invalid = |reaction: MaterialReaction| {
-        let mut builder = MaterialRegistryBuilder::new();
-        let known = builder.register(Material::CellularDynamic {
+    let invalid: &dyn Fn(
+        MaterialReaction,
+    ) -> (Result<MaterialRegistry, String>, MaterialIdentifier) = &|reaction: MaterialReaction| {
+        let mut builder: MaterialRegistryBuilder = MaterialRegistryBuilder::new();
+        let known: MaterialIdentifier = builder.register(Material::CellularDynamic {
             name: "a".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(1, 1, 1)),
             mass: 1.0,
@@ -316,7 +325,7 @@ fn test_reaction_compiler_rejects_invalid_authoring_and_accepts_pressure_only_ru
         .0
         .is_err()
     );
-    let unknown = MaterialIdentifier::from_u32(0x3fff_ffff);
+    let unknown: MaterialIdentifier = MaterialIdentifier::from_u32(0x3fff_ffff);
     assert!(
         invalid(MaterialReaction {
             reactants: [
@@ -352,10 +361,10 @@ fn test_reaction_compiler_rejects_invalid_authoring_and_accepts_pressure_only_ru
 
 #[test]
 fn test_malformed_metadata_extension_is_rejected() {
-    let registry = MaterialRegistry::new();
-    let mut bytes = Vec::new();
+    let registry: MaterialRegistry = MaterialRegistry::new();
+    let mut bytes: Vec<u8> = Vec::new();
     registry.serialize(&mut bytes).unwrap();
-    let extension = bytes
+    let extension: usize = bytes
         .windows(8)
         .position(|value| value == b"dwmtmeta")
         .unwrap();
@@ -365,8 +374,8 @@ fn test_malformed_metadata_extension_is_rejected() {
 
 #[test]
 fn test_invalid_transition_target_in_metadata_is_rejected() {
-    let mut builder = MaterialRegistryBuilder::new();
-    let source = builder.register(Material::CellularDynamic {
+    let mut builder: MaterialRegistryBuilder = MaterialRegistryBuilder::new();
+    let source: MaterialIdentifier = builder.register(Material::CellularDynamic {
         name: "source".into(),
         graphics: MaterialAppearance::from_color(Color::new_rgb(1, 1, 1)),
         mass: 1.0,
@@ -374,7 +383,7 @@ fn test_invalid_transition_target_in_metadata_is_rejected() {
         friction: 0.5,
         restitution: 0.0,
     });
-    let target = builder.register(Material::CellularDynamic {
+    let target: MaterialIdentifier = builder.register(Material::CellularDynamic {
         name: "target".into(),
         graphics: MaterialAppearance::from_color(Color::new_rgb(2, 2, 2)),
         mass: 1.0,
@@ -396,10 +405,10 @@ fn test_invalid_transition_target_in_metadata_is_rejected() {
             },
         )
         .unwrap();
-    let registry = builder.compile().unwrap();
-    let mut bytes = Vec::new();
+    let registry: MaterialRegistry = builder.compile().unwrap();
+    let mut bytes: Vec<u8> = Vec::new();
     registry.serialize(&mut bytes).unwrap();
-    let extension = bytes
+    let extension: usize = bytes
         .windows(8)
         .position(|value| value == b"dwmtmeta")
         .unwrap();

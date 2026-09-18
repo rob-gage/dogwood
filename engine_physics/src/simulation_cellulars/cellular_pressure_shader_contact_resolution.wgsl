@@ -7,7 +7,7 @@ fn process_cellular_face(
 ) {
     let logical_index: u32 =
         logical_cell_index_from_active_pressure_workgroup(workgroup, local_index);
-    if logical_index >= parameters.buffered_cell_count {
+    if logical_index >= cellular_pressure_parameters.buffered_cell_count {
         return;
     }
     let cell: vec2<i32> = cellular_pressure_world_cell_from_logical_index(logical_index);
@@ -204,7 +204,7 @@ fn process_rigid_cellular_face(
     gather: bool,
 ) {
     let owner: u32 = rigid_owners[rigid];
-    if owner == 0u || owner > parameters.rigid_body_count {
+    if owner == 0u || owner > cellular_pressure_parameters.rigid_body_count {
         return;
     }
     if external_body_occupancy[other] == 1u || external_body_occupancy[other] == 2u {

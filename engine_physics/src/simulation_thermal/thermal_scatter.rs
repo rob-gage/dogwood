@@ -1,10 +1,11 @@
 // Copyright Rob Gage 2026
 
-use engine_compute::{Accelerator, AcceleratorBuffer};
+use engine_compute::Accelerator;
+use engine_compute::AcceleratorBuffer;
 
 pub(crate) struct ThermalScatter {
     rigid_temperature_sum: AcceleratorBuffer,
-    parameters: wgpu::Buffer,
+    thermal_scatter_parameters: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     cellular_pipeline: wgpu::ComputePipeline,
     fluid_pipeline: wgpu::ComputePipeline,
@@ -35,29 +36,37 @@ impl ThermalScatter {
             ring[1],
         ];
         accelerator.wgpu_queue().write_buffer(
-            &self.parameters,
+            &self.thermal_scatter_parameters,
             0,
             &parameter_values
                 .iter()
                 .flat_map(|value| value.to_le_bytes())
                 .collect::<Vec<_>>(),
         );
-        let mut pass: wgpu::ComputePass<'_> =
+        let mut thermal_scatter_compute_pass: wgpu::ComputePass<'_> =
             accelerator.begin_compute_pass(encoder, "thermal scatter");
-        pass.set_bind_group(0, &self.bind_group, &[]);
+        thermal_scatter_compute_pass.set_bind_group(0, &self.bind_group, &[]);
         if has_rigid {
-            pass.set_pipeline(&self.clear_rigid_pipeline);
-            pass.dispatch_workgroups(self.rigid_capacity.div_ceil(64), 1, 1);
+            thermal_scatter_compute_pass.set_pipeline(&self.clear_rigid_pipeline);
+            thermal_scatter_compute_pass.dispatch_workgroups(
+                self.rigid_capacity.div_ceil(64),
+                1,
+                1,
+            );
         }
-        pass.set_pipeline(&self.cellular_pipeline);
-        pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
-        pass.set_pipeline(&self.fluid_pipeline);
-        pass.dispatch_workgroups(self.particle_capacity.div_ceil(64), 1, 1);
+        thermal_scatter_compute_pass.set_pipeline(&self.cellular_pipeline);
+        thermal_scatter_compute_pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+        thermal_scatter_compute_pass.set_pipeline(&self.fluid_pipeline);
+        thermal_scatter_compute_pass.dispatch_workgroups(self.particle_capacity.div_ceil(64), 1, 1);
         if has_rigid {
-            pass.set_pipeline(&self.accumulate_rigid_pipeline);
-            pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
-            pass.set_pipeline(&self.apply_rigid_pipeline);
-            pass.dispatch_workgroups(self.rigid_capacity.div_ceil(64), 1, 1);
+            thermal_scatter_compute_pass.set_pipeline(&self.accumulate_rigid_pipeline);
+            thermal_scatter_compute_pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+            thermal_scatter_compute_pass.set_pipeline(&self.apply_rigid_pipeline);
+            thermal_scatter_compute_pass.dispatch_workgroups(
+                self.rigid_capacity.div_ceil(64),
+                1,
+                1,
+            );
         }
     }
     #[allow(clippy::too_many_arguments)]
@@ -86,11 +95,12 @@ impl ThermalScatter {
         let device: &wgpu::Device = accelerator.wgpu_device();
         let rigid_temperature_sum: AcceleratorBuffer =
             accelerator.allocate::<u32>(rigid_capacity as usize);
-        let parameters: wgpu::Buffer = crate::simulation::create_simulation_uniform_buffer(
-            device,
-            "thermal scatter parameters",
-            64,
-        );
+        let thermal_scatter_parameters: wgpu::Buffer =
+            crate::simulation::create_simulation_uniform_buffer(
+                device,
+                "thermal scatter parameters",
+                64,
+            );
         let parameter_values: [u32; 16] = [
             0u32,
             0,
@@ -110,7 +120,7 @@ impl ThermalScatter {
             0,
         ];
         accelerator.wgpu_queue().write_buffer(
-            &parameters,
+            &thermal_scatter_parameters,
             0,
             &parameter_values
                 .iter()
@@ -119,14 +129,16 @@ impl ThermalScatter {
         );
         let storage: fn(u32, bool) -> wgpu::BindGroupLayoutEntry =
             crate::simulation::storage_bind_group_layout_entry;
-        let mut entries: Vec<wgpu::BindGroupLayoutEntry> = (0u32..15)
+        let mut thermal_scatter_bind_group_layout_entries: Vec<wgpu::BindGroupLayoutEntry> = (0u32
+            ..15)
             .map(|binding: u32| storage(binding, !matches!(binding, 3 | 4 | 6 | 11 | 13)))
             .collect();
-        entries.push(crate::simulation::uniform_bind_group_layout_entry(15));
+        thermal_scatter_bind_group_layout_entries
+            .push(crate::simulation::uniform_bind_group_layout_entry(15));
         let layout: wgpu::BindGroupLayout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("thermal scatter"),
-                entries: &entries,
+                entries: &thermal_scatter_bind_group_layout_entries,
             });
         let buffers: [&AcceleratorBuffer; 15] = [
             solved,
@@ -155,7 +167,7 @@ impl ThermalScatter {
             .collect();
         bind_entries.push(wgpu::BindGroupEntry {
             binding: 15,
-            resource: parameters.as_entire_binding(),
+            resource: thermal_scatter_parameters.as_entire_binding(),
         });
         let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("thermal scatter"),
@@ -186,7 +198,7 @@ impl ThermalScatter {
         };
         Self {
             rigid_temperature_sum,
-            parameters,
+            thermal_scatter_parameters,
             bind_group,
             cellular_pipeline: pipeline("scatter_cellular_gas"),
             fluid_pipeline: pipeline("scatter_fluid_particles"),
@@ -217,7 +229,7 @@ impl ThermalScatter {
             ring[1],
         ];
         accelerator.wgpu_queue().write_buffer(
-            &self.parameters,
+            &self.thermal_scatter_parameters,
             0,
             &parameter_values
                 .iter()
@@ -230,24 +242,32 @@ impl ThermalScatter {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("thermal scatter"),
                 });
-        let mut pass: wgpu::ComputePass<'_> =
+        let mut thermal_scatter_compute_pass: wgpu::ComputePass<'_> =
             accelerator.begin_compute_pass(&mut encoder, "thermal scatter");
-        pass.set_bind_group(0, &self.bind_group, &[]);
+        thermal_scatter_compute_pass.set_bind_group(0, &self.bind_group, &[]);
         if has_rigid {
-            pass.set_pipeline(&self.clear_rigid_pipeline);
-            pass.dispatch_workgroups(self.rigid_capacity.div_ceil(64), 1, 1);
+            thermal_scatter_compute_pass.set_pipeline(&self.clear_rigid_pipeline);
+            thermal_scatter_compute_pass.dispatch_workgroups(
+                self.rigid_capacity.div_ceil(64),
+                1,
+                1,
+            );
         }
-        pass.set_pipeline(&self.cellular_pipeline);
-        pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
-        pass.set_pipeline(&self.fluid_pipeline);
-        pass.dispatch_workgroups(self.particle_capacity.div_ceil(64), 1, 1);
+        thermal_scatter_compute_pass.set_pipeline(&self.cellular_pipeline);
+        thermal_scatter_compute_pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+        thermal_scatter_compute_pass.set_pipeline(&self.fluid_pipeline);
+        thermal_scatter_compute_pass.dispatch_workgroups(self.particle_capacity.div_ceil(64), 1, 1);
         if has_rigid {
-            pass.set_pipeline(&self.accumulate_rigid_pipeline);
-            pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
-            pass.set_pipeline(&self.apply_rigid_pipeline);
-            pass.dispatch_workgroups(self.rigid_capacity.div_ceil(64), 1, 1);
+            thermal_scatter_compute_pass.set_pipeline(&self.accumulate_rigid_pipeline);
+            thermal_scatter_compute_pass.dispatch_workgroups(self.cell_count.div_ceil(64), 1, 1);
+            thermal_scatter_compute_pass.set_pipeline(&self.apply_rigid_pipeline);
+            thermal_scatter_compute_pass.dispatch_workgroups(
+                self.rigid_capacity.div_ceil(64),
+                1,
+                1,
+            );
         }
-        drop(pass);
+        drop(thermal_scatter_compute_pass);
         accelerator.wgpu_queue().submit(Some(encoder.finish()));
     }
 }
@@ -255,6 +275,6 @@ impl ThermalScatter {
 impl Drop for ThermalScatter {
     fn drop(&mut self) {
         self.rigid_temperature_sum.free();
-        self.parameters.destroy();
+        self.thermal_scatter_parameters.destroy();
     }
 }

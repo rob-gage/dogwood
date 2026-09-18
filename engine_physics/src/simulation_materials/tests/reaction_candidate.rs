@@ -14,7 +14,7 @@ pub(crate) struct ReactionCandidate {
 
 pub(crate) fn resolve_contention(mut candidates: Vec<ReactionCandidate>) -> Vec<ReactionCandidate> {
     candidates.sort_by_key(candidate_order_key);
-    let mut claimed = BTreeSet::new();
+    let mut claimed: BTreeSet<u64> = BTreeSet::new();
     candidates
         .into_iter()
         .filter(|candidate| {

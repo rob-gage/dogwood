@@ -1,6 +1,13 @@
 // Copyright Rob Gage 2026
 
-use super::*;
+use engine_compute::Accelerator;
+use engine_compute::AcceleratorBuffer;
+
+use super::Gases;
+use crate::simulation::simulation_constants::AUTHORED_CONCENTRATION;
+use crate::simulation::simulation_constants::PRESSURE_ITERATION_COUNT;
+use crate::tiles::TileArea;
+use crate::tiles::TileCoordinates;
 
 impl Gases {
     /// Applies stable authored concentrations and explicit cell clears
@@ -63,14 +70,14 @@ impl Gases {
             while end < temperatures.len() && temperatures[end].0 == temperatures[end - 1].0 + 1 {
                 end += 1;
             }
-            let bytes: Vec<u8> = temperatures[start..end]
+            let gas_temperature_bytes: Vec<u8> = temperatures[start..end]
                 .iter()
                 .flat_map(|&(_, temperature)| temperature.to_bits().to_le_bytes())
                 .collect();
             accelerator.wgpu_queue().write_buffer(
                 self.gas_temperature.wgpu_buffer(),
                 temperatures[start].0 as u64 * 4,
-                &bytes,
+                &gas_temperature_bytes,
             );
             start = end;
         }
@@ -248,7 +255,7 @@ impl Gases {
             Some(area),
         );
         let dimensions: [u16; 2] = area.dimensions();
-        let count: u32 = u32::from(dimensions[0]) * u32::from(dimensions[1]) * 64;
+        let streamed_gas_cell_count: u32 = u32::from(dimensions[0]) * u32::from(dimensions[1]) * 64;
         let mut encoder: wgpu::CommandEncoder =
             accelerator
                 .wgpu_device()
@@ -259,7 +266,7 @@ impl Gases {
             accelerator,
             &mut encoder,
             &self.clear_area_pipeline,
-            count,
+            streamed_gas_cell_count,
             "clear incoming gas area",
         );
         accelerator.wgpu_queue().submit(Some(encoder.finish()));

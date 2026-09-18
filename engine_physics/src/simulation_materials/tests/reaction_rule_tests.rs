@@ -1,14 +1,16 @@
 // Copyright Rob Gage 2026
 
-use super::reaction_candidate::{ReactionCandidate, resolve_contention};
-use super::reaction_environment::{ReactionEnvironment, environment_matches};
+use super::reaction_candidate::ReactionCandidate;
+use super::reaction_candidate::resolve_contention;
+use super::reaction_environment::ReactionEnvironment;
+use super::reaction_environment::environment_matches;
 use super::reaction_extent::extent;
 use super::reaction_implicit_air::implicit_air;
 use crate::materials::CompiledMaterialReaction;
 
 #[test]
 fn test_environment_bounds_are_independent() {
-    let rule = CompiledMaterialReaction {
+    let rule: CompiledMaterialReaction = CompiledMaterialReaction {
         minimum_temperature: 10.0,
         maximum_temperature: 20.0,
         minimum_pressure: 2.0,
@@ -53,7 +55,7 @@ fn test_environment_bounds_are_independent() {
 
 #[test]
 fn test_contention_is_priority_then_stable_and_atomic() {
-    let candidates = vec![
+    let candidates: Vec<ReactionCandidate> = vec![
         ReactionCandidate {
             anchor: 8,
             reaction_index: 1,
@@ -79,7 +81,7 @@ fn test_contention_is_priority_then_stable_and_atomic() {
             authorities: [Some(11), None],
         },
     ];
-    let accepted = resolve_contention(candidates);
+    let accepted: Vec<ReactionCandidate> = resolve_contention(candidates);
     assert_eq!(
         accepted
             .iter()
@@ -91,7 +93,7 @@ fn test_contention_is_priority_then_stable_and_atomic() {
 
 #[test]
 fn test_contention_tie_uses_authoring_order() {
-    let candidates = vec![
+    let candidates: Vec<ReactionCandidate> = vec![
         ReactionCandidate {
             anchor: 4,
             reaction_index: 9,
@@ -109,14 +111,14 @@ fn test_contention_tie_uses_authoring_order() {
             authorities: [Some(12), None],
         },
     ];
-    let accepted = resolve_contention(candidates);
+    let accepted: Vec<ReactionCandidate> = resolve_contention(candidates);
     assert_eq!(accepted.len(), 1);
     assert_eq!(accepted[0].reaction_index, 3);
 }
 
 #[test]
 fn test_contention_final_tie_uses_reaction_index() {
-    let candidates = vec![
+    let candidates: Vec<ReactionCandidate> = vec![
         ReactionCandidate {
             anchor: 2,
             reaction_index: 9,
@@ -134,7 +136,7 @@ fn test_contention_final_tie_uses_reaction_index() {
             authorities: [Some(12), None],
         },
     ];
-    let accepted = resolve_contention(candidates);
+    let accepted: Vec<ReactionCandidate> = resolve_contention(candidates);
     assert_eq!(accepted.len(), 1);
     assert_eq!(accepted[0].reaction_index, 3);
 }

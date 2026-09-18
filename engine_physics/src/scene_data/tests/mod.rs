@@ -1,14 +1,26 @@
 // Copyright Rob Gage 2026
 
-use super::*;
-use crate::materials::{Material, MaterialIdentifier, MaterialRegistry};
+use std::collections::HashSet;
+use std::io;
+
+use engine_graphics::Color;
+use engine_graphics::MaterialAppearance;
+
+use super::SceneDormantRigidBody;
+use super::SceneDormantRigidCell;
+use super::append_record;
+use super::owner_chunk;
+use super::remove_ids;
+use super::world_aabb;
+use crate::materials::Material;
+use crate::materials::MaterialIdentifier;
+use crate::materials::MaterialRegistry;
 use crate::tiles::CellularAppearance;
-use engine_graphics::{Color, MaterialAppearance};
-use std::{collections::HashSet, io};
+use crate::tiles::TileCoordinates;
 
 fn test_materials() -> (MaterialRegistry, MaterialIdentifier) {
-    let mut registry = MaterialRegistry::new();
-    let identifier = registry.register(Material::CellularStatic {
+    let mut registry: MaterialRegistry = MaterialRegistry::new();
+    let identifier: MaterialIdentifier = registry.register(Material::CellularStatic {
         name: "test".into(),
         graphics: MaterialAppearance::from_color(Color::new_rgb(1, 2, 3)),
         mass: 1.0,
@@ -26,8 +38,8 @@ fn test_materials() -> (MaterialRegistry, MaterialIdentifier) {
 
 #[test]
 fn test_dormant_rigid_serialization_preserves_authoritative_state() {
-    let (materials, material) = test_materials();
-    let body = SceneDormantRigidBody {
+    let (materials, material): (MaterialRegistry, MaterialIdentifier) = test_materials();
+    let body: SceneDormantRigidBody = SceneDormantRigidBody {
         identifier: 9,
         position: [1.25, -2.5],
         rotation: 0.75,
@@ -53,9 +65,10 @@ fn test_dormant_rigid_serialization_preserves_authoritative_state() {
             },
         ],
     };
-    let mut bytes = Vec::new();
+    let mut bytes: Vec<u8> = Vec::new();
     body.serialize(&mut bytes, &materials).unwrap();
-    let loaded = SceneDormantRigidBody::deserialize(&mut bytes.as_slice(), &materials).unwrap();
+    let loaded: SceneDormantRigidBody =
+        SceneDormantRigidBody::deserialize(&mut bytes.as_slice(), &materials).unwrap();
     assert_eq!(loaded.identifier, body.identifier);
     assert_eq!(
         loaded.position.map(f32::to_bits),
@@ -80,8 +93,8 @@ fn test_dormant_rigid_serialization_preserves_authoritative_state() {
 
 #[test]
 fn test_malformed_dormant_rigid_is_rejected() {
-    let (materials, material) = test_materials();
-    let body = SceneDormantRigidBody {
+    let (materials, material): (MaterialRegistry, MaterialIdentifier) = test_materials();
+    let body: SceneDormantRigidBody = SceneDormantRigidBody {
         identifier: 1,
         position: [0.0, 0.0],
         rotation: 0.0,
@@ -105,16 +118,18 @@ fn test_malformed_dormant_rigid_is_rejected() {
 
 #[test]
 fn test_rotated_geometry_bounds_drive_owner() {
-    let bounds = world_aabb([10.0, 10.0], std::f32::consts::FRAC_PI_4, [[0, 0], [8, 0]]).unwrap();
+    let bounds: ([f32; 2], [f32; 2]) =
+        world_aabb([10.0, 10.0], std::f32::consts::FRAC_PI_4, [[0, 0], [8, 0]]).unwrap();
     assert!(bounds.0[0] < 10.0 && bounds.1[0] > 10.0);
-    let owner = owner_chunk([10.0, 10.0], std::f32::consts::FRAC_PI_4, [[0, 0], [8, 0]]).unwrap();
+    let owner: TileCoordinates =
+        owner_chunk([10.0, 10.0], std::f32::consts::FRAC_PI_4, [[0, 0], [8, 0]]).unwrap();
     assert_eq!((owner.x, owner.y), (0, 0));
 }
 
 #[test]
 fn test_owner_mutations_preserve_current_records() {
-    let (materials, material) = test_materials();
-    let record = |identifier| SceneDormantRigidBody {
+    let (materials, material): (MaterialRegistry, MaterialIdentifier) = test_materials();
+    let record: &dyn Fn(u64) -> SceneDormantRigidBody = &|identifier: u64| SceneDormantRigidBody {
         identifier,
         position: [0.0, 0.0],
         rotation: 0.0,
@@ -130,7 +145,7 @@ fn test_owner_mutations_preserve_current_records() {
             temperature: 1.0,
         }],
     };
-    let mut records = vec![record(1), record(2)];
+    let mut records: Vec<SceneDormantRigidBody> = vec![record(1), record(2)];
     append_record(&mut records, record(3)).unwrap();
     remove_ids(&mut records, &[1]);
     assert_eq!(

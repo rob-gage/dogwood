@@ -5,7 +5,7 @@ fn propagate_pending_cellular_pressure(
 ) {
     let logical_index: u32 =
         logical_cell_index_from_active_pressure_workgroup(workgroup.x, local_index);
-    if logical_index >= parameters.buffered_cell_count {
+    if logical_index >= cellular_pressure_parameters.buffered_cell_count {
         return;
     }
     let cell: vec2<i32> = cellular_pressure_world_cell_from_logical_index(logical_index);
@@ -43,7 +43,7 @@ fn propagate_cellular_pressure_b(
 ) {
     let logical_index: u32 =
         logical_cell_index_from_active_pressure_workgroup(workgroup.x, local_index);
-    if logical_index < parameters.buffered_cell_count {
+    if logical_index < cellular_pressure_parameters.buffered_cell_count {
         let index: u32 =
             cellular_pressure_physical_cell_index_from_world_cell(
                 cellular_pressure_world_cell_from_logical_index(logical_index),
@@ -62,7 +62,7 @@ fn finalize_cellular_pressure(
 ) {
     let logical_index: u32 =
         logical_cell_index_from_active_pressure_workgroup(workgroup.x, local_index);
-    if logical_index >= parameters.buffered_cell_count {
+    if logical_index >= cellular_pressure_parameters.buffered_cell_count {
         return;
     }
     let cell: vec2<i32> = cellular_pressure_world_cell_from_logical_index(logical_index);
@@ -105,7 +105,7 @@ fn apply_retained_cellular_pressure(
 ) {
     let logical_index: u32 =
         logical_cell_index_from_active_pressure_workgroup(workgroup.x, local_index);
-    if logical_index >= parameters.buffered_cell_count {
+    if logical_index >= cellular_pressure_parameters.buffered_cell_count {
         return;
     }
     let cell: vec2<i32> = cellular_pressure_world_cell_from_logical_index(logical_index);
@@ -141,7 +141,7 @@ fn apply_cellular_static_pressure_damage(
     if overload <= 0.0 {
         return;
     }
-    cellular_integrities[index] -= overload * parameters.delta_time * parameters.damage_rate;
+    cellular_integrities[index] -= overload * cellular_pressure_parameters.delta_time * cellular_pressure_parameters.damage_rate;
     if cellular_integrities[index] > 0.0 {
         return;
     }
@@ -149,13 +149,13 @@ fn apply_cellular_static_pressure_damage(
     if
         properties.debris != EMPTY_MATERIAL_IDENTIFIER && cellular_fracture_yield_random_from_world_cell(
             cell,
-            parameters.tick,
+            cellular_pressure_parameters.tick,
         ) < properties.debris_yield_rate
     {
         replacement = properties.debris;
     }
     let request_index: u32 = atomicAdd(&material_mutation_request_count[0], 1u);
-    if request_index < parameters.buffered_cell_count {
+    if request_index < cellular_pressure_parameters.buffered_cell_count {
         material_mutation_requests[request_index] =
             MaterialMutationRequest(index, 0u, index, material, replacement, 0u, 0u, 0u, 0u);
     }
@@ -164,7 +164,7 @@ fn apply_cellular_static_pressure_damage(
 
 // Retains pressure that the source material or blocked stencil routes cannot transmit
 fn propagate_cellular_pressure(logical_index: u32, read_pressure_a: bool) {
-    if logical_index >= parameters.buffered_cell_count {
+    if logical_index >= cellular_pressure_parameters.buffered_cell_count {
         return;
     }
     let cell: vec2<i32> = cellular_pressure_world_cell_from_logical_index(logical_index);

@@ -1,7 +1,10 @@
 // Copyright Rob Gage 2026
 
+use std::sync::Mutex;
+use std::sync::MutexGuard;
+use std::sync::OnceLock;
+
 use engine_compute::Accelerator;
-use std::sync::{Mutex, MutexGuard, OnceLock};
 
 static ACCELERATOR_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -13,7 +16,7 @@ pub(crate) fn acquire_accelerator_test_lock() -> MutexGuard<'static, ()> {
 }
 
 pub(crate) fn new_accelerator_test() -> (MutexGuard<'static, ()>, Accelerator) {
-    let accelerator_test_lock = acquire_accelerator_test_lock();
-    let accelerator = Accelerator::new().unwrap();
+    let accelerator_test_lock: MutexGuard<'static, ()> = acquire_accelerator_test_lock();
+    let accelerator: Accelerator = Accelerator::new().unwrap();
     (accelerator_test_lock, accelerator)
 }

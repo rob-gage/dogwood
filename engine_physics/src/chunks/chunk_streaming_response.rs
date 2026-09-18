@@ -1,8 +1,10 @@
 // Copyright Rob Gage 2026
 
+use std::error::Error;
+use std::io;
+
 use super::Chunk;
 use crate::tiles::TileCoordinates;
-use std::{error::Error, io};
 
 /// The result returned by a background chunk load or generation task
 pub enum ChunkStreamingResponse {

@@ -1,17 +1,26 @@
 // Copyright Rob Gage 2026
 
+use std::time::Duration;
+
+use engine_graphics::Color;
+use engine_graphics::MaterialAppearance;
+
 use super::scene_test_accelerator::new_scene_test_accelerator;
 use super::scene_test_configuration::scene_test_configuration;
 use super::scene_test_readback::read_cell_state;
-use crate::materials::{
-    Material, MaterialIdentifier, MaterialRegistry, MaterialRegistryBuilder,
-    MaterialThermalProperties, MaterialThermalTransition,
-};
-use crate::scenes::{Scene, SceneEditBatch, SceneEditCellPlacement};
+use crate::materials::Material;
+use crate::materials::MaterialIdentifier;
+use crate::materials::MaterialRegistry;
+use crate::materials::MaterialRegistryBuilder;
+use crate::materials::MaterialThermalProperties;
+use crate::materials::MaterialThermalTransition;
+use crate::scenes::Scene;
+use crate::scenes::SceneEditBatch;
+use crate::scenes::SceneEditCellPlacement;
 use crate::simulation::CollisionOccupancySnapshot;
-use crate::tiles::{CellCoordinates, CellularAppearance, TileCoordinates};
-use engine_graphics::{Color, MaterialAppearance};
-use std::time::Duration;
+use crate::tiles::CellCoordinates;
+use crate::tiles::CellularAppearance;
+use crate::tiles::TileCoordinates;
 
 #[test]
 fn test_disconnected_static_component_becomes_one_falling_rigid_body() {

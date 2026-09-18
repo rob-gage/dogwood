@@ -1,11 +1,12 @@
-use engine_compute::{Accelerator, AcceleratorBuffer};
+use engine_compute::Accelerator;
+use engine_compute::AcceleratorBuffer;
 
 /// Reusable Accelerator gather for sparse rigid state slots.  One dispatch and one
 /// contiguous copy replace three tiny copy commands per rigid cell.
 pub(crate) struct RigidCellStateGather {
     descriptors: AcceleratorBuffer,
     output: AcceleratorBuffer,
-    count: wgpu::Buffer,
+    rigid_cell_state_record_count: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     pipeline: wgpu::ComputePipeline,
 }
@@ -21,11 +22,12 @@ impl RigidCellStateGather {
         let device: &wgpu::Device = accelerator.wgpu_device();
         let descriptors: AcceleratorBuffer = accelerator.allocate::<u32>(capacity.max(1));
         let output: AcceleratorBuffer = accelerator.allocate::<[f32; 4]>(capacity.max(1));
-        let count: wgpu::Buffer = crate::simulation::create_simulation_uniform_buffer(
-            device,
-            "rigid cell state gather count",
-            4,
-        );
+        let rigid_cell_state_record_count: wgpu::Buffer =
+            crate::simulation::create_simulation_uniform_buffer(
+                device,
+                "rigid cell state gather count",
+                4,
+            );
         let storage: fn(u32, bool) -> wgpu::BindGroupLayoutEntry =
             crate::simulation::storage_bind_group_layout_entry;
         let layout: wgpu::BindGroupLayout =
@@ -49,7 +51,7 @@ impl RigidCellStateGather {
                 amounts.wgpu_buffer(),
                 temperatures.wgpu_buffer(),
                 output.wgpu_buffer(),
-                &count,
+                &rigid_cell_state_record_count,
             ]
             .into_iter()
             .enumerate()
@@ -84,7 +86,7 @@ impl RigidCellStateGather {
         Self {
             descriptors,
             output,
-            count,
+            rigid_cell_state_record_count,
             bind_group,
             pipeline,
         }
@@ -94,25 +96,34 @@ impl RigidCellStateGather {
         if slots.is_empty() {
             return;
         }
-        let bytes: Vec<u8> = slots.iter().flat_map(|slot| slot.to_le_bytes()).collect();
-        accelerator
-            .wgpu_queue()
-            .write_buffer(self.descriptors.wgpu_buffer(), 0, &bytes);
-        accelerator
-            .wgpu_queue()
-            .write_buffer(&self.count, 0, &(slots.len() as u32).to_le_bytes());
+        let rigid_cell_state_slot_bytes: Vec<u8> =
+            slots.iter().flat_map(|slot| slot.to_le_bytes()).collect();
+        accelerator.wgpu_queue().write_buffer(
+            self.descriptors.wgpu_buffer(),
+            0,
+            &rigid_cell_state_slot_bytes,
+        );
+        accelerator.wgpu_queue().write_buffer(
+            &self.rigid_cell_state_record_count,
+            0,
+            &(slots.len() as u32).to_le_bytes(),
+        );
         let mut encoder: wgpu::CommandEncoder =
             accelerator
                 .wgpu_device()
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("rigid dormancy gather"),
                 });
-        let mut pass: wgpu::ComputePass<'_> =
+        let mut rigid_state_gather_compute_pass: wgpu::ComputePass<'_> =
             accelerator.begin_compute_pass(&mut encoder, "rigid dormancy gather");
-        pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.dispatch_workgroups((slots.len() as u32).div_ceil(64), 1, 1);
-        drop(pass);
+        rigid_state_gather_compute_pass.set_pipeline(&self.pipeline);
+        rigid_state_gather_compute_pass.set_bind_group(0, &self.bind_group, &[]);
+        rigid_state_gather_compute_pass.dispatch_workgroups(
+            (slots.len() as u32).div_ceil(64),
+            1,
+            1,
+        );
+        drop(rigid_state_gather_compute_pass);
         encoder.copy_buffer_to_buffer(
             self.output.wgpu_buffer(),
             0,
@@ -128,6 +139,6 @@ impl Drop for RigidCellStateGather {
     fn drop(&mut self) {
         self.descriptors.free();
         self.output.free();
-        self.count.destroy();
+        self.rigid_cell_state_record_count.destroy();
     }
 }

@@ -1,7 +1,10 @@
 // Copyright Rob Gage 2026
 
-use super::{CellCoordinates, CellularAppearance, TileData};
-use crate::materials::{MaterialForm, MaterialIdentifier};
+use super::CellCoordinates;
+use super::CellularAppearance;
+use super::TileData;
+use crate::materials::MaterialForm;
+use crate::materials::MaterialIdentifier;
 
 #[test]
 fn test_from_world_position_floors_cell_coordinates() {
@@ -16,13 +19,13 @@ fn test_from_world_position_floors_cell_coordinates() {
 
 #[test]
 fn test_current_format_round_trips_amount_and_temperature() {
-    let material = MaterialIdentifier::new(MaterialForm::CellularStatic, 2);
-    let mut tile = TileData::EMPTY;
+    let material: MaterialIdentifier = MaterialIdentifier::new(MaterialForm::CellularStatic, 2);
+    let mut tile: TileData = TileData::EMPTY;
     tile.set_cell_with_integrity(3, 4, material, CellularAppearance(17), 0.25);
     tile.set_cell_state(3, 4, 0.37, 777.0);
-    let mut bytes = Vec::new();
+    let mut bytes: Vec<u8> = Vec::new();
     tile.serialize(&mut bytes).unwrap();
-    let loaded = TileData::deserialize(&mut bytes.as_slice()).unwrap();
+    let loaded: TileData = TileData::deserialize(&mut bytes.as_slice()).unwrap();
     assert_eq!(loaded.cell_material_identifier(3, 4), material);
     assert_eq!(loaded.cell_appearance(3, 4).0, 17);
     assert_eq!(loaded.cell_integrity(3, 4), 0.25);
@@ -32,14 +35,14 @@ fn test_current_format_round_trips_amount_and_temperature() {
 
 #[test]
 fn test_legacy_format_marks_occupied_temperature_unresolved() {
-    let material = MaterialIdentifier::new(MaterialForm::CellularStatic, 0);
-    let mut tile = TileData::EMPTY;
+    let material: MaterialIdentifier = MaterialIdentifier::new(MaterialForm::CellularStatic, 0);
+    let mut tile: TileData = TileData::EMPTY;
     tile.set_cell(1, 2, material, CellularAppearance(3));
-    let mut bytes = Vec::new();
+    let mut bytes: Vec<u8> = Vec::new();
     tile.serialize_material_identifiers(&mut bytes).unwrap();
     tile.serialize_appearances(&mut bytes).unwrap();
     tile.serialize_integrities(&mut bytes).unwrap();
-    let loaded = TileData::deserialize_legacy(&mut bytes.as_slice()).unwrap();
+    let loaded: TileData = TileData::deserialize_legacy(&mut bytes.as_slice()).unwrap();
     assert_eq!(loaded.cell_amount(1, 2), 1.0);
     assert!(loaded.cell_temperature(1, 2).is_nan());
     assert_eq!(loaded.cell_amount(0, 0), 0.0);

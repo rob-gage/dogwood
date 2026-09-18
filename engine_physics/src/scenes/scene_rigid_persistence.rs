@@ -1,10 +1,20 @@
 // Copyright Rob Gage 2026
 
-use super::*;
-use crate::scenes::SceneDormantRigidBody;
-use crate::simulation::{RigidCellularBody, RigidCellularBodyCell};
-use crate::tiles::TileArea;
+use std::io;
 use std::sync::mpsc::SyncSender;
+
+use super::RIGID_IO_MAX_IN_FLIGHT;
+use super::Scene;
+use super::SceneRigidBodyStreamingResponse;
+use super::SceneRigidIoJob;
+use super::SceneRigidOwnerLoad;
+use super::SceneRigidPersistenceRequest;
+use crate::scenes::SceneData;
+use crate::scenes::SceneDormantRigidBody;
+use crate::simulation::RigidCellularBody;
+use crate::simulation::RigidCellularBodyCell;
+use crate::tiles::TileArea;
+use crate::tiles::TileCoordinates;
 
 impl Scene {
     pub(super) fn rigid_owner_load(&mut self, owner: TileCoordinates) {
@@ -26,16 +36,18 @@ impl Scene {
                 self.rigid_owner_loads
                     .insert(owner, SceneRigidOwnerLoad::Loading);
                 let generation: u64 = *self.rigid_owner_generation.entry(owner).or_default();
-                let data: SceneData = self.data.clone();
+                let scene_data_store: SceneData = self.data.clone();
                 let sender: SyncSender<SceneRigidBodyStreamingResponse> =
                     self.rigid_streaming_response_sender.clone();
                 self.rigid_io_in_flight += 1;
                 std::thread::spawn(move || {
-                    let _ = sender.send(SceneRigidBodyStreamingResponse::Loaded {
-                        owner,
-                        generation,
-                        result: data.read_dormant_rigids(owner),
-                    });
+                    sender
+                        .send(SceneRigidBodyStreamingResponse::Loaded {
+                            owner,
+                            generation,
+                            result: scene_data_store.read_dormant_rigids(owner),
+                        })
+                        .ok();
                 });
                 continue;
             } else if let Some(job) = self.rigid_persistence_queue.pop_front() {
@@ -43,7 +55,7 @@ impl Scene {
             } else {
                 break;
             };
-            let data: SceneData = self.data.clone();
+            let scene_data_store: SceneData = self.data.clone();
             let sender: SyncSender<SceneRigidBodyStreamingResponse> =
                 self.rigid_streaming_response_sender.clone();
             self.rigid_io_in_flight += 1;
@@ -54,39 +66,51 @@ impl Scene {
                         request.record.rotation,
                         request.record.cells.iter().map(|cell| cell.local),
                     ) else {
-                        let _ = sender.send(SceneRigidBodyStreamingResponse::Saved {
-                            request,
-                            result: Err(io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                "invalid rigid geometry",
-                            )),
-                        });
+                        sender
+                            .send(SceneRigidBodyStreamingResponse::Saved {
+                                request,
+                                result: Err(io::Error::new(
+                                    io::ErrorKind::InvalidData,
+                                    "invalid rigid geometry",
+                                )),
+                            })
+                            .ok();
                         return;
                     };
-                    let result: Result<(), io::Error> =
-                        data.read_dormant_rigids(owner).and_then(|mut records| {
+                    let rigid_persistence_result: Result<(), io::Error> = scene_data_store
+                        .read_dormant_rigids(owner)
+                        .and_then(|mut records| {
                             crate::scenes::append_record(&mut records, request.record.clone())?;
-                            data.write_dormant_rigids(owner, &records)
+                            scene_data_store.write_dormant_rigids(owner, &records)
                         });
-                    let _ = sender.send(SceneRigidBodyStreamingResponse::Saved { request, result });
+                    sender
+                        .send(SceneRigidBodyStreamingResponse::Saved {
+                            request,
+                            result: rigid_persistence_result,
+                        })
+                        .ok();
                 }
                 SceneRigidIoJob::Claim {
                     owner,
                     original,
                     restored_ids,
                 } => {
-                    let result: Result<Vec<SceneDormantRigidBody>, io::Error> =
-                        data.read_dormant_rigids(owner).and_then(|mut records| {
-                            crate::scenes::remove_ids(&mut records, &restored_ids);
-                            data.write_dormant_rigids(owner, &records)?;
-                            Ok(records)
-                        });
-                    let _ = sender.send(SceneRigidBodyStreamingResponse::Claimed {
-                        owner,
-                        original,
-                        restored_ids,
-                        result,
-                    });
+                    let rigid_claim_result: Result<Vec<SceneDormantRigidBody>, io::Error> =
+                        scene_data_store
+                            .read_dormant_rigids(owner)
+                            .and_then(|mut records| {
+                                crate::scenes::remove_ids(&mut records, &restored_ids);
+                                scene_data_store.write_dormant_rigids(owner, &records)?;
+                                Ok(records)
+                            });
+                    sender
+                        .send(SceneRigidBodyStreamingResponse::Claimed {
+                            owner,
+                            original,
+                            restored_ids,
+                            result: rigid_claim_result,
+                        })
+                        .ok();
                 }
             });
         }
@@ -146,9 +170,9 @@ impl Scene {
                         .ok_or_else(|| {
                             io::Error::new(io::ErrorKind::InvalidData, "invalid rigid geometry")
                         })?;
-                        let generation: &mut u64 =
+                        let rigid_owner_generation: &mut u64 =
                             self.rigid_owner_generation.entry(owner).or_default();
-                        *generation = generation.wrapping_add(1);
+                        *rigid_owner_generation = rigid_owner_generation.wrapping_add(1);
                         let claiming: bool = matches!(
                             self.rigid_owner_loads.get(&owner),
                             Some(SceneRigidOwnerLoad::Claiming)
@@ -202,32 +226,37 @@ impl Scene {
         &mut self,
         request: SceneRigidPersistenceRequest,
     ) -> Result<(), io::Error> {
-        let mut cells: Vec<RigidCellularBodyCell> = Vec::with_capacity(request.record.cells.len());
-        for (cell, slot) in request.record.cells.iter().zip(request.slots) {
-            cells.push(RigidCellularBodyCell {
+        let mut restored_rigid_body_cells: Vec<RigidCellularBodyCell> =
+            Vec::with_capacity(request.record.cells.len());
+        for (cell, rigid_cell_state_slot) in request.record.cells.iter().zip(request.slots) {
+            restored_rigid_body_cells.push(RigidCellularBodyCell {
                 local: cell.local,
                 material: cell.material,
                 appearance: cell.appearance,
-                state_slot: slot,
-                state_generation: self.rigid_cell_state_generations[slot as usize],
+                state_slot: rigid_cell_state_slot,
+                state_generation: self.rigid_cell_state_generations[rigid_cell_state_slot as usize],
             });
         }
-        let (friction, restitution) = self.rigid_cellular_material_response(&cells);
-        let mut body: RigidCellularBody = self.physics_world.insert_rigid_cellular_body(
-            request.record.position,
-            request.record.rotation,
-            self.data.materials(),
-            cells,
-            friction,
-            restitution,
-            request.record.linear_velocity,
-            request.record.angular_velocity,
-        );
-        body.identifier = request.record.identifier;
+        let (friction, restitution) =
+            self.rigid_cellular_material_response(&restored_rigid_body_cells);
+        let mut restored_rigid_cellular_body: RigidCellularBody =
+            self.physics_world.insert_rigid_cellular_body(
+                request.record.position,
+                request.record.rotation,
+                self.data.materials(),
+                restored_rigid_body_cells,
+                friction,
+                restitution,
+                request.record.linear_velocity,
+                request.record.angular_velocity,
+            );
+        restored_rigid_cellular_body.identifier = request.record.identifier;
         if request.record.sleeping {
-            self.physics_world.sleep_rigid_cellular_body(&body);
+            self.physics_world
+                .sleep_rigid_cellular_body(&restored_rigid_cellular_body);
         }
-        self.rigid_cellular_bodies.push(body);
+        self.rigid_cellular_bodies
+            .push(restored_rigid_cellular_body);
         self.rigid_cellular_topology_revision =
             self.rigid_cellular_topology_revision.wrapping_add(1);
         self.rigid_cellular_contact_active
@@ -245,11 +274,15 @@ impl Scene {
                 .iter()
                 .position(|body| body.identifier == *identifier)
             {
-                let body: RigidCellularBody = self.rigid_cellular_bodies.swap_remove(index);
-                self.rigid_activation_pending.remove(&body.identifier);
-                self.rigid_sleeping_pending.remove(&body.identifier);
-                self.physics_world.remove_rigid_cellular_body(&body);
-                for cell in body.cells {
+                let removed_rigid_cellular_body: RigidCellularBody =
+                    self.rigid_cellular_bodies.swap_remove(index);
+                self.rigid_activation_pending
+                    .remove(&removed_rigid_cellular_body.identifier);
+                self.rigid_sleeping_pending
+                    .remove(&removed_rigid_cellular_body.identifier);
+                self.physics_world
+                    .remove_rigid_cellular_body(&removed_rigid_cellular_body);
+                for cell in removed_rigid_cellular_body.cells {
                     self.release_rigid_cell_state(cell.state_slot);
                 }
             }
@@ -322,51 +355,59 @@ impl Scene {
             }
         }
         let mut uploaded: Vec<[u32; 4]> = Vec::with_capacity(required);
-        let mut ids: Vec<u64> = Vec::with_capacity(records.len());
+        let mut restored_rigid_body_identifiers: Vec<u64> = Vec::with_capacity(records.len());
         for record in &records {
-            let mut cells: Vec<RigidCellularBodyCell> = Vec::with_capacity(record.cells.len());
+            let mut restored_rigid_body_cells: Vec<RigidCellularBodyCell> =
+                Vec::with_capacity(record.cells.len());
             for cell in &record.cells {
-                let slot: u32 = self.rigid_cell_state_free.pop().expect("capacity checked");
-                let generation: u32 = self.rigid_cell_state_generations[slot as usize];
-                cells.push(RigidCellularBodyCell {
+                let rigid_cell_state_slot: u32 =
+                    self.rigid_cell_state_free.pop().expect("capacity checked");
+                let rigid_cell_state_generation: u32 =
+                    self.rigid_cell_state_generations[rigid_cell_state_slot as usize];
+                restored_rigid_body_cells.push(RigidCellularBodyCell {
                     local: cell.local,
                     material: cell.material,
                     appearance: cell.appearance,
-                    state_slot: slot,
-                    state_generation: generation,
+                    state_slot: rigid_cell_state_slot,
+                    state_generation: rigid_cell_state_generation,
                 });
                 uploaded.push([
-                    slot,
+                    rigid_cell_state_slot,
                     cell.integrity.to_bits(),
                     cell.amount.to_bits(),
                     cell.temperature.to_bits(),
                 ]);
             }
-            let (friction, restitution) = self.rigid_cellular_material_response(&cells);
-            let mut body: RigidCellularBody = self.physics_world.insert_rigid_cellular_body(
-                record.position,
-                record.rotation,
-                self.data.materials(),
-                cells,
-                friction,
-                restitution,
-                record.linear_velocity,
-                record.angular_velocity,
-            );
-            body.identifier = record.identifier;
+            let (friction, restitution) =
+                self.rigid_cellular_material_response(&restored_rigid_body_cells);
+            let mut restored_rigid_cellular_body: RigidCellularBody =
+                self.physics_world.insert_rigid_cellular_body(
+                    record.position,
+                    record.rotation,
+                    self.data.materials(),
+                    restored_rigid_body_cells,
+                    friction,
+                    restitution,
+                    record.linear_velocity,
+                    record.angular_velocity,
+                );
+            restored_rigid_cellular_body.identifier = record.identifier;
             if record.sleeping {
-                self.rigid_sleeping_pending.insert(body.identifier);
+                self.rigid_sleeping_pending
+                    .insert(restored_rigid_cellular_body.identifier);
             }
             self.physics_world
-                .set_rigid_cellular_body_enabled(&body, false);
-            self.rigid_activation_pending.insert(body.identifier);
-            ids.push(body.identifier);
+                .set_rigid_cellular_body_enabled(&restored_rigid_cellular_body, false);
+            self.rigid_activation_pending
+                .insert(restored_rigid_cellular_body.identifier);
+            restored_rigid_body_identifiers.push(restored_rigid_cellular_body.identifier);
             self.rigid_cellular_body_identifier_next = self
                 .rigid_cellular_body_identifier_next
                 .max(record.identifier.checked_add(1).ok_or_else(|| {
                     io::Error::new(io::ErrorKind::InvalidData, "rigid identity overflow")
                 })?);
-            self.rigid_cellular_bodies.push(body);
+            self.rigid_cellular_bodies
+                .push(restored_rigid_cellular_body);
         }
         self.rigid_cell_state_upload
             .apply(self.accelerator.as_ref(), &uploaded);
@@ -382,7 +423,7 @@ impl Scene {
             .push_back(SceneRigidIoJob::Claim {
                 owner,
                 original,
-                restored_ids: ids,
+                restored_ids: restored_rigid_body_identifiers,
             });
         self.rigid_io_submit();
         self.debug_assert_rigid_resident_invariants();

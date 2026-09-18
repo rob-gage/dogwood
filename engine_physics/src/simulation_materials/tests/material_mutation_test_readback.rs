@@ -1,17 +1,18 @@
 // Copyright Rob Gage 2026
 
-use engine_compute::{Accelerator, AcceleratorBuffer};
-use std::{
-    sync::mpsc,
-    time::{Duration, Instant},
-};
+use std::sync::mpsc;
+use std::time::Duration;
+use std::time::Instant;
+
+use engine_compute::Accelerator;
+use engine_compute::AcceleratorBuffer;
 
 pub(crate) fn read_u32(
     accelerator: &Accelerator,
     source: &AcceleratorBuffer,
     count: u64,
 ) -> Vec<u32> {
-    let buffer = accelerator
+    let buffer: wgpu::Buffer = accelerator
         .wgpu_device()
         .create_buffer(&wgpu::BufferDescriptor {
             label: Some("material mutation test readback"),
@@ -19,7 +20,7 @@ pub(crate) fn read_u32(
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-    let mut encoder = accelerator
+    let mut encoder: wgpu::CommandEncoder = accelerator
         .wgpu_device()
         .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
     encoder.copy_buffer_to_buffer(source.wgpu_buffer(), 0, &buffer, 0, count * 4);
@@ -30,7 +31,7 @@ pub(crate) fn read_u32(
         .map_async(wgpu::MapMode::Read, move |result| {
             sender.send(result).unwrap();
         });
-    let start = Instant::now();
+    let start: Instant = Instant::now();
     loop {
         accelerator.poll().unwrap();
         if let Ok(result) = receiver.try_recv() {
@@ -40,7 +41,7 @@ pub(crate) fn read_u32(
         assert!(start.elapsed() < Duration::from_secs(10));
         std::thread::yield_now();
     }
-    let result = buffer
+    let result: Vec<u32> = buffer
         .slice(..)
         .get_mapped_range()
         .unwrap()
