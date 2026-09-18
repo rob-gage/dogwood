@@ -79,7 +79,7 @@ struct Particle {
     temperature: f32,
 }
 
-struct Parameters {
+struct FluidSimulationParameters {
     buffered_origin: vec2<i32>,
     buffered_tile_size: vec2<u32>,
     active_origin: vec2<i32>,
@@ -139,7 +139,7 @@ struct DerivedFluidActorSample {
 @group(0) @binding(9) var<storage, read> cellular_material_identifiers: array<u32>;
 @group(0) @binding(10) var<storage, read> external_body_occupancy: array<u32>;
 @group(0) @binding(11) var<storage, read> external_body_velocity: array<vec4<f32>>;
-@group(0) @binding(12) var<uniform> parameters: Parameters;
+@group(0) @binding(12) var<uniform> parameters: FluidSimulationParameters;
 @group(0) @binding(13) var<storage, read_write> predicted_positions: array<vec2<f32>>;
 @group(0) @binding(14) var<storage, read_write> lambdas: array<f32>;
 @group(0) @binding(15) var<storage, read_write> position_corrections: array<vec2<f32>>;
