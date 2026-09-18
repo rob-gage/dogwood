@@ -16,7 +16,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let command: Command = clap::Parser::parse();
     match command.subcommand {
         New { directory, name } => {
-            let project_name = match name {
+            let project_name: String = match name {
                 Some(name) => name,
                 None => {
                     print!("Project name: ");
@@ -53,9 +53,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .parent()
                 .ok_or("CLI repository root is unavailable")?
                 .to_path_buf();
-            let engine_path = repository_root.join("engine");
-            let template_project_path = repository_root.join("template_project");
-            let manifest = format!(
+            let engine_path: PathBuf = repository_root.join("engine");
+            let template_project_path: PathBuf = repository_root.join("template_project");
+            let manifest: String = format!(
                 "# Copyright Rob Gage 2026\n\n[package]\nname = \"{project_name}\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\ndogwood_engine = {{ path = \"{}\" }}\ndogwood_template_project = {{ path = \"{}\" }}\n",
                 engine_path.display(),
                 template_project_path.display(),
