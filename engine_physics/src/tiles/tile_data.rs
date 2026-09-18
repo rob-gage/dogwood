@@ -150,7 +150,7 @@ impl TileData {
     ) {
         for y in 0..8 {
             for x in 0..8 {
-                let material = self.cell_material_identifiers[y][x];
+                let material: MaterialIdentifier = self.cell_material_identifiers[y][x];
                 if material == MaterialIdentifier::NULL {
                     self.set_cell_state(x, y, 0.0, 0.0);
                 } else if !self.cell_temperatures[y][x].is_finite() {
@@ -225,11 +225,11 @@ impl TileData {
         reader.read_exact(&mut amount_data)?;
         let mut temperature_data: Vec<u8> = vec![0; Self::CELL_FIELD_SERIALIZED_SIZE];
         reader.read_exact(&mut temperature_data)?;
-        let mut material_reader = material_data.as_slice();
-        let mut appearance_reader = appearance_data.as_slice();
-        let mut integrity_reader = integrity_data.as_slice();
-        let mut amount_reader = amount_data.as_slice();
-        let mut temperature_reader = temperature_data.as_slice();
+        let mut material_reader: &[u8] = material_data.as_slice();
+        let mut appearance_reader: &[u8] = appearance_data.as_slice();
+        let mut integrity_reader: &[u8] = integrity_data.as_slice();
+        let mut amount_reader: &[u8] = amount_data.as_slice();
+        let mut temperature_reader: &[u8] = temperature_data.as_slice();
         Self::deserialize_fields(
             &mut material_reader,
             &mut appearance_reader,
@@ -241,16 +241,16 @@ impl TileData {
 
     /// Deserializes the pre-amount/temperature layout, marking occupied temperatures unresolved.
     pub fn deserialize_legacy<R: io::Read>(reader: &mut R) -> Result<TileData, io::Error> {
-        let mut material_data = vec![0; Self::CELL_FIELD_SERIALIZED_SIZE];
+        let mut material_data: Vec<u8> = vec![0; Self::CELL_FIELD_SERIALIZED_SIZE];
         reader.read_exact(&mut material_data)?;
-        let mut appearance_data = vec![0; Self::CELL_FIELD_SERIALIZED_SIZE];
+        let mut appearance_data: Vec<u8> = vec![0; Self::CELL_FIELD_SERIALIZED_SIZE];
         reader.read_exact(&mut appearance_data)?;
-        let mut integrity_data = vec![0; Self::CELL_FIELD_SERIALIZED_SIZE];
+        let mut integrity_data: Vec<u8> = vec![0; Self::CELL_FIELD_SERIALIZED_SIZE];
         reader.read_exact(&mut integrity_data)?;
-        let mut material_reader = material_data.as_slice();
-        let mut appearance_reader = appearance_data.as_slice();
-        let mut integrity_reader = integrity_data.as_slice();
-        let mut tile = Self::deserialize_legacy_fields(
+        let mut material_reader: &[u8] = material_data.as_slice();
+        let mut appearance_reader: &[u8] = appearance_data.as_slice();
+        let mut integrity_reader: &[u8] = integrity_data.as_slice();
+        let mut tile: TileData = Self::deserialize_legacy_fields(
             &mut material_reader,
             &mut appearance_reader,
             &mut integrity_reader,
@@ -297,14 +297,14 @@ impl TileData {
         }
         for row in &mut tile_data.cell_amounts {
             for amount in row {
-                let mut data = [0; 4];
+                let mut data: [u8; 4] = [0; 4];
                 amount_reader.read_exact(&mut data)?;
                 *amount = f32::from_bits(u32::from_le_bytes(data));
             }
         }
         for row in &mut tile_data.cell_temperatures {
             for temperature in row {
-                let mut data = [0; 4];
+                let mut data: [u8; 4] = [0; 4];
                 temperature_reader.read_exact(&mut data)?;
                 *temperature = f32::from_bits(u32::from_le_bytes(data));
             }
@@ -319,24 +319,24 @@ impl TileData {
         appearance_reader: &mut A,
         integrity_reader: &mut I,
     ) -> Result<TileData, io::Error> {
-        let mut tile_data = Self::EMPTY;
+        let mut tile_data: Self = Self::EMPTY;
         for row in &mut tile_data.cell_material_identifiers {
             for identifier in row {
-                let mut data = [0; 4];
+                let mut data: [u8; 4] = [0; 4];
                 material_reader.read_exact(&mut data)?;
                 *identifier = MaterialIdentifier::from_u32(u32::from_le_bytes(data));
             }
         }
         for row in &mut tile_data.cell_appearances {
             for appearance in row {
-                let mut data = [0; 4];
+                let mut data: [u8; 4] = [0; 4];
                 appearance_reader.read_exact(&mut data)?;
                 *appearance = CellularAppearance(u32::from_le_bytes(data));
             }
         }
         for row in &mut tile_data.cell_integrities {
             for integrity in row {
-                let mut data = [0; 4];
+                let mut data: [u8; 4] = [0; 4];
                 integrity_reader.read_exact(&mut data)?;
                 *integrity = f32::from_bits(u32::from_le_bytes(data));
             }
