@@ -55,7 +55,8 @@ impl ThermalEdits {
             "thermal edit parameters",
             48,
         );
-        let storage = crate::simulation::storage_bind_group_layout_entry;
+        let storage: fn(u32, bool) -> wgpu::BindGroupLayoutEntry =
+            crate::simulation::storage_bind_group_layout_entry;
         let mut layout_entries: Vec<wgpu::BindGroupLayoutEntry> = (0u32..11)
             .map(|binding: u32| storage(binding, matches!(binding, 0 | 1 | 6 | 7)))
             .collect();

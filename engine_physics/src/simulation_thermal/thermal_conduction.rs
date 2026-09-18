@@ -73,7 +73,8 @@ impl ThermalConduction {
             "thermal conduction parameters",
             64,
         );
-        let storage = crate::simulation::storage_bind_group_layout_entry;
+        let storage: fn(u32, bool) -> wgpu::BindGroupLayoutEntry =
+            crate::simulation::storage_bind_group_layout_entry;
         let layout: wgpu::BindGroupLayout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("thermal conduction"),

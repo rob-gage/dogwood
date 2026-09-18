@@ -105,7 +105,8 @@ impl ThermalInteraction {
                 .flat_map(|value| value.to_le_bytes())
                 .collect::<Vec<_>>(),
         );
-        let storage = crate::simulation::storage_bind_group_layout_entry;
+        let storage: fn(u32, bool) -> wgpu::BindGroupLayoutEntry =
+            crate::simulation::storage_bind_group_layout_entry;
         let mut entries: Vec<wgpu::BindGroupLayoutEntry> = (0u32..14)
             .map(|binding: u32| storage(binding, binding != 13))
             .collect();
