@@ -48,7 +48,7 @@ impl Scene {
                 rollback.push(reserved);
                 continue;
             };
-            if !(amount >= 0.999 && amount <= 1.001)
+            if !(0.999..=1.001).contains(&amount)
                 || self
                     .rigid_cell_state_generations
                     .get(slot as usize)
