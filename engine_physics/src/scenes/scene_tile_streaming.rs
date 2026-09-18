@@ -20,9 +20,14 @@ impl Scene {
             })
             .collect();
         let mut error: Option<io::Error> = None;
-        if let Err(_) = self.tile_downloads.lock().map(|mut tile_downloads| {
-            tile_downloads.extend(downloads.iter().cloned());
-        }) {
+        if self
+            .tile_downloads
+            .lock()
+            .map(|mut tile_downloads| {
+                tile_downloads.extend(downloads.iter().cloned());
+            })
+            .is_err()
+        {
             error = Some(io::Error::other("Tile download queue is unavailable"));
         }
         let mut downloads: Vec<Arc<Mutex<TileDownload>>> = downloads;

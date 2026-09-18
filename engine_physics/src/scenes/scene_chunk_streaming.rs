@@ -20,14 +20,16 @@ impl Scene {
     /// Reads an unloaded chunk into this `Scene`
     pub(super) fn chunk_load(&mut self, coordinates: TileCoordinates) -> Result<(), io::Error> {
         // avoid duplicate work
-        if let Some(entry) = self.chunks.get(&coordinates) {
-            match entry {
+        if matches!(
+            self.chunks.get(&coordinates),
+            Some(
                 ChunkEntry::Active { .. }
-                | ChunkEntry::Loading { .. }
-                | ChunkEntry::Generating { .. }
-                | ChunkEntry::Saving { .. } => return Ok(()),
-                _ => (),
-            }
+                    | ChunkEntry::Loading { .. }
+                    | ChunkEntry::Generating { .. }
+                    | ChunkEntry::Saving { .. }
+            )
+        ) {
+            return Ok(());
         }
         let streaming_identifier: u64 = self.chunks_streaming_identifier_next;
         self.chunks_streaming_identifier_next =
@@ -61,13 +63,15 @@ impl Scene {
     /// Generates a new chunk for this `Scene`
     pub(super) fn chunk_generate(&mut self, coordinates: TileCoordinates) -> Result<(), io::Error> {
         // avoid duplicate work
-        if let Some(entry) = self.chunks.get(&coordinates) {
-            match entry {
+        if matches!(
+            self.chunks.get(&coordinates),
+            Some(
                 ChunkEntry::Active { .. }
-                | ChunkEntry::Generating { .. }
-                | ChunkEntry::Saving { .. } => return Ok(()),
-                _ => (),
-            }
+                    | ChunkEntry::Generating { .. }
+                    | ChunkEntry::Saving { .. }
+            )
+        ) {
+            return Ok(());
         }
         let streaming_identifier: u64 = self.chunks_streaming_identifier_next;
         self.chunks_streaming_identifier_next =
