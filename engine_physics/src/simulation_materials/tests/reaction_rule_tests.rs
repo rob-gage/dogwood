@@ -142,7 +142,7 @@ fn test_contention_final_tie_uses_reaction_index() {
 #[test]
 fn test_extent_is_stoichiometric() {
     assert_eq!(extent(0.5, [1.0, 0.4], [1.0, 2.0]), 0.2);
-    // Two slots resolving to one authority share its inventory budget.
+    // two slots resolving to one authority share its inventory budget.
     assert_eq!(extent(1.0, [0.7], [1.0 + 1.0]), 0.35);
 }
 

@@ -75,7 +75,7 @@ impl Scene {
         let cellular_physics_body_proxy =
             CellularPhysicsBodyProxy::new(accelerator.as_ref(), buffered_cell_count);
         let material_table = MaterialTable::new(accelerator.as_ref(), data.materials());
-        // One-tick chemical energy source consumed by unified thermal gathering.
+        // one-tick chemical energy source consumed by unified thermal gathering.
         let reaction_energy = accelerator.allocate::<f32>(buffered_cell_count);
         let fluids: Fluids = Fluids::new(
             accelerator.as_ref(),

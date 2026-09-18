@@ -129,7 +129,7 @@ pub(super) fn register_reactions(
             .tag(material, name)
             .map_err(|error| error.to_string())?;
     }
-    // All identifiers now exist, so transition metadata can be compiled
+    // all identifiers now exist, so transition metadata can be compiled
     // without relying on registration order.
     Ok(())
 }

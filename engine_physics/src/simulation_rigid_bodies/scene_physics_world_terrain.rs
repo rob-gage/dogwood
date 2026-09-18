@@ -165,7 +165,7 @@ impl ScenePhysicsWorld {
                 );
             }
         }
-        // A support tile can vanish underneath a sleeping body. Wake only bodies touching it.
+        // a support tile can vanish underneath a sleeping body. Wake only bodies touching it.
         for key in changed_dynamic {
             let lo = Vector::new(key.x as f32, key.y as f32) - Vector::splat(0.125);
             let hi = lo + Vector::splat(1.25);

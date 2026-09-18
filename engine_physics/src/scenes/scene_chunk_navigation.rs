@@ -143,7 +143,7 @@ impl Scene {
         }) {
             return Ok(());
         }
-        // Capture under the old terrain interpretation.  If its bounded
+        // capture under the old terrain interpretation.  If its bounded
         // staging frontier is full, retain the current valid area for a later
         // frame rather than letting bodies outrun their support.
         if !self.rigid_dormancy_begin(buffered_area)? {

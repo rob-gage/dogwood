@@ -156,7 +156,7 @@ impl Scene {
         if !thermal_edits.is_empty() {
             let physical_indices: Vec<u32> =
                 thermal_edits.keys().map(|&index| index as u32).collect();
-            // The current Accelerator request format has one delta per request; aggregate same-cell
+            // the current Accelerator request format has one delta per request; aggregate same-cell
             // edits on the CPU so this flush submits exactly once.
             self.thermal_edits.apply(
                 self.accelerator.as_ref(),

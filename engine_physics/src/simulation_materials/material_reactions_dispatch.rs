@@ -46,7 +46,7 @@ impl MaterialReactions {
         let mut pass = accelerator.begin_compute_pass(encoder, "chemistry arbitration");
         pass.set_pipeline(&self.reserve_pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
-        // One invocation performs the ordered arbitration. It is intentionally
+        // one invocation performs the ordered arbitration. It is intentionally
         // serialized: reservation order is a correctness rule, not a race.
         pass.dispatch_workgroups(1, 1, 1);
         drop(pass);

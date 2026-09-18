@@ -80,7 +80,7 @@ impl Scene {
                 pending
             })
             .collect();
-        // Slots were packed in ascending resident order; restore that output
+        // slots were packed in ascending resident order; restore that output
         // order after the descending swap-removes kept indices stable.
         bodies.reverse();
         self.rigid_cellular_topology_revision =

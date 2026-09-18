@@ -142,7 +142,7 @@ impl Fluids {
         ring_offset_x: u16,
         ring_offset_y: u16,
     ) {
-        // One bounded upload per aggregate scene-edit flush. The edit shader already
+        // one bounded upload per aggregate scene-edit flush. The edit shader already
         // scans this dense ring buffer, so a sparse sequence of tiny writes buys nothing.
         let mut cells = vec![
             crate::materials::MaterialIdentifier::NULL.as_u32();

@@ -22,7 +22,7 @@ pub(crate) struct MaterialTable {
 impl MaterialTable {
     pub(crate) fn new(accelerator: &Accelerator, registry: &MaterialRegistry) -> Self {
         let material_graphics: MaterialGraphics = registry.build_material_graphics(accelerator);
-        // Four vec4-compatible groups (conductivity/heat capacity, cold transition,
+        // four vec4-compatible groups (conductivity/heat capacity, cold transition,
         // hot transition, and padding) keep the WGSL record naturally 16-byte aligned.
         let records: Vec<[u32; 16]> = registry
             .iter()

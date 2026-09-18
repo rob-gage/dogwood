@@ -44,14 +44,14 @@ impl MaterialMutations {
         gas_count: u32,
     ) -> Self {
         let device = accelerator.wgpu_device();
-        // Nine words retain the old cell replacement prefix and add an exact authority locator.
+        // nine words retain the old cell replacement prefix and add an exact authority locator.
         let requests =
             accelerator.allocate::<[u32; 9]>(buffered_cell_count * (2 + gas_count as usize));
         let request_count = accelerator.allocate::<u32>(1);
         accelerator
             .wgpu_queue()
             .write_buffer(request_count.wgpu_buffer(), 0, &0u32.to_le_bytes());
-        // Two branches (cold/hot), one dense slot per gas cell.  This is transient,
+        // two branches (cold/hot), one dense slot per gas cell.  This is transient,
         // overwritten by phase_gases every tick, so it needs no clear pass.
         let gas_fluid_candidates =
             accelerator.allocate::<[u32; 6]>((buffered_cell_count * gas_count as usize * 2).max(1));
