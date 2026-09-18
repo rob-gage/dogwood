@@ -266,7 +266,7 @@ impl CellularCollision {
                                     Vec::with_capacity(mapped.len() / 16);
                                 let mut dynamic_masks: Vec<[u32; 2]> =
                                     Vec::with_capacity(mapped.len() / 16);
-                                for bytes in mapped.chunks_exact(16) {
+                                for bytes in mapped.as_chunks::<16>().0 {
                                     static_masks.push([
                                         u32::from_le_bytes(bytes[0..4].try_into().unwrap()),
                                         u32::from_le_bytes(bytes[4..8].try_into().unwrap()),

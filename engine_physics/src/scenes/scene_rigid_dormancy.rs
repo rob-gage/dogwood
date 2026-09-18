@@ -141,7 +141,9 @@ impl Scene {
                 }
             };
             let states: Vec<[f32; 3]> = bytes
-                .chunks_exact(16)
+                .as_chunks::<16>()
+                .0
+                .iter()
                 .map(|b| {
                     [
                         f32::from_bits(u32::from_le_bytes(b[0..4].try_into().unwrap())),
