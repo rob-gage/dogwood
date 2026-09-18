@@ -14,8 +14,10 @@ pub struct EditorInterface {
     pub frames_per_second: u32,
     /// Most recently measured simulation ticks per second.
     pub ticks_per_second: u32,
-    /// Whether free-fly camera controls are active.
-    pub free_fly_enabled: bool,
+    /// Whether the actual gameplay pawn is possessed.
+    pub attached: bool,
+    /// Whether world-editing tools are available.
+    pub editing_enabled: bool,
     /// Whether the editor can return from free-fly mode.
     pub return_enabled: bool,
     /// Whether brush placement uses a square shape.
@@ -159,7 +161,7 @@ impl Widget for EditorInterface {
                             self.chunk_borders_requested.set(chunk_borders);
                         }
                     });
-                    if self.free_fly_enabled {
+                    if self.attached {
                         if ui.button("Detach").clicked() {
                             self.free_fly_requested.set(true);
                         }
@@ -171,18 +173,26 @@ impl Widget for EditorInterface {
                     }
                     ui.separator();
                     if ui
-                        .selectable_label(!self.brush_is_square, "Circle")
+                        .add_enabled(
+                            self.editing_enabled,
+                            egui::Button::new("Circle").selected(!self.brush_is_square),
+                        )
                         .clicked()
                     {
                         self.circle_requested.set(true);
                     }
                     if ui
-                        .selectable_label(self.brush_is_square, "Square")
+                        .add_enabled(
+                            self.editing_enabled,
+                            egui::Button::new("Square").selected(self.brush_is_square),
+                        )
                         .clicked()
                     {
                         self.square_requested.set(true);
                     }
-                    ui.label(format!("Brush {}", self.brush_size));
+                    ui.add_enabled_ui(self.editing_enabled, |ui| {
+                        ui.label(format!("Brush {}", self.brush_size));
+                    });
                     ui.separator();
                 });
             });
@@ -213,77 +223,79 @@ impl Widget for EditorInterface {
             .exact_size(190.0)
             .resizable(false)
             .show(ui, |ui| {
-                ui.add_space(6.0);
-                ui.heading("Tools");
-                ui.separator();
-                egui::CollapsingHeader::new("General")
-                    .default_open(true)
-                    .show(ui, |ui| {
-                        if Self::tool_button(ui, self.eraser_selected, "Eraser") {
-                            self.eraser_requested.set(true);
-                        }
-                    });
-                egui::CollapsingHeader::new("Materials")
-                    .default_open(true)
-                    .show(ui, |ui| {
-                        let mut rigid_body_placement_enabled: bool =
-                            self.rigid_body_placement_enabled;
-                        if ui
-                            .checkbox(&mut rigid_body_placement_enabled, "Rigid Body Placement")
-                            .changed()
-                        {
-                            self.rigid_body_placement_requested
-                                .set(Some(rigid_body_placement_enabled));
-                        }
-                        for (identifier, name, color) in &self.materials {
-                            if Self::material_button(
-                                ui,
-                                self.selected_tool == Some(*identifier),
-                                name,
-                                *color,
-                            ) {
-                                self.material_requested.set(Some(*identifier));
+                ui.add_enabled_ui(self.editing_enabled, |ui| {
+                    ui.add_space(6.0);
+                    ui.heading("Tools");
+                    ui.separator();
+                    egui::CollapsingHeader::new("General")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            if Self::tool_button(ui, self.eraser_selected, "Eraser") {
+                                self.eraser_requested.set(true);
                             }
+                        });
+                    egui::CollapsingHeader::new("Materials")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            let mut rigid_body_placement_enabled: bool =
+                                self.rigid_body_placement_enabled;
+                            if ui
+                                .checkbox(&mut rigid_body_placement_enabled, "Rigid Body Placement")
+                                .changed()
+                            {
+                                self.rigid_body_placement_requested
+                                    .set(Some(rigid_body_placement_enabled));
+                            }
+                            for (identifier, name, color) in &self.materials {
+                                if Self::material_button(
+                                    ui,
+                                    self.selected_tool == Some(*identifier),
+                                    name,
+                                    *color,
+                                ) {
+                                    self.material_requested.set(Some(*identifier));
+                                }
+                            }
+                        });
+                    egui::CollapsingHeader::new("Pressure").show(ui, |ui| {
+                        let response: egui::Response = ui.add_sized(
+                            [(ui.available_width() - 22.0).max(0.0), 24.0],
+                            egui::Slider::new(&mut self.impulse_rate, 1.0..=1000.0)
+                                .text("P/s")
+                                .show_value(false),
+                        );
+                        if response.changed() {
+                            self.impulse_rate_requested.set(Some(self.impulse_rate));
+                        }
+                        if Self::tool_button(ui, self.impulse_selected, "Impulse") {
+                            self.impulse_requested.set(true);
                         }
                     });
-                egui::CollapsingHeader::new("Pressure").show(ui, |ui| {
-                    let response: egui::Response = ui.add_sized(
-                        [(ui.available_width() - 22.0).max(0.0), 24.0],
-                        egui::Slider::new(&mut self.impulse_rate, 1.0..=1000.0)
-                            .text("P/s")
-                            .show_value(false),
-                    );
-                    if response.changed() {
-                        self.impulse_rate_requested.set(Some(self.impulse_rate));
-                    }
-                    if Self::tool_button(ui, self.impulse_selected, "Impulse") {
-                        self.impulse_requested.set(true);
-                    }
-                });
-                egui::CollapsingHeader::new("Thermal").show(ui, |ui| {
-                    let response: egui::Response = ui.add_sized(
-                        [(ui.available_width() - 22.0).max(0.0), 24.0],
-                        egui::Slider::new(&mut self.thermal_rate, 1.0..=1000.0)
-                            .text("K/s")
-                            .show_value(false),
-                    );
-                    if response.changed() {
-                        self.thermal_rate_requested.set(Some(self.thermal_rate));
-                    }
-                    if Self::tool_button(
-                        ui,
-                        self.thermal_tool_active && self.thermal_heat_mode,
-                        "Heat",
-                    ) {
-                        self.thermal_heat_requested.set(true);
-                    }
-                    if Self::tool_button(
-                        ui,
-                        self.thermal_tool_active && !self.thermal_heat_mode,
-                        "Cool",
-                    ) {
-                        self.thermal_cool_requested.set(true);
-                    }
+                    egui::CollapsingHeader::new("Thermal").show(ui, |ui| {
+                        let response: egui::Response = ui.add_sized(
+                            [(ui.available_width() - 22.0).max(0.0), 24.0],
+                            egui::Slider::new(&mut self.thermal_rate, 1.0..=1000.0)
+                                .text("K/s")
+                                .show_value(false),
+                        );
+                        if response.changed() {
+                            self.thermal_rate_requested.set(Some(self.thermal_rate));
+                        }
+                        if Self::tool_button(
+                            ui,
+                            self.thermal_tool_active && self.thermal_heat_mode,
+                            "Heat",
+                        ) {
+                            self.thermal_heat_requested.set(true);
+                        }
+                        if Self::tool_button(
+                            ui,
+                            self.thermal_tool_active && !self.thermal_heat_mode,
+                            "Cool",
+                        ) {
+                            self.thermal_cool_requested.set(true);
+                        }
+                    });
                 });
             });
         egui::CentralPanel::default()

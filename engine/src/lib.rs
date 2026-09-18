@@ -14,7 +14,7 @@ mod renders;
 
 pub mod diagnostics;
 
-pub use games::{Game, GameApplication};
+pub use games::{Game, GameApplication, GamePointerInput};
 
 /// Audio subsystem APIs.
 pub mod audio {

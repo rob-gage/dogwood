@@ -25,6 +25,10 @@ mod editor_application_pointer;
 
 const RIGID_BODY_PLACEMENT_INTERVAL: Duration = Duration::from_millis(150);
 
+fn editor_owns_possession(possessed: Option<Actor>, editor_pawn: Option<Actor>) -> bool {
+    editor_pawn.is_some() && possessed == editor_pawn
+}
+
 /// A windowed editor application for a `Game`
 pub struct EditorApplication<G: Game> {
     /// The game application hosted by this editor
@@ -73,6 +77,25 @@ pub struct EditorApplication<G: Game> {
 }
 
 impl<G: Game> EditorApplication<G> {
+    fn editing_enabled(&self) -> bool {
+        editor_owns_possession(
+            self.application
+                .game()
+                .scene()
+                .and_then(|scene| scene.possessed_actor()),
+            self.editor_pawn,
+        )
+    }
+
+    fn clear_editor_interaction(&mut self) {
+        self.is_primary_scene_interaction_held = false;
+        self.stroke_anchor = None;
+        self.last_thermal_edit = None;
+        self.last_impulse_edit = None;
+        self.rigid_body_placement_requested = None;
+        self.pixel_scroll_y = 0.0;
+    }
+
     fn new(accelerator: Arc<engine::compute::Accelerator>, game: G) -> Self {
         let mut application: GameApplication<G> = GameApplication::new_with_title(
             accelerator,
@@ -110,6 +133,9 @@ impl<G: Game> EditorApplication<G> {
 
     /// Returns the clipped physical preview rectangles for the current brush footprint
     fn brush_preview(&self) -> (Vec<[f32; 4]>, Color) {
+        if !self.editing_enabled() {
+            return (Vec::new(), Color::new_rgba(255, 80, 80, 96));
+        }
         let Some(anchor): Option<CellCoordinates> = self.hovered_cell() else {
             return (Vec::new(), Color::new_rgba(255, 80, 80, 96));
         };
@@ -150,7 +176,7 @@ impl<G: Game> EditorApplication<G> {
 
     /// Applies the current brush stroke through the scene edit boundary
     fn paint_hovered_cells(&mut self) {
-        if !self.is_primary_scene_interaction_held {
+        if !self.editing_enabled() || !self.is_primary_scene_interaction_held {
             return;
         }
         if self.rigid_body_placement_enabled
@@ -248,6 +274,10 @@ impl<G: Game> EditorApplication<G> {
 
     /// Queues one body for one accepted static-material click.
     fn place_requested_rigid_body(&mut self) {
+        if !self.editing_enabled() {
+            self.rigid_body_placement_requested = None;
+            return;
+        }
         let Some(anchor) = self.rigid_body_placement_requested.take() else {
             return;
         };
@@ -291,6 +321,9 @@ impl<G: Game> EditorApplication<G> {
 
     /// Adjusts the brush size and restarts the current stamp when it changes
     fn adjust_brush_size(&mut self, adjustment: i32) {
+        if !self.editing_enabled() {
+            return;
+        }
         if self.brush.adjust_size(adjustment) {
             self.stroke_anchor = None;
         }
@@ -299,6 +332,12 @@ impl<G: Game> EditorApplication<G> {
     /// Updates the editor's pointer state after the user interface handles an event
     fn handle_pointer_event(&mut self, event: &winit::event::WindowEvent, ui_consumed: bool) {
         use winit::event::{ElementState, MouseButton, WindowEvent::*};
+        if !self.editing_enabled() {
+            if matches!(event, Focused(false) | CursorLeft { .. }) {
+                self.clear_editor_interaction();
+            }
+            return;
+        }
         match event {
             CursorMoved { position, .. } => {
                 self.cursor_position = Some([position.x as f32, position.y as f32]);
@@ -426,6 +465,8 @@ impl<G: Game> EditorApplication<G> {
             .actor_registry_mutable()
             .set_velocity(editor_pawn, SceneVelocity { x: 0.0, y: 0.0 });
         scene.possess_actor(editor_pawn);
+        self.clear_editor_interaction();
+        self.application.set_game_pointer_input_enabled(false);
     }
 
     /// Requests the saved pawn's area and restores possession when it is resident
@@ -457,6 +498,8 @@ impl<G: Game> EditorApplication<G> {
                 .set_position(original_pawn, position);
             scene.possess_actor(original_pawn);
             self.is_return_pending = false;
+            self.clear_editor_interaction();
+            self.application.set_game_pointer_input_enabled(true);
         }
     }
 
@@ -473,6 +516,22 @@ impl<G: Game> EditorApplication<G> {
         let mut application: EditorApplication<G> = Self::new(accelerator, game);
         event_loop.run_app(&mut application)?;
         application.application.finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::editor_owns_possession;
+    use engine::physics::{actors::ActorRegistry, scenes::ScenePosition};
+
+    #[test]
+    fn editing_is_only_enabled_for_the_editor_pawn() {
+        let mut registry = ActorRegistry::new();
+        let game_pawn = registry.spawn(ScenePosition::from_world([0.0, 0.0]));
+        let editor_pawn = registry.spawn(ScenePosition::from_world([1.0, 0.0]));
+        assert!(!editor_owns_possession(Some(game_pawn), Some(editor_pawn)));
+        assert!(editor_owns_possession(Some(editor_pawn), Some(editor_pawn)));
+        assert!(!editor_owns_possession(None, Some(editor_pawn)));
     }
 }
 

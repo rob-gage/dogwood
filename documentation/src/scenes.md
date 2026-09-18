@@ -24,7 +24,8 @@ The application passes elapsed wall time to `Scene::update`. The scene consumes
 that time as fixed simulation ticks (currently 60 Hz with bounded catch-up),
 applies queued edits, advances resident simulation, and schedules streaming or
 readback work. `Game::actor_contacts` receives contact batches,
-`Game::material_extractions` receives completed extraction batches, and
+`Game::material_extractions` receives completed extraction batches,
+`Game::pass_pointer_input` receives camera-transformed pointer state, and
 `Game::update` receives the ordinary game callback after scene work.
 
 Rendering and UI continue while gameplay is paused. `Game::is_paused` disables

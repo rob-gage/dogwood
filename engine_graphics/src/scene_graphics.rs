@@ -1,7 +1,22 @@
 // Copyright Rob Gage 2026
 
 use super::MaterialGraphics;
+use crate::Color;
 use crate::engine_compute::AcceleratorBuffer;
+
+/// A small world-space overlay drawn above the simulated scene.
+#[derive(Clone, Copy, Debug)]
+pub enum SceneOverlay {
+    /// A thin circle outline in world/tile units.
+    CircleOutline {
+        /// Center in world/tile coordinates.
+        center: [f32; 2],
+        /// Radius in world/tile units.
+        radius: f32,
+        /// Outline color.
+        color: Color,
+    },
+}
 
 /// Minimal visible representation of a generic scene actor.
 #[derive(Copy, Clone, Debug)]

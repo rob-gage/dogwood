@@ -38,11 +38,18 @@ struct Uniforms {
     gas_count: u32,
     _padding: vec2<u32>,
     actor_count: u32,
-    _actor_padding: vec3<u32>,
+    overlay_count: u32,
+    _padding_end: vec2<u32>,
+    _unused: vec4<u32>,
 }
 
 struct SceneActorGraphics {
     rect: vec4<f32>,
+    color: vec4<f32>,
+}
+
+struct SceneOverlay {
+    center_radius: vec4<f32>,
     color: vec4<f32>,
 }
 
@@ -90,6 +97,7 @@ const CELLS_PER_CHUNK_EDGE: i32 = 512;
 @group(0) @binding(12) var<storage, read> rigid_material_identifiers: array<u32>;
 @group(0) @binding(13) var<storage, read> rigid_appearances: array<u32>;
 @group(0) @binding(14) var<storage, read> actors: array<SceneActorGraphics>;
+@group(0) @binding(15) var<storage, read> overlays: array<SceneOverlay>;
 
 // A fullscreen triangle delegates all scene lookup to the fragment shader
 @vertex
@@ -105,6 +113,10 @@ fn render_scene_fullscreen_triangle_vertex(
 @fragment
 fn render_scene_fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let world: vec2<f32> = scene_world_position_from_fragment_position(position.xy);
+    let overlay: vec4<f32> = scene_overlay_color(world);
+    if overlay.a > 0.0 {
+        return overlay;
+    }
     // TEMPORARY: draw the possessed walking pawn over the cellular scene
     if all(abs(world - uniforms.walking_pawn_position) < uniforms.walking_pawn_size * 0.5) {
         return vec4<f32>(1.0);
@@ -143,6 +155,18 @@ fn render_scene_fragment(@builtin(position) position: vec4<f32>) -> @location(0)
     let result: vec4<f32> = render_scene_material_color(scene_cell, cell_index);
     let gas: vec4<f32> = render_gas_scattering_at_cell_position(world * CELLS_PER_TILE_FLOAT);
     return apply_scene_grid_borders(vec4<f32>(mix(result.rgb, gas.rgb, gas.a), 1.0), cell, world);
+}
+
+fn scene_overlay_color(world: vec2<f32>) -> vec4<f32> {
+    for (var overlay_index: u32 = 0u; overlay_index < uniforms.overlay_count; overlay_index++) {
+        let overlay: SceneOverlay = overlays[overlay_index];
+        let distance_from_edge: f32 = abs(distance(world, overlay.center_radius.xy) - overlay.center_radius.z);
+        let thickness: f32 = max(uniforms.camera_size.x / uniforms.window_size.x * 1.5, 0.01);
+        if distance_from_edge <= thickness {
+            return overlay.color;
+        }
+    }
+    return vec4<f32>(0.0);
 }
 
 // Converts a viewport fragment position into continuous scene-world coordinates

@@ -2,7 +2,7 @@
 
 use super::create_render_shader_module;
 use engine_compute::Accelerator;
-use engine_graphics::SceneGraphics;
+use engine_graphics::{SceneGraphics, SceneOverlay};
 use engine_physics::scenes::Scene;
 
 /// Handles the rendering of `Scene`s
@@ -18,6 +18,9 @@ pub struct SceneRenderer {
     /// Growable storage for active generic actor graphics.
     actor_buffer: Option<wgpu::Buffer>,
     actor_buffer_capacity: usize,
+    /// Growable storage for transient world overlays.
+    overlay_buffer: Option<wgpu::Buffer>,
+    overlay_buffer_capacity: usize,
 }
 
 impl SceneRenderer {
@@ -30,6 +33,8 @@ impl SceneRenderer {
             uniform_buffer: None,
             actor_buffer: None,
             actor_buffer_capacity: 0,
+            overlay_buffer: None,
+            overlay_buffer_capacity: 0,
         }
     }
 
@@ -46,6 +51,7 @@ impl SceneRenderer {
         view_mode: u32,
         show_tile_borders: bool,
         show_chunk_borders: bool,
+        overlays: &[SceneOverlay],
         command_encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
     ) {
@@ -211,6 +217,16 @@ impl SceneRenderer {
                             },
                             count: None,
                         },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 15,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
                     ],
                 });
             let pipeline_layout: wgpu::PipelineLayout =
@@ -292,7 +308,7 @@ impl SceneRenderer {
                 0,
                 0,
                 graphics.actors.len() as u32,
-                0,
+                overlays.len() as u32,
                 0,
                 0,
                 0,
@@ -329,6 +345,45 @@ impl SceneRenderer {
                     self.actor_buffer.as_ref().unwrap(),
                     0,
                     &actor_data,
+                );
+            }
+            let overlay_data: Vec<u8> = overlays
+                .iter()
+                .flat_map(|overlay| match overlay {
+                    SceneOverlay::CircleOutline {
+                        center,
+                        radius,
+                        color,
+                    } => center
+                        .iter()
+                        .copied()
+                        .chain([*radius, 0.0])
+                        .chain([
+                            f32::from(color.red()) / 255.0,
+                            f32::from(color.green()) / 255.0,
+                            f32::from(color.blue()) / 255.0,
+                            f32::from(color.alpha()) / 255.0,
+                        ])
+                        .flat_map(f32::to_le_bytes),
+                })
+                .collect();
+            let required_overlay_capacity: usize = overlays.len().max(1) * 32;
+            if self.overlay_buffer_capacity < required_overlay_capacity {
+                self.overlay_buffer = Some(accelerator.wgpu_device().create_buffer(
+                    &wgpu::BufferDescriptor {
+                        label: Some("Scene overlays"),
+                        size: required_overlay_capacity as u64,
+                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    },
+                ));
+                self.overlay_buffer_capacity = required_overlay_capacity;
+            }
+            if !overlay_data.is_empty() {
+                accelerator.wgpu_queue().write_buffer(
+                    self.overlay_buffer.as_ref().unwrap(),
+                    0,
+                    &overlay_data,
                 );
             }
             let mut uniform_data: Vec<u8> = Vec::with_capacity(128);
@@ -438,6 +493,10 @@ impl SceneRenderer {
                         wgpu::BindGroupEntry {
                             binding: 14,
                             resource: self.actor_buffer.as_ref().unwrap().as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 15,
+                            resource: self.overlay_buffer.as_ref().unwrap().as_entire_binding(),
                         },
                     ],
                 })

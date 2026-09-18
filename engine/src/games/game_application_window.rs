@@ -17,6 +17,7 @@ impl<G: Game> GameApplication<G> {
                 .user_interface_context()
                 .process_window_event(window, event)
         });
+        self.handle_pointer_event(event, ui_consumed);
         match event {
             CloseRequested => event_loop.exit(),
             Resized(size) => self.resize(size.width, size.height),

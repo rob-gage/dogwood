@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-use super::Game;
+use super::{Game, GamePointerInput};
 use crate::renders::{SceneRenderer, UserInterfaceRenderer};
 use engine_compute::Accelerator;
 use engine_graphics::Camera;
@@ -11,6 +11,32 @@ use std::{error::Error, sync::Arc};
 
 #[path = "game_application_window.rs"]
 mod game_application_window;
+
+fn scene_world_position_from_viewport(
+    position: [f32; 2],
+    viewport: [u32; 4],
+    camera_position: [f32; 2],
+    camera_size: [f32; 2],
+) -> Option<[f32; 2]> {
+    let x: f32 = position[0] - viewport[0] as f32;
+    let y: f32 = position[1] - viewport[1] as f32;
+    if x < 0.0 || y < 0.0 || x >= viewport[2] as f32 || y >= viewport[3] as f32 {
+        return None;
+    }
+    Some([
+        camera_position[0] + (x / viewport[2] as f32 - 0.5) * camera_size[0],
+        camera_position[1] + (0.5 - y / viewport[3] as f32) * camera_size[1],
+    ])
+}
+
+fn accepts_game_pointer_press(
+    enabled: bool,
+    ui_consumed: bool,
+    world_position: Option<[f32; 2]>,
+    already_down: bool,
+) -> bool {
+    enabled && !ui_consumed && world_position.is_some() && !already_down
+}
 
 /// A `winit` application used to run a `Game` implementor
 pub struct GameApplication<G: Game> {
@@ -38,6 +64,15 @@ pub struct GameApplication<G: Game> {
     show_tile_borders: bool,
     /// Whether the scene renderer draws chunk boundaries
     show_chunk_borders: bool,
+    /// Whether the host routes primary pointer input to the game.
+    game_pointer_input_enabled: bool,
+    /// Latest physical cursor position in the window.
+    pointer_position: Option<[f32; 2]>,
+    /// Whether gameplay currently owns the primary pointer capture.
+    primary_pointer_down: bool,
+    /// One-frame primary pointer edges.
+    primary_pointer_pressed: bool,
+    primary_pointer_released: bool,
     /// The renderer for the active scene
     scene_renderer: SceneRenderer,
     /// The renderer for the active user interface
@@ -93,6 +128,11 @@ impl<G: Game> GameApplication<G> {
             scene_view_mode: 0,
             show_tile_borders: false,
             show_chunk_borders: false,
+            game_pointer_input_enabled: true,
+            pointer_position: None,
+            primary_pointer_down: false,
+            primary_pointer_pressed: false,
+            primary_pointer_released: false,
             scene_renderer: SceneRenderer::new(),
             user_interface_renderer: UserInterfaceRenderer::new(),
             error: None,
@@ -166,6 +206,7 @@ impl<G: Game> GameApplication<G> {
             self.scene_view_mode,
             self.show_tile_borders,
             self.show_chunk_borders,
+            &self.game.scene_overlays(),
             &mut command_encoder,
             &view,
         );
@@ -249,6 +290,17 @@ impl<G: Game> GameApplication<G> {
         self.is_simulation_enabled = is_enabled;
     }
 
+    /// Enables or disables gameplay-owned pointer input.
+    pub fn set_game_pointer_input_enabled(&mut self, is_enabled: bool) {
+        self.game_pointer_input_enabled = is_enabled;
+        if !is_enabled {
+            self.pointer_position = None;
+            self.primary_pointer_down = false;
+            self.primary_pointer_pressed = false;
+            self.primary_pointer_released = false;
+        }
+    }
+
     /// Returns the latest sampled rendered-frame and fixed-simulation rates
     pub const fn performance_rates(&self) -> [u32; 2] {
         [self.frames_per_second, self.ticks_per_second]
@@ -270,16 +322,8 @@ impl<G: Game> GameApplication<G> {
     pub fn scene_world_position(&self, position: [f32; 2]) -> Option<[f32; 2]> {
         let configuration: &wgpu::SurfaceConfiguration = self.surface_configuration.as_ref()?;
         let viewport: [u32; 4] = self.scene_viewport(configuration);
-        let x: f32 = position[0] - viewport[0] as f32;
-        let y: f32 = position[1] - viewport[1] as f32;
-        if x < 0.0 || y < 0.0 || x >= viewport[2] as f32 || y >= viewport[3] as f32 {
-            return None;
-        }
         let camera_size: [f32; 2] = self.scene_camera_size(viewport);
-        Some([
-            self.camera_position[0] + (x / viewport[2] as f32 - 0.5) * camera_size[0],
-            self.camera_position[1] + (0.5 - y / viewport[3] as f32) * camera_size[1],
-        ])
+        scene_world_position_from_viewport(position, viewport, self.camera_position, camera_size)
     }
 
     /// Returns a clipped physical surface rectangle for a world-space rectangle
@@ -398,6 +442,111 @@ impl<G: Game> GameApplication<G> {
             self.camera_velocity = [0.0, 0.0];
         }
     }
+
+    pub(super) fn handle_pointer_event(
+        &mut self,
+        event: &winit::event::WindowEvent,
+        ui_consumed: bool,
+    ) {
+        use winit::event::{ElementState, MouseButton, WindowEvent};
+        match event {
+            WindowEvent::CursorMoved { position, .. } => {
+                self.pointer_position = Some([position.x as f32, position.y as f32]);
+            }
+            WindowEvent::CursorLeft { .. } => self.pointer_position = None,
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Left,
+                ..
+            } => {
+                if accepts_game_pointer_press(
+                    self.game_pointer_input_enabled,
+                    ui_consumed,
+                    self.pointer_position
+                        .and_then(|position| self.scene_world_position(position)),
+                    self.primary_pointer_down,
+                ) {
+                    self.primary_pointer_down = true;
+                    self.primary_pointer_pressed = true;
+                }
+            }
+            WindowEvent::MouseInput {
+                state: ElementState::Released,
+                button: MouseButton::Left,
+                ..
+            } => {
+                if self.primary_pointer_down {
+                    self.primary_pointer_down = false;
+                    self.primary_pointer_released = true;
+                }
+            }
+            WindowEvent::Focused(false) => {
+                self.pointer_position = None;
+                self.primary_pointer_down = false;
+                self.primary_pointer_pressed = false;
+                self.primary_pointer_released = true;
+            }
+            _ => {}
+        }
+    }
+
+    fn pointer_input(&self) -> GamePointerInput {
+        GamePointerInput {
+            world_position: self
+                .pointer_position
+                .and_then(|position| self.scene_world_position(position)),
+            primary_down: self.primary_pointer_down,
+            primary_pressed: self.primary_pointer_pressed,
+            primary_released: self.primary_pointer_released,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{accepts_game_pointer_press, scene_world_position_from_viewport};
+
+    #[test]
+    fn pointer_world_conversion_rejects_outside_and_maps_viewport_center() {
+        let viewport = [10, 20, 100, 50];
+        assert_eq!(
+            scene_world_position_from_viewport([60.0, 45.0], viewport, [3.0, 4.0], [10.0, 5.0]),
+            Some([3.0, 4.0])
+        );
+        assert_eq!(
+            scene_world_position_from_viewport([9.0, 45.0], viewport, [3.0, 4.0], [10.0, 5.0]),
+            None
+        );
+    }
+
+    #[test]
+    fn ui_or_disabled_pointer_press_cannot_capture_gameplay() {
+        assert!(!accepts_game_pointer_press(
+            true,
+            true,
+            Some([0.0, 0.0]),
+            false
+        ));
+        assert!(!accepts_game_pointer_press(
+            false,
+            false,
+            Some([0.0, 0.0]),
+            false
+        ));
+        assert!(!accepts_game_pointer_press(true, false, None, false));
+        assert!(accepts_game_pointer_press(
+            true,
+            false,
+            Some([0.0, 0.0]),
+            false
+        ));
+        assert!(!accepts_game_pointer_press(
+            true,
+            false,
+            Some([0.0, 0.0]),
+            true
+        ));
+    }
 }
 
 impl<G: Game> winit::application::ApplicationHandler for GameApplication<G> {
@@ -418,12 +567,15 @@ impl<G: Game> winit::application::ApplicationHandler for GameApplication<G> {
         self.accelerator.accelerator_timing_begin_sample();
         self.game
             .pass_input(&self.keyboard_input_state, self.input_translator.as_ref());
+        self.game.pass_pointer_input(&self.pointer_input());
         if let Err(error) = self.update() {
             tracing::error!(%error, "application update failed");
             self.error = Some(Box::new(error));
             event_loop.exit();
             return;
         }
+        self.primary_pointer_pressed = false;
+        self.primary_pointer_released = false;
         self.compose_user_interface();
         self.redraw();
     }

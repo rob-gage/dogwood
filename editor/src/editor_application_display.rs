@@ -113,11 +113,10 @@ impl<G: Game> EditorApplication<G> {
             self.apply_editor_results(results);
         }
         self.update_return();
-        let free_fly_enabled: bool = self
-            .application
-            .game()
-            .scene()
-            .is_some_and(|scene| scene.possessed_actor() != self.editor_pawn);
+        let editing_enabled: bool = self.editing_enabled();
+        self.application
+            .set_game_pointer_input_enabled(!editing_enabled);
+        let attached: bool = !editing_enabled;
         let return_enabled: bool = !self.is_return_pending
             && self.application.game().scene().is_some_and(|scene| {
                 scene.possessed_actor() == self.editor_pawn
@@ -172,7 +171,8 @@ impl<G: Game> EditorApplication<G> {
             is_playing: self.is_playing,
             frames_per_second,
             ticks_per_second,
-            free_fly_enabled,
+            attached,
+            editing_enabled,
             return_enabled,
             brush_is_square: self.brush.is_square(),
             brush_size: self.brush.size(),

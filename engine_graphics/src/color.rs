@@ -1,7 +1,7 @@
 // Copyright Rob Gage 2026
 
 /// A color with red, green, blue, and alpha channels
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct Color(u32);
 
 impl Color {

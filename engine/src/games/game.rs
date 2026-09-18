@@ -3,6 +3,7 @@
 use super::game_application::GameApplication;
 use engine_compute::Accelerator;
 use engine_graphics::Camera;
+use engine_graphics::SceneOverlay;
 use engine_input::{InputTranslator, KeyboardInputState};
 use engine_physics::actors::{ActorContactEvent, ActorControlState};
 use engine_physics::{
@@ -11,6 +12,19 @@ use engine_physics::{
 };
 use engine_user_interface::UserInterfaceContext;
 use std::{error::Error, sync::Arc, time::Duration};
+
+/// Pointer state prepared by the engine for one game update.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct GamePointerInput {
+    /// Pointer position in scene world/tile coordinates, if inside the scene viewport.
+    pub world_position: Option<[f32; 2]>,
+    /// Whether the gameplay-owned primary pointer is held.
+    pub primary_down: bool,
+    /// Whether gameplay received a primary press this frame.
+    pub primary_pressed: bool,
+    /// Whether gameplay received a primary release this frame.
+    pub primary_released: bool,
+}
 
 /// Implementors are games that run on this engine.
 pub trait Game {
@@ -25,6 +39,14 @@ pub trait Game {
 
     /// Receives completed asynchronous material extraction results.
     fn material_extractions(&mut self, _results: &[MaterialExtractionResult]) {}
+
+    /// Receives pointer state before the ordinary game update.
+    fn pass_pointer_input(&mut self, _input: &GamePointerInput) {}
+
+    /// Returns transient world-space overlays to draw above the scene.
+    fn scene_overlays(&self) -> Vec<SceneOverlay> {
+        Vec::new()
+    }
 
     /// Adds ordinary game-owned UI for the next rendered frame.
     fn compose_user_interface(&mut self) {}

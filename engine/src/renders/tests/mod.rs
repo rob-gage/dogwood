@@ -72,6 +72,7 @@ fn test_scene_shader_builds_without_a_window_surface() {
         0,
         false,
         false,
+        &[],
         &mut encoder,
         &view,
     );
