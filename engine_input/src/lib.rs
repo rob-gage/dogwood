@@ -4,6 +4,8 @@
 
 pub mod controls;
 pub mod keyboard;
+pub mod mouse;
 
 pub use controls::{ControlState, InputTranslator, SimpleInputTranslator};
 pub use keyboard::{Key, KeyboardInputState};
+pub use mouse::{Button, MouseInputState};
