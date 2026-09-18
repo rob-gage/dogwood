@@ -808,6 +808,7 @@ dependencies = [
 name = "dogwood_engine"
 version = "0.0.1"
 dependencies = [
+ "dogwood_engine_audio",
  "dogwood_engine_compute",
  "dogwood_engine_graphics",
  "dogwood_engine_input",
@@ -897,7 +898,6 @@ dependencies = [
  "dogwood_editor",
  "dogwood_engine",
  "dogwood_template_materials",
- "tracing",
 ]
 
 [[package]]

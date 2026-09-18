@@ -2,7 +2,7 @@
 
 use crate::simulation::RigidCellularBodyCell;
 
-pub(super) struct PendingRigidDormancy {
+pub(super) struct ScenePendingRigidDormancy {
     pub(super) identifier: u64,
     pub(super) position: [f32; 2],
     pub(super) rotation: f32,

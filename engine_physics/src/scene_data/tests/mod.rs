@@ -27,7 +27,7 @@ fn test_materials() -> (MaterialRegistry, MaterialIdentifier) {
 #[test]
 fn test_dormant_rigid_serialization_preserves_authoritative_state() {
     let (materials, material) = test_materials();
-    let body = DormantRigidBody {
+    let body = SceneDormantRigidBody {
         identifier: 9,
         position: [1.25, -2.5],
         rotation: 0.75,
@@ -35,7 +35,7 @@ fn test_dormant_rigid_serialization_preserves_authoritative_state() {
         angular_velocity: 5.0,
         sleeping: true,
         cells: vec![
-            DormantRigidCell {
+            SceneDormantRigidCell {
                 local: [-2, 3],
                 material,
                 appearance: CellularAppearance(0x1234_5678),
@@ -43,7 +43,7 @@ fn test_dormant_rigid_serialization_preserves_authoritative_state() {
                 amount: 0.5,
                 temperature: 456.0,
             },
-            DormantRigidCell {
+            SceneDormantRigidCell {
                 local: [4, 5],
                 material,
                 appearance: CellularAppearance(7),
@@ -55,7 +55,7 @@ fn test_dormant_rigid_serialization_preserves_authoritative_state() {
     };
     let mut bytes = Vec::new();
     body.serialize(&mut bytes, &materials).unwrap();
-    let loaded = DormantRigidBody::deserialize(&mut bytes.as_slice(), &materials).unwrap();
+    let loaded = SceneDormantRigidBody::deserialize(&mut bytes.as_slice(), &materials).unwrap();
     assert_eq!(loaded.identifier, body.identifier);
     assert_eq!(
         loaded.position.map(f32::to_bits),
@@ -81,14 +81,14 @@ fn test_dormant_rigid_serialization_preserves_authoritative_state() {
 #[test]
 fn test_malformed_dormant_rigid_is_rejected() {
     let (materials, material) = test_materials();
-    let body = DormantRigidBody {
+    let body = SceneDormantRigidBody {
         identifier: 1,
         position: [0.0, 0.0],
         rotation: 0.0,
         linear_velocity: [0.0; 2],
         angular_velocity: 0.0,
         sleeping: false,
-        cells: vec![DormantRigidCell {
+        cells: vec![SceneDormantRigidCell {
             local: [0, 0],
             material,
             appearance: CellularAppearance::NEUTRAL,
@@ -114,14 +114,14 @@ fn test_rotated_geometry_bounds_drive_owner() {
 #[test]
 fn test_owner_mutations_preserve_current_records() {
     let (materials, material) = test_materials();
-    let record = |identifier| DormantRigidBody {
+    let record = |identifier| SceneDormantRigidBody {
         identifier,
         position: [0.0, 0.0],
         rotation: 0.0,
         linear_velocity: [0.0; 2],
         angular_velocity: 0.0,
         sleeping: false,
-        cells: vec![DormantRigidCell {
+        cells: vec![SceneDormantRigidCell {
             local: [0, 0],
             material,
             appearance: CellularAppearance::NEUTRAL,

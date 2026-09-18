@@ -41,7 +41,7 @@ impl Scene {
         if current_indices.as_deref() != Some(&pending.indices) {
             self.static_detachment_generation = self.static_detachment_generation.wrapping_add(1);
             self.pending_static_detachment =
-                current_indices.map(|indices| PendingStaticDetachment {
+                current_indices.map(|indices| ScenePendingStaticDetachment {
                     components: pending.components,
                     indices,
                     generation: self.static_detachment_generation,
@@ -51,7 +51,7 @@ impl Scene {
         }
         if pending.ring_offset != (self.tiles_ring_offset_x, self.tiles_ring_offset_y) {
             self.static_detachment_generation = self.static_detachment_generation.wrapping_add(1);
-            self.pending_static_detachment = Some(PendingStaticDetachment {
+            self.pending_static_detachment = Some(ScenePendingStaticDetachment {
                 components: pending.components,
                 indices: current_indices.unwrap_or_default(),
                 generation: self.static_detachment_generation,
@@ -218,7 +218,7 @@ impl Scene {
                 self.static_detachment_generation =
                     self.static_detachment_generation.wrapping_add(1);
                 self.pending_static_detachment =
-                    (!indices.is_empty()).then_some(PendingStaticDetachment {
+                    (!indices.is_empty()).then_some(ScenePendingStaticDetachment {
                         components: pending.components,
                         indices,
                         generation: self.static_detachment_generation,
@@ -416,7 +416,7 @@ impl Scene {
             valid_components.push(component);
         }
         self.static_detachment_generation = self.static_detachment_generation.wrapping_add(1);
-        self.pending_static_detachment = Some(PendingStaticDetachment {
+        self.pending_static_detachment = Some(ScenePendingStaticDetachment {
             components: valid_components,
             indices,
             generation: self.static_detachment_generation,

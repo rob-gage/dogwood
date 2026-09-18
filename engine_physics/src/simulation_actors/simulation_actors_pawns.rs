@@ -20,7 +20,7 @@ const CELLULAR_DRIVE_TRANSFER: f32 = 0.08;
 /// Implements the fixed-rate systems that advance a `Scene`
 pub trait SceneSimulation {
     /// Advances every configured Dogwood actor pawn by one fixed simulation step
-    fn simulate_actor_pawns(
+    fn simulate_actors_pawns(
         world: &mut bevy_ecs::world::World,
         delta_time: f32,
         is_simulation_active: bool,

@@ -2,6 +2,7 @@
 
 //! Public facade for the Dogwood engine runtime and its major subsystems.
 
+extern crate dogwood_engine_audio as engine_audio;
 extern crate dogwood_engine_compute as engine_compute;
 extern crate dogwood_engine_graphics as engine_graphics;
 extern crate dogwood_engine_input as engine_input;
@@ -15,35 +16,32 @@ pub mod diagnostics;
 
 pub use games::{Game, GameApplication};
 
-/// Audio integration surface reserved by the engine facade.
-pub mod audio {}
+/// Audio subsystem APIs.
+pub mod audio {
+    pub use engine_audio::*;
+}
 
-/// Shared graphics and compute accelerator resources.
+/// Compute subsystem APIs.
 pub mod compute {
-    pub use engine_compute::Accelerator;
+    pub use engine_compute::*;
 }
 
-/// Input integration surface reserved by the engine facade.
-pub mod input {}
+/// Input subsystem APIs.
+pub mod input {
+    pub use engine_input::*;
+}
 
-/// Rendering-facing camera, color, and material appearance types.
+/// Graphics subsystem APIs.
 pub mod graphics {
-    pub use engine_graphics::{Camera, Color, MaterialAppearance};
+    pub use engine_graphics::*;
 }
 
-/// Physics-facing scene, material, tile, actor, and simulation modules.
+/// Physics subsystem APIs.
 pub mod physics {
-    pub use engine_physics::actors;
-    pub use engine_physics::chunks;
-    pub use engine_physics::materials;
-    pub use engine_physics::scenes;
-    pub use engine_physics::simulation;
-    pub use engine_physics::tiles;
+    pub use engine_physics::*;
 }
 
-/// User-interface widgets and context types.
+/// User-interface subsystem APIs.
 pub mod user_interface {
-    pub use engine_user_interface::UserInterface;
-    pub use engine_user_interface::UserInterfaceContext;
-    pub use engine_user_interface::Widget;
+    pub use engine_user_interface::*;
 }

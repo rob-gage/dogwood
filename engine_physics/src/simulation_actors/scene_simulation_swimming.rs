@@ -3,8 +3,8 @@
 use crate::simulation::ScenePhysicsWorld;
 use crate::{
     actors::{ActorCollisionShape, ActorPawnSwimmingConfiguration, ActorPawnSwimmingState},
-    scene_simulation::scene_simulation_position::integrate_actor_position,
     scenes::{ScenePosition, SceneVelocity},
+    simulation_actors::scene_simulation_position::integrate_actor_position,
 };
 use rapier2d::prelude::Vector;
 

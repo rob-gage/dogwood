@@ -1,14 +1,14 @@
 // Copyright Rob Gage 2026
 
-use super::scene_rigid_persistence_request::RigidPersistenceRequest;
-use crate::scenes::DormantRigidBody;
+use super::scene_rigid_persistence_request::SceneRigidPersistenceRequest;
+use crate::scenes::SceneDormantRigidBody;
 use crate::tiles::TileCoordinates;
 
-pub(super) enum RigidIoJob {
-    Persist(RigidPersistenceRequest),
+pub(super) enum SceneRigidIoJob {
+    Persist(SceneRigidPersistenceRequest),
     Claim {
         owner: TileCoordinates,
-        original: Vec<DormantRigidBody>,
+        original: Vec<SceneDormantRigidBody>,
         restored_ids: Vec<u64>,
     },
 }

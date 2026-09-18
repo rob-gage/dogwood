@@ -23,4 +23,3 @@ path = "template-project-editor.rs"
 dogwood_editor = { workspace = true }
 dogwood_engine = { workspace = true }
 dogwood_template_materials = { workspace = true }
-tracing.workspace = true

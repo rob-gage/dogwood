@@ -1,9 +1,9 @@
 // Copyright Rob Gage 2026
 
-use crate::scenes::DormantRigidBody;
+use crate::scenes::SceneDormantRigidBody;
 
-pub(super) enum RigidOwnerLoad {
+pub(super) enum SceneRigidOwnerLoad {
     Loading,
-    Ready(Vec<DormantRigidBody>),
+    Ready(Vec<SceneDormantRigidBody>),
     Claiming,
 }

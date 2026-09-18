@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-use super::scene_data_dormant_rigid::{DormantRigidBody, owner_chunk};
+use super::scene_data_dormant_rigid::{SceneDormantRigidBody, owner_chunk};
 use crate::{chunks::Chunk, materials::MaterialRegistry, tiles::TileCoordinates};
 use std::{
     collections::HashSet,
@@ -103,7 +103,7 @@ impl SceneData {
     pub(crate) fn read_dormant_rigids(
         &self,
         owner: TileCoordinates,
-    ) -> Result<Vec<DormantRigidBody>, io::Error> {
+    ) -> Result<Vec<SceneDormantRigidBody>, io::Error> {
         let path: PathBuf = self.rigid_path(owner);
         let mut file: File = match File::open(path) {
             Ok(file) => file,
@@ -133,7 +133,7 @@ impl SceneData {
                 "too many dormant rigid bodies",
             ));
         }
-        let mut records: Vec<DormantRigidBody> = Vec::new();
+        let mut records: Vec<SceneDormantRigidBody> = Vec::new();
         let mut ids: HashSet<u64> = HashSet::new();
         records.try_reserve_exact(count).map_err(|_| {
             io::Error::new(
@@ -142,10 +142,10 @@ impl SceneData {
             )
         })?;
         for _ in 0..count {
-            let record: DormantRigidBody = if legacy {
-                DormantRigidBody::deserialize_legacy(&mut file, self.materials())?
+            let record: SceneDormantRigidBody = if legacy {
+                SceneDormantRigidBody::deserialize_legacy(&mut file, self.materials())?
             } else {
-                DormantRigidBody::deserialize(&mut file, self.materials())?
+                SceneDormantRigidBody::deserialize(&mut file, self.materials())?
             };
             let record_owner: TileCoordinates = owner_chunk(
                 record.position,
@@ -180,7 +180,7 @@ impl SceneData {
     pub(crate) fn write_dormant_rigids(
         &self,
         owner: TileCoordinates,
-        records: &[DormantRigidBody],
+        records: &[SceneDormantRigidBody],
     ) -> Result<(), io::Error> {
         let path: PathBuf = self.rigid_path(owner);
         if records.is_empty() {
@@ -244,10 +244,10 @@ impl SceneData {
                 ));
             }
             for _ in 0..count {
-                let record: DormantRigidBody = if legacy {
-                    DormantRigidBody::deserialize_legacy(&mut file, self.materials())?
+                let record: SceneDormantRigidBody = if legacy {
+                    SceneDormantRigidBody::deserialize_legacy(&mut file, self.materials())?
                 } else {
-                    DormantRigidBody::deserialize(&mut file, self.materials())?
+                    SceneDormantRigidBody::deserialize(&mut file, self.materials())?
                 };
                 next = next.max(record.identifier.checked_add(1).ok_or_else(|| {
                     io::Error::new(io::ErrorKind::InvalidData, "rigid identity overflow")

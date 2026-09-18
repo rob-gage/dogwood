@@ -24,7 +24,7 @@ impl Scene {
     }
 
     /// Returns the tile area resident on the Accelerator
-    pub(super) fn area_buffered(&self) -> TileArea {
+    pub fn area_buffered(&self) -> TileArea {
         let buffer_size: i32 = i32::from(self.simulation_buffer_size);
         let dimensions: u16 = u16::from(self.simulation_buffer_size) * 2;
         TileArea::new(
@@ -138,7 +138,7 @@ impl Scene {
         if !streaming_area.iterate_chunk_coordinates().all(|owner| {
             matches!(
                 self.rigid_owner_loads.get(&owner),
-                Some(RigidOwnerLoad::Ready(_))
+                Some(SceneRigidOwnerLoad::Ready(_))
             )
         }) {
             return Ok(());

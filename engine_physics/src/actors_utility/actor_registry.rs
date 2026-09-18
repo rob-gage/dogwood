@@ -10,7 +10,8 @@ use crate::{
         ActorPawnSwimmingState, ActorPawnWalkingState, ActorPossessable, ActorPreviousPosition,
     },
     scenes::{Scene, ScenePosition, SceneVelocity},
-    simulation::{ScenePhysicsWorld, SceneSimulation},
+    simulation::ScenePhysicsWorld,
+    simulation_actors::SceneSimulation,
 };
 /// Owns the ECS world and provides the engine's actor-facing API.
 pub struct ActorRegistry {
@@ -324,7 +325,7 @@ impl ActorRegistry {
         gravity: [f32; 2],
         physics_world: &ScenePhysicsWorld,
     ) {
-        Scene::simulate_actor_pawns(
+        Scene::simulate_actors_pawns(
             &mut self.world,
             delta_time,
             is_simulation_active,

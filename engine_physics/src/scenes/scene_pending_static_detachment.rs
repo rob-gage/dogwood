@@ -2,7 +2,7 @@
 
 use crate::tiles::CellCoordinates;
 
-pub(super) struct PendingStaticDetachment {
+pub(super) struct ScenePendingStaticDetachment {
     pub(super) components: Vec<Vec<CellCoordinates>>,
     pub(super) indices: Vec<u32>,
     pub(super) generation: u64,

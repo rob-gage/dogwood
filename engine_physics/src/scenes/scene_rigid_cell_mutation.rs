@@ -104,7 +104,7 @@ impl Scene {
             self.remove_rigid_cellular_body_cells(
                 body_index,
                 &removed,
-                RigidCellRemovalCause::PhaseTransition,
+                SceneRigidCellRemovalCause::PhaseTransition,
             );
         }
     }
@@ -114,7 +114,7 @@ impl Scene {
         &mut self,
         body_index: usize,
         removed: &HashSet<[i32; 2]>,
-        cause: RigidCellRemovalCause,
+        cause: SceneRigidCellRemovalCause,
     ) {
         if body_index >= self.rigid_cellular_bodies.len() || removed.is_empty() {
             return;
@@ -141,7 +141,7 @@ impl Scene {
             .iter()
             .filter(|cell| removed.contains(&cell.local))
         {
-            if cause == RigidCellRemovalCause::Fracture
+            if cause == SceneRigidCellRemovalCause::Fracture
                 && let Some(placement) = self.rigid_cell_debris_placement(&state, cell)
             {
                 debris.push(placement);

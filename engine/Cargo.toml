@@ -17,6 +17,7 @@ wayland = [
 ]
 
 [dependencies]
+dogwood_engine_audio = { workspace = true }
 dogwood_engine_compute = { workspace = true }
 dogwood_engine_graphics = { workspace = true }
 dogwood_engine_input = { workspace = true }

@@ -1,7 +1,7 @@
 // Copyright Rob Gage 2026
 
 use super::*;
-use crate::scenes::DormantRigidBody;
+use crate::scenes::SceneDormantRigidBody;
 
 impl Scene {
     /// Freezes outgoing bodies while current support is still valid, then
@@ -11,7 +11,7 @@ impl Scene {
         future_buffered: TileArea,
     ) -> Result<bool, io::Error> {
         let current_buffered: TileArea = self.area_buffered();
-        let mut selected: Vec<(usize, PendingRigidDormancy)> = Vec::new();
+        let mut selected: Vec<(usize, ScenePendingRigidDormancy)> = Vec::new();
         let mut state_count: usize = 0;
         for (index, body) in self.rigid_cellular_bodies.iter().enumerate() {
             let Some(state) = self.physics_world.rigid_cellular_body_state(body) else {
@@ -31,7 +31,7 @@ impl Scene {
                 state_count += body.cells.len();
                 selected.push((
                     index,
-                    PendingRigidDormancy {
+                    ScenePendingRigidDormancy {
                         identifier: body.identifier,
                         position: state.translation,
                         rotation: state.angle,
@@ -69,7 +69,7 @@ impl Scene {
             .map_async(wgpu::MapMode::Read, move |outcome| {
                 let _ = sender.send(outcome);
             });
-        let mut bodies: Vec<PendingRigidDormancy> = selected
+        let mut bodies: Vec<ScenePendingRigidDormancy> = selected
             .into_iter()
             .rev()
             .map(|(index, pending)| {
@@ -89,7 +89,7 @@ impl Scene {
             .resize(self.rigid_cellular_bodies.len(), false);
         self.rigid_granular_contact_active
             .resize(self.rigid_cellular_bodies.len(), false);
-        self.rigid_dormancy_batches.push(RigidDormancyBatch {
+        self.rigid_dormancy_batches.push(SceneRigidDormancyBatch {
             bodies,
             readback_slot,
             state_count,
@@ -108,14 +108,16 @@ impl Scene {
                     continue;
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    let batch: RigidDormancyBatch = self.rigid_dormancy_batches.swap_remove(index);
+                    let batch: SceneRigidDormancyBatch =
+                        self.rigid_dormancy_batches.swap_remove(index);
                     self.rigid_dormancy_readbacks[batch.readback_slot].unmap();
                     self.rigid_dormancy_readback_free.push(batch.readback_slot);
                     self.restore_aborted_rigid_dormancy(batch.bodies);
                     return Err(io::Error::other("rigid dormancy readback disconnected"));
                 }
                 Ok(Err(error)) => {
-                    let batch: RigidDormancyBatch = self.rigid_dormancy_batches.swap_remove(index);
+                    let batch: SceneRigidDormancyBatch =
+                        self.rigid_dormancy_batches.swap_remove(index);
                     self.rigid_dormancy_readbacks[batch.readback_slot].unmap();
                     self.rigid_dormancy_readback_free.push(batch.readback_slot);
                     self.restore_aborted_rigid_dormancy(batch.bodies);
@@ -125,7 +127,7 @@ impl Scene {
                 }
                 Ok(Ok(())) => {}
             }
-            let batch: RigidDormancyBatch = self.rigid_dormancy_batches.swap_remove(index);
+            let batch: SceneRigidDormancyBatch = self.rigid_dormancy_batches.swap_remove(index);
             let bytes: wgpu::BufferView = match self.rigid_dormancy_readbacks[batch.readback_slot]
                 .slice(0..batch.state_count as u64 * 16)
                 .get_mapped_range()
@@ -164,11 +166,12 @@ impl Scene {
             self.rigid_dormancy_readbacks[batch.readback_slot].unmap();
             self.rigid_dormancy_readback_free.push(batch.readback_slot);
             let mut cursor: usize = 0;
-            let mut bodies: std::vec::IntoIter<PendingRigidDormancy> = batch.bodies.into_iter();
-            let mut records: Vec<(PendingRigidDormancy, DormantRigidBody)> = Vec::new();
+            let mut bodies: std::vec::IntoIter<ScenePendingRigidDormancy> =
+                batch.bodies.into_iter();
+            let mut records: Vec<(ScenePendingRigidDormancy, SceneDormantRigidBody)> = Vec::new();
             while let Some(body) = bodies.next() {
                 let end: usize = cursor + body.cells.len();
-                let record: DormantRigidBody = crate::scenes::DormantRigidBody {
+                let record: SceneDormantRigidBody = crate::scenes::SceneDormantRigidBody {
                     identifier: body.identifier,
                     position: body.position,
                     rotation: body.rotation,
@@ -179,7 +182,7 @@ impl Scene {
                         .cells
                         .iter()
                         .zip(&states[cursor..end])
-                        .map(|(cell, state)| crate::scenes::DormantRigidCell {
+                        .map(|(cell, state)| crate::scenes::SceneDormantRigidCell {
                             local: cell.local,
                             material: cell.material,
                             appearance: cell.appearance,
@@ -191,7 +194,7 @@ impl Scene {
                 };
                 cursor = end;
                 if let Err(error) = record.validate(self.data.materials()) {
-                    let mut pending: Vec<PendingRigidDormancy> = records
+                    let mut pending: Vec<ScenePendingRigidDormancy> = records
                         .into_iter()
                         .map(|(body, _)| body)
                         .collect::<Vec<_>>();
@@ -203,12 +206,11 @@ impl Scene {
                 records.push((body, record));
             }
             for (body, record) in records {
-                self.rigid_persistence_queue.push_back(RigidIoJob::Persist(
-                    RigidPersistenceRequest {
+                self.rigid_persistence_queue
+                    .push_back(SceneRigidIoJob::Persist(SceneRigidPersistenceRequest {
                         slots: body.cells.iter().map(|cell| cell.state_slot).collect(),
                         record,
-                    },
-                ));
+                    }));
             }
             debug_assert_eq!(cursor, states.len());
             self.rigid_io_submit();
@@ -218,7 +220,7 @@ impl Scene {
 
     /// A failed map leaves the live Accelerator slots untouched, so reinserting the
     /// frozen CPU snapshot restores the only authoritative resident body.
-    fn restore_aborted_rigid_dormancy(&mut self, pending: Vec<PendingRigidDormancy>) {
+    fn restore_aborted_rigid_dormancy(&mut self, pending: Vec<ScenePendingRigidDormancy>) {
         for pending in pending {
             let (friction, restitution) = self.rigid_cellular_material_response(&pending.cells);
             let mut body: RigidCellularBody = self.physics_world.insert_rigid_cellular_body(

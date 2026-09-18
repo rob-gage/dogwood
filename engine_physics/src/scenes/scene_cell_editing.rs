@@ -66,7 +66,11 @@ impl Scene {
         let mut chemistry_removals: Vec<_> = chemistry_removals.into_iter().collect();
         chemistry_removals.sort_unstable_by_key(|(body, _)| std::cmp::Reverse(*body));
         for (body, cells) in chemistry_removals {
-            self.remove_rigid_cellular_body_cells(body, &cells, RigidCellRemovalCause::Chemistry);
+            self.remove_rigid_cellular_body_cells(
+                body,
+                &cells,
+                SceneRigidCellRemovalCause::Chemistry,
+            );
         }
         let destroyed: HashSet<[u32; 2]> = self
             .cellular_physics_body_proxy
@@ -93,7 +97,11 @@ impl Scene {
                 .collect();
             removals.sort_unstable_by_key(|(body, _)| std::cmp::Reverse(*body));
             for (body, cells) in removals {
-                self.remove_rigid_cellular_body_cells(body, &cells, RigidCellRemovalCause::Erase);
+                self.remove_rigid_cellular_body_cells(
+                    body,
+                    &cells,
+                    SceneRigidCellRemovalCause::Erase,
+                );
             }
         }
         self.debug_assert_rigid_resident_invariants();
@@ -159,7 +167,7 @@ impl Scene {
                     self.remove_rigid_cellular_body_cells(
                         body,
                         &cells,
-                        RigidCellRemovalCause::Fracture,
+                        SceneRigidCellRemovalCause::Fracture,
                     );
                 }
             }

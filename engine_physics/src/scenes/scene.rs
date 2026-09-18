@@ -1,13 +1,13 @@
 // Copyright Rob Gage 2026
 
-use super::scene_pending_rigid_dormancy::PendingRigidDormancy;
-use super::scene_pending_static_detachment::PendingStaticDetachment;
-use super::scene_rigid_cell_removal_cause::RigidCellRemovalCause;
-use super::scene_rigid_dormancy_batch::RigidDormancyBatch;
-use super::scene_rigid_io_job::RigidIoJob;
-use super::scene_rigid_owner_load::RigidOwnerLoad;
-use super::scene_rigid_persistence_request::RigidPersistenceRequest;
-use super::scene_rigid_streaming_response::RigidStreamingResponse;
+use super::scene_pending_rigid_dormancy::ScenePendingRigidDormancy;
+use super::scene_pending_static_detachment::ScenePendingStaticDetachment;
+use super::scene_rigid_body_streaming_response::SceneRigidBodyStreamingResponse;
+use super::scene_rigid_cell_removal_cause::SceneRigidCellRemovalCause;
+use super::scene_rigid_dormancy_batch::SceneRigidDormancyBatch;
+use super::scene_rigid_io_job::SceneRigidIoJob;
+use super::scene_rigid_owner_load::SceneRigidOwnerLoad;
+use super::scene_rigid_persistence_request::SceneRigidPersistenceRequest;
 use crate::scenes::{
     FluidDownload, FluidUpload, GasDownload, GasUpload, SceneData, SceneEdit, SceneEditBatch,
     SceneEditCellPlacement, SceneGenerator, ScenePosition, SceneVelocity, TileDownload, TileUpload,
@@ -150,18 +150,18 @@ pub struct Scene {
     rigid_cell_state_generations: Vec<u32>,
     rigid_cell_state_free: Vec<u32>,
     /// Bodies awaiting one batched authoritative Accelerator state capture.
-    rigid_dormancy_batches: Vec<RigidDormancyBatch>,
+    rigid_dormancy_batches: Vec<SceneRigidDormancyBatch>,
     rigid_dormancy_readbacks: Vec<wgpu::Buffer>,
     rigid_dormancy_readback_free: Vec<usize>,
     /// Background rigid owner-file work is deliberately bounded independently
     /// from chunk streaming so filesystem latency cannot stall simulation.
-    rigid_streaming_response_sender: SyncSender<RigidStreamingResponse>,
-    rigid_streaming_responses: Receiver<RigidStreamingResponse>,
-    rigid_owner_loads: HashMap<TileCoordinates, RigidOwnerLoad>,
+    rigid_streaming_response_sender: SyncSender<SceneRigidBodyStreamingResponse>,
+    rigid_streaming_responses: Receiver<SceneRigidBodyStreamingResponse>,
+    rigid_owner_loads: HashMap<TileCoordinates, SceneRigidOwnerLoad>,
     rigid_owner_load_queue: VecDeque<TileCoordinates>,
     rigid_owner_generation: HashMap<TileCoordinates, u64>,
     rigid_desired_owners: HashSet<TileCoordinates>,
-    rigid_persistence_queue: VecDeque<RigidIoJob>,
+    rigid_persistence_queue: VecDeque<SceneRigidIoJob>,
     rigid_io_in_flight: usize,
     /// Restored bodies wait for a collision snapshot of the current ring.
     rigid_activation_pending: HashSet<u64>,
@@ -178,7 +178,7 @@ pub struct Scene {
     rigid_granular_contact_active: Vec<bool>,
     /// Prior static snapshot used to ignore initial islands and detect topology changes
     rigid_detachment_snapshot: Option<CollisionOccupancySnapshot>,
-    pending_static_detachment: Option<PendingStaticDetachment>,
+    pending_static_detachment: Option<ScenePendingStaticDetachment>,
     static_detachment_in_flight_generation: Option<u64>,
     static_detachment_generation: u64,
     static_detachment_visit_stamps: Vec<u32>,

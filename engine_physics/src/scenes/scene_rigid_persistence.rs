@@ -1,7 +1,7 @@
 // Copyright Rob Gage 2026
 
 use super::*;
-use crate::scenes::DormantRigidBody;
+use crate::scenes::SceneDormantRigidBody;
 use crate::simulation::{RigidCellularBody, RigidCellularBodyCell};
 use crate::tiles::TileArea;
 use std::sync::mpsc::SyncSender;
@@ -21,16 +21,17 @@ impl Scene {
     /// bounded worker frontier: disk latency delays an area shift, never a frame.
     pub(super) fn rigid_io_submit(&mut self) {
         while self.rigid_io_in_flight < RIGID_IO_MAX_IN_FLIGHT {
-            let job: RigidIoJob = if let Some(owner) = self.rigid_owner_load_queue.pop_front() {
+            let job: SceneRigidIoJob = if let Some(owner) = self.rigid_owner_load_queue.pop_front()
+            {
                 self.rigid_owner_loads
-                    .insert(owner, RigidOwnerLoad::Loading);
+                    .insert(owner, SceneRigidOwnerLoad::Loading);
                 let generation: u64 = *self.rigid_owner_generation.entry(owner).or_default();
                 let data: SceneData = self.data.clone();
-                let sender: SyncSender<RigidStreamingResponse> =
+                let sender: SyncSender<SceneRigidBodyStreamingResponse> =
                     self.rigid_streaming_response_sender.clone();
                 self.rigid_io_in_flight += 1;
                 std::thread::spawn(move || {
-                    let _ = sender.send(RigidStreamingResponse::Loaded {
+                    let _ = sender.send(SceneRigidBodyStreamingResponse::Loaded {
                         owner,
                         generation,
                         result: data.read_dormant_rigids(owner),
@@ -43,17 +44,17 @@ impl Scene {
                 break;
             };
             let data: SceneData = self.data.clone();
-            let sender: SyncSender<RigidStreamingResponse> =
+            let sender: SyncSender<SceneRigidBodyStreamingResponse> =
                 self.rigid_streaming_response_sender.clone();
             self.rigid_io_in_flight += 1;
             std::thread::spawn(move || match job {
-                RigidIoJob::Persist(request) => {
+                SceneRigidIoJob::Persist(request) => {
                     let Some(owner) = crate::scenes::owner_chunk(
                         request.record.position,
                         request.record.rotation,
                         request.record.cells.iter().map(|cell| cell.local),
                     ) else {
-                        let _ = sender.send(RigidStreamingResponse::Saved {
+                        let _ = sender.send(SceneRigidBodyStreamingResponse::Saved {
                             request,
                             result: Err(io::Error::new(
                                 io::ErrorKind::InvalidData,
@@ -67,20 +68,20 @@ impl Scene {
                             crate::scenes::append_record(&mut records, request.record.clone())?;
                             data.write_dormant_rigids(owner, &records)
                         });
-                    let _ = sender.send(RigidStreamingResponse::Saved { request, result });
+                    let _ = sender.send(SceneRigidBodyStreamingResponse::Saved { request, result });
                 }
-                RigidIoJob::Claim {
+                SceneRigidIoJob::Claim {
                     owner,
                     original,
                     restored_ids,
                 } => {
-                    let result: Result<Vec<DormantRigidBody>, io::Error> =
+                    let result: Result<Vec<SceneDormantRigidBody>, io::Error> =
                         data.read_dormant_rigids(owner).and_then(|mut records| {
                             crate::scenes::remove_ids(&mut records, &restored_ids);
                             data.write_dormant_rigids(owner, &records)?;
                             Ok(records)
                         });
-                    let _ = sender.send(RigidStreamingResponse::Claimed {
+                    let _ = sender.send(SceneRigidBodyStreamingResponse::Claimed {
                         owner,
                         original,
                         restored_ids,
@@ -95,7 +96,7 @@ impl Scene {
         while let Ok(response) = self.rigid_streaming_responses.try_recv() {
             self.rigid_io_in_flight = self.rigid_io_in_flight.saturating_sub(1);
             match response {
-                RigidStreamingResponse::Loaded {
+                SceneRigidBodyStreamingResponse::Loaded {
                     owner,
                     generation,
                     result,
@@ -109,7 +110,7 @@ impl Scene {
                     match result {
                         Ok(records) => {
                             self.rigid_owner_loads
-                                .insert(owner, RigidOwnerLoad::Ready(records));
+                                .insert(owner, SceneRigidOwnerLoad::Ready(records));
                         }
                         Err(error) => {
                             self.rigid_owner_loads.remove(&owner);
@@ -121,21 +122,21 @@ impl Scene {
                         }
                     }
                 }
-                RigidStreamingResponse::Loaded { owner, .. } => {
+                SceneRigidBodyStreamingResponse::Loaded { owner, .. } => {
                     // a newer generation may already be loading. If not,
                     // stale completion must repair the desired-owner state.
                     if self.rigid_desired_owners.contains(&owner)
                         && !matches!(
                             self.rigid_owner_loads.get(&owner),
-                            Some(RigidOwnerLoad::Loading)
-                                | Some(RigidOwnerLoad::Ready(_))
-                                | Some(RigidOwnerLoad::Claiming)
+                            Some(SceneRigidOwnerLoad::Loading)
+                                | Some(SceneRigidOwnerLoad::Ready(_))
+                                | Some(SceneRigidOwnerLoad::Claiming)
                         )
                     {
                         self.rigid_owner_load(owner);
                     }
                 }
-                RigidStreamingResponse::Saved { request, result } => match result {
+                SceneRigidBodyStreamingResponse::Saved { request, result } => match result {
                     Ok(()) => {
                         let owner: TileCoordinates = crate::scenes::owner_chunk(
                             request.record.position,
@@ -150,7 +151,7 @@ impl Scene {
                         *generation = generation.wrapping_add(1);
                         let claiming: bool = matches!(
                             self.rigid_owner_loads.get(&owner),
-                            Some(RigidOwnerLoad::Claiming)
+                            Some(SceneRigidOwnerLoad::Claiming)
                         );
                         if !claiming {
                             self.rigid_owner_loads.remove(&owner);
@@ -167,7 +168,7 @@ impl Scene {
                         return Err(error);
                     }
                 },
-                RigidStreamingResponse::Claimed {
+                SceneRigidBodyStreamingResponse::Claimed {
                     owner,
                     original,
                     restored_ids,
@@ -175,12 +176,12 @@ impl Scene {
                 } => match result {
                     Ok(records) => {
                         self.rigid_owner_loads
-                            .insert(owner, RigidOwnerLoad::Ready(records));
+                            .insert(owner, SceneRigidOwnerLoad::Ready(records));
                     }
                     Err(error) => {
                         self.rollback_rigid_restore(&restored_ids);
                         self.rigid_owner_loads
-                            .insert(owner, RigidOwnerLoad::Ready(original));
+                            .insert(owner, SceneRigidOwnerLoad::Ready(original));
                         if self.rigid_desired_owners.contains(&owner) {
                             self.rigid_owner_loads.remove(&owner);
                             self.rigid_owner_generation
@@ -199,7 +200,7 @@ impl Scene {
 
     fn restore_failed_rigid_persistence(
         &mut self,
-        request: RigidPersistenceRequest,
+        request: SceneRigidPersistenceRequest,
     ) -> Result<(), io::Error> {
         let mut cells: Vec<RigidCellularBodyCell> = Vec::with_capacity(request.record.cells.len());
         for (cell, slot) in request.record.cells.iter().zip(request.slots) {
@@ -268,7 +269,7 @@ impl Scene {
             .rigid_owner_loads
             .iter()
             .filter_map(|(owner, state)| {
-                matches!(state, RigidOwnerLoad::Ready(_)).then_some(*owner)
+                matches!(state, SceneRigidOwnerLoad::Ready(_)).then_some(*owner)
             })
             .collect();
         for owner in owners {
@@ -280,11 +281,12 @@ impl Scene {
     /// Claims loaded records only after terrain uploads were submitted.  The
     /// owner file remains authoritative until the background claim completes.
     fn restore_dormant_rigids(&mut self, owner: TileCoordinates) -> Result<(), io::Error> {
-        let Some(RigidOwnerLoad::Ready(original)) = self.rigid_owner_loads.remove(&owner) else {
+        let Some(SceneRigidOwnerLoad::Ready(original)) = self.rigid_owner_loads.remove(&owner)
+        else {
             return Ok(());
         };
         let buffered: TileArea = self.area_buffered();
-        let (records, _retained): (Vec<DormantRigidBody>, Vec<DormantRigidBody>) =
+        let (records, _retained): (Vec<SceneDormantRigidBody>, Vec<SceneDormantRigidBody>) =
             original.iter().cloned().partition(|record| {
                 crate::scenes::world_aabb(
                     record.position,
@@ -295,13 +297,13 @@ impl Scene {
             });
         if records.is_empty() {
             self.rigid_owner_loads
-                .insert(owner, RigidOwnerLoad::Ready(original));
+                .insert(owner, SceneRigidOwnerLoad::Ready(original));
             return Ok(());
         }
         let required: usize = records.iter().map(|record| record.cells.len()).sum();
         if required > self.rigid_cell_state_free.len() {
             self.rigid_owner_loads
-                .insert(owner, RigidOwnerLoad::Ready(original));
+                .insert(owner, SceneRigidOwnerLoad::Ready(original));
             return Ok(());
         }
         for record in &records {
@@ -312,7 +314,7 @@ impl Scene {
                 .any(|body| body.identifier == record.identifier)
             {
                 self.rigid_owner_loads
-                    .insert(owner, RigidOwnerLoad::Ready(original));
+                    .insert(owner, SceneRigidOwnerLoad::Ready(original));
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "duplicate resident rigid identity",
@@ -375,12 +377,13 @@ impl Scene {
         self.rigid_granular_contact_active
             .resize(self.rigid_cellular_bodies.len(), false);
         self.rigid_owner_loads
-            .insert(owner, RigidOwnerLoad::Claiming);
-        self.rigid_persistence_queue.push_back(RigidIoJob::Claim {
-            owner,
-            original,
-            restored_ids: ids,
-        });
+            .insert(owner, SceneRigidOwnerLoad::Claiming);
+        self.rigid_persistence_queue
+            .push_back(SceneRigidIoJob::Claim {
+                owner,
+                original,
+                restored_ids: ids,
+            });
         self.rigid_io_submit();
         self.debug_assert_rigid_resident_invariants();
         Ok(())

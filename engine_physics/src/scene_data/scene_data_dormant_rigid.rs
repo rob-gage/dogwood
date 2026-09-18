@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-use super::DormantRigidCell;
+use super::SceneDormantRigidCell;
 use crate::tiles::CellularAppearance;
 use crate::{
     binary_reader::read_u32,
@@ -14,19 +14,19 @@ use std::{collections::HashSet, io};
 /// the center of its world-space geometry. Cells may span arbitrary chunks;
 /// they never own copies.
 #[derive(Clone)]
-pub(crate) struct DormantRigidBody {
+pub(crate) struct SceneDormantRigidBody {
     pub(crate) identifier: u64,
     pub(crate) position: [f32; 2],
     pub(crate) rotation: f32,
     pub(crate) linear_velocity: [f32; 2],
     pub(crate) angular_velocity: f32,
     pub(crate) sleeping: bool,
-    pub(crate) cells: Vec<DormantRigidCell>,
+    pub(crate) cells: Vec<SceneDormantRigidCell>,
 }
 
 pub(crate) fn append_record(
-    records: &mut Vec<DormantRigidBody>,
-    record: DormantRigidBody,
+    records: &mut Vec<SceneDormantRigidBody>,
+    record: SceneDormantRigidBody,
 ) -> Result<(), io::Error> {
     let mut before: HashSet<u64> = records.iter().map(|record| record.identifier).collect();
     if !before.insert(record.identifier) {
@@ -46,7 +46,7 @@ pub(crate) fn append_record(
     Ok(())
 }
 
-pub(crate) fn remove_ids(records: &mut Vec<DormantRigidBody>, ids: &[u64]) {
+pub(crate) fn remove_ids(records: &mut Vec<SceneDormantRigidBody>, ids: &[u64]) {
     let before: HashSet<u64> = records.iter().map(|record| record.identifier).collect();
     let claimed: HashSet<u64> = ids.iter().copied().collect();
     records.retain(|record| !claimed.contains(&record.identifier));
@@ -114,7 +114,7 @@ pub(crate) fn intersects_area(bounds: ([f32; 2], [f32; 2]), area: crate::tiles::
         && minimum[1] < (origin.y + i32::from(dimensions[1])) as f32
 }
 
-impl DormantRigidBody {
+impl SceneDormantRigidBody {
     const MAX_CELLS: usize = 1 << 20;
 
     pub(crate) fn validate(&self, materials: &MaterialRegistry) -> Result<(), io::Error> {
@@ -249,7 +249,7 @@ impl DormantRigidBody {
                 "too many dormant rigid cells",
             ));
         }
-        let mut cells: Vec<DormantRigidCell> = Vec::new();
+        let mut cells: Vec<SceneDormantRigidCell> = Vec::new();
         cells.try_reserve_exact(count).map_err(|_| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -257,7 +257,7 @@ impl DormantRigidBody {
             )
         })?;
         for _ in 0..count {
-            cells.push(DormantRigidCell {
+            cells.push(SceneDormantRigidCell {
                 local: [
                     i32::from_le_bytes(read_u32(reader)?.to_le_bytes()),
                     i32::from_le_bytes(read_u32(reader)?.to_le_bytes()),
