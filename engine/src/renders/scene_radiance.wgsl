@@ -17,6 +17,7 @@ struct CascadeConfiguration {
 struct RadianceIntervals { values: array<vec4<f32>>, }
 
 @group(0) @binding(0) var optical_field: texture_2d<f32>;
+@group(0) @binding(2) var distance_field: texture_2d<f32>;
 @group(0) @binding(3) var<uniform> trace_configuration: CascadeConfiguration;
 @group(0) @binding(4) var<storage, read_write> trace_output: RadianceIntervals;
 
@@ -44,27 +45,45 @@ fn trace(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let angle = (f32(direction_index) + 0.5) * TAU /
         f32(trace_configuration.direction_count);
     let direction = vec2<f32>(cos(angle), sin(angle));
-    let interval_length = trace_configuration.interval_end - trace_configuration.interval_start;
-    let step_length = max(1.0, interval_length / 64.0);
     var travel = trace_configuration.interval_start;
     var radiance = vec3<f32>(0.0);
     var transmission = 1.0;
-    for (var step = 0u; step < 64u; step++) {
+    var last_attenuated_cell = vec2<i32>(0x7fffffff);
+    var origin_cell = vec2<i32>(0);
+    var escaping_origin_cell = false;
+    if all(probe_position >= vec2<f32>(0.0)) &&
+            all(probe_position < vec2<f32>(trace_configuration.scene_size)) {
+        origin_cell = vec2<i32>(probe_position);
+        escaping_origin_cell = textureLoad(optical_field, origin_cell, 0).a > 0.000001;
+    }
+    for (var step = 0u; step < 96u; step++) {
         if travel >= trace_configuration.interval_end || transmission <= 0.001 { break; }
-        let segment_length = min(step_length, trace_configuration.interval_end - travel);
-        let position = probe_position + direction * (travel + segment_length * 0.5);
+        let position = probe_position + direction * travel;
         if any(position < vec2<f32>(0.0)) ||
                 any(position >= vec2<f32>(trace_configuration.scene_size)) { break; }
-        let optical = textureLoad(optical_field, vec2<i32>(position), 0);
-        let cell_optical_depth = max(optical.a, 0.0);
-        let optical_depth = cell_optical_depth * segment_length;
-        let attenuation = select(exp(-optical_depth), 1.0, step == 0u);
-        let segment_radiance = select(optical.rgb * segment_length, optical.rgb *
-            ((1.0 - exp(-optical_depth)) / max(cell_optical_depth, 0.000001)),
-            cell_optical_depth > 0.000001);
-        radiance += transmission * segment_radiance;
-        transmission *= attenuation;
-        travel += segment_length;
+        let pixel = vec2<i32>(position);
+        let optical = textureLoad(optical_field, pixel, 0);
+        if optical.a > 0.000001 {
+            let cell = pixel;
+            if escaping_origin_cell && all(cell == origin_cell) {
+                travel += 1.0;
+                continue;
+            }
+            escaping_origin_cell = false;
+            if any(cell != last_attenuated_cell) {
+                let tau = max(optical.a, 0.0);
+                let cell_transmission = exp(-tau);
+                radiance += transmission * optical.rgb *
+                    ((1.0 - cell_transmission) / max(tau, 0.000001));
+                transmission *= cell_transmission;
+                last_attenuated_cell = cell;
+            }
+            travel += 1.0;
+            continue;
+        }
+        escaping_origin_cell = false;
+        let distance = textureLoad(distance_field, pixel, 0).r;
+        travel += max(distance * 0.8, 1.0);
     }
     trace_output.values[invocation.x] = vec4<f32>(max(radiance, vec3<f32>(0.0)),
         clamp(transmission, 0.0, 1.0));
