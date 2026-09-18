@@ -3,7 +3,9 @@
 //! Rigid cellular bodies, state transfer, and granular reaction systems.
 
 mod actor_physics_proxy;
+#[path = "rigid_dynamic_collision_tile.rs"]
 mod dynamic_tile;
+#[path = "rigid_dynamic_collision_tile_key.rs"]
 mod dynamic_tile_key;
 mod rigid_cell_state_gather;
 mod rigid_cell_state_upload;
@@ -16,7 +18,9 @@ mod rigid_granular_readback_status;
 mod scene_physics_world;
 mod scene_physics_world_collision_groups;
 mod terrain_bridge_statistics;
+#[path = "static_terrain_collision_patch.rs"]
 mod terrain_patch;
+#[path = "static_terrain_collision_patch_key.rs"]
 mod terrain_patch_key;
 
 #[cfg(test)]
