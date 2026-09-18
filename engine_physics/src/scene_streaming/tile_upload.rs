@@ -69,8 +69,8 @@ impl TileUpload {
         initial_temperature: impl Fn(MaterialIdentifier) -> f32,
     ) {
         for index in 0..64 {
-            let offset = index * 4;
-            let identifier = MaterialIdentifier::from_u32(u32::from_le_bytes(
+            let offset: usize = index * 4;
+            let identifier: MaterialIdentifier = MaterialIdentifier::from_u32(u32::from_le_bytes(
                 self.material_identifiers[offset..offset + 4]
                     .try_into()
                     .unwrap(),
@@ -81,7 +81,7 @@ impl TileUpload {
                     .copy_from_slice(&0.0f32.to_bits().to_le_bytes());
                 continue;
             }
-            let temperature = f32::from_bits(u32::from_le_bytes(
+            let temperature: f32 = f32::from_bits(u32::from_le_bytes(
                 self.temperatures[offset..offset + 4].try_into().unwrap(),
             ));
             if !temperature.is_finite() {
