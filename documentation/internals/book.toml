@@ -1,0 +1,11 @@
+[book]
+authors = ["Dogwood contributors"]
+language = "en"
+src = "src"
+title = "Dogwood engine internals"
+
+[build]
+build-dir = "book"
+
+[output.html]
+git-repository-url = "https://github.com/rob-gage/dogwood"
