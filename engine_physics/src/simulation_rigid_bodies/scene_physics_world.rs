@@ -165,10 +165,10 @@ impl ScenePhysicsWorld {
         states: &[crate::actors::ActorPhysicsProxyState],
         up: Vector,
     ) {
-        let mut live = HashSet::new();
+        let mut live_actors: HashSet<Actor> = HashSet::new();
         for state in states {
-            live.insert(state.actor);
-            let pose = state
+            live_actors.insert(state.actor);
+            let pose: Pose = state
                 .shape
                 .pose(Vector::new(state.center[0], state.center[1]), up);
             if let Some(proxy) = self.pawn_proxies.get_mut(&state.actor) {
@@ -188,10 +188,10 @@ impl ScenePhysicsWorld {
                     .unwrap()
                     .set_next_kinematic_position(pose);
             } else {
-                let body = self
+                let body: RigidBodyHandle = self
                     .rapier
                     .insert_body(RigidBodyBuilder::kinematic_position_based().pose(pose));
-                let collider = self.rapier.insert_collider(
+                let collider: ColliderHandle = self.rapier.insert_collider(
                     ColliderBuilder::new(state.shape.rapier_shape())
                         .collision_groups(Self::pawn_collision_groups())
                         .solver_groups(Self::pawn_solver_groups()),
@@ -207,13 +207,13 @@ impl ScenePhysicsWorld {
                 );
             }
         }
-        let stale: Vec<_> = self
+        let stale_actors: Vec<Actor> = self
             .pawn_proxies
             .keys()
-            .filter(|actor| !live.contains(actor))
+            .filter(|actor| !live_actors.contains(actor))
             .copied()
             .collect();
-        for actor in stale {
+        for actor in stale_actors {
             if let Some(proxy) = self.pawn_proxies.remove(&actor) {
                 self.rapier.remove_body(proxy.body);
             }
@@ -223,7 +223,7 @@ impl ScenePhysicsWorld {
     /// Advances Rapier's collision world by one fixed scene step
     pub fn step(&mut self, gravity: [f32; 2], delta_time: f32) {
         #[cfg(debug_assertions)]
-        let started = Instant::now();
+        let start_time: Instant = Instant::now();
         self.rapier.gravity = Vector::new(gravity[0], gravity[1]);
         self.rapier.integration_parameters.dt = delta_time;
         self.rapier.step();
@@ -241,7 +241,7 @@ impl ScenePhysicsWorld {
         }
         #[cfg(debug_assertions)]
         tracing::trace!(
-            elapsed_us = started.elapsed().as_micros(),
+            elapsed_us = start_time.elapsed().as_micros(),
             "rapier rigid step"
         );
     }
@@ -257,7 +257,7 @@ impl ScenePhysicsWorld {
         let Some(state) = self.rigid_cellular_body_state(body) else {
             return false;
         };
-        let effective = state.inverse_mass
+        let effective: f32 = state.inverse_mass
             * (constraint[0] * constraint[0] + constraint[1] * constraint[1])
             + state.inverse_angular_inertia * constraint[2] * constraint[2];
         if effective <= 1e-12 {
@@ -265,19 +265,19 @@ impl ScenePhysicsWorld {
         }
         // The Accelerator impulse defines a velocity target along its generalized contact direction.
         // Re-evaluate that target against current motion instead of replaying stale stopping work.
-        let target = source[0] * constraint[0]
+        let target: f32 = source[0] * constraint[0]
             + source[1] * constraint[1]
             + source[2] * constraint[2]
             + effective;
-        let target = if source[3] == 0.0 {
+        let target: f32 = if source[3] == 0.0 {
             target.max(0.0)
         } else {
             target
         };
-        let current = state.linear_velocity[0] * constraint[0]
+        let current: f32 = state.linear_velocity[0] * constraint[0]
             + state.linear_velocity[1] * constraint[1]
             + state.angular_velocity * constraint[2];
-        let scale = ((target - current) / effective).max(0.0);
+        let scale: f32 = ((target - current) / effective).max(0.0);
         self.apply_rigid_cellular_body_reaction(
             body,
             [constraint[0] * scale, constraint[1] * scale],
@@ -300,13 +300,13 @@ impl ScenePhysicsWorld {
         }
         // Spread the confirmed one-step impulse through Rapier's integration substeps.
         // An upfront velocity kick cancels final gravity velocity but introduces position drift.
-        let impulse = Vector::new(support[0], support[1]);
-        let quadratic = 0.5
+        let impulse: Vector = Vector::new(support[0], support[1]);
+        let quadratic: f32 = 0.5
             * (rigid.mass_properties().local_mprops.inv_mass * impulse.length_squared()
                 + rigid.mass_properties().effective_world_inv_inertia * support[2] * support[2]);
-        let linear = rigid.linvel().dot(impulse) + rigid.angvel() * support[2];
-        let budget = support[3].max(0.0);
-        let scale = if linear + quadratic <= budget {
+        let linear: f32 = rigid.linvel().dot(impulse) + rigid.angvel() * support[2];
+        let budget: f32 = support[3].max(0.0);
+        let scale: f32 = if linear + quadratic <= budget {
             1.0
         } else if quadratic > 0.0 {
             ((linear * linear + 4.0 * quadratic * budget).sqrt() - linear) / (2.0 * quadratic)
@@ -314,8 +314,8 @@ impl ScenePhysicsWorld {
             0.0
         }
         .clamp(0.0, 1.0);
-        let force = impulse * (60.0 * scale);
-        let torque = support[2] * (60.0 * scale);
+        let force: Vector = impulse * (60.0 * scale);
+        let torque: f32 = support[2] * (60.0 * scale);
         rigid.add_force(force, false);
         rigid.add_torque(torque, false);
         self.step_support.push((body.handle, force, torque));
@@ -327,7 +327,8 @@ impl ScenePhysicsWorld {
         body: &RigidCellularBody,
         recovery: [f32; 4],
     ) -> bool {
-        let Some(before) = self.rigid_cellular_body_state(body) else {
+        let Some(before): Option<RigidCellularBodyState> = self.rigid_cellular_body_state(body)
+        else {
             return false;
         };
         self.apply_rigid_cellular_body_reaction(
@@ -337,7 +338,7 @@ impl ScenePhysicsWorld {
             recovery[3],
             false,
         );
-        let after = self.rigid_cellular_body_state(body).unwrap();
+        let after: RigidCellularBodyState = self.rigid_cellular_body_state(body).unwrap();
         self.step_recovery.push((
             body.handle,
             Vector::new(
