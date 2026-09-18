@@ -10,8 +10,8 @@ use engine::{
     graphics::{Color, SceneOverlay},
 };
 
-pub const COLLECTION_REACH: f32 = 1.0;
-pub const COLLECTION_RADIUS: f32 = 0.7;
+pub const COLLECTION_REACH: f32 = 1.1;
+pub const COLLECTION_RADIUS: f32 = 0.8;
 
 pub fn calculate_aim_direction(
     player: [f32; 2],
@@ -143,6 +143,8 @@ mod tests {
     fn collection_center_has_fixed_reach() {
         let player = [2.0, -1.0];
         let center = [player[0] + COLLECTION_REACH, player[1]];
-        assert_eq!(center, [3.0, -1.0]);
+        assert_eq!(center, [player[0] + COLLECTION_REACH, player[1]]);
+        assert!((COLLECTION_REACH - 1.1).abs() < f32::EPSILON);
+        assert!((COLLECTION_RADIUS - 0.8).abs() < f32::EPSILON);
     }
 }
