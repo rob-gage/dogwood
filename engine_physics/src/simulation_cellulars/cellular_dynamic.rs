@@ -34,6 +34,7 @@ pub struct CellularDynamic {
 }
 
 impl CellularDynamic {
+    /// Returns the persistent per-cell kinematic state buffer.
     pub const fn kinematics_buffer(&self) -> &AcceleratorBuffer {
         &self.kinematics
     }

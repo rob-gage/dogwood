@@ -20,6 +20,7 @@ pub struct MaterialMutations {
 }
 
 impl MaterialMutations {
+    /// Creates the Accelerator resources used to resolve material replacement requests.
     pub fn new(
         accelerator: &Accelerator,
         materials: &MaterialRegistry,
@@ -218,6 +219,7 @@ impl MaterialMutations {
     pub(crate) const fn gas_fluid_candidates_buffer(&self) -> &AcceleratorBuffer {
         &self.gas_fluid_candidates
     }
+    /// Resolves queued replacements without applying their results to canonical state.
     pub fn resolve(&self, accelerator: &Accelerator, buffered_cell_count: u32, gas_count: u32) {
         self.resolve_requests(accelerator, buffered_cell_count, gas_count);
     }

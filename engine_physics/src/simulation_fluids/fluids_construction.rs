@@ -3,6 +3,7 @@
 use super::*;
 
 impl Fluids {
+    /// Creates the authoritative fluid particle store and solver resources.
     pub fn new(
         accelerator: &Accelerator,
         cellular_material_identifiers: &AcceleratorBuffer,

@@ -42,15 +42,19 @@ pub struct CellularPhysicsBodyProxy {
 mod cellular_physics_body_proxy_construction;
 
 impl CellularPhysicsBodyProxy {
+    /// Returns the cell occupancy raster buffer.
     pub const fn occupancy_buffer(&self) -> &AcceleratorBuffer {
         &self.occupancy
     }
+    /// Returns the cell velocity raster buffer.
     pub const fn velocity_buffer(&self) -> &AcceleratorBuffer {
         &self.velocity
     }
+    /// Returns the rigid-cell material identifier raster buffer.
     pub const fn rigid_material_identifiers_buffer(&self) -> &AcceleratorBuffer {
         &self.rigid_material_identifiers
     }
+    /// Returns the rigid-cell appearance raster buffer.
     pub const fn rigid_appearances_buffer(&self) -> &AcceleratorBuffer {
         &self.rigid_appearances
     }

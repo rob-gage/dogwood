@@ -3,6 +3,7 @@
 use super::*;
 
 impl Scene {
+    /// Downloads resident tile state into CPU-owned tile records.
     pub fn tiles_download(
         &self,
         area: TileArea,

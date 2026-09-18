@@ -3,6 +3,7 @@
 use super::*;
 
 impl CellularPhysicsBodyProxy {
+    /// Creates the Accelerator rasterizer and its fixed-capacity readback state.
     pub fn new(accelerator: &Accelerator, buffered_cell_count: usize) -> Self {
         let device = accelerator.wgpu_device();
         let buffered_cell_count = buffered_cell_count as u32;
