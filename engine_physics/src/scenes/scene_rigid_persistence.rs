@@ -1,6 +1,10 @@
 // Copyright Rob Gage 2026
 
 use super::*;
+use crate::scenes::DormantRigidBody;
+use crate::simulation::{RigidCellularBody, RigidCellularBodyCell};
+use crate::tiles::TileArea;
+use std::sync::mpsc::SyncSender;
 
 impl Scene {
     pub(super) fn rigid_owner_load(&mut self, owner: TileCoordinates) {
@@ -17,12 +21,13 @@ impl Scene {
     /// bounded worker frontier: disk latency delays an area shift, never a frame.
     pub(super) fn rigid_io_submit(&mut self) {
         while self.rigid_io_in_flight < RIGID_IO_MAX_IN_FLIGHT {
-            let job = if let Some(owner) = self.rigid_owner_load_queue.pop_front() {
+            let job: RigidIoJob = if let Some(owner) = self.rigid_owner_load_queue.pop_front() {
                 self.rigid_owner_loads
                     .insert(owner, RigidOwnerLoad::Loading);
-                let generation = *self.rigid_owner_generation.entry(owner).or_default();
-                let data = self.data.clone();
-                let sender = self.rigid_streaming_response_sender.clone();
+                let generation: u64 = *self.rigid_owner_generation.entry(owner).or_default();
+                let data: SceneData = self.data.clone();
+                let sender: SyncSender<RigidStreamingResponse> =
+                    self.rigid_streaming_response_sender.clone();
                 self.rigid_io_in_flight += 1;
                 std::thread::spawn(move || {
                     let _ = sender.send(RigidStreamingResponse::Loaded {
@@ -37,8 +42,9 @@ impl Scene {
             } else {
                 break;
             };
-            let data = self.data.clone();
-            let sender = self.rigid_streaming_response_sender.clone();
+            let data: SceneData = self.data.clone();
+            let sender: SyncSender<RigidStreamingResponse> =
+                self.rigid_streaming_response_sender.clone();
             self.rigid_io_in_flight += 1;
             std::thread::spawn(move || match job {
                 RigidIoJob::Persist(request) => {
@@ -56,10 +62,11 @@ impl Scene {
                         });
                         return;
                     };
-                    let result = data.read_dormant_rigids(owner).and_then(|mut records| {
-                        crate::scenes::append_record(&mut records, request.record.clone())?;
-                        data.write_dormant_rigids(owner, &records)
-                    });
+                    let result: Result<(), io::Error> =
+                        data.read_dormant_rigids(owner).and_then(|mut records| {
+                            crate::scenes::append_record(&mut records, request.record.clone())?;
+                            data.write_dormant_rigids(owner, &records)
+                        });
                     let _ = sender.send(RigidStreamingResponse::Saved { request, result });
                 }
                 RigidIoJob::Claim {
@@ -67,11 +74,12 @@ impl Scene {
                     original,
                     restored_ids,
                 } => {
-                    let result = data.read_dormant_rigids(owner).and_then(|mut records| {
-                        crate::scenes::remove_ids(&mut records, &restored_ids);
-                        data.write_dormant_rigids(owner, &records)?;
-                        Ok(records)
-                    });
+                    let result: Result<Vec<DormantRigidBody>, io::Error> =
+                        data.read_dormant_rigids(owner).and_then(|mut records| {
+                            crate::scenes::remove_ids(&mut records, &restored_ids);
+                            data.write_dormant_rigids(owner, &records)?;
+                            Ok(records)
+                        });
                     let _ = sender.send(RigidStreamingResponse::Claimed {
                         owner,
                         original,
@@ -129,7 +137,7 @@ impl Scene {
                 }
                 RigidStreamingResponse::Saved { request, result } => match result {
                     Ok(()) => {
-                        let owner = crate::scenes::owner_chunk(
+                        let owner: TileCoordinates = crate::scenes::owner_chunk(
                             request.record.position,
                             request.record.rotation,
                             request.record.cells.iter().map(|cell| cell.local),
@@ -137,9 +145,10 @@ impl Scene {
                         .ok_or_else(|| {
                             io::Error::new(io::ErrorKind::InvalidData, "invalid rigid geometry")
                         })?;
-                        let generation = self.rigid_owner_generation.entry(owner).or_default();
+                        let generation: &mut u64 =
+                            self.rigid_owner_generation.entry(owner).or_default();
                         *generation = generation.wrapping_add(1);
-                        let claiming = matches!(
+                        let claiming: bool = matches!(
                             self.rigid_owner_loads.get(&owner),
                             Some(RigidOwnerLoad::Claiming)
                         );
@@ -192,7 +201,7 @@ impl Scene {
         &mut self,
         request: RigidPersistenceRequest,
     ) -> Result<(), io::Error> {
-        let mut cells = Vec::with_capacity(request.record.cells.len());
+        let mut cells: Vec<RigidCellularBodyCell> = Vec::with_capacity(request.record.cells.len());
         for (cell, slot) in request.record.cells.iter().zip(request.slots) {
             cells.push(RigidCellularBodyCell {
                 local: cell.local,
@@ -203,7 +212,7 @@ impl Scene {
             });
         }
         let (friction, restitution) = self.rigid_cellular_material_response(&cells);
-        let mut body = self.physics_world.insert_rigid_cellular_body(
+        let mut body: RigidCellularBody = self.physics_world.insert_rigid_cellular_body(
             request.record.position,
             request.record.rotation,
             self.data.materials(),
@@ -235,7 +244,7 @@ impl Scene {
                 .iter()
                 .position(|body| body.id == *id)
             {
-                let body = self.rigid_cellular_bodies.swap_remove(index);
+                let body: RigidCellularBody = self.rigid_cellular_bodies.swap_remove(index);
                 self.rigid_activation_pending.remove(&body.id);
                 self.rigid_sleeping_pending.remove(&body.id);
                 self.physics_world.remove_rigid_cellular_body(&body);
@@ -255,7 +264,7 @@ impl Scene {
     /// Runs after incoming cellular/fluid/gas uploads have been submitted and
     /// before `update` can enter a fixed simulation tick.
     pub(super) fn restore_ready_rigids(&mut self) -> Result<(), io::Error> {
-        let owners: Vec<_> = self
+        let owners: Vec<TileCoordinates> = self
             .rigid_owner_loads
             .iter()
             .filter_map(|(owner, state)| {
@@ -274,15 +283,16 @@ impl Scene {
         let Some(RigidOwnerLoad::Ready(original)) = self.rigid_owner_loads.remove(&owner) else {
             return Ok(());
         };
-        let buffered = self.area_buffered();
-        let (records, _retained): (Vec<_>, Vec<_>) = original.iter().cloned().partition(|record| {
-            crate::scenes::world_aabb(
-                record.position,
-                record.rotation,
-                record.cells.iter().map(|cell| cell.local),
-            )
-            .is_some_and(|bounds| crate::scenes::intersects_area(bounds, buffered))
-        });
+        let buffered: TileArea = self.area_buffered();
+        let (records, _retained): (Vec<DormantRigidBody>, Vec<DormantRigidBody>) =
+            original.iter().cloned().partition(|record| {
+                crate::scenes::world_aabb(
+                    record.position,
+                    record.rotation,
+                    record.cells.iter().map(|cell| cell.local),
+                )
+                .is_some_and(|bounds| crate::scenes::intersects_area(bounds, buffered))
+            });
         if records.is_empty() {
             self.rigid_owner_loads
                 .insert(owner, RigidOwnerLoad::Ready(original));
@@ -309,13 +319,13 @@ impl Scene {
                 ));
             }
         }
-        let mut uploaded = Vec::with_capacity(required);
-        let mut ids = Vec::with_capacity(records.len());
+        let mut uploaded: Vec<[u32; 4]> = Vec::with_capacity(required);
+        let mut ids: Vec<u64> = Vec::with_capacity(records.len());
         for record in &records {
-            let mut cells = Vec::with_capacity(record.cells.len());
+            let mut cells: Vec<RigidCellularBodyCell> = Vec::with_capacity(record.cells.len());
             for cell in &record.cells {
-                let slot = self.rigid_cell_state_free.pop().expect("capacity checked");
-                let generation = self.rigid_cell_state_generations[slot as usize];
+                let slot: u32 = self.rigid_cell_state_free.pop().expect("capacity checked");
+                let generation: u32 = self.rigid_cell_state_generations[slot as usize];
                 cells.push(RigidCellularBodyCell {
                     local: cell.local,
                     material: cell.material,
@@ -331,7 +341,7 @@ impl Scene {
                 ]);
             }
             let (friction, restitution) = self.rigid_cellular_material_response(&cells);
-            let mut body = self.physics_world.insert_rigid_cellular_body(
+            let mut body: RigidCellularBody = self.physics_world.insert_rigid_cellular_body(
                 record.position,
                 record.rotation,
                 self.data.materials(),
