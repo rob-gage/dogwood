@@ -4,7 +4,7 @@ use super::game_application::GameApplication;
 use engine_compute::Accelerator;
 use engine_graphics::Camera;
 use engine_input::{InputTranslator, KeyboardInputState};
-use engine_physics::actors::ActorControlState;
+use engine_physics::actors::{ActorContactEvent, ActorControlState};
 use engine_physics::{
     scenes::{Scene, ScenePosition},
     tiles::TileCoordinates,
@@ -19,6 +19,9 @@ pub trait Game {
 
     /// Runs after the active scene has processed this application update.
     fn update(&mut self, _elapsed: Duration) {}
+
+    /// Receives the deduplicated actor contacts produced by the latest scene update.
+    fn actor_contacts(&mut self, _contacts: &[ActorContactEvent]) {}
 
     /// Adds ordinary game-owned UI for the next rendered frame.
     fn compose_user_interface(&mut self) {}

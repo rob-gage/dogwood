@@ -1,11 +1,14 @@
-use engine::physics::{
-    actors::{Actor, ActorContactState},
-    scenes::Scene,
-};
+use engine::physics::actors::{Actor, ActorContactEvent, ActorContactState};
+use engine::physics::scenes::Scene;
 
-pub fn collect_contacts(scene: &mut Scene, pawn: Actor, squares: &mut Vec<Actor>) -> u32 {
+pub fn collect_contacts(
+    scene: &mut Scene,
+    pawn: Actor,
+    squares: &mut Vec<Actor>,
+    contacts: &[ActorContactEvent],
+) -> u32 {
     let mut collected = 0;
-    for event in scene.drain_actor_contact_events() {
+    for event in contacts {
         if event.state != ActorContactState::Started
             || !event.first.eq(&pawn) && !event.second.eq(&pawn)
         {

@@ -29,5 +29,24 @@ with `despawn`.
 
 Actor simulation runs during the fixed scene tick. Walking uses scene collision,
 swimming uses fluid interaction when configured, and noclip integrates directly.
-There is no public generic gameplay ECS query API; keep game rules in your own
-structures and use the registry as the actor boundary.
+`Actor` is a stable Dogwood identity; the underlying ECS entity is private and
+may be reconstructed in a later streaming pass. Generic dynamic actors can be
+spawned without Rapier types:
+
+```rust
+let square = scene.actor_registry_mutable().spawn_physical_actor(
+    ActorPhysicalConfiguration {
+        collision_shape: ActorCollisionShape::Rectangle { width: 0.7, height: 0.7 },
+        color: [1.0, 0.2, 0.1, 1.0],
+        ..Default::default()
+    },
+    position,
+    SceneVelocity { x: 0.0, y: 0.0 },
+);
+```
+
+The physics world synchronizes generic actor position and velocity back to the
+registry. Logical actor contacts are delivered after `Scene::update` through
+`Game::actor_contacts(&[ActorContactEvent])`; handle `Started` events there and
+despawn through the registry. `Game::update(Duration)` runs afterward for
+ordinary gameplay updates.

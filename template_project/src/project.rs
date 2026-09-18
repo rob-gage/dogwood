@@ -108,10 +108,10 @@ impl TemplateProject {
 impl Game for TemplateProject {
     const TITLE: &'static str = "Demo Game";
 
-    fn update(&mut self, _elapsed: std::time::Duration) {
+    fn actor_contacts(&mut self, contacts: &[engine::physics::actors::ActorContactEvent]) {
         if let Some(scene) = self.scene.as_mut() {
             self.collected +=
-                crate::gameplay::collect_contacts(scene, self.pawn, &mut self.squares);
+                crate::gameplay::collect_contacts(scene, self.pawn, &mut self.squares, contacts);
         }
     }
 

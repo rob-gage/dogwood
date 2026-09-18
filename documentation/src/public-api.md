@@ -11,6 +11,11 @@ The game-facing crate is `dogwood_engine`. Its supported top-level API is:
 | `physics` | actors, scenes, materials, tiles, simulation |
 | `user_interface` | `UserInterfaceContext`, widgets |
 
+Games receive scene-produced actor contact batches through the default
+`Game::actor_contacts` callback, then receive the per-frame `Game::update`
+callback. Game-owned HUD composition belongs in
+`Game::compose_user_interface`; both callbacks are optional.
+
 For example:
 
 ```rust

@@ -234,7 +234,7 @@ impl SceneRenderer {
             self.bind_group_layout = Some(bind_group_layout);
             self.uniform_buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Scene uniforms"),
-                size: 368,
+                size: 384,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }));
@@ -293,7 +293,8 @@ impl SceneRenderer {
             for _ in graphics.actors.len().min(8)..8 {
                 uniforms.extend([0; 4]);
             }
-            let mut uniform_data: Vec<u8> = Vec::with_capacity(368);
+            uniforms.extend([0; 4]);
+            let mut uniform_data: Vec<u8> = Vec::with_capacity(384);
             for value in uniforms {
                 uniform_data.extend_from_slice(&value.to_le_bytes());
             }

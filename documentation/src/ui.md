@@ -11,7 +11,9 @@ self.ui.run(input, |ui| {
 });
 ```
 
-For reusable widgets, implement `user_interface::Widget::display`. The
+For per-frame game UI, implement `Game::compose_user_interface` and call
+`UserInterfaceContext::add_contents` with Dogwood's `UserInterface`; template
+game code does not need a direct egui dependency. For reusable widgets, implement `user_interface::Widget::display`. The
 template’s UI module is the place to keep game-specific state and widgets.
 `graphics::Camera` controls the scene view; material appearance controls cell
 rendering. Game code does not need to touch WGPU renderers.
