@@ -141,6 +141,41 @@ mod tests {
     }
 
     #[test]
+    fn deferred_editor_actions_and_viewport_are_available_after_composition() {
+        let context = UserInterfaceContext::new();
+        let play_requested: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
+        let play_for_editor: Rc<RefCell<bool>> = play_requested.clone();
+        let viewport_bounds: Rc<RefCell<Option<[u32; 4]>>> = Rc::new(RefCell::new(None));
+        let bounds_for_editor: Rc<RefCell<Option<[u32; 4]>>> = viewport_bounds.clone();
+        context.add_contents(|ui| {
+            ui.egui().label("game");
+        });
+        context.add_contents(move |ui| {
+            ui.egui().label("editor");
+            *play_for_editor.borrow_mut() = true;
+            *bounds_for_editor.borrow_mut() = Some([10, 20, 300, 180]);
+        });
+        context.run(egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(320.0, 240.0),
+            )),
+            time: Some(1.0),
+            ..Default::default()
+        });
+        let output = context.take_output();
+        assert!(output.shapes.len() >= 2);
+        assert!(*play_requested.borrow());
+        let mut is_playing = false;
+        if *play_requested.borrow() {
+            is_playing = !is_playing;
+        }
+        assert!(is_playing);
+        assert_eq!(*viewport_bounds.borrow(), Some([10, 20, 300, 180]));
+        output.drop_without_applying_deltas();
+    }
+
+    #[test]
     fn queued_contributions_do_not_advance_time_between_real_inputs() {
         let context = UserInterfaceContext::new();
         context.add_contents(|ui| {

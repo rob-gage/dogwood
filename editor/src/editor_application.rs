@@ -68,6 +68,8 @@ pub struct EditorApplication<G: Game> {
     show_tile_borders: bool,
     /// Whether boundaries between persistent chunks are visible
     show_chunk_borders: bool,
+    /// Results produced by the editor UI in the preceding shared egui frame
+    pending_editor_results: Option<editor_application_display::EditorInterfaceResults>,
 }
 
 impl<G: Game> EditorApplication<G> {
@@ -102,6 +104,7 @@ impl<G: Game> EditorApplication<G> {
             view_mode: EditorViewMode::Normal,
             show_tile_borders: false,
             show_chunk_borders: false,
+            pending_editor_results: None,
         }
     }
 
