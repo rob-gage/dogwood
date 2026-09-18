@@ -21,10 +21,14 @@ impl ScenePhysicsWorld {
             .map(|(_, collider)| collider)
     }
 
-    fn demand_dynamic_tiles(required: &mut HashSet<DynamicTileKey>, lo: Vector, hi: Vector) {
+    fn demand_dynamic_tiles(
+        required: &mut HashSet<RigidDynamicCollisionTileKey>,
+        lo: Vector,
+        hi: Vector,
+    ) {
         for y in (lo.y.floor() as i32 - 1)..=(hi.y.floor() as i32 + 1) {
             for x in (lo.x.floor() as i32 - 1)..=(hi.x.floor() as i32 + 1) {
-                required.insert(DynamicTileKey { x, y });
+                required.insert(RigidDynamicCollisionTileKey { x, y });
             }
         }
     }
@@ -72,7 +76,7 @@ impl ScenePhysicsWorld {
                 for y in y0..=y1 {
                     for x in x0..=x1 {
                         self.required_terrain_patches
-                            .insert(TerrainPatchKey { x, y });
+                            .insert(StaticTerrainCollisionPatchKey { x, y });
                     }
                 }
             }
@@ -97,7 +101,7 @@ impl ScenePhysicsWorld {
             for y in y0..=y1 {
                 for x in x0..=x1 {
                     self.required_terrain_patches
-                        .insert(TerrainPatchKey { x, y });
+                        .insert(StaticTerrainCollisionPatchKey { x, y });
                 }
             }
         }
@@ -109,11 +113,14 @@ impl ScenePhysicsWorld {
         let mut changed_dynamic = Vec::new();
         for key in dynamic_keys {
             let mask = snapshot.dynamic_tile_mask(key.x, key.y);
-            let tile = self.dynamic_tiles.entry(key).or_insert(DynamicTile {
-                collider: None,
-                mask: [0; 2],
-                last_required_tick: self.terrain_tick,
-            });
+            let tile = self
+                .dynamic_tiles
+                .entry(key)
+                .or_insert(RigidDynamicCollisionTile {
+                    collider: None,
+                    mask: [0; 2],
+                    last_required_tick: self.terrain_tick,
+                });
             tile.last_required_tick = self.terrain_tick;
             if tile.mask == mask {
                 continue;
@@ -215,11 +222,14 @@ impl ScenePhysicsWorld {
                 .terrain_patches
                 .get(&key)
                 .is_none_or(|p| p.masks != masks);
-            let patch = self.terrain_patches.entry(key).or_insert(TerrainPatch {
-                collider: None,
-                masks,
-                last_required_tick: self.terrain_tick,
-            });
+            let patch = self
+                .terrain_patches
+                .entry(key)
+                .or_insert(StaticTerrainCollisionPatch {
+                    collider: None,
+                    masks,
+                    last_required_tick: self.terrain_tick,
+                });
             patch.last_required_tick = self.terrain_tick;
             if !changed {
                 continue;

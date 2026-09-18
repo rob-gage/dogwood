@@ -1,9 +1,10 @@
 // Copyright Rob Gage 2026
 
 use super::{
-    actor_physics_proxy::ActorPhysicsProxy, dynamic_tile::DynamicTile,
-    dynamic_tile_key::DynamicTileKey, terrain_bridge_statistics::TerrainBridgeStatistics,
-    terrain_patch::TerrainPatch, terrain_patch_key::TerrainPatchKey,
+    actor_physics_proxy::ActorPhysicsProxy, dynamic_tile::RigidDynamicCollisionTile,
+    dynamic_tile_key::RigidDynamicCollisionTileKey,
+    terrain_bridge_statistics::TerrainBridgeStatistics, terrain_patch::StaticTerrainCollisionPatch,
+    terrain_patch_key::StaticTerrainCollisionPatchKey,
 };
 use crate::actors::{Actor, ActorCellularProxyState, ActorCollisionShape};
 use crate::materials::MaterialRegistry;
@@ -25,10 +26,10 @@ pub struct ScenePhysicsWorld {
     rapier: PhysicsWorld,
     /// Latest asynchronously completed canonical cellular collision snapshot
     cellular_terrain_snapshot: Option<CollisionOccupancySnapshot>,
-    terrain_patches: HashMap<TerrainPatchKey, TerrainPatch>,
-    required_terrain_patches: HashSet<TerrainPatchKey>,
-    dynamic_tiles: HashMap<DynamicTileKey, DynamicTile>,
-    required_dynamic_tiles: HashSet<DynamicTileKey>,
+    terrain_patches: HashMap<StaticTerrainCollisionPatchKey, StaticTerrainCollisionPatch>,
+    required_terrain_patches: HashSet<StaticTerrainCollisionPatchKey>,
+    dynamic_tiles: HashMap<RigidDynamicCollisionTileKey, RigidDynamicCollisionTile>,
+    required_dynamic_tiles: HashSet<RigidDynamicCollisionTileKey>,
     terrain_tick: u64,
     terrain_statistics: TerrainBridgeStatistics,
     snapshot_updated_this_tick: bool,
@@ -403,7 +404,7 @@ impl ScenePhysicsWorld {
         coordinates: [i32; 2],
     ) -> Option<ColliderHandle> {
         self.dynamic_tiles
-            .get(&DynamicTileKey {
+            .get(&RigidDynamicCollisionTileKey {
                 x: coordinates[0],
                 y: coordinates[1],
             })
