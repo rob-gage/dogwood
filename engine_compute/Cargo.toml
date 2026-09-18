@@ -11,7 +11,14 @@ description.workspace = true
 naga_oil = { workspace = true }
 pollster = { workspace = true }
 tracing = { workspace = true }
-wgpu = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+# Windows builds use only the native DirectX 12 backend.
+wgpu = { workspace = true, features = ["dx12"] }
+
+[target.'cfg(not(windows))'.dependencies]
+# Keep the existing Linux/macOS-friendly native backends out of Windows builds.
+wgpu = { workspace = true, features = ["vulkan", "gles"] }
 
 [dev-dependencies]
 tracing-appender = { workspace = true }

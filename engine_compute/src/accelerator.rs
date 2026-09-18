@@ -20,6 +20,14 @@ pub struct Accelerator {
 impl Accelerator {
     /// Creates the shared graphics and compute device used by Dogwood.
     pub fn new() -> Result<Self, Box<dyn Error>> {
+        #[cfg(target_os = "windows")]
+        let instance: wgpu::Instance = {
+            let mut descriptor: wgpu::InstanceDescriptor =
+                wgpu::InstanceDescriptor::new_without_display_handle();
+            descriptor.backends = wgpu::Backends::DX12;
+            wgpu::Instance::new(descriptor)
+        };
+        #[cfg(not(target_os = "windows"))]
         let instance: wgpu::Instance = wgpu::Instance::default();
         let adapter: wgpu::Adapter =
             pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
