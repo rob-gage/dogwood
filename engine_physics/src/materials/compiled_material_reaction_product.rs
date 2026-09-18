@@ -2,6 +2,7 @@
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
+/// Fixed-stride numeric product record used by Accelerator reaction passes.
 pub struct CompiledMaterialReactionProduct {
     /// Packed material identifier produced by the reaction.
     pub material: u32,

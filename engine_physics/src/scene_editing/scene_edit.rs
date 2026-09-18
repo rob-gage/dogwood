@@ -6,16 +6,30 @@ use crate::tiles::CellCoordinates;
 /// A requested material mutation of cells in a `Scene`
 pub enum SceneEdit {
     /// Places explicit state in cells
-    PlaceCells { cells: Vec<SceneEditCellPlacement> },
+    PlaceCells {
+        /// Explicit material and state for each target cell.
+        cells: Vec<SceneEditCellPlacement>,
+    },
     /// Creates one authoritative body-local rigid cellular body.
-    PlaceRigidBody { cells: Vec<SceneEditCellPlacement> },
+    PlaceRigidBody {
+        /// Body-local material and state for each rigid cell.
+        cells: Vec<SceneEditCellPlacement>,
+    },
     /// Erases material from cells
-    Erase { cells: Vec<CellCoordinates> },
+    Erase {
+        /// World cells whose material representation is erased.
+        cells: Vec<CellCoordinates>,
+    },
     /// Destroys every representation occupying the requested world cells.
-    DestroyCells { cells: Vec<CellCoordinates> },
+    DestroyCells {
+        /// World cells whose material representations are destroyed.
+        cells: Vec<CellCoordinates>,
+    },
     /// Adds a signed temperature delta to all representations at these cells.
     Thermal {
+        /// World cells receiving the temperature delta.
         cells: Vec<CellCoordinates>,
+        /// Signed temperature change applied to each representation.
         delta_temperature: f32,
     },
 }

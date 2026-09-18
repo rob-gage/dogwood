@@ -61,6 +61,7 @@ impl SceneEditBatch {
     pub fn destroy_cells(&mut self, cells: Vec<CellCoordinates>) {
         self.edits.push(SceneEdit::DestroyCells { cells });
     }
+    /// Adds a signed temperature change request to cells.
     pub fn thermal(&mut self, cells: Vec<CellCoordinates>, delta_temperature: f32) {
         self.edits.push(SceneEdit::Thermal {
             cells,
@@ -73,6 +74,7 @@ impl SceneEditBatch {
         self.edits.drain(..)
     }
 
+    /// Returns whether this batch contains no pending edits.
     pub const fn is_empty(&self) -> bool {
         self.edits.is_empty()
     }

@@ -60,6 +60,7 @@ impl ChunkGasCell {
         Ok(cell)
     }
 
+    /// Reads a gas record from the legacy chunk format.
     pub fn deserialize_legacy<R: io::Read>(reader: &mut R) -> Result<Self, io::Error> {
         let coordinates: CellCoordinates = CellCoordinates {
             x: crate::binary_reader::read_u32(reader)? as i32,

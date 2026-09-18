@@ -8,7 +8,9 @@ use super::TileCoordinates;
 /// One world tile unit contains eight cells.
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct CellCoordinates {
+    /// Horizontal cell coordinate in world space.
     pub x: i32,
+    /// Vertical cell coordinate in world space.
     pub y: i32,
 }
 

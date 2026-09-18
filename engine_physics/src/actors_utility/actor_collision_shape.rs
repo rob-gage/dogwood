@@ -6,11 +6,24 @@ use rapier2d::prelude::{Pose, SharedShape, Vector};
 #[derive(Copy, Clone, PartialEq)]
 pub enum ActorCollisionShape {
     /// A rotation-independent circle
-    Circle { radius: f32 },
+    Circle {
+        /// Radius in world tile units.
+        radius: f32,
+    },
     /// A capsule whose segment follows gravity-relative up
-    Capsule { radius: f32, height: f32 },
+    Capsule {
+        /// End-cap radius in world tile units.
+        radius: f32,
+        /// Total capsule height in world tile units.
+        height: f32,
+    },
     /// A rectangle whose width follows tangent and height follows up
-    Rectangle { width: f32, height: f32 },
+    Rectangle {
+        /// Tangent-axis width in world tile units.
+        width: f32,
+        /// Gravity-relative height in world tile units.
+        height: f32,
+    },
 }
 
 impl ActorCollisionShape {

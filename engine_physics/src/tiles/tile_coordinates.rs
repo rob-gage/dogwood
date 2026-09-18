@@ -5,7 +5,9 @@
 /// Positions move higher up as `y` increases, and further right as `x` increases.
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct TileCoordinates {
+    /// Horizontal tile coordinate in world space.
     pub x: i32,
+    /// Vertical tile coordinate in world space.
     pub y: i32,
 }
 

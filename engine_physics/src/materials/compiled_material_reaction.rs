@@ -9,18 +9,31 @@ use super::MaterialIdentifier;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct CompiledMaterialReaction {
+    /// Reactants consumed by this reaction, including unused slots.
     pub reactants: [CompiledMaterialReactionReactant; 2],
+    /// Products emitted by this reaction, including unused slots.
     pub products: [CompiledMaterialReactionProduct; 2],
+    /// Inclusive lower temperature bound, or the internal unbounded sentinel.
     pub minimum_temperature: f32,
+    /// Inclusive upper temperature bound, or the internal unbounded sentinel.
     pub maximum_temperature: f32,
+    /// Inclusive lower pressure bound, or the internal unbounded sentinel.
     pub minimum_pressure: f32,
+    /// Inclusive upper pressure bound, or the internal unbounded sentinel.
     pub maximum_pressure: f32,
+    /// Inclusive lower air bound, or the internal unbounded sentinel.
     pub minimum_air: f32,
+    /// Inclusive upper air bound, or the internal unbounded sentinel.
     pub maximum_air: f32,
+    /// Maximum reaction extent permitted during one fixed tick.
     pub maximum_extent_per_tick: f32,
+    /// Thermal energy emitted per unit of reaction extent.
     pub thermal_energy: f32,
+    /// Pressure output emitted per unit of reaction extent.
     pub pressure_output: f32,
+    /// Authoring priority used during reaction arbitration.
     pub priority: i32,
+    /// Stable authoring order used to break equal-priority ties.
     pub authoring_order: u32,
 }
 

@@ -56,6 +56,7 @@ impl ChunkFluidParticle {
         Ok(particle)
     }
 
+    /// Reads a fluid record from the legacy chunk format.
     pub fn deserialize_legacy<R: io::Read>(reader: &mut R) -> Result<Self, io::Error> {
         let material_identifier: MaterialIdentifier =
             MaterialIdentifier::from_u32(crate::binary_reader::read_u32(reader)?);
