@@ -1,6 +1,7 @@
 // Copyright Rob Gage 2026
 
 use super::*;
+use crate::simulation_cellulars::CellularStaticState;
 
 impl Scene {
     /// Transfers newly disconnected static components into authoritative body-local matter
@@ -24,7 +25,7 @@ impl Scene {
             self.pending_static_detachment = Some(pending);
             return Ok(());
         }
-        let states = match result {
+        let states: Vec<CellularStaticState> = match result {
             Ok(states) if states.len() == pending.indices.len() => states,
             _ => {
                 self.pending_static_detachment = Some(pending);
@@ -58,12 +59,12 @@ impl Scene {
             });
             return Ok(());
         }
-        let mut offset = 0;
-        let mut edits = SceneEditBatch::new();
+        let mut offset: usize = 0;
+        let mut edits: SceneEditBatch = SceneEditBatch::new();
         let mut rigid_insertions = Vec::new();
         for component in pending.components {
-            let end = offset + component.len();
-            let component_states = &states[offset..end];
+            let end: usize = offset + component.len();
+            let component_states: &[CellularStaticState] = &states[offset..end];
             offset = end;
             if component_states.iter().any(|state| {
                 state.amount <= 0.000001
@@ -76,16 +77,17 @@ impl Scene {
             }) {
                 continue;
             }
-            let minimum_x = component.iter().map(|cell| cell.x).min().unwrap();
-            let minimum_y = component.iter().map(|cell| cell.y).min().unwrap();
-            let mut cells = Vec::with_capacity(component.len());
-            let mut integrities = Vec::with_capacity(component.len());
-            let mut amounts = Vec::with_capacity(component.len());
-            let mut temperatures = Vec::with_capacity(component.len());
-            let mut friction = 0.0;
-            let mut restitution = 0.0;
+            let minimum_x: i32 = component.iter().map(|cell| cell.x).min().unwrap();
+            let minimum_y: i32 = component.iter().map(|cell| cell.y).min().unwrap();
+            let mut cells: Vec<RigidCellularBodyCell> = Vec::with_capacity(component.len());
+            let mut integrities: Vec<f32> = Vec::with_capacity(component.len());
+            let mut amounts: Vec<f32> = Vec::with_capacity(component.len());
+            let mut temperatures: Vec<f32> = Vec::with_capacity(component.len());
+            let mut friction: f32 = 0.0;
+            let mut restitution: f32 = 0.0;
             for (coordinates, state) in component.iter().zip(component_states) {
-                let material_identifier = MaterialIdentifier::from_u32(state.material);
+                let material_identifier: MaterialIdentifier =
+                    MaterialIdentifier::from_u32(state.material);
                 let Some(Material::CellularStatic {
                     friction: cell_friction,
                     restitution: cell_restitution,
@@ -112,7 +114,7 @@ impl Scene {
                 continue;
             }
             if cells.len() < self.rigid_component_minimum(&cells) {
-                let debris = cells
+                let debris: Vec<SceneEditCellPlacement> = cells
                     .iter()
                     .filter_map(|cell| match self.data.materials().get(cell.material) {
                         Some(Material::CellularStatic {
@@ -139,7 +141,7 @@ impl Scene {
                 edits.place_cells(debris);
                 continue;
             }
-            let divisor = cells.len() as f32;
+            let divisor: f32 = cells.len() as f32;
             edits.erase(component.clone());
             rigid_insertions.push((
                 [minimum_x as f32 / 8.0, minimum_y as f32 / 8.0],
@@ -235,23 +237,24 @@ impl Scene {
         let origin_y: i32 = snapshot.origin.y * 8;
         let width: i32 = i32::from(snapshot.width) * 8;
         let height: i32 = i32::from(snapshot.height) * 8;
-        let mut seeds = Vec::new();
+        let mut seeds: Vec<CellCoordinates> = Vec::new();
         let mut changed_bits = 0usize;
         for tile_y in 0..snapshot.height {
             for tile_x in 0..snapshot.width {
-                let tile = usize::from(tile_y) * usize::from(snapshot.width) + usize::from(tile_x);
+                let tile: usize =
+                    usize::from(tile_y) * usize::from(snapshot.width) + usize::from(tile_x);
                 for word in 0..2 {
-                    let current = snapshot.static_masks[tile][word];
-                    let previous = previous.static_masks[tile][word];
-                    let added = current & !previous;
-                    let removed = previous & !current;
+                    let current: u32 = snapshot.static_masks[tile][word];
+                    let previous: u32 = previous.static_masks[tile][word];
+                    let added: u32 = current & !previous;
+                    let removed: u32 = previous & !current;
                     changed_bits += (added | removed).count_ones() as usize;
                     for mask in [added, removed] {
-                        let mut bits = mask;
+                        let mut bits: u32 = mask;
                         while bits != 0 {
-                            let bit = bits.trailing_zeros();
-                            let local = word as i32 * 32 + bit as i32;
-                            let cell = CellCoordinates {
+                            let bit: u32 = bits.trailing_zeros();
+                            let local: i32 = word as i32 * 32 + bit as i32;
+                            let cell: CellCoordinates = CellCoordinates {
                                 x: (snapshot.origin.x + i32::from(tile_x)) * 8 + local % 8,
                                 y: (snapshot.origin.y + i32::from(tile_y)) * 8 + local / 8,
                             };
@@ -291,7 +294,7 @@ impl Scene {
         }
         seeds.sort_unstable_by_key(|cell| (cell.y, cell.x));
         seeds.dedup();
-        let visit_count = (width * height) as usize;
+        let visit_count: usize = (width * height) as usize;
         if self.static_detachment_visit_stamps.len() != visit_count {
             self.static_detachment_visit_stamps = vec![0; visit_count];
             self.static_detachment_visit_generation = 0;
@@ -300,10 +303,10 @@ impl Scene {
             .static_detachment_visit_generation
             .wrapping_add(1)
             .max(1);
-        let visit_generation = self.static_detachment_visit_generation;
+        let visit_generation: u32 = self.static_detachment_visit_generation;
         let visit_index =
             |cell: CellCoordinates| ((cell.y - origin_y) * width + cell.x - origin_x) as usize;
-        let mut candidates = Vec::new();
+        let mut candidates: Vec<Vec<CellCoordinates>> = Vec::new();
         let mut visited_cells = 0usize;
         for seed in seeds.iter().copied() {
             if snapshot.is_static_cell_occupied(seed.x, seed.y) != Some(true)
@@ -311,13 +314,13 @@ impl Scene {
             {
                 continue;
             }
-            let mut queue = vec![seed];
+            let mut queue: Vec<CellCoordinates> = vec![seed];
             self.static_detachment_visit_stamps[visit_index(seed)] = visit_generation;
-            let mut component = Vec::new();
-            let mut cursor = 0;
-            let mut anchored = false;
+            let mut component: Vec<CellCoordinates> = Vec::new();
+            let mut cursor: usize = 0;
+            let mut anchored: bool = false;
             while cursor < queue.len() {
-                let cell = queue[cursor];
+                let cell: CellCoordinates = queue[cursor];
                 cursor += 1;
                 component.push(cell);
                 visited_cells += 1;
@@ -354,7 +357,7 @@ impl Scene {
                     {
                         continue;
                     }
-                    let index = visit_index(neighbor);
+                    let index: usize = visit_index(neighbor);
                     if self.static_detachment_visit_stamps[index] != visit_generation {
                         self.static_detachment_visit_stamps[index] = visit_generation;
                         queue.push(neighbor);
@@ -375,8 +378,9 @@ impl Scene {
             candidate_cells = candidates.iter().map(Vec::len).sum::<usize>(),
             "delta-seeded static detachment"
         );
-        let newly_discovered_cells: HashSet<_> = candidates.iter().flatten().copied().collect();
-        let mut desired_components = self
+        let newly_discovered_cells: HashSet<CellCoordinates> =
+            candidates.iter().flatten().copied().collect();
+        let mut desired_components: Vec<Vec<CellCoordinates>> = self
             .pending_static_detachment
             .take()
             .map(|pending| {
@@ -398,8 +402,8 @@ impl Scene {
             self.submit_pending_static_detachment();
             return Ok(());
         }
-        let mut indices = Vec::new();
-        let mut valid_components = Vec::new();
+        let mut indices: Vec<u32> = Vec::new();
+        let mut valid_components: Vec<Vec<CellCoordinates>> = Vec::new();
         for component in desired_components {
             let Some(component_indices) = component
                 .iter()
@@ -436,18 +440,18 @@ impl Scene {
         else {
             return None;
         };
-        let seed = cell
+        let seed: u32 = cell
             .state_slot
             .wrapping_mul(747_796_405)
             .wrapping_add(2_891_336_453);
         if (seed % 10_000) as f32 >= debris_yield_rate * 10_000.0 {
             return None;
         }
-        let local = [
+        let local: [f32; 2] = [
             (cell.local[0] as f32 + 0.5) / 8.0,
             (cell.local[1] as f32 + 0.5) / 8.0,
         ];
-        let world = [
+        let world: [f32; 2] = [
             state.translation[0] + state.angle.cos() * local[0] - state.angle.sin() * local[1],
             state.translation[1] + state.angle.sin() * local[0] + state.angle.cos() * local[1],
         ];
