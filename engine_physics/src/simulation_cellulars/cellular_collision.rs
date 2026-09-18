@@ -49,7 +49,7 @@ impl CellularCollision {
         let tile_count: u32 = u32::from(width) * u32::from(height);
         let byte_size: u64 = u64::from(tile_count) * 16;
         let occupancy: AcceleratorBuffer = accelerator.allocate::<[u32; 4]>(tile_count as usize);
-        let parameters = crate::simulation::create_simulation_uniform_buffer(
+        let parameters: wgpu::Buffer = crate::simulation::create_simulation_uniform_buffer(
             device,
             "cellular collision parameters",
             64,
