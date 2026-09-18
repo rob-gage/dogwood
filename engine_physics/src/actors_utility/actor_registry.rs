@@ -231,16 +231,17 @@ impl ActorRegistry {
         };
         let movement: Option<ActorPawnMovement> = pawn.movement;
         let has_walking: bool = pawn.walking.is_some();
-        let Some(mut state): Option<bevy_ecs::world::Mut<'_, ActorPawnSwimmingState>> =
-            self.world.get_mut::<ActorPawnSwimmingState>(entity)
-        else {
-            return false;
-        };
-        state.immersion = sample[0].clamp(0.0, 1.0);
-        state.fluid_velocity = [sample[1], sample[2]];
-        state.fluid_density = sample[3].max(0.0);
-        state.fluid_viscosity = sample[4].max(0.0);
-        drop(state);
+        {
+            let Some(mut state): Option<bevy_ecs::world::Mut<'_, ActorPawnSwimmingState>> =
+                self.world.get_mut::<ActorPawnSwimmingState>(entity)
+            else {
+                return false;
+            };
+            state.immersion = sample[0].clamp(0.0, 1.0);
+            state.fluid_velocity = [sample[1], sample[2]];
+            state.fluid_density = sample[3].max(0.0);
+            state.fluid_viscosity = sample[4].max(0.0);
+        }
         let movement: Option<ActorPawnMovement> = match movement {
             Some(ActorPawnMovement::Walking) if sample[0] >= configuration.enter_immersion => {
                 Some(ActorPawnMovement::Swimming)
