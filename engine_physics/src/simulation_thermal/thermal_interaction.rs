@@ -1,3 +1,5 @@
+// Copyright Rob Gage 2026
+
 use crate::materials::MaterialRegistry;
 use engine_compute::{Accelerator, AcceleratorBuffer};
 
@@ -24,7 +26,7 @@ impl ThermalInteraction {
         ring_offset: [u32; 2],
         has_rigid: bool,
     ) {
-        let values = [
+        let parameter_values: [u32; 6] = [
             buffered_origin[0] as u32,
             buffered_origin[1] as u32,
             buffered_tiles[0],
@@ -35,12 +37,13 @@ impl ThermalInteraction {
         accelerator.wgpu_queue().write_buffer(
             &self.parameters,
             32,
-            &values
+            &parameter_values
                 .iter()
-                .flat_map(|v| v.to_le_bytes())
+                .flat_map(|value| value.to_le_bytes())
                 .collect::<Vec<_>>(),
         );
-        let mut pass = accelerator.begin_compute_pass(encoder, "thermal interaction");
+        let mut pass: wgpu::ComputePass<'_> =
+            accelerator.begin_compute_pass(encoder, "thermal interaction");
         pass.set_bind_group(0, &self.bind_group, &[]);
         if has_rigid {
             pass.set_pipeline(&self.clear_pipeline);
@@ -76,15 +79,16 @@ impl ThermalInteraction {
         empty_space_conductivity: f32,
         empty_space_capacity: f32,
     ) -> Self {
-        let device = accelerator.wgpu_device();
-        let interaction = accelerator.allocate::<[f32; 4]>(cell_count as usize);
-        let rigid_raster_claim_counts = accelerator.allocate::<u32>(rigid_capacity as usize);
-        let parameters = crate::simulation::create_simulation_uniform_buffer(
+        let device: &wgpu::Device = accelerator.wgpu_device();
+        let interaction: AcceleratorBuffer = accelerator.allocate::<[f32; 4]>(cell_count as usize);
+        let rigid_raster_claim_counts: AcceleratorBuffer =
+            accelerator.allocate::<u32>(rigid_capacity as usize);
+        let parameters: wgpu::Buffer = crate::simulation::create_simulation_uniform_buffer(
             device,
             "thermal interaction parameters",
             64,
         );
-        let values = [
+        let parameter_values: [u32; 7] = [
             ambient_temperature.to_bits(),
             empty_space_conductivity.to_bits(),
             empty_space_capacity.to_bits(),
@@ -96,24 +100,27 @@ impl ThermalInteraction {
         accelerator.wgpu_queue().write_buffer(
             &parameters,
             0,
-            &values
+            &parameter_values
                 .iter()
                 .flat_map(|value| value.to_le_bytes())
                 .collect::<Vec<_>>(),
         );
         let storage = crate::simulation::storage_bind_group_layout_entry;
-        let mut entries: Vec<_> = (0..14).map(|b| storage(b, b != 13)).collect();
+        let mut entries: Vec<wgpu::BindGroupLayoutEntry> = (0u32..14)
+            .map(|binding: u32| storage(binding, binding != 13))
+            .collect();
         entries[12] = storage(12, true);
         entries[13] = storage(13, false);
         entries.push(crate::simulation::uniform_bind_group_layout_entry(14));
         entries.push(crate::simulation::uniform_bind_group_layout_entry(15));
         entries.push(storage(16, false));
         entries.push(storage(17, false));
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("thermal interaction"),
-            entries: &entries,
-        });
-        let buffers = [
+        let layout: wgpu::BindGroupLayout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("thermal interaction"),
+                entries: &entries,
+            });
+        let buffers: [&AcceleratorBuffer; 14] = [
             cellular_materials,
             cellular_amounts,
             cellular_temperatures,
@@ -129,12 +136,12 @@ impl ThermalInteraction {
             fluid_coverage,
             &interaction,
         ];
-        let mut bind_entries: Vec<_> = buffers
+        let mut bind_entries: Vec<wgpu::BindGroupEntry<'_>> = buffers
             .iter()
             .enumerate()
-            .map(|(i, b)| wgpu::BindGroupEntry {
-                binding: i as u32,
-                resource: b.wgpu_buffer().as_entire_binding(),
+            .map(|(index, buffer)| wgpu::BindGroupEntry {
+                binding: index as u32,
+                resource: buffer.wgpu_buffer().as_entire_binding(),
             })
             .collect();
         bind_entries.push(wgpu::BindGroupEntry {
@@ -153,23 +160,24 @@ impl ThermalInteraction {
             binding: 15,
             resource: thermal_parameters.as_entire_binding(),
         });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("thermal interaction"),
             layout: &layout,
             entries: &bind_entries,
         });
-        let shader = crate::simulation::create_simulation_shader_module(
+        let shader: wgpu::ShaderModule = crate::simulation::create_simulation_shader_module(
             device,
             "thermal interaction shader",
             include_str!("thermal_interaction.wgsl"),
             "engine_physics/src/simulation/thermal_interaction.wgsl",
         );
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("thermal interaction"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
-        let pipeline = |entry| {
+        let pipeline_layout: wgpu::PipelineLayout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("thermal interaction"),
+                bind_group_layouts: &[Some(&layout)],
+                immediate_size: 0,
+            });
+        let pipeline = |entry: &'static str| {
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
                 layout: Some(&pipeline_layout),
@@ -201,7 +209,7 @@ impl ThermalInteraction {
         ring_offset: [u32; 2],
         has_rigid: bool,
     ) {
-        let values = [
+        let parameter_values: [u32; 6] = [
             buffered_origin[0] as u32,
             buffered_origin[1] as u32,
             buffered_tiles[0],
@@ -212,18 +220,19 @@ impl ThermalInteraction {
         accelerator.wgpu_queue().write_buffer(
             &self.parameters,
             32,
-            &values
+            &parameter_values
                 .iter()
                 .flat_map(|value| value.to_le_bytes())
                 .collect::<Vec<_>>(),
         );
-        let mut encoder =
+        let mut encoder: wgpu::CommandEncoder =
             accelerator
                 .wgpu_device()
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("thermal interaction"),
                 });
-        let mut pass = accelerator.begin_compute_pass(&mut encoder, "gather thermal interaction");
+        let mut pass: wgpu::ComputePass<'_> =
+            accelerator.begin_compute_pass(&mut encoder, "gather thermal interaction");
         pass.set_bind_group(0, &self.bind_group, &[]);
         if has_rigid {
             pass.set_pipeline(&self.clear_pipeline);
