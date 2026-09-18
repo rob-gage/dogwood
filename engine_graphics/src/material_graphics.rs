@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-use super::MaterialAppearance;
+use super::{MaterialAppearance, MaterialOptics};
 use crate::engine_compute::{Accelerator, AcceleratorBuffer};
 use std::mem::size_of;
 
@@ -23,14 +23,48 @@ pub struct MaterialGraphics {
     pub gas_properties: AcceleratorBuffer,
 }
 
+macro_rules! material_graphics_form {
+    ($name:ident) => {
+        #[derive(Copy, Clone)]
+        pub struct $name {
+            pub appearance: MaterialAppearance,
+            pub optics: MaterialOptics,
+        }
+
+        impl From<MaterialAppearance> for $name {
+            fn from(appearance: MaterialAppearance) -> Self {
+                Self {
+                    optics: appearance.optics(),
+                    appearance,
+                }
+            }
+        }
+
+        impl MaterialGraphicsProperty for $name {
+            fn appearance(self) -> MaterialAppearance {
+                self.appearance
+            }
+        }
+    };
+}
+
+trait MaterialGraphicsProperty: Copy {
+    fn appearance(self) -> MaterialAppearance;
+}
+
+material_graphics_form!(MaterialGraphicsCellularStatic);
+material_graphics_form!(MaterialGraphicsCellularDynamic);
+material_graphics_form!(MaterialGraphicsFluid);
+material_graphics_form!(MaterialGraphicsGas);
+
 impl MaterialGraphics {
     /// Creates graphics properties for every material form
     pub fn new(
         accelerator: &Accelerator,
-        cellular_statics: Vec<MaterialAppearance>,
-        cellular_dynamics: Vec<MaterialAppearance>,
-        fluids: Vec<MaterialAppearance>,
-        gases: Vec<MaterialAppearance>,
+        cellular_statics: Vec<MaterialGraphicsCellularStatic>,
+        cellular_dynamics: Vec<MaterialGraphicsCellularDynamic>,
+        fluids: Vec<MaterialGraphicsFluid>,
+        gases: Vec<MaterialGraphicsGas>,
         fluid_properties: Vec<[f32; 8]>,
         gas_properties: Vec<[f32; 8]>,
     ) -> Self {
@@ -47,14 +81,13 @@ impl MaterialGraphics {
     /// Creates an Accelerator buffer containing graphics properties for one material form
     fn create_buffer(
         accelerator: &Accelerator,
-        properties: Vec<MaterialAppearance>,
+        properties: Vec<impl MaterialGraphicsProperty>,
     ) -> AcceleratorBuffer {
         let data: Vec<u32> = properties
             .into_iter()
-            .flat_map(MaterialAppearance::accelerator_data)
+            .flat_map(|property| property.appearance().accelerator_data())
             .collect();
-        // keep empty material form buffers large enough for one WGSL element
-        let buffer: AcceleratorBuffer = accelerator.allocate::<u32>(data.len().max(16));
+        let buffer: AcceleratorBuffer = accelerator.allocate::<u32>(data.len().max(24));
         if !data.is_empty() {
             let mut bytes: Vec<u8> = Vec::with_capacity(data.len() * size_of::<u32>());
             for value in data {

@@ -1,7 +1,10 @@
 // Copyright Rob Gage 2026
 
 use engine_compute::Accelerator;
-use engine_graphics::MaterialGraphics;
+use engine_graphics::{
+    MaterialGraphics, MaterialGraphicsCellularDynamic, MaterialGraphicsCellularStatic,
+    MaterialGraphicsFluid, MaterialGraphicsGas,
+};
 
 use super::Material;
 use super::MaterialRegistry;
@@ -13,19 +16,19 @@ impl MaterialRegistry {
             accelerator,
             self.cellular_statics
                 .iter()
-                .map(|material| *material.appearance())
+                .map(|material| MaterialGraphicsCellularStatic::from(*material.appearance()))
                 .collect(),
             self.cellular_dynamics
                 .iter()
-                .map(|material| *material.appearance())
+                .map(|material| MaterialGraphicsCellularDynamic::from(*material.appearance()))
                 .collect(),
             self.fluids
                 .iter()
-                .map(|material| *material.appearance())
+                .map(|material| MaterialGraphicsFluid::from(*material.appearance()))
                 .collect(),
             self.gases
                 .iter()
-                .map(|material| *material.appearance())
+                .map(|material| MaterialGraphicsGas::from(*material.appearance()))
                 .collect(),
             self.fluids
                 .iter()
@@ -59,14 +62,13 @@ impl MaterialRegistry {
                     Material::Gas {
                         density,
                         diffusivity,
-                        extinction,
                         dissipation,
                         compressibility,
                         ..
                     } => [
                         *density,
                         *diffusivity,
-                        *extinction,
+                        0.0,
                         *dissipation,
                         *compressibility,
                         0.0,

@@ -81,7 +81,8 @@ pub enum Material {
         density: f32,
         /// Species mixing beyond semi-Lagrangian numerical diffusion
         diffusivity: f32,
-        /// Optical depth contributed by unit concentration
+        /// Legacy serialized optical depth; rendering reads `graphics` optics.
+        /// Kept for backward-compatible material files and not passed to simulation.
         extinction: f32,
         /// Exponential concentration decay rate per second; zero preserves the species
         dissipation: f32,
