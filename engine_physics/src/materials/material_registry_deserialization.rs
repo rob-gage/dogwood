@@ -156,16 +156,16 @@ impl MaterialRegistry {
         self.set_compiled_metadata(metadata, tags, Vec::new())
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         if version == 2 {
-            let member_count = Self::read_u32(reader)? as usize;
+            let member_count: usize = Self::read_u32(reader)? as usize;
             if member_count > self.material_count() as usize * 1024 {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "Too many reaction selector members",
                 ));
             }
-            let mut members = Vec::with_capacity(member_count);
+            let mut members: Vec<MaterialIdentifier> = Vec::with_capacity(member_count);
             for _ in 0..member_count {
-                let id = MaterialIdentifier::from_u32(Self::read_u32(reader)?);
+                let id: MaterialIdentifier = MaterialIdentifier::from_u32(Self::read_u32(reader)?);
                 if self.get(id).is_none() {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
@@ -174,33 +174,44 @@ impl MaterialRegistry {
                 }
                 members.push(id);
             }
-            let reaction_count = Self::read_u32(reader)? as usize;
+            let reaction_count: usize = Self::read_u32(reader)? as usize;
             if reaction_count > 65536 {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "Too many reactions",
                 ));
             }
-            let mut reactions = Vec::with_capacity(reaction_count);
+            let mut reactions: Vec<CompiledMaterialReaction> = Vec::with_capacity(reaction_count);
             for _ in 0..reaction_count {
-                let mut words = [0u32; CompiledMaterialReaction::WORD_COUNT];
+                let mut words: [u32; CompiledMaterialReaction::WORD_COUNT] =
+                    [0u32; CompiledMaterialReaction::WORD_COUNT];
                 for word in &mut words {
                     *word = Self::read_u32(reader)?;
                 }
-                let reactant =
-                    |offset, count, amount_bits, present| CompiledMaterialReactionReactant {
+                let reactant = |offset: u32,
+                                count: u32,
+                                amount_bits: u32,
+                                present: u32|
+                 -> CompiledMaterialReactionReactant {
+                    CompiledMaterialReactionReactant {
                         member_offset: offset,
                         member_count: count,
                         amount_bits,
                         present,
-                    };
-                let product = |material, amount_bits, present| CompiledMaterialReactionProduct {
-                    material,
-                    amount_bits,
-                    present,
-                    _padding: 0,
+                    }
                 };
-                let rule = CompiledMaterialReaction {
+                let product = |material: u32,
+                               amount_bits: u32,
+                               present: u32|
+                 -> CompiledMaterialReactionProduct {
+                    CompiledMaterialReactionProduct {
+                        material,
+                        amount_bits,
+                        present,
+                        _padding: 0,
+                    }
+                };
+                let rule: CompiledMaterialReaction = CompiledMaterialReaction {
                     reactants: [
                         reactant(words[0], words[1], words[2], words[3]),
                         reactant(words[4], words[5], words[6], words[7]),
