@@ -52,8 +52,8 @@ impl Chunk {
     pub fn deserialize<R: io::Read>(reader: &mut R) -> Result<Chunk, io::Error> {
         let mut magic: [u8; 8] = [0; 8];
         reader.read_exact(&mut magic)?;
-        let legacy = magic == Self::LEGACY_MAGIC;
-        let v2 = magic == Self::V2_MAGIC;
+        let legacy: bool = magic == Self::LEGACY_MAGIC;
+        let v2: bool = magic == Self::V2_MAGIC;
         if !legacy && !v2 && magic != Self::CURRENT_MAGIC {
             return Err(io::ErrorKind::InvalidData.into());
         }
@@ -203,9 +203,9 @@ impl Chunk {
 
     /// Returns mutable tile data when the tile lies within this chunk.
     pub(crate) fn get_tile_mut(&mut self, position: TileCoordinates) -> Result<&mut TileData, ()> {
-        let x = usize::try_from(position.x.checked_sub(self.tile_coordinates.x).ok_or(())?)
+        let x: usize = usize::try_from(position.x.checked_sub(self.tile_coordinates.x).ok_or(())?)
             .map_err(|_| ())?;
-        let y = usize::try_from(position.y.checked_sub(self.tile_coordinates.y).ok_or(())?)
+        let y: usize = usize::try_from(position.y.checked_sub(self.tile_coordinates.y).ok_or(())?)
             .map_err(|_| ())?;
         if x >= usize::from(Self::WIDTH) || y >= usize::from(Self::WIDTH) {
             return Err(());
