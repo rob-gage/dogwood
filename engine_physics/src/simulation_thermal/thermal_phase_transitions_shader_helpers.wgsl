@@ -291,7 +291,7 @@ fn transition(
     }
     let position = (vec2<f32>(world) + vec2<f32>(0.5)) / CELLS_PER_TILE_FLOAT;
     requests[n] =
-        Request(
+        ThermalPhaseTransitionRequest(
             cell,
             kind,
             locator,
