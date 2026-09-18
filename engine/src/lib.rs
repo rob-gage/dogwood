@@ -15,14 +15,23 @@ pub mod diagnostics;
 
 pub use games::{Game, GameApplication};
 
+/// Audio integration surface reserved by the engine facade.
 pub mod audio {}
+
+/// Shared graphics and compute accelerator resources.
 pub mod compute {
     pub use engine_compute::Accelerator;
 }
+
+/// Input integration surface reserved by the engine facade.
 pub mod input {}
+
+/// Rendering-facing camera, color, and material appearance types.
 pub mod graphics {
     pub use engine_graphics::{Camera, Color, MaterialAppearance};
 }
+
+/// Physics-facing scene, material, tile, actor, and simulation modules.
 pub mod physics {
     pub use engine_physics::actors;
     pub use engine_physics::chunks;
@@ -31,6 +40,8 @@ pub mod physics {
     pub use engine_physics::simulation;
     pub use engine_physics::tiles;
 }
+
+/// User-interface widgets and context types.
 pub mod user_interface {
     pub use engine_user_interface::UserInterface;
     pub use engine_user_interface::UserInterfaceContext;
