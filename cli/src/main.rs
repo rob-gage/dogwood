@@ -21,7 +21,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 None => {
                     print!("Project name: ");
                     io::stdout().flush()?;
-                    let mut project_name = String::new();
+                    let mut project_name: String = String::new();
                     io::stdin().read_line(&mut project_name)?;
                     project_name.trim().to_owned()
                 }
