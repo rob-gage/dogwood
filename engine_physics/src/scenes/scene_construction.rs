@@ -64,19 +64,21 @@ impl Scene {
             accelerator.allocate::<u32>(buffered_cell_count);
         let cellular_integrities: AcceleratorBuffer =
             accelerator.allocate::<f32>(buffered_cell_count);
-        let cellular_amounts = accelerator.allocate::<f32>(buffered_cell_count);
-        let cellular_temperatures = accelerator.allocate::<f32>(buffered_cell_count);
+        let cellular_amounts: AcceleratorBuffer = accelerator.allocate::<f32>(buffered_cell_count);
+        let cellular_temperatures: AcceleratorBuffer =
+            accelerator.allocate::<f32>(buffered_cell_count);
         let rigid_cell_integrities: AcceleratorBuffer =
             accelerator.allocate::<f32>(buffered_cell_count);
         let rigid_cell_amounts: AcceleratorBuffer =
             accelerator.allocate::<f32>(buffered_cell_count);
         let rigid_cell_temperatures: AcceleratorBuffer =
             accelerator.allocate::<f32>(buffered_cell_count);
-        let cellular_physics_body_proxy =
+        let cellular_physics_body_proxy: CellularPhysicsBodyProxy =
             CellularPhysicsBodyProxy::new(accelerator.as_ref(), buffered_cell_count);
-        let material_table = MaterialTable::new(accelerator.as_ref(), data.materials());
+        let material_table: MaterialTable =
+            MaterialTable::new(accelerator.as_ref(), data.materials());
         // one-tick chemical energy source consumed by unified thermal gathering.
-        let reaction_energy = accelerator.allocate::<f32>(buffered_cell_count);
+        let reaction_energy: AcceleratorBuffer = accelerator.allocate::<f32>(buffered_cell_count);
         let fluids: Fluids = Fluids::new(
             accelerator.as_ref(),
             &cellular_material_identifiers,
@@ -98,7 +100,7 @@ impl Scene {
             buffered_cell_count,
             simulation.ambient_temperature,
         );
-        let ambient_gas_temperature =
+        let ambient_gas_temperature: Vec<u8> =
             vec![simulation.ambient_temperature.to_bits().to_le_bytes(); buffered_cell_count]
                 .into_iter()
                 .flatten()
@@ -108,7 +110,7 @@ impl Scene {
             0,
             &ambient_gas_temperature,
         );
-        let thermal_interaction = ThermalInteraction::new(
+        let thermal_interaction: ThermalInteraction = ThermalInteraction::new(
             accelerator.as_ref(),
             data.materials(),
             &cellular_material_identifiers,
@@ -133,12 +135,12 @@ impl Scene {
             simulation.empty_space_thermal_conductivity,
             simulation.empty_space_heat_capacity,
         );
-        let thermal_conduction = ThermalConduction::new(
+        let thermal_conduction: ThermalConduction = ThermalConduction::new(
             accelerator.as_ref(),
             thermal_interaction.interaction_buffer(),
             buffered_cell_count as u32,
         );
-        let thermal_scatter = ThermalScatter::new(
+        let thermal_scatter: ThermalScatter = ThermalScatter::new(
             accelerator.as_ref(),
             thermal_conduction.solved_buffer(),
             &cellular_material_identifiers,
@@ -170,7 +172,7 @@ impl Scene {
             simulation.width + buffer_size,
             simulation.height + buffer_size,
         );
-        let material_mutations = MaterialMutations::new(
+        let material_mutations: MaterialMutations = MaterialMutations::new(
             accelerator.as_ref(),
             data.materials(),
             &cellular_material_identifiers,
@@ -192,30 +194,31 @@ impl Scene {
             buffered_cell_count,
             gases.gas_count(),
         );
-        let rigid_cell_state_upload = RigidCellStateUpload::new(
+        let rigid_cell_state_upload: RigidCellStateUpload = RigidCellStateUpload::new(
             accelerator.as_ref(),
             &rigid_cell_integrities,
             &rigid_cell_amounts,
             &rigid_cell_temperatures,
             buffered_cell_count,
         );
-        let rigid_cell_state_gather = RigidCellStateGather::new(
+        let rigid_cell_state_gather: RigidCellStateGather = RigidCellStateGather::new(
             accelerator.as_ref(),
             &rigid_cell_integrities,
             &rigid_cell_amounts,
             &rigid_cell_temperatures,
             buffered_cell_count,
         );
-        let cellular_static_state_gather = CellularStaticStateGather::new(
-            accelerator.as_ref(),
-            &cellular_material_identifiers,
-            &cellular_appearances,
-            &cellular_integrities,
-            &cellular_amounts,
-            &cellular_temperatures,
-            buffered_cell_count,
-        );
-        let rigid_dormancy_readbacks = (0..RIGID_DORMANCY_READBACK_SLOTS)
+        let cellular_static_state_gather: CellularStaticStateGather =
+            CellularStaticStateGather::new(
+                accelerator.as_ref(),
+                &cellular_material_identifiers,
+                &cellular_appearances,
+                &cellular_integrities,
+                &cellular_amounts,
+                &cellular_temperatures,
+                buffered_cell_count,
+            );
+        let rigid_dormancy_readbacks: Vec<wgpu::Buffer> = (0..RIGID_DORMANCY_READBACK_SLOTS)
             .map(|index| {
                 accelerator
                     .wgpu_device()
@@ -227,7 +230,7 @@ impl Scene {
                     })
             })
             .collect();
-        let thermal_phase_transitions = ThermalPhaseTransitions::new(
+        let thermal_phase_transitions: ThermalPhaseTransitions = ThermalPhaseTransitions::new(
             accelerator.as_ref(),
             &cellular_material_identifiers,
             &cellular_amounts,
@@ -250,7 +253,7 @@ impl Scene {
             fluids.free_indices_buffer(),
             fluids.free_count_buffer(),
         );
-        let thermal_edits = ThermalEdits::new(
+        let thermal_edits: ThermalEdits = ThermalEdits::new(
             accelerator.as_ref(),
             &cellular_material_identifiers,
             &cellular_temperatures,
@@ -288,7 +291,7 @@ impl Scene {
             gases.gas_count(),
             buffered_cell_count,
         );
-        let material_reactions = MaterialReactions::new(
+        let material_reactions: MaterialReactions = MaterialReactions::new(
             accelerator.as_ref(),
             &material_table,
             &cellular_material_identifiers,
