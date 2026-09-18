@@ -40,8 +40,8 @@ struct Uniforms {
     actor_count: u32,
     overlay_count: u32,
     _padding_end: vec2<u32>,
+    lighting_origin: vec2<i32>,
     lighting_size: vec2<u32>,
-    _lighting_padding: vec2<u32>,
 }
 
 struct SceneActorGraphics {
@@ -355,8 +355,8 @@ fn sample_scene_illumination(position: vec2<f32>) -> vec3<f32> {
     if any(uniforms.lighting_size == vec2<u32>(0u)) {
         return vec3<f32>(0.0);
     }
-    let coordinate: vec2<f32> = (position - uniforms.viewport_origin) *
-        vec2<f32>(uniforms.lighting_size) / uniforms.window_size;
+    let cell_position = position * CELLS_PER_TILE_FLOAT - vec2<f32>(uniforms.lighting_origin);
+    let coordinate: vec2<f32> = cell_position - vec2<f32>(0.5);
     let base: vec2<i32> = vec2<i32>(floor(coordinate));
     let fraction: vec2<f32> = fract(coordinate);
     let maximum: vec2<i32> = vec2<i32>(uniforms.lighting_size) - vec2<i32>(1);

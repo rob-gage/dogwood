@@ -8,10 +8,17 @@ const CASCADE_COUNT: usize = 5;
 const PROBE_SPACING: u32 = 4;
 const DIRECTION_COUNT: u32 = 4;
 const INTERVAL_LENGTH: f32 = 8.0;
+const LIGHTING_MARGIN_CELLS: u32 = 16;
+
+#[derive(Copy, Clone)]
+pub(super) struct LightingDomain {
+    pub(super) world_cell_origin: [i32; 2],
+    pub(super) size_cells: [u32; 2],
+}
 
 /// Persistent optical resolve and Radiance Cascades resources for one scene view.
 pub(super) struct SceneRadiancePass {
-    size: Option<[u32; 2]>,
+    domain: Option<LightingDomain>,
     optical: Option<(wgpu::Texture, wgpu::TextureView)>,
     optical_pipeline: Option<wgpu::RenderPipeline>,
     optical_layout: Option<wgpu::BindGroupLayout>,
@@ -34,7 +41,7 @@ pub(super) struct SceneRadiancePass {
 impl SceneRadiancePass {
     pub(super) const fn new() -> Self {
         Self {
-            size: None,
+            domain: None,
             optical: None,
             optical_pipeline: None,
             optical_layout: None,
@@ -55,8 +62,8 @@ impl SceneRadiancePass {
         }
     }
 
-    pub(super) fn size(&self) -> Option<[u32; 2]> {
-        self.size
+    pub(super) fn domain(&self) -> Option<LightingDomain> {
+        self.domain
     }
 
     pub(super) fn illumination(&self) -> Option<&wgpu::TextureView> {
@@ -67,13 +74,14 @@ impl SceneRadiancePass {
         &mut self,
         accelerator: &Accelerator,
         scene: Option<&Scene>,
-        size: [u32; 2],
         camera_position: [f32; 2],
         camera_size: [f32; 2],
         command_encoder: &mut wgpu::CommandEncoder,
     ) {
         self.initialize(accelerator);
-        self.resize(accelerator, size);
+        let domain = Self::domain_for(camera_position, camera_size);
+        self.resize(accelerator, domain.size_cells);
+        self.domain = Some(domain);
         let (
             Some(optical_pipeline),
             Some(optical_layout),
@@ -92,23 +100,19 @@ impl SceneRadiancePass {
             return;
         };
         let graphics: SceneGraphics<'_> = scene.graphics();
-        let uniforms: [u32; 16] = [
-            camera_position[0].to_bits(),
-            camera_position[1].to_bits(),
-            (size[0] as f32).to_bits(),
-            (size[1] as f32).to_bits(),
-            camera_size[0].to_bits(),
-            camera_size[1].to_bits(),
-            0,
-            0,
+        let uniforms: [u32; 12] = [
             graphics.buffered_origin[0] as u32,
             graphics.buffered_origin[1] as u32,
             graphics.buffered_tile_size[0],
             graphics.buffered_tile_size[1],
             graphics.ring_offset[0],
             graphics.ring_offset[1],
+            graphics.gas_count,
             0,
-            0,
+            domain.world_cell_origin[0] as u32,
+            domain.world_cell_origin[1] as u32,
+            domain.size_cells[0],
+            domain.size_cells[1],
         ];
         accelerator.wgpu_queue().write_buffer(
             optical_uniform,
@@ -162,8 +166,15 @@ impl SceneRadiancePass {
         });
         render_pass.set_pipeline(optical_pipeline);
         render_pass.set_bind_group(0, &optical_group, &[]);
-        render_pass.set_viewport(0.0, 0.0, size[0] as f32, size[1] as f32, 0.0, 1.0);
-        render_pass.set_scissor_rect(0, 0, size[0], size[1]);
+        render_pass.set_viewport(
+            0.0,
+            0.0,
+            domain.size_cells[0] as f32,
+            domain.size_cells[1] as f32,
+            0.0,
+            1.0,
+        );
+        render_pass.set_scissor_rect(0, 0, domain.size_cells[0], domain.size_cells[1]);
         render_pass.draw(0..3, 0..1);
         drop(render_pass);
 
@@ -191,7 +202,11 @@ impl SceneRadiancePass {
         compute_pass.set_pipeline(integrate);
         if let Some(group) = self.integrate_groups.first() {
             compute_pass.set_bind_group(0, group, &[]);
-            compute_pass.dispatch_workgroups((size[0] * size[1]).div_ceil(64), 1, 1);
+            compute_pass.dispatch_workgroups(
+                (domain.size_cells[0] * domain.size_cells[1]).div_ceil(64),
+                1,
+                1,
+            );
         }
     }
 
@@ -328,7 +343,7 @@ impl SceneRadiancePass {
     }
 
     fn resize(&mut self, accelerator: &Accelerator, size: [u32; 2]) {
-        if self.size == Some(size) {
+        if self.domain.map(|domain| domain.size_cells) == Some(size) {
             return;
         }
         let device = accelerator.wgpu_device();
@@ -459,7 +474,25 @@ impl SceneRadiancePass {
                     },
                 ],
             }));
-        self.size = Some(size);
+    }
+
+    fn domain_for(camera_position: [f32; 2], camera_size: [f32; 2]) -> LightingDomain {
+        let visible_min = [
+            (camera_position[0] - camera_size[0] * 0.5)
+                .mul_add(8.0, -(LIGHTING_MARGIN_CELLS as f32))
+                .floor() as i32,
+            (camera_position[1] - camera_size[1] * 0.5)
+                .mul_add(8.0, -(LIGHTING_MARGIN_CELLS as f32))
+                .floor() as i32,
+        ];
+        let visible_size = [
+            (camera_size[0] * 8.0).ceil() as u32 + LIGHTING_MARGIN_CELLS * 2,
+            (camera_size[1] * 8.0).ceil() as u32 + LIGHTING_MARGIN_CELLS * 2,
+        ];
+        LightingDomain {
+            world_cell_origin: visible_min,
+            size_cells: visible_size,
+        }
     }
 
     fn config(

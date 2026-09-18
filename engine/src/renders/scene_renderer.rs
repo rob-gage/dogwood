@@ -59,14 +59,9 @@ impl SceneRenderer {
         command_encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
     ) {
-        let lighting_size: [u32; 2] = [
-            viewport[2].max(1).div_ceil(2),
-            viewport[3].max(1).div_ceil(2),
-        ];
         self.radiance_pass.compute(
             accelerator,
             scene,
-            lighting_size,
             camera_position,
             camera_size,
             command_encoder,
@@ -339,10 +334,20 @@ impl SceneRenderer {
                         overlays.len() as u32,
                         0,
                         0,
-                        self.radiance_pass.size().unwrap_or([0; 2])[0],
-                        self.radiance_pass.size().unwrap_or([0; 2])[1],
-                        0,
-                        0,
+                        self.radiance_pass
+                            .domain()
+                            .map_or(0, |domain| domain.world_cell_origin[0])
+                            as u32,
+                        self.radiance_pass
+                            .domain()
+                            .map_or(0, |domain| domain.world_cell_origin[1])
+                            as u32,
+                        self.radiance_pass
+                            .domain()
+                            .map_or([0; 2], |domain| domain.size_cells)[0],
+                        self.radiance_pass
+                            .domain()
+                            .map_or([0; 2], |domain| domain.size_cells)[1],
                     ];
                     let required_actor_capacity: usize = graphics.actors.len().max(1) * 32;
                     if self.actor_buffer_capacity < required_actor_capacity {

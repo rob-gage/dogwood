@@ -112,8 +112,8 @@ Gas materials are species in a shared Eulerian flow field:
 
 - `density` is the species density relative to the implicit ambient atmosphere.
 - `diffusivity` controls mixing beyond numerical advection.
-- `graphics.with_extinction(...)` controls optical depth in rendering; gas
-  concentration scales that extinction. The legacy gas field remains only for
+- `graphics.with_occlusion(...)` controls the fraction of light blocked by one
+  full cell; gas concentration scales that occlusion. The legacy gas field remains only for
   loading older material files and is not a simulation parameter.
 - `dissipation` is exponential concentration decay per second; zero preserves
   the species.
@@ -125,9 +125,9 @@ fields. Reactions and phase transitions can create or consume a species.
 ## Appearance And Identifiers
 
 `MaterialAppearance` supplies base color, variation, color influence, radiance,
-and first-pass optical extinction. Set extinction with
-`with_extinction(0.0)` for transparent material, a small value for glass, and
-a large value for opaque stone. `with_radiance` supplies emitted light; lava
+and first-pass optical occlusion. Set occlusion with
+`with_occlusion(0.0)` for transparent material, a small value for glass, and
+a larger value for opaque stone. `with_radiance` supplies emitted light; lava
 and fire use it to illuminate neighboring cells. Cell appearance variation is
 stored separately from the identifier, so the same material can have different
 visual instances. The renderer applies these properties to cellular, rigid-body

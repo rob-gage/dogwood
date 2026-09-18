@@ -6,8 +6,8 @@ use super::MaterialRegistry;
 impl MaterialRegistry {
     /// Returns whether all simulation properties of a material are valid
     pub(super) fn material_is_valid(material: &Material) -> bool {
-        let extinction: f32 = material.appearance().optics().extinction;
-        if !extinction.is_finite() || extinction < 0.0 {
+        let occlusion: f32 = material.appearance().optics().occlusion;
+        if !occlusion.is_finite() || !(0.0..=1.0).contains(&occlusion) {
             return false;
         }
         match material {

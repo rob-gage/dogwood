@@ -5,13 +5,15 @@ use super::Color;
 /// Optical attenuation used by the first scene-lighting pass.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct MaterialOptics {
-    /// Extinction per world cell. Zero is transparent; larger values absorb more light.
-    pub extinction: f32,
+    /// Fraction of light blocked while crossing one fully occupied world cell.
+    ///
+    /// Values are clamped to `0.0..=1.0` when authored through the builder.
+    pub occlusion: f32,
 }
 
 impl Default for MaterialOptics {
     fn default() -> Self {
-        Self { extinction: 0.0 }
+        Self { occlusion: 0.0 }
     }
 }
 
@@ -55,7 +57,7 @@ impl MaterialAppearance {
             variation: [0.0; 4],
             color_influence: [0.0; 4],
             radiance_influence: [0.0; 4],
-            optics: MaterialOptics { extinction: 0.0 },
+            optics: MaterialOptics { occlusion: 0.0 },
         }
     }
 
@@ -104,10 +106,23 @@ impl MaterialAppearance {
         self
     }
 
-    /// Sets the material's optical extinction per world cell.
-    pub const fn with_extinction(mut self, extinction: f32) -> Self {
-        self.optics = MaterialOptics { extinction };
+    /// Sets the fraction of light blocked while crossing one full world cell.
+    pub const fn with_occlusion(mut self, occlusion: f32) -> Self {
+        self.optics = MaterialOptics {
+            occlusion: if occlusion < 0.0 {
+                0.0
+            } else if occlusion > 1.0 {
+                1.0
+            } else {
+                occlusion
+            },
+        };
         self
+    }
+
+    /// Compatibility alias for older material definitions.
+    pub const fn with_extinction(self, extinction: f32) -> Self {
+        self.with_occlusion(extinction)
     }
 
     /// Returns the material's optical properties.
@@ -123,7 +138,7 @@ impl MaterialAppearance {
     /// Returns this material's Accelerator representation
     pub fn accelerator_data(self) -> [u32; 24] {
         // WGSL MaterialAppearance is four packed colors, three vec4 fields, and
-        // one extinction scalar and WGSL's 16-byte alignment padding make a
+        // one occlusion scalar and WGSL's 16-byte alignment padding make a
         // 96-byte storage-buffer element.
         let mut data: [u32; 24] = [0; 24];
         data[0] = self.color_freezing.as_u32();
@@ -139,7 +154,7 @@ impl MaterialAppearance {
         for (index, value) in self.radiance_influence.into_iter().enumerate() {
             data[12 + index] = value.to_bits();
         }
-        data[16] = self.optics.extinction.to_bits();
+        data[16] = self.optics.occlusion.to_bits();
         data
     }
 }

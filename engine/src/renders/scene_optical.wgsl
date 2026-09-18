@@ -18,25 +18,13 @@
 #import utility::tile_ring::physical_cell_index_from_world_cell
 
 struct Uniforms {
-    camera_position: vec2<f32>,
-    window_size: vec2<f32>,
-    camera_size: vec2<f32>,
-    walking_pawn_position: vec2<f32>,
     buffered_origin: vec2<i32>,
     buffered_tile_size: vec2<u32>,
     ring_offset: vec2<u32>,
-    walking_pawn_size: vec2<f32>,
-    viewport_origin: vec2<f32>,
-    view_mode: u32,
-    show_tile_borders: u32,
-    show_chunk_borders: u32,
     gas_count: u32,
-    _padding: vec2<u32>,
-    actor_count: u32,
-    overlay_count: u32,
-    _padding_end: vec2<u32>,
+    _padding: u32,
+    lighting_origin: vec2<i32>,
     lighting_size: vec2<u32>,
-    _lighting_padding: vec2<u32>,
 }
 
 struct MaterialAppearance {
@@ -83,13 +71,7 @@ fn vertex(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
 
 @fragment
 fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    let normalized: vec2<f32> = vec2<f32>(
-        (position.x - uniforms.viewport_origin.x) / uniforms.window_size.x,
-        1.0 - (position.y - uniforms.viewport_origin.y) / uniforms.window_size.y,
-    );
-    let world: vec2<f32> = uniforms.camera_position +
-        (normalized - vec2<f32>(0.5)) * uniforms.camera_size;
-    let cell: vec2<i32> = vec2<i32>(floor(world * CELLS_PER_TILE_FLOAT));
+    let cell: vec2<i32> = uniforms.lighting_origin + vec2<i32>(position.xy);
     let index: u32 = physical_cell_index_from_world_cell(
         cell, uniforms.buffered_origin, uniforms.buffered_tile_size, uniforms.ring_offset,
     );
@@ -111,7 +93,9 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         let coverage: f32 = select(1.0, sample.fluid_coverage, sample.is_fluid);
         let emission: vec3<f32> = unpack_color(properties.radiance_freezing).rgb *
             (vec3<f32>(1.0) + variation.rgb * properties.radiance_influence.rgb) * coverage;
-        return vec4<f32>(max(emission, vec3<f32>(0.0)), max(properties.extinction * coverage, 0.0));
+        let occlusion = clamp(properties.extinction, 0.0, 1.0);
+        let optical_depth = -log(max(1.0 - occlusion, 0.000001)) * coverage;
+        return vec4<f32>(max(emission, vec3<f32>(0.0)), optical_depth);
     }
     return gas_optics(cell);
 }
@@ -162,7 +146,8 @@ fn gas_optics(cell: vec2<i32>) -> vec4<f32> {
     for (var species: u32 = 0u; species < uniforms.gas_count; species++) {
         let concentration: f32 = sample_gas(species, vec2<f32>(cell) + vec2<f32>(0.5));
         let properties: MaterialAppearance = gases[species];
-        extinction += concentration * max(properties.extinction, 0.0);
+        let occlusion = clamp(properties.extinction, 0.0, 1.0);
+        extinction += concentration * -log(max(1.0 - occlusion, 0.000001));
         emission += unpack_color(properties.radiance_freezing).rgb * concentration;
     }
     return vec4<f32>(emission, extinction);

@@ -51,10 +51,10 @@ fn trace(@builtin(global_invocation_id) invocation: vec3<u32>) {
         if any(position < vec2<f32>(0.0)) ||
                 any(position >= vec2<f32>(trace_configuration.scene_size)) { break; }
         let optical = textureLoad(optical_field, vec2<i32>(position), 0);
-        let extinction = max(optical.a, 0.0);
-        let attenuation = exp(-extinction);
+        let optical_depth = max(optical.a, 0.0);
+        let attenuation = select(exp(-optical_depth), 1.0, step == 0u);
         let segment_radiance = select(optical.rgb, optical.rgb *
-            ((1.0 - attenuation) / max(extinction, 0.000001)), extinction > 0.000001);
+            ((1.0 - attenuation) / max(optical_depth, 0.000001)), optical_depth > 0.000001);
         radiance += transmission * segment_radiance;
         transmission *= attenuation;
         travel += 1.0;

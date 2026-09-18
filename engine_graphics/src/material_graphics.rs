@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-use super::{MaterialAppearance, MaterialOptics};
+use super::MaterialAppearance;
 use crate::engine_compute::{Accelerator, AcceleratorBuffer};
 use std::mem::size_of;
 
@@ -28,15 +28,11 @@ macro_rules! material_graphics_form {
         #[derive(Copy, Clone)]
         pub struct $name {
             pub appearance: MaterialAppearance,
-            pub optics: MaterialOptics,
         }
 
         impl From<MaterialAppearance> for $name {
             fn from(appearance: MaterialAppearance) -> Self {
-                Self {
-                    optics: appearance.optics(),
-                    appearance,
-                }
+                Self { appearance }
             }
         }
 
