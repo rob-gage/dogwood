@@ -22,9 +22,27 @@ impl Accelerator {
     pub fn new() -> Result<Self, Box<dyn Error>> {
         #[cfg(target_os = "windows")]
         let instance: wgpu::Instance = {
+            // Prefer the Windows SDK redistributable during development. Release
+            // builds may instead ship `dxcompiler.dll` beside the executable.
+            let dxc_path: std::path::PathBuf = std::env::var_os("ProgramFiles(x86)")
+                .map(std::path::PathBuf::from)
+                .map(|directory| {
+                    directory
+                        .join("Windows Kits")
+                        .join("10")
+                        .join("Redist")
+                        .join("D3D")
+                        .join("x64")
+                        .join("dxcompiler.dll")
+                })
+                .filter(|path| path.is_file())
+                .unwrap_or_else(|| std::path::PathBuf::from("dxcompiler.dll"));
             let mut descriptor: wgpu::InstanceDescriptor =
                 wgpu::InstanceDescriptor::new_without_display_handle();
             descriptor.backends = wgpu::Backends::DX12;
+            descriptor.backend_options.dx12.shader_compiler = wgpu::Dx12Compiler::DynamicDxc {
+                dxc_path: dxc_path.to_string_lossy().into_owned(),
+            };
             wgpu::Instance::new(descriptor)
         };
         #[cfg(not(target_os = "windows"))]

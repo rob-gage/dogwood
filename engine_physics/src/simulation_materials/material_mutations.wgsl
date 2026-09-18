@@ -63,7 +63,9 @@ struct MaterialMutationParameters {
 }
 
 @group(0) @binding(0) var<storage, read> requests: array<MaterialMutationRequest>;
-@group(0) @binding(1) var<storage, read> request_count: array<atomic<u32>>;
+// Naga lowers atomicLoad on DX12 to an interlocked operation. It therefore
+// requires an RWByteAddressBuffer even though this pipeline only reads it.
+@group(0) @binding(1) var<storage, read_write> request_count: array<atomic<u32>>;
 @group(0) @binding(2) var<storage, read_write> cellular_material_identifiers: array<u32>;
 @group(0) @binding(3) var<storage, read_write> cellular_appearances: array<u32>;
 @group(0) @binding(4) var<storage, read> static_defaults: array<u32>;

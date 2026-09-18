@@ -119,7 +119,9 @@ struct ThermalPhaseTransitionParameters {
 @group(0) @binding(8) var<storage, read_write> requests: array<ThermalPhaseTransitionRequest>;
 @group(0) @binding(9) var<storage, read_write> request_count: array<atomic<u32>>;
 @group(0) @binding(10) var<uniform> thermal_phase_transition_parameters: ThermalPhaseTransitionParameters;
-@group(0) @binding(11) var<storage, read> rigid_claims: array<atomic<u32>>;
+// DX12 lowers atomicLoad to an interlocked operation, which requires an RW
+// buffer view even when the shader does not change the stored value.
+@group(0) @binding(11) var<storage, read_write> rigid_claims: array<atomic<u32>>;
 
 struct GasFluidCandidate {
     replacement: u32,

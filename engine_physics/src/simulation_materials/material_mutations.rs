@@ -97,7 +97,7 @@ impl MaterialMutations {
                 label: Some("material mutation layout"),
                 entries: &[
                     storage(0, true),
-                    storage(1, true),
+                    storage(1, false),
                     storage(2, false),
                     storage(3, false),
                     storage(4, true),

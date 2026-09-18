@@ -60,7 +60,7 @@ struct RigidCell {
 @group(0) @binding(6) var<storage, read> fluid_coverage: array<f32>;
 @group(0) @binding(7) var<storage, read_write> gas_concentrations: array<f32>;
 @group(0) @binding(8) var<storage, read> external_occupancy: array<u32>;
-@group(0) @binding(9) var<storage, read> rigid_claims: array<atomic<u32>>;
+@group(0) @binding(9) var<storage, read_write> rigid_claims: array<atomic<u32>>;
 @group(0) @binding(10) var<storage, read_write> candidates: array<Candidate>;
 @group(0) @binding(11) var<uniform> material_reaction_parameters: MaterialReactionParameters;
 @group(0) @binding(12) var<storage, read_write> mutation_requests: array<MaterialReactionMutationRequest>;
@@ -81,7 +81,7 @@ struct FluidParticleAuthority {
 }
 
 @group(0) @binding(16) var<storage, read_write> fluid_particles: array<FluidParticleAuthority>;
-@group(0) @binding(17) var<storage, read> fluid_bucket_heads: array<atomic<u32>>;
+@group(0) @binding(17) var<storage, read_write> fluid_bucket_heads: array<atomic<u32>>;
 @group(0) @binding(18) var<storage, read> fluid_next_particle: array<u32>;
 
 struct FluidSpatialParameters {

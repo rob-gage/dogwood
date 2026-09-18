@@ -105,7 +105,7 @@ impl ThermalPhaseTransitions {
             .collect();
         thermal_phase_transition_bind_group_layout_entries
             .push(crate::simulation::uniform_bind_group_layout_entry(7));
-        thermal_phase_transition_bind_group_layout_entries.push(storage(11, true));
+        thermal_phase_transition_bind_group_layout_entries.push(storage(11, false));
         thermal_phase_transition_bind_group_layout_entries.push(storage(12, false));
         thermal_phase_transition_bind_group_layout_entries.push(storage(13, true));
         thermal_phase_transition_bind_group_layout_entries.push(storage(14, true));
