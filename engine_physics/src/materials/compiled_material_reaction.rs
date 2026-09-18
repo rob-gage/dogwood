@@ -25,7 +25,9 @@ pub struct CompiledMaterialReaction {
 }
 
 impl CompiledMaterialReaction {
+    /// Number of 32-bit words in the fixed-stride Accelerator record.
     pub const WORD_COUNT: usize = 27;
+    /// Size in bytes of the fixed-stride Accelerator record.
     pub const BYTE_SIZE: u64 = (Self::WORD_COUNT * std::mem::size_of::<u32>()) as u64;
 }
 

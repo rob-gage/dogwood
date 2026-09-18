@@ -8,17 +8,29 @@ use super::MaterialReactionReactant;
 /// fixed stride.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MaterialReaction {
+    /// Up to two materials or tags consumed by this reaction.
     pub reactants: [Option<MaterialReactionReactant>; 2],
+    /// Up to two materials produced by this reaction.
     pub products: [Option<MaterialReactionProduct>; 2],
+    /// Optional lower temperature bound for reaction eligibility.
     pub minimum_temperature: Option<f32>,
+    /// Optional upper temperature bound for reaction eligibility.
     pub maximum_temperature: Option<f32>,
+    /// Optional lower pressure bound for reaction eligibility.
     pub minimum_pressure: Option<f32>,
+    /// Optional upper pressure bound for reaction eligibility.
     pub maximum_pressure: Option<f32>,
+    /// Optional lower implicit-air concentration bound for reaction eligibility.
     pub minimum_air: Option<f32>,
+    /// Optional upper implicit-air concentration bound for reaction eligibility.
     pub maximum_air: Option<f32>,
+    /// Maximum reaction extent that may be applied during one simulation tick.
     pub maximum_extent_per_tick: f32,
+    /// Thermal energy released or consumed by one unit of reaction extent.
     pub thermal_energy: f32,
+    /// Pressure contribution produced by one unit of reaction extent.
     pub pressure_output: f32,
+    /// Arbitration priority used when eligible reactions contend for matter.
     pub priority: i32,
 }
 
