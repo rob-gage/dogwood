@@ -73,7 +73,7 @@ impl Scene {
             .into_iter()
             .rev()
             .map(|(index, pending)| {
-                let body = self.rigid_cellular_bodies.swap_remove(index);
+                let body: RigidCellularBody = self.rigid_cellular_bodies.swap_remove(index);
                 self.rigid_activation_pending.remove(&body.identifier);
                 self.rigid_sleeping_pending.remove(&body.identifier);
                 self.physics_world.remove_rigid_cellular_body(&body);
@@ -108,14 +108,14 @@ impl Scene {
                     continue;
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    let batch = self.rigid_dormancy_batches.swap_remove(index);
+                    let batch: RigidDormancyBatch = self.rigid_dormancy_batches.swap_remove(index);
                     self.rigid_dormancy_readbacks[batch.readback_slot].unmap();
                     self.rigid_dormancy_readback_free.push(batch.readback_slot);
                     self.restore_aborted_rigid_dormancy(batch.bodies);
                     return Err(io::Error::other("rigid dormancy readback disconnected"));
                 }
                 Ok(Err(error)) => {
-                    let batch = self.rigid_dormancy_batches.swap_remove(index);
+                    let batch: RigidDormancyBatch = self.rigid_dormancy_batches.swap_remove(index);
                     self.rigid_dormancy_readbacks[batch.readback_slot].unmap();
                     self.rigid_dormancy_readback_free.push(batch.readback_slot);
                     self.restore_aborted_rigid_dormancy(batch.bodies);
@@ -125,8 +125,8 @@ impl Scene {
                 }
                 Ok(Ok(())) => {}
             }
-            let batch = self.rigid_dormancy_batches.swap_remove(index);
-            let bytes = match self.rigid_dormancy_readbacks[batch.readback_slot]
+            let batch: RigidDormancyBatch = self.rigid_dormancy_batches.swap_remove(index);
+            let bytes: wgpu::BufferView = match self.rigid_dormancy_readbacks[batch.readback_slot]
                 .slice(0..batch.state_count as u64 * 16)
                 .get_mapped_range()
             {
@@ -164,7 +164,7 @@ impl Scene {
             self.rigid_dormancy_readbacks[batch.readback_slot].unmap();
             self.rigid_dormancy_readback_free.push(batch.readback_slot);
             let mut cursor: usize = 0;
-            let mut bodies = batch.bodies.into_iter();
+            let mut bodies: std::vec::IntoIter<PendingRigidDormancy> = batch.bodies.into_iter();
             let mut records: Vec<(PendingRigidDormancy, DormantRigidBody)> = Vec::new();
             while let Some(body) = bodies.next() {
                 let end: usize = cursor + body.cells.len();
@@ -191,7 +191,7 @@ impl Scene {
                 };
                 cursor = end;
                 if let Err(error) = record.validate(self.data.materials()) {
-                    let mut pending = records
+                    let mut pending: Vec<PendingRigidDormancy> = records
                         .into_iter()
                         .map(|(body, _)| body)
                         .collect::<Vec<_>>();
