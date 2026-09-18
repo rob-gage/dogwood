@@ -2,6 +2,7 @@
 
 use super::create_render_shader_module;
 use engine_compute::Accelerator;
+use engine_graphics::SceneGraphics;
 use engine_physics::scenes::Scene;
 
 /// Handles the rendering of `Scene`s
@@ -247,7 +248,7 @@ impl SceneRenderer {
             return;
         };
         let bind_group: Option<wgpu::BindGroup> = scene.map(|scene| {
-            let graphics = scene.graphics();
+            let graphics: SceneGraphics<'_> = scene.graphics();
             let (walking_pawn_position, walking_pawn_size): ([f32; 2], [f32; 2]) =
                 graphics.walking_pawn.unwrap_or(([0.0; 2], [0.0; 2]));
             let uniforms: [u32; 24] = [
