@@ -139,7 +139,12 @@ fn reserve_candidate(cell: u32) {
         {
             continue;
         }
-        let slot = reserve_fluid_slot();
+        let product_material = reactions[candidate.reaction].words[base];
+        let existing_slot = find_fluid_product_slot(cell, product_material);
+        var slot = existing_slot;
+        if (slot == 0xffffffffu) {
+            slot = reserve_fluid_slot();
+        }
         if (slot == 0xffffffffu) {
             if (material_form_from_identifier(candidate.material0) == GAS_MATERIAL_FORM) {
                 release_gas_reservation(

@@ -111,6 +111,69 @@ fn reserve_fluid_slot() -> u32 {
     return 0xffffffffu;
 }
 
+// The authority reservation pass is serialized, so a product can reuse an
+// unreserved particle that already represents the same material in its output
+// cell. The high bit distinguishes that existing particle from a newly
+// claimed free-list slot in Candidate.product_slots.
+fn find_fluid_product_slot(cell: u32, material: u32) -> u32 {
+    let world =
+        world_cell_from_physical_tile_ring_index(
+            cell,
+            fluid_spatial_parameters.buffered_origin,
+            fluid_spatial_parameters.buffered_tile_size,
+            fluid_spatial_parameters.ring_offset,
+        );
+    let center = (vec2<f32>(world) + vec2<f32>(0.5)) / CELLS_PER_TILE_FLOAT;
+    let base =
+        fluid_bucket_coordinates_from_position(
+            center,
+            fluid_spatial_parameters.buffered_origin,
+            fluid_spatial_parameters.support_radius_cells,
+            CELLS_PER_TILE_FLOAT,
+        );
+    var selected = 0xffffffffu;
+    for (var y: i32 = -1; y <= 1; y += 1) {
+        for (var x: i32 = -1; x <= 1; x += 1) {
+            let bucket =
+                fluid_bucket_index_from_coordinates(
+                    base + vec2<i32>(x, y),
+                    fluid_spatial_parameters.bucket_dimensions,
+                    0xffffffffu,
+                );
+            if (bucket == 0xffffffffu) {
+                continue;
+            }
+            var p = atomicLoad(&fluid_bucket_heads[bucket]);
+            for (
+                var n: u32 = 0u;
+                p != 0xffffffffu && n < fluid_spatial_parameters.particle_capacity;
+                n += 1u
+            ) {
+                let particle = fluid_particles[p];
+                if
+                    (p < selected
+                        && particle.is_active != 0u
+                        && particle.material_identifier == material
+                        && particle.amount > 0.000001
+                        && fluid_particle_belongs_to_cell(
+                            particle.position,
+                            world,
+                            CELLS_PER_TILE_FLOAT,
+                        )
+                        && atomicLoad(&fluid_reservations[p]) == 0u)
+                {
+                    selected = p;
+                }
+                p = fluid_next_particle[p];
+            }
+        }
+    }
+    if (selected == 0xffffffffu) {
+        return selected;
+    }
+    return selected | 0x80000000u;
+}
+
 fn fluid_source_cell(cell: u32, source_cell: u32, commit: bool) {
     let world =
         world_cell_from_physical_tile_ring_index(

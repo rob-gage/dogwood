@@ -22,7 +22,7 @@ fn reserve_fluid_authority(@builtin(global_invocation_id) invocation: vec3<u32>)
 }
 
 fn release_fluid_slot(slot: u32) {
-    if (slot == 0xffffffffu) {
+    if (slot == 0xffffffffu || (slot & 0x80000000u) != 0u) {
         return;
     }
     let count = atomicAdd(&fluid_free_count[0], 1u);
@@ -32,6 +32,22 @@ fn release_fluid_slot(slot: u32) {
 }
 
 fn spawn_fluid_product(slot: u32, material: u32, amount: f32, cell: u32, temperature: f32) {
+    if ((slot & 0x80000000u) != 0u) {
+        let existing_slot = slot & 0x7fffffffu;
+        if (existing_slot >= arrayLength(&fluid_particles)) {
+            return;
+        }
+        var existing = fluid_particles[existing_slot];
+        let total_amount = max(existing.amount, 0.0) + amount;
+        if (total_amount > 0.000001) {
+            existing.temperature =
+                (max(existing.amount, 0.0) * existing.temperature + amount * temperature)
+                    / total_amount;
+        }
+        existing.amount = total_amount;
+        fluid_particles[existing_slot] = existing;
+        return;
+    }
     let world =
         world_cell_from_physical_tile_ring_index(
             cell,
