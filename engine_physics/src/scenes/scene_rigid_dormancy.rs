@@ -1,6 +1,7 @@
 // Copyright Rob Gage 2026
 
 use super::*;
+use crate::scenes::DormantRigidBody;
 
 impl Scene {
     /// Freezes outgoing bodies while current support is still valid, then
@@ -9,9 +10,9 @@ impl Scene {
         &mut self,
         future_buffered: TileArea,
     ) -> Result<bool, io::Error> {
-        let current_buffered = self.area_buffered();
-        let mut selected = Vec::new();
-        let mut state_count = 0usize;
+        let current_buffered: TileArea = self.area_buffered();
+        let mut selected: Vec<(usize, PendingRigidDormancy)> = Vec::new();
+        let mut state_count: usize = 0;
         for (index, body) in self.rigid_cellular_bodies.iter().enumerate() {
             let Some(state) = self.physics_world.rigid_cellular_body_state(body) else {
                 continue;
@@ -50,7 +51,7 @@ impl Scene {
         {
             return Ok(false);
         }
-        let Some(readback_slot) = self.rigid_dormancy_readback_free.pop() else {
+        let Some(readback_slot): Option<usize> = self.rigid_dormancy_readback_free.pop() else {
             return Ok(false);
         };
         let slots: Vec<u32> = selected
@@ -62,13 +63,13 @@ impl Scene {
             &slots,
             &self.rigid_dormancy_readbacks[readback_slot],
         );
-        let (sender, result) = sync_channel(1);
+        let (sender, result) = sync_channel::<Result<(), wgpu::BufferAsyncError>>(1);
         self.rigid_dormancy_readbacks[readback_slot]
             .slice(0..state_count as u64 * 16)
             .map_async(wgpu::MapMode::Read, move |outcome| {
                 let _ = sender.send(outcome);
             });
-        let mut bodies: Vec<_> = selected
+        let mut bodies: Vec<PendingRigidDormancy> = selected
             .into_iter()
             .rev()
             .map(|(index, pending)| {
@@ -99,7 +100,7 @@ impl Scene {
     }
 
     pub(super) fn rigid_dormancy_apply_completed(&mut self) -> Result<(), io::Error> {
-        let mut index = 0;
+        let mut index: usize = 0;
         while index < self.rigid_dormancy_batches.len() {
             match self.rigid_dormancy_batches[index].result.try_recv() {
                 Err(std::sync::mpsc::TryRecvError::Empty) => {
@@ -160,12 +161,12 @@ impl Scene {
             drop(bytes);
             self.rigid_dormancy_readbacks[batch.readback_slot].unmap();
             self.rigid_dormancy_readback_free.push(batch.readback_slot);
-            let mut cursor = 0;
+            let mut cursor: usize = 0;
             let mut bodies = batch.bodies.into_iter();
-            let mut records = Vec::new();
+            let mut records: Vec<(PendingRigidDormancy, DormantRigidBody)> = Vec::new();
             while let Some(body) = bodies.next() {
-                let end = cursor + body.cells.len();
-                let record = crate::scenes::DormantRigidBody {
+                let end: usize = cursor + body.cells.len();
+                let record: DormantRigidBody = crate::scenes::DormantRigidBody {
                     identifier: body.id,
                     position: body.position,
                     rotation: body.rotation,
@@ -218,7 +219,7 @@ impl Scene {
     fn restore_aborted_rigid_dormancy(&mut self, pending: Vec<PendingRigidDormancy>) {
         for pending in pending {
             let (friction, restitution) = self.rigid_cellular_material_response(&pending.cells);
-            let mut body = self.physics_world.insert_rigid_cellular_body(
+            let mut body: RigidCellularBody = self.physics_world.insert_rigid_cellular_body(
                 pending.position,
                 pending.rotation,
                 self.data.materials(),
