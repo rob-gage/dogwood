@@ -306,7 +306,11 @@ impl Scene {
         // queue upload only newly available chunks
         for coordinates in chunks_available {
             self.rigid_owner_load(coordinates);
-            let _ = self.tiles_upload(TileArea::new(coordinates, Chunk::WIDTH, Chunk::WIDTH));
+            std::mem::drop(self.tiles_upload(TileArea::new(
+                coordinates,
+                Chunk::WIDTH,
+                Chunk::WIDTH,
+            )));
         }
         Ok(())
     }

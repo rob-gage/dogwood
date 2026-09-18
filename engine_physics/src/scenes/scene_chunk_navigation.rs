@@ -262,7 +262,7 @@ impl Scene {
             self.tiles_ring_offset_y,
         );
         self.gas_clear_area(tiles_upload_area);
-        let _ = self.tiles_upload(tiles_upload_area);
+        std::mem::drop(self.tiles_upload(tiles_upload_area));
         self.fluid_uploads_queue(tiles_upload_area)?;
         self.gas_upload_area(tiles_upload_area)?;
         Ok(())
