@@ -1,5 +1,18 @@
 // Copyright Rob Gage 2026
 
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::collections::VecDeque;
+use std::io;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::mpsc::Receiver;
+use std::sync::mpsc::SyncSender;
+use std::time::Duration;
+
+use engine_compute::Accelerator;
+use engine_compute::AcceleratorBuffer;
+
 use super::scene_pending_rigid_dormancy::ScenePendingRigidDormancy;
 use super::scene_pending_static_detachment::ScenePendingStaticDetachment;
 use super::scene_rigid_body_streaming_response::SceneRigidBodyStreamingResponse;
@@ -8,37 +21,53 @@ use super::scene_rigid_dormancy_batch::SceneRigidDormancyBatch;
 use super::scene_rigid_io_job::SceneRigidIoJob;
 use super::scene_rigid_owner_load::SceneRigidOwnerLoad;
 use super::scene_rigid_persistence_request::SceneRigidPersistenceRequest;
-use crate::scenes::{
-    FluidDownload, FluidUpload, GasDownload, SceneData, SceneEditBatch, SceneGenerator,
-    ScenePosition, SceneVelocity, TileDownload, TileUpload,
-};
-use crate::simulation::{
-    CellularCollision, CellularDynamic, CellularPhysicsBodyProxy, CellularPressure,
-    CellularStaticStateGather, CollisionOccupancySnapshot, Fluids, Gases, MaterialMutations,
-    MaterialReactions, RigidCellStateGather, RigidCellStateUpload, RigidCellularBody,
-    ScenePhysicsWorld, SceneSimulationConfiguration, ThermalConduction, ThermalEdits,
-    ThermalInteraction, ThermalPhaseTransitions, ThermalScatter,
-};
-use crate::{
-    actors::{Actor, ActorContactEvent, ActorRegistry},
-    chunks::{Chunk, ChunkEntry, ChunkFluidParticle, ChunkStreamingResponse},
-    materials::{Material, MaterialIdentifier, MaterialRegistry, MaterialTable},
-    tiles::{Tile, TileArea, TileCoordinates, TileData},
-};
-use engine_compute::{Accelerator, AcceleratorBuffer};
-use std::{
-    collections::{HashMap, HashSet, VecDeque},
-    error::Error,
-    future::poll_fn,
-    io,
-    sync::{
-        Arc, Mutex,
-        mpsc::{Receiver, SyncSender, sync_channel},
-    },
-    time::Duration,
-};
+use crate::actors::Actor;
+use crate::actors::ActorContactEvent;
+use crate::actors::ActorPhysicalSnapshot;
+use crate::actors::ActorRegistry;
+use crate::chunks::ChunkEntry;
+use crate::chunks::ChunkStreamingResponse;
+use crate::materials::MaterialIdentifier;
+use crate::materials::MaterialRegistry;
+use crate::materials::MaterialTable;
+use crate::scenes::FluidDownload;
+use crate::scenes::FluidUpload;
+use crate::scenes::GasDownload;
+use crate::scenes::SceneData;
+use crate::scenes::SceneEditBatch;
+use crate::scenes::SceneGenerator;
+use crate::scenes::ScenePosition;
+use crate::scenes::SceneVelocity;
+use crate::scenes::TileDownload;
+use crate::scenes::TileUpload;
+use crate::simulation::CellularCollision;
+use crate::simulation::CellularDynamic;
+use crate::simulation::CellularPhysicsBodyProxy;
+use crate::simulation::CellularPressure;
+use crate::simulation::CellularStaticStateGather;
+use crate::simulation::CollisionOccupancySnapshot;
+use crate::simulation::Fluids;
+use crate::simulation::Gases;
+use crate::simulation::MaterialMutations;
+use crate::simulation::MaterialReactions;
+use crate::simulation::RigidCellStateGather;
+use crate::simulation::RigidCellStateUpload;
+use crate::simulation::RigidCellularBody;
+#[cfg(test)]
+use crate::simulation::RigidCellularBodyState;
+use crate::simulation::ScenePhysicsWorld;
+use crate::simulation::ThermalConduction;
+use crate::simulation::ThermalEdits;
+use crate::simulation::ThermalInteraction;
+use crate::simulation::ThermalPhaseTransitions;
+use crate::simulation::ThermalScatter;
+#[cfg(test)]
+use crate::tiles::CellCoordinates;
+use crate::tiles::Tile;
+use crate::tiles::TileArea;
+use crate::tiles::TileCoordinates;
 
-// One serialized owner-file worker avoids lost updates when several bodies
+// one serialized owner-file worker avoids lost updates when several bodies
 // share an owner; its latency is outside the frame loop.
 const RIGID_IO_MAX_IN_FLIGHT: usize = 1;
 const RIGID_IO_QUEUE_CAPACITY: usize = 64;
@@ -66,6 +95,8 @@ pub struct Scene {
     /// The actor currently receiving player control, if any
     possessed_actor: Option<Actor>,
     pub(super) actor_contact_events: Vec<ActorContactEvent>,
+    pub(super) actor_snapshots: HashMap<TileCoordinates, Vec<ActorPhysicalSnapshot>>,
+    pub(super) actor_initialized_regions: HashSet<TileCoordinates>,
     /// Chunks in this scene indexed by their `TilePosition`s
     chunks: HashMap<TileCoordinates, ChunkEntry>,
     /// The sender used by chunk streaming threads to return streamed chunks
@@ -219,12 +250,18 @@ mod scene_chunk_navigation;
 mod scene_chunk_streaming;
 #[path = "scene_construction.rs"]
 mod scene_construction;
+#[path = "scene_construction_entrypoints.rs"]
+mod scene_construction_entrypoints;
+#[path = "scene_construction_load.rs"]
+mod scene_construction_load;
 #[path = "scene_edit_application.rs"]
 mod scene_edit_application;
 #[path = "scene_fluid_streaming.rs"]
 mod scene_fluid_streaming;
 #[path = "scene_gas_streaming.rs"]
 mod scene_gas_streaming;
+#[path = "scene_generator_configuration.rs"]
+mod scene_generator_configuration;
 #[path = "scene_graphics.rs"]
 mod scene_graphics;
 #[path = "scene_rigid_cell_mutation.rs"]
@@ -235,6 +272,8 @@ mod scene_rigid_detachment;
 mod scene_rigid_dormancy;
 #[path = "scene_rigid_persistence.rs"]
 mod scene_rigid_persistence;
+#[path = "scene_tile_access.rs"]
+mod scene_tile_access;
 #[path = "scene_tile_streaming.rs"]
 mod scene_tile_streaming;
 #[path = "scene_update.rs"]
@@ -275,21 +314,6 @@ impl Scene {
 
     pub(crate) const fn rigid_cell_temperatures_buffer(&self) -> &AcceleratorBuffer {
         &self.rigid_cell_temperatures
-    }
-
-    /// Returns the active tile at a provided `TileCoordinates` if one exists
-    pub fn tile_at(&self, coordinates: TileCoordinates) -> Option<Tile> {
-        let buffer_size: i32 = i32::from(self.simulation_buffer_size);
-        let width: usize = self.simulation_width as usize + buffer_size as usize * 2;
-        let x: usize = usize::try_from(coordinates.x - (self.origin.x - buffer_size)).ok()?;
-        let y: usize = usize::try_from(coordinates.y - (self.origin.y - buffer_size)).ok()?;
-        let height: usize = self.simulation_height as usize + buffer_size as usize * 2;
-        if x >= width || y >= height {
-            return None;
-        }
-        let x: usize = (x + self.tiles_ring_offset_x as usize) % width;
-        let y: usize = (y + self.tiles_ring_offset_y as usize) % height;
-        self.tiles.get(y * width + x).copied()
     }
 
     /// Removes completed Accelerator tile uploads

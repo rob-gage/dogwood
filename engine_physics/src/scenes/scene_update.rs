@@ -1,12 +1,19 @@
 // Copyright Rob Gage 2026
 
-use super::{
-    MAX_CATCH_UP_TICKS, Scene, SceneEditBatch, ScenePosition, TICK_RATE, TileArea, TileCoordinates,
-};
+use std::io;
+use std::time::Duration;
+
+use rapier2d::prelude::Vector;
+
+use super::MAX_CATCH_UP_TICKS;
+use super::Scene;
+use super::SceneEditBatch;
+use super::ScenePosition;
+use super::TICK_RATE;
+use super::TileArea;
+use super::TileCoordinates;
 use crate::actors_utility::ActorCellularProxyState;
 use crate::simulation::RigidCellularBodyState;
-use rapier2d::prelude::Vector;
-use std::{io, time::Duration};
 
 impl Scene {
     /// Handles Scene streaming and returns the number of completed fixed-rate ticks
@@ -28,6 +35,7 @@ impl Scene {
         }
         self.rigid_streaming_apply_completed()?;
         self.chunks_refresh()?;
+        self.actors_streaming_update();
         self.tile_downloads_submit()?;
         self.tile_uploads_submit()?;
         self.fluid_downloads_submit()?;

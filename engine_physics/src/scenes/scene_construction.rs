@@ -1,49 +1,55 @@
 // Copyright Rob Gage 2026
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::collections::VecDeque;
+use std::error::Error;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::mpsc::Receiver;
+use std::sync::mpsc::SyncSender;
+use std::sync::mpsc::sync_channel;
+use std::time::Duration;
 
-use super::*;
+use engine_compute::Accelerator;
+use engine_compute::AcceleratorBuffer;
+
+use super::CHUNK_STREAMING_QUEUE_CAPACITY;
+use super::RIGID_DORMANCY_READBACK_SLOTS;
+use super::Scene;
+use super::SceneRigidBodyStreamingResponse;
+use crate::actors::ActorRegistry;
+use crate::chunks::Chunk;
+use crate::chunks::ChunkEntry;
+use crate::chunks::ChunkStreamingResponse;
+use crate::materials::MaterialTable;
+use crate::scenes::SceneData;
+use crate::scenes::SceneEditBatch;
+use crate::scenes::SceneGenerator;
+use crate::scenes_streaming::FluidDownload;
+use crate::scenes_streaming::GasDownload;
+use crate::simulation::CellularCollision;
+use crate::simulation::CellularDynamic;
+use crate::simulation::CellularPhysicsBodyProxy;
+use crate::simulation::CellularPressure;
+use crate::simulation::CellularStaticStateGather;
+use crate::simulation::Fluids;
+use crate::simulation::Gases;
+use crate::simulation::MaterialMutations;
+use crate::simulation::MaterialReactions;
+use crate::simulation::RigidCellStateGather;
+use crate::simulation::RigidCellStateUpload;
+use crate::simulation::ScenePhysicsWorld;
+use crate::simulation::SceneSimulationConfiguration;
+use crate::simulation::ThermalConduction;
+use crate::simulation::ThermalEdits;
+use crate::simulation::ThermalInteraction;
+use crate::simulation::ThermalPhaseTransitions;
+use crate::simulation::ThermalScatter;
+use crate::tiles::Tile;
+use crate::tiles::TileArea;
+use crate::tiles::TileCoordinates;
 
 impl Scene {
-    /// Creates a temporary `Scene`, its buffered Accelerator storage, and every initial chunk.
-    ///
-    /// The initial streaming area is synchronously loaded from disk or generated so the returned
-    /// scene has data for its active area and its non-simulated Accelerator buffer. Tile uploads are
-    /// queued here and submitted by the first `tick`.
-    pub fn new(
-        accelerator: &Arc<Accelerator>,
-        materials: MaterialRegistry,
-        simulation: SceneSimulationConfiguration,
-    ) -> Result<Self, Box<dyn Error>> {
-        Self::load(
-            accelerator,
-            simulation,
-            SceneData::new_temporary(materials)?,
-        )
-    }
-
-    /// Creates a temporary `Scene` using a generator for chunks that are not already stored
-    pub fn new_with_generator(
-        accelerator: &Arc<Accelerator>,
-        materials: MaterialRegistry,
-        simulation: SceneSimulationConfiguration,
-        generator: impl SceneGenerator + 'static,
-    ) -> Result<Self, Box<dyn Error>> {
-        Self::load_with_generator(
-            accelerator,
-            simulation,
-            SceneData::new_temporary(materials)?,
-            generator,
-        )
-    }
-
-    /// Loads a `Scene` from existing `SceneData`
-    pub fn load(
-        accelerator: &Arc<Accelerator>,
-        simulation: SceneSimulationConfiguration,
-        data: SceneData,
-    ) -> Result<Self, Box<dyn Error>> {
-        Self::load_with_generator(accelerator, simulation, data, ())
-    }
-
     /// Loads a `Scene` from existing `SceneData`, generating chunks that are not stored
     pub fn load_with_generator(
         accelerator: &Arc<Accelerator>,
@@ -348,10 +354,14 @@ impl Scene {
                 });
         let tile_count: u32 = buffered_tile_count as u32;
         let tiles: Box<[Tile]> = (0..tile_count).map(Tile).collect();
-        let (chunk_streaming_response_sender, chunk_streaming_responses) =
-            sync_channel(CHUNK_STREAMING_QUEUE_CAPACITY);
-        let (rigid_streaming_response_sender, rigid_streaming_responses) =
-            sync_channel(CHUNK_STREAMING_QUEUE_CAPACITY);
+        let (chunk_streaming_response_sender, chunk_streaming_responses): (
+            SyncSender<ChunkStreamingResponse>,
+            Receiver<ChunkStreamingResponse>,
+        ) = sync_channel(CHUNK_STREAMING_QUEUE_CAPACITY);
+        let (rigid_streaming_response_sender, rigid_streaming_responses): (
+            SyncSender<SceneRigidBodyStreamingResponse>,
+            Receiver<SceneRigidBodyStreamingResponse>,
+        ) = sync_channel(CHUNK_STREAMING_QUEUE_CAPACITY);
         let mut scene: Self = Self {
             accelerator,
             data,
@@ -359,6 +369,8 @@ impl Scene {
             actor_registry: ActorRegistry::new(),
             possessed_actor: None,
             actor_contact_events: Vec::new(),
+            actor_snapshots: HashMap::new(),
+            actor_initialized_regions: HashSet::new(),
             chunks: HashMap::new(),
             chunk_streaming_response_sender,
             chunk_streaming_responses,
@@ -447,9 +459,13 @@ impl Scene {
         };
         scene.rigid_cellular_body_identifier_next = scene.data.next_dormant_rigid_id()?;
         for coordinates in scene.area_streaming().iterate_chunk_coordinates() {
+            let mut generated: bool = false;
             let mut chunk: Chunk = match scene.data.read_chunk(coordinates)? {
                 Some(chunk) => chunk,
-                None => scene.generator.generate_chunk(coordinates),
+                None => {
+                    generated = true;
+                    scene.generator.generate_chunk(coordinates)
+                }
             };
             chunk.resolve_uninitialized_temperatures(|identifier| {
                 scene.initial_temperature(identifier)
@@ -461,6 +477,9 @@ impl Scene {
                     is_dirty: false,
                 },
             );
+            if generated {
+                scene.generate_actor_region(coordinates);
+            }
         }
         for owner in scene
             .area_buffered()
@@ -477,11 +496,5 @@ impl Scene {
         scene.gas_clear_area(buffered_area);
         scene.gas_upload_area(buffered_area)?;
         Ok(scene)
-    }
-
-    /// Sets the `SceneGenerator` of this `Scene` that will be used for generating new chunks
-    pub fn with_generator(mut self, generator: impl SceneGenerator + 'static) -> Self {
-        self.generator = Arc::new(generator);
-        self
     }
 }

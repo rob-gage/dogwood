@@ -15,6 +15,9 @@ pub struct SceneRenderer {
     pipeline: Option<wgpu::RenderPipeline>,
     /// The scene render uniforms
     uniform_buffer: Option<wgpu::Buffer>,
+    /// Growable storage for active generic actor graphics.
+    actor_buffer: Option<wgpu::Buffer>,
+    actor_buffer_capacity: usize,
 }
 
 impl SceneRenderer {
@@ -25,6 +28,8 @@ impl SceneRenderer {
             bind_group_layout: None,
             pipeline: None,
             uniform_buffer: None,
+            actor_buffer: None,
+            actor_buffer_capacity: 0,
         }
     }
 
@@ -196,6 +201,16 @@ impl SceneRenderer {
                             },
                             count: None,
                         },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 14,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
                     ],
                 });
             let pipeline_layout: wgpu::PipelineLayout =
@@ -234,7 +249,7 @@ impl SceneRenderer {
             self.bind_group_layout = Some(bind_group_layout);
             self.uniform_buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Scene uniforms"),
-                size: 384,
+                size: 128,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }));
@@ -251,7 +266,7 @@ impl SceneRenderer {
             let graphics: SceneGraphics<'_> = scene.graphics();
             let (walking_pawn_position, walking_pawn_size): ([f32; 2], [f32; 2]) =
                 graphics.walking_pawn.unwrap_or(([0.0; 2], [0.0; 2]));
-            let mut uniforms: Vec<u32> = vec![
+            let uniforms: [u32; 32] = [
                 camera_position[0].to_bits(),
                 camera_position[1].to_bits(),
                 (viewport[2] as f32).to_bits(),
@@ -274,27 +289,49 @@ impl SceneRenderer {
                 show_tile_borders.into(),
                 show_chunk_borders.into(),
                 graphics.gas_count,
+                0,
+                0,
+                graphics.actors.len() as u32,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
             ];
-            uniforms.extend([graphics.actors.len().min(8) as u32, 0, 0, 0]);
-            for actor in graphics.actors.iter().take(8) {
-                uniforms.extend([
-                    actor.position[0].to_bits(),
-                    actor.position[1].to_bits(),
-                    actor.size[0].to_bits(),
-                    actor.size[1].to_bits(),
-                ]);
+            let required_actor_capacity: usize = graphics.actors.len().max(1) * 32;
+            if self.actor_buffer_capacity < required_actor_capacity {
+                self.actor_buffer = Some(accelerator.wgpu_device().create_buffer(
+                    &wgpu::BufferDescriptor {
+                        label: Some("Scene actor graphics"),
+                        size: required_actor_capacity as u64,
+                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    },
+                ));
+                self.actor_buffer_capacity = required_actor_capacity;
             }
-            for _ in graphics.actors.len().min(8)..8 {
-                uniforms.extend([0; 4]);
+            let actor_data: Vec<u8> = graphics
+                .actors
+                .iter()
+                .flat_map(|actor| {
+                    actor
+                        .position
+                        .into_iter()
+                        .chain(actor.size)
+                        .chain(actor.color)
+                        .flat_map(f32::to_le_bytes)
+                })
+                .collect();
+            if !actor_data.is_empty() {
+                accelerator.wgpu_queue().write_buffer(
+                    self.actor_buffer.as_ref().unwrap(),
+                    0,
+                    &actor_data,
+                );
             }
-            for actor in graphics.actors.iter().take(8) {
-                uniforms.extend(actor.color.map(f32::to_bits));
-            }
-            for _ in graphics.actors.len().min(8)..8 {
-                uniforms.extend([0; 4]);
-            }
-            uniforms.extend([0; 4]);
-            let mut uniform_data: Vec<u8> = Vec::with_capacity(384);
+            let mut uniform_data: Vec<u8> = Vec::with_capacity(128);
             for value in uniforms {
                 uniform_data.extend_from_slice(&value.to_le_bytes());
             }
@@ -397,6 +434,10 @@ impl SceneRenderer {
                         wgpu::BindGroupEntry {
                             binding: 13,
                             resource: graphics.rigid_appearances.wgpu_buffer().as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 14,
+                            resource: self.actor_buffer.as_ref().unwrap().as_entire_binding(),
                         },
                     ],
                 })

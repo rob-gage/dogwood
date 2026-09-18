@@ -1,5 +1,11 @@
 # Game loop and scenes
 
+`SceneGenerator::generate_actor_spawns_with_seed` may provide initial generic
+physical actors for a newly generated region. The scene owns those actors after
+generation: runtime movement and despawns are authoritative. Actors that leave
+the retained buffered area are snapshotted and removed from ECS/Rapier, then
+restored with the same stable `Actor` when their region returns.
+
 `GameApplication` owns the window, input polling, rendering, and fixed-rate
 scene updates. `Game::launch` is the normal entry point. The engine calls
 `Scene::update(elapsed, is_simulation_active)`; it handles streaming, queued

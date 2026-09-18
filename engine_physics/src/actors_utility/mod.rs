@@ -8,6 +8,9 @@ mod actor_physical;
 mod actor_physical_proxy_state;
 mod actor_physics_proxy_state;
 mod actor_registry;
+mod actor_registry_accessors;
+mod actor_registry_default;
+mod actor_registry_physical;
 
 #[cfg(test)]
 pub(crate) mod tests;

@@ -44,7 +44,13 @@ impl UserInterfaceContext {
         });
         let mut returned_output: egui::FullOutput = output.clone();
         returned_output.textures_delta.clear();
-        *self.output.borrow_mut() = output;
+        let newer_shapes = output.shapes.clone();
+        let mut pending: egui::FullOutput = std::mem::take(&mut *self.output.borrow_mut());
+        let previous_shapes = std::mem::take(&mut pending.shapes);
+        pending.append(output);
+        pending.shapes = previous_shapes;
+        pending.shapes.extend(newer_shapes);
+        *self.output.borrow_mut() = pending;
         returned_output
     }
 
@@ -116,6 +122,26 @@ impl UserInterfaceContext {
     /// Returns a reference to this `UserInterfaceContext`'s `egui::Context`
     pub fn egui_context(&self) -> &egui::Context {
         &self.egui_context
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UserInterfaceContext;
+
+    #[test]
+    fn run_accumulates_multiple_ui_contributions_until_consumed() {
+        let context = UserInterfaceContext::new();
+        context.add_contents(|ui| {
+            ui.egui().label("game");
+        });
+        context.add_contents(|ui| {
+            ui.egui().label("editor");
+        });
+        let output = context.take_output();
+        assert!(output.shapes.len() >= 2);
+        output.drop_without_applying_deltas();
+        assert!(context.take_output().shapes.is_empty());
     }
 }
 

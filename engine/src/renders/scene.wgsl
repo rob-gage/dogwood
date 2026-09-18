@@ -39,8 +39,11 @@ struct Uniforms {
     _padding: vec2<u32>,
     actor_count: u32,
     _actor_padding: vec3<u32>,
-    actor_rects: array<vec4<f32>, 8>,
-    actor_colors: array<vec4<f32>, 8>,
+}
+
+struct SceneActorGraphics {
+    rect: vec4<f32>,
+    color: vec4<f32>,
 }
 
 struct MaterialAppearance {
@@ -86,6 +89,7 @@ const CELLS_PER_CHUNK_EDGE: i32 = 512;
 @group(0) @binding(11) var<storage, read> gas_concentrations: array<f32>;
 @group(0) @binding(12) var<storage, read> rigid_material_identifiers: array<u32>;
 @group(0) @binding(13) var<storage, read> rigid_appearances: array<u32>;
+@group(0) @binding(14) var<storage, read> actors: array<SceneActorGraphics>;
 
 // A fullscreen triangle delegates all scene lookup to the fragment shader
 @vertex
@@ -106,9 +110,9 @@ fn render_scene_fragment(@builtin(position) position: vec4<f32>) -> @location(0)
         return vec4<f32>(1.0);
     }
     for (var actor_index: u32 = 0u; actor_index < uniforms.actor_count; actor_index++) {
-        let actor: vec4<f32> = uniforms.actor_rects[actor_index];
-        if all(abs(world - actor.xy) < actor.zw * 0.5) {
-            return uniforms.actor_colors[actor_index];
+        let actor: SceneActorGraphics = actors[actor_index];
+        if all(abs(world - actor.rect.xy) < actor.rect.zw * 0.5) {
+            return actor.color;
         }
     }
     let cell: vec2<i32> = vec2<i32>(floor(world * CELLS_PER_TILE_FLOAT));

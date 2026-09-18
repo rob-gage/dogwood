@@ -1,6 +1,18 @@
 // Copyright Rob Gage 2026
 
-use super::*;
+use std::error::Error;
+use std::io;
+use std::sync::Arc;
+use std::sync::mpsc::SyncSender;
+
+use super::Scene;
+use crate::chunks::Chunk;
+use crate::chunks::ChunkEntry;
+use crate::chunks::ChunkStreamingResponse;
+use crate::scenes::SceneData;
+use crate::scenes::SceneGenerator;
+use crate::tiles::TileArea;
+use crate::tiles::TileCoordinates;
 
 impl Scene {
     /// Requests every chunk in a chunk-aligned streaming area
@@ -40,20 +52,21 @@ impl Scene {
                 streaming_identifier,
             },
         );
-        let data: SceneData = self.data.clone();
+        let scene_data_store: SceneData = self.data.clone();
         let sender: SyncSender<ChunkStreamingResponse> =
             self.chunk_streaming_response_sender.clone();
         // spawn new thread to attempt read
         std::thread::spawn(move || {
-            let result: Result<Option<Box<Chunk>>, Box<dyn Error + Send + Sync>> = data
-                .read_chunk(coordinates)
-                .map(|chunk| chunk.map(Box::new))
-                .map_err(|error| Box::new(error).into());
+            let chunk_streaming_result: Result<Option<Box<Chunk>>, Box<dyn Error + Send + Sync>> =
+                scene_data_store
+                    .read_chunk(coordinates)
+                    .map(|chunk| chunk.map(Box::new))
+                    .map_err(|error| Box::new(error).into());
             sender
                 .send(ChunkStreamingResponse::Loaded {
                     streaming_identifier,
                     coordinates,
-                    result,
+                    result: chunk_streaming_result,
                 })
                 .unwrap();
         });
@@ -87,13 +100,13 @@ impl Scene {
             self.chunk_streaming_response_sender.clone();
         // spawn new thread for generation
         std::thread::spawn(move || {
-            let result: Result<Box<Chunk>, Box<dyn Error + Send + Sync>> =
+            let chunk_streaming_result: Result<Box<Chunk>, Box<dyn Error + Send + Sync>> =
                 Ok(Box::new(generator.generate_chunk(coordinates)));
             sender
                 .send(ChunkStreamingResponse::Generated {
                     streaming_identifier,
                     coordinates,
-                    result,
+                    result: chunk_streaming_result,
                 })
                 .unwrap();
         });
@@ -150,12 +163,12 @@ impl Scene {
                     streaming_identifier,
                 },
             );
-            let data: SceneData = self.data.clone();
+            let scene_data_store: SceneData = self.data.clone();
             let sender: SyncSender<ChunkStreamingResponse> =
                 self.chunk_streaming_response_sender.clone();
             std::thread::spawn(move || {
-                let result: Result<Box<Chunk>, (Box<Chunk>, io::Error)> =
-                    match data.write_chunk(&chunk) {
+                let chunk_streaming_result: Result<Box<Chunk>, (Box<Chunk>, io::Error)> =
+                    match scene_data_store.write_chunk(&chunk) {
                         Ok(()) => Ok(Box::new(chunk)),
                         Err(error) => Err((Box::new(chunk), error)),
                     };
@@ -163,7 +176,7 @@ impl Scene {
                     .send(ChunkStreamingResponse::Saved {
                         streaming_identifier,
                         coordinates,
-                        result,
+                        result: chunk_streaming_result,
                     })
                     .unwrap();
             });
@@ -239,6 +252,7 @@ impl Scene {
                                     is_dirty: false,
                                 },
                             );
+                            self.generate_actor_region(coordinates);
                             chunks_available.push(coordinates);
                         }
                         Err(error) => {

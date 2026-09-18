@@ -50,3 +50,11 @@ registry. Logical actor contacts are delivered after `Scene::update` through
 `Game::actor_contacts(&[ActorContactEvent])`; handle `Started` events there and
 despawn through the registry. `Game::update(Duration)` runs afterward for
 ordinary gameplay updates.
+
+Generic physical actors outside the retained buffered scene area are kept as
+engine-owned snapshots rather than live ECS or Rapier objects. Returning to a
+resident region restores the same `Actor` identity, transform, velocity, and
+physical configuration. Possessed actors remain resident. A
+`SceneGenerator` can provide initial `ActorPhysicalSpawn` values for a region;
+that hook is called only when the region is first generated, not on ordinary
+unload/reload.

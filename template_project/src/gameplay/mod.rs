@@ -1,12 +1,7 @@
 use engine::physics::actors::{Actor, ActorContactEvent, ActorContactState};
 use engine::physics::scenes::Scene;
 
-pub fn collect_contacts(
-    scene: &mut Scene,
-    pawn: Actor,
-    squares: &mut Vec<Actor>,
-    contacts: &[ActorContactEvent],
-) -> u32 {
+pub fn collect_contacts(scene: &mut Scene, pawn: Actor, contacts: &[ActorContactEvent]) -> u32 {
     let mut collected = 0;
     for event in contacts {
         if event.state != ActorContactState::Started
@@ -19,8 +14,14 @@ pub fn collect_contacts(
         } else {
             event.first
         };
-        if let Some(index) = squares.iter().position(|actor| *actor == square) {
-            squares.swap_remove(index);
+        if scene
+            .actor_registry()
+            .physical_configuration(square)
+            .is_none_or(|configuration| configuration.color != crate::actors::DEMO_SQUARE_COLOR)
+        {
+            continue;
+        }
+        if scene.actor_registry().contains(square) {
             scene.actor_registry_mutable().despawn(square);
             collected += 1;
         }

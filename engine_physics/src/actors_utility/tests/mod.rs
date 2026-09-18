@@ -1,11 +1,15 @@
 // Copyright Rob Gage 2026
 
-use crate::actors::{
-    Actor, ActorPawn, ActorPawnMovement, ActorPawnSwimmingConfiguration,
-    ActorPawnWalkingConfiguration, ActorPhysicalConfiguration,
-};
-use crate::actors_utility::{ActorCollisionShape, ActorRegistry};
-use crate::scenes::{ScenePosition, SceneVelocity};
+use crate::actors::Actor;
+use crate::actors::ActorPawn;
+use crate::actors::ActorPawnMovement;
+use crate::actors::ActorPawnSwimmingConfiguration;
+use crate::actors::ActorPawnWalkingConfiguration;
+use crate::actors::ActorPhysicalConfiguration;
+use crate::actors_utility::ActorCollisionShape;
+use crate::actors_utility::ActorRegistry;
+use crate::scenes::ScenePosition;
+use crate::scenes::SceneVelocity;
 use crate::tiles::TileCoordinates;
 
 #[test]
@@ -103,4 +107,34 @@ fn test_physical_actor_can_be_spawned_and_despawned() {
     assert!(registry.contains(actor));
     assert!(registry.despawn(actor));
     assert!(!registry.contains(actor));
+}
+
+#[test]
+fn test_unloaded_actor_queries_are_safe_and_restore_keeps_identity() {
+    let mut registry = ActorRegistry::new();
+    let actor = registry.spawn_physical_actor(
+        ActorPhysicalConfiguration::default(),
+        ScenePosition {
+            tile_coordinates: TileCoordinates { x: 0, y: 0 },
+            x_offset: 0.5,
+            y_offset: 0.5,
+        },
+        SceneVelocity { x: 1.0, y: 0.0 },
+    );
+    let snapshot = registry.physical_snapshot(actor).unwrap();
+    assert!(registry.despawn(actor));
+    assert!(!registry.contains(actor));
+    assert!(registry.get_position(actor).is_none());
+    assert!(registry.get_velocity(actor).is_none());
+    assert!(!registry.set_position(actor, snapshot.position));
+    assert!(!registry.set_velocity(actor, snapshot.velocity));
+    assert!(registry.restore_physical_snapshot(snapshot));
+    assert!(registry.contains(actor));
+    assert_eq!(registry.get_velocity(actor).unwrap().x, 1.0);
+    let replacement = registry.spawn(ScenePosition {
+        tile_coordinates: TileCoordinates { x: 1, y: 0 },
+        x_offset: 0.0,
+        y_offset: 0.0,
+    });
+    assert_ne!(replacement, actor);
 }
