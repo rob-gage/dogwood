@@ -295,7 +295,7 @@ impl Scene {
             [0.0; 2],
             0.0,
         );
-        body.identifier = self.next_rigid_cellular_body_id();
+        body.identifier = self.next_rigid_cellular_body_identifier();
         self.rigid_cellular_bodies.push(body);
         self.rigid_cellular_topology_revision =
             self.rigid_cellular_topology_revision.wrapping_add(1);
@@ -308,13 +308,13 @@ impl Scene {
         self.debug_assert_rigid_resident_invariants();
     }
 
-    pub(super) fn next_rigid_cellular_body_id(&mut self) -> u64 {
-        let id = self.rigid_cellular_body_id_next;
-        self.rigid_cellular_body_id_next = self
-            .rigid_cellular_body_id_next
+    pub(super) fn next_rigid_cellular_body_identifier(&mut self) -> u64 {
+        let identifier: u64 = self.rigid_cellular_body_identifier_next;
+        self.rigid_cellular_body_identifier_next = self
+            .rigid_cellular_body_identifier_next
             .checked_add(1)
             .expect("rigid body identity exhausted");
-        id
+        identifier
     }
 
     /// Resolves one world cell to a resident physical Accelerator cell

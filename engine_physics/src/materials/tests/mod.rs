@@ -238,7 +238,7 @@ fn test_builder_compiles_dense_indices_tags_and_thermal_metadata() {
 #[test]
 fn test_reaction_compiler_rejects_invalid_authoring_and_accepts_pressure_only_rules() {
     let mut builder = MaterialRegistryBuilder::new();
-    let id = builder.register(Material::CellularDynamic {
+    let identifier = builder.register(Material::CellularDynamic {
         name: "a".into(),
         graphics: MaterialAppearance::from_color(Color::new_rgb(1, 1, 1)),
         mass: 1.0,
@@ -347,7 +347,7 @@ fn test_reaction_compiler_rejects_invalid_authoring_and_accepts_pressure_only_ru
         .0
         .is_err()
     );
-    let _ = id;
+    let _ = identifier;
 }
 
 #[test]

@@ -145,7 +145,7 @@ pub struct Scene {
     /// Authoritative body-local cellular matter paired with Rapier bodies
     rigid_cellular_bodies: Vec<RigidCellularBody>,
     /// Monotonic scene identity; never derived from vector or Accelerator allocation order.
-    rigid_cellular_body_id_next: u64,
+    rigid_cellular_body_identifier_next: u64,
     /// Generation protects a delayed raster result from a recycled slot.
     rigid_cell_state_generations: Vec<u32>,
     rigid_cell_state_free: Vec<u32>,

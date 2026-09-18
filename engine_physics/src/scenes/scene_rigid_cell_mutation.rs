@@ -196,7 +196,7 @@ impl Scene {
                 child_velocity,
                 state.angular_velocity,
             );
-            child.identifier = self.next_rigid_cellular_body_id();
+            child.identifier = self.next_rigid_cellular_body_identifier();
             self.rigid_cellular_bodies.push(child);
         }
         self.rigid_cellular_contact_active

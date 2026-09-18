@@ -237,12 +237,12 @@ impl Scene {
         Ok(())
     }
 
-    fn rollback_rigid_restore(&mut self, ids: &[u64]) {
-        for id in ids {
+    fn rollback_rigid_restore(&mut self, identifiers: &[u64]) {
+        for identifier in identifiers {
             if let Some(index) = self
                 .rigid_cellular_bodies
                 .iter()
-                .position(|body| body.identifier == *id)
+                .position(|body| body.identifier == *identifier)
             {
                 let body: RigidCellularBody = self.rigid_cellular_bodies.swap_remove(index);
                 self.rigid_activation_pending.remove(&body.identifier);
@@ -359,11 +359,11 @@ impl Scene {
                 .set_rigid_cellular_body_enabled(&body, false);
             self.rigid_activation_pending.insert(body.identifier);
             ids.push(body.identifier);
-            self.rigid_cellular_body_id_next =
-                self.rigid_cellular_body_id_next
-                    .max(record.identifier.checked_add(1).ok_or_else(|| {
-                        io::Error::new(io::ErrorKind::InvalidData, "rigid identity overflow")
-                    })?);
+            self.rigid_cellular_body_identifier_next = self
+                .rigid_cellular_body_identifier_next
+                .max(record.identifier.checked_add(1).ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "rigid identity overflow")
+                })?);
             self.rigid_cellular_bodies.push(body);
         }
         self.rigid_cell_state_upload

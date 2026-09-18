@@ -396,7 +396,7 @@ impl Scene {
             cellular_static_state_gather,
             cellular_physics_body_proxy,
             rigid_cellular_bodies: Vec::new(),
-            rigid_cellular_body_id_next: 1,
+            rigid_cellular_body_identifier_next: 1,
             rigid_cell_state_generations: vec![0; buffered_cell_count],
             rigid_cell_state_free: (0..buffered_cell_count as u32).rev().collect(),
             rigid_dormancy_batches: Vec::new(),
@@ -441,7 +441,7 @@ impl Scene {
             gravity: simulation.gravity,
             physics_world: ScenePhysicsWorld::new(),
         };
-        scene.rigid_cellular_body_id_next = scene.data.next_dormant_rigid_id()?;
+        scene.rigid_cellular_body_identifier_next = scene.data.next_dormant_rigid_id()?;
         for coordinates in scene.area_streaming().iterate_chunk_coordinates() {
             let mut chunk: Chunk = match scene.data.read_chunk(coordinates)? {
                 Some(chunk) => chunk,
