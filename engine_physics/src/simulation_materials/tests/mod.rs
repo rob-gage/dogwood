@@ -254,7 +254,7 @@ fn test_gas_condensation_aggregates_a_tile_into_unit_particles() {
         .write_buffer(free_count.wgpu_buffer(), 0, &4u32.to_le_bytes());
     let fluid = MaterialIdentifier::new(crate::materials::MaterialForm::Fluid, 0).as_u32();
     for tick in 1..=4 {
-        // Pressure resolution must not consume the previous thermal candidate buffer.
+        // pressure resolution must not consume the previous thermal candidate buffer.
         mutations.resolve_requests(&accelerator, 64, 1);
         let gas = read_u32(&accelerator, &gas_concentrations, 64);
         let candidates: Vec<[u32; 6]> = gas

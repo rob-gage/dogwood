@@ -55,7 +55,7 @@ impl Scene {
             .min(tick_time.saturating_mul(MAX_CATCH_UP_TICKS));
         let mut ticks: u32 = 0;
         while self.tick_time >= tick_time && ticks < MAX_CATCH_UP_TICKS {
-            // A catch-up update may submit several fixed ticks. Give tiny reaction
+            // a catch-up update may submit several fixed ticks. Give tiny reaction
             // readbacks a nonblocking chance to complete between them so each
             // reaction is applied as its own fixed-tick batch.
             self.accelerator
@@ -202,7 +202,7 @@ impl Scene {
                 self.gravity,
                 1.0 / TICK_RATE as f32,
             );
-            // Chemistry discovery observes the post-advection material snapshot
+            // chemistry discovery observes the post-advection material snapshot
             // and the prior resolved pressure field. Its outputs are applied in
             // later stages, never recursively during this discovery pass.
             {
@@ -213,7 +213,7 @@ impl Scene {
                 );
                 self.material_reactions
                     .encode(self.accelerator.as_ref(), &mut encoder);
-                // Resolve chemistry's authority-addressed cell mutations before
+                // resolve chemistry's authority-addressed cell mutations before
                 // pressure observes this tick's post-reaction material snapshot.
                 self.material_mutations.encode_requests(
                     self.accelerator.as_ref(),

@@ -275,8 +275,8 @@ impl ScenePhysicsWorld {
         if effective <= 1e-12 {
             return self.apply_rigid_cellular_body_reaction(body, [0.0; 2], 0.0, 0.0, wake);
         }
-        // The Accelerator impulse defines a velocity target along its generalized contact direction.
-        // Re-evaluate that target against current motion instead of replaying stale stopping work.
+        // the Accelerator impulse defines a velocity target along its generalized contact direction.
+        // re-evaluate that target against current motion instead of replaying stale stopping work.
         let target: f32 = source[0] * constraint[0]
             + source[1] * constraint[1]
             + source[2] * constraint[2]
@@ -310,8 +310,8 @@ impl ScenePhysicsWorld {
         if rigid.is_sleeping() {
             return true;
         }
-        // Spread the confirmed one-step impulse through Rapier's integration substeps.
-        // An upfront velocity kick cancels final gravity velocity but introduces position drift.
+        // spread the confirmed one-step impulse through Rapier's integration substeps.
+        // an upfront velocity kick cancels final gravity velocity but introduces position drift.
         let impulse: Vector = Vector::new(support[0], support[1]);
         let quadratic: f32 = 0.5
             * (rigid.mass_properties().local_mprops.inv_mass * impulse.length_squared()

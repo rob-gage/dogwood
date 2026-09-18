@@ -125,7 +125,7 @@ impl CellularPressure {
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.dispatch_workgroups_indirect(&self.indirect_dispatch, 0);
         }
-        // Contact discovery is intentionally broad.  Rebuild the same compact list from
+        // contact discovery is intentionally broad.  Rebuild the same compact list from
         // actual pressure sources before running the expensive pressure stencil.
         {
             let mut pass = accelerator.begin_compute_pass(

@@ -122,7 +122,7 @@ impl Scene {
                     }
                 }
                 RigidStreamingResponse::Loaded { owner, .. } => {
-                    // A newer generation may already be loading. If not,
+                    // a newer generation may already be loading. If not,
                     // stale completion must repair the desired-owner state.
                     if self.rigid_desired_owners.contains(&owner)
                         && !matches!(

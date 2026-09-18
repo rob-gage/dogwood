@@ -384,7 +384,7 @@ pub trait SceneSimulation {
         collisions: &mut impl FnMut(Vector),
     ) -> (Vector, bool) {
         let requested_rise: f32 = desired.dot(up);
-        // A canonical cell is the maximum discrete riser accepted by the validated probe.
+        // a canonical cell is the maximum discrete riser accepted by the validated probe.
         let clearance: f32 = 1.0 / 8.0 + requested_rise.max(0.0);
         let (raised, _) = physics_world.move_actor(
             collision_shape,

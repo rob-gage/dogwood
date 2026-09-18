@@ -262,7 +262,7 @@ fn test_rigid_static_overlap_uses_one_coherent_reaction_per_tick_under_readback_
             .flat_map(u32::to_le_bytes)
             .collect::<Vec<_>>(),
     );
-    // The rigid cell overlaps the top of the static cell and is moving into it.
+    // the rigid cell overlaps the top of the static cell and is moving into it.
     let transform: [f32; 12] = [
         0.0, 0.08, 1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0625, 0.1425, 1.0, 0.0,
     ];
@@ -275,7 +275,7 @@ fn test_rigid_static_overlap_uses_one_coherent_reaction_per_tick_under_readback_
             .collect::<Vec<_>>(),
     );
 
-    // Do not poll while submitting: this deliberately exercises the bounded
+    // do not poll while submitting: this deliberately exercises the bounded
     // readback pool without permitting an unbounded staging allocation.
     for _ in 0..5 {
         pressure

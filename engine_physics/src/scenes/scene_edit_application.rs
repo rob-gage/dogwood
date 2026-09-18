@@ -263,7 +263,7 @@ impl Scene {
         }
         if !gas_edits.is_empty() || !gas_clear_cells.is_empty() {
             let mut authored_temperature_by_cell = BTreeMap::<usize, (f32, usize)>::new();
-            // BTreeMap ordering plus this average keeps shared-cell gas temperature deterministic.
+            // btreemap ordering plus this average keeps shared-cell gas temperature deterministic.
             for (&(cell, _), &temperature) in &gas_edits {
                 let entry = authored_temperature_by_cell.entry(cell).or_insert((0.0, 0));
                 entry.0 += temperature;
