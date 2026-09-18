@@ -1,3 +1,5 @@
+// Copyright Rob Gage 2026
+
 use engine_compute::{Accelerator, AcceleratorBuffer};
 
 pub(crate) struct ThermalScatter {
@@ -24,7 +26,7 @@ impl ThermalScatter {
         ring: [u32; 2],
         has_rigid: bool,
     ) {
-        let vals = [
+        let parameter_values: [u32; 6] = [
             origin[0] as u32,
             origin[1] as u32,
             tiles[0],
@@ -35,12 +37,13 @@ impl ThermalScatter {
         accelerator.wgpu_queue().write_buffer(
             &self.parameters,
             0,
-            &vals
+            &parameter_values
                 .iter()
-                .flat_map(|v| v.to_le_bytes())
+                .flat_map(|value| value.to_le_bytes())
                 .collect::<Vec<_>>(),
         );
-        let mut pass = accelerator.begin_compute_pass(encoder, "thermal scatter");
+        let mut pass: wgpu::ComputePass<'_> =
+            accelerator.begin_compute_pass(encoder, "thermal scatter");
         pass.set_bind_group(0, &self.bind_group, &[]);
         if has_rigid {
             pass.set_pipeline(&self.clear_rigid_pipeline);
@@ -80,14 +83,15 @@ impl ThermalScatter {
         rigid_capacity: u32,
         empty_space_heat_capacity: f32,
     ) -> Self {
-        let device = accelerator.wgpu_device();
-        let rigid_temperature_sum = accelerator.allocate::<u32>(rigid_capacity as usize);
-        let parameters = crate::simulation::create_simulation_uniform_buffer(
+        let device: &wgpu::Device = accelerator.wgpu_device();
+        let rigid_temperature_sum: AcceleratorBuffer =
+            accelerator.allocate::<u32>(rigid_capacity as usize);
+        let parameters: wgpu::Buffer = crate::simulation::create_simulation_uniform_buffer(
             device,
             "thermal scatter parameters",
             64,
         );
-        let vals = [
+        let parameter_values: [u32; 16] = [
             0u32,
             0,
             0,
@@ -108,21 +112,22 @@ impl ThermalScatter {
         accelerator.wgpu_queue().write_buffer(
             &parameters,
             0,
-            &vals
+            &parameter_values
                 .iter()
-                .flat_map(|v| v.to_le_bytes())
+                .flat_map(|value| value.to_le_bytes())
                 .collect::<Vec<_>>(),
         );
         let storage = crate::simulation::storage_bind_group_layout_entry;
-        let mut entries: Vec<_> = (0..15)
-            .map(|b| storage(b, !matches!(b, 3 | 4 | 6 | 11 | 13)))
+        let mut entries: Vec<wgpu::BindGroupLayoutEntry> = (0u32..15)
+            .map(|binding: u32| storage(binding, !matches!(binding, 3 | 4 | 6 | 11 | 13)))
             .collect();
         entries.push(crate::simulation::uniform_bind_group_layout_entry(15));
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("thermal scatter"),
-            entries: &entries,
-        });
-        let buffers = [
+        let layout: wgpu::BindGroupLayout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("thermal scatter"),
+                entries: &entries,
+            });
+        let buffers: [&AcceleratorBuffer; 15] = [
             solved,
             cellular_materials,
             cellular_amounts,
@@ -139,38 +144,39 @@ impl ThermalScatter {
             &rigid_temperature_sum,
             external_occupancy,
         ];
-        let mut bind_entries: Vec<_> = buffers
+        let mut bind_entries: Vec<wgpu::BindGroupEntry<'_>> = buffers
             .iter()
             .enumerate()
-            .map(|(i, b)| wgpu::BindGroupEntry {
-                binding: i as u32,
-                resource: b.wgpu_buffer().as_entire_binding(),
+            .map(|(index, buffer)| wgpu::BindGroupEntry {
+                binding: index as u32,
+                resource: buffer.wgpu_buffer().as_entire_binding(),
             })
             .collect();
         bind_entries.push(wgpu::BindGroupEntry {
             binding: 15,
             resource: parameters.as_entire_binding(),
         });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("thermal scatter"),
             layout: &layout,
             entries: &bind_entries,
         });
-        let shader = crate::simulation::create_simulation_shader_module(
+        let shader: wgpu::ShaderModule = crate::simulation::create_simulation_shader_module(
             device,
             "thermal scatter shader",
             include_str!("thermal_scatter.wgsl"),
             "engine_physics/src/simulation/thermal_scatter.wgsl",
         );
-        let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("thermal scatter"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
-        let pipeline = |entry| {
+        let pipeline_layout: wgpu::PipelineLayout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("thermal scatter"),
+                bind_group_layouts: &[Some(&layout)],
+                immediate_size: 0,
+            });
+        let pipeline = |entry: &'static str| {
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
-                layout: Some(&pl),
+                layout: Some(&pipeline_layout),
                 module: &shader,
                 entry_point: Some(entry),
                 compilation_options: Default::default(),
@@ -201,7 +207,7 @@ impl ThermalScatter {
         ring: [u32; 2],
         has_rigid: bool,
     ) {
-        let vals = [
+        let parameter_values: [u32; 6] = [
             origin[0] as u32,
             origin[1] as u32,
             tiles[0],
@@ -212,18 +218,19 @@ impl ThermalScatter {
         accelerator.wgpu_queue().write_buffer(
             &self.parameters,
             0,
-            &vals
+            &parameter_values
                 .iter()
-                .flat_map(|v| v.to_le_bytes())
+                .flat_map(|value| value.to_le_bytes())
                 .collect::<Vec<_>>(),
         );
-        let mut encoder =
+        let mut encoder: wgpu::CommandEncoder =
             accelerator
                 .wgpu_device()
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("thermal scatter"),
                 });
-        let mut pass = accelerator.begin_compute_pass(&mut encoder, "thermal scatter");
+        let mut pass: wgpu::ComputePass<'_> =
+            accelerator.begin_compute_pass(&mut encoder, "thermal scatter");
         pass.set_bind_group(0, &self.bind_group, &[]);
         if has_rigid {
             pass.set_pipeline(&self.clear_rigid_pipeline);
