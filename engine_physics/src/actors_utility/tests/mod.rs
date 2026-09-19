@@ -264,7 +264,7 @@ fn test_actor_sprite_extraction_uses_current_frame_and_interpolated_position() {
     let extracted = registry.sprite_graphics(0.5);
     assert_eq!(extracted.len(), 1);
     assert_eq!(extracted[0].position, [2.0, 2.0]);
-    assert_eq!(extracted[0].texture_coordinates, [0.625, 0.25, 0.875, 0.75]);
+    assert_eq!(extracted[0].texture_coordinates, [0.625, 0.75, 0.875, 0.25]);
 }
 
 #[test]

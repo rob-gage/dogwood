@@ -21,6 +21,7 @@ pub struct ActorSprites {
     frame_elapsed: Duration,
     animation_speed: f32,
     paused: bool,
+    flip_x: bool,
     world_size: [f32; 2],
     world_offset: [f32; 2],
 }
@@ -36,6 +37,7 @@ impl Default for ActorSprites {
             frame_elapsed: Duration::ZERO,
             animation_speed: 1.0,
             paused: false,
+            flip_x: false,
             world_size: [1.0, 1.0],
             world_offset: [0.0, 0.0],
         }
@@ -152,6 +154,14 @@ impl ActorSprites {
 
     pub const fn is_paused(&self) -> bool {
         self.paused
+    }
+
+    pub const fn flip_x(&self) -> bool {
+        self.flip_x
+    }
+
+    pub fn set_flip_x(&mut self, flip_x: bool) {
+        self.flip_x = flip_x;
     }
 
     pub const fn world_size(&self) -> [f32; 2] {
@@ -299,5 +309,8 @@ mod tests {
         assert!(!sprites.set_world_offset([f32::INFINITY, 0.0]));
         assert!(sprites.set_world_offset([0.25, -0.5]));
         assert_eq!(sprites.world_offset(), [0.25, -0.5]);
+        assert!(!sprites.flip_x());
+        sprites.set_flip_x(true);
+        assert!(sprites.flip_x());
     }
 }

@@ -101,14 +101,17 @@ impl ActorRegistry {
                 let frame_x: u32 = animation.frame_width().checked_mul(sprites.frame_index())?;
                 let texture_sheet_width: f32 = animation.sprite_sheet().width() as f32;
                 let texture_sheet_height: f32 = animation.sprite_sheet().height() as f32;
+                let frame_left = frame_x as f32 + 0.5;
+                let frame_right =
+                    (frame_x + animation.frame_width()) as f32 - 0.5;
                 let texture_coordinates: [f32; 4] = [
-                    (frame_x as f32 + 0.5) / texture_sheet_width,
+                    if sprites.flip_x() { frame_right } else { frame_left },
                     (animation.frame_height() as f32 - 0.5) / texture_sheet_height,
-                    (frame_x + animation.frame_width()) as f32 - 0.5,
+                    if sprites.flip_x() { frame_left } else { frame_right },
                     0.5,
                 ];
                 let texture_coordinates: [f32; 4] = [
-                    texture_coordinates[0],
+                    texture_coordinates[0] / texture_sheet_width,
                     texture_coordinates[1],
                     texture_coordinates[2] / texture_sheet_width,
                     texture_coordinates[3] / texture_sheet_height,
