@@ -122,10 +122,6 @@ fn render_scene_fullscreen_triangle_vertex(
 @fragment
 fn render_scene_fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let world: vec2<f32> = scene_world_position_from_fragment_position(position.xy);
-    let overlay: vec4<f32> = scene_overlay_color(world);
-    if overlay.a > 0.0 {
-        return overlay;
-    }
     // TEMPORARY: draw the possessed walking pawn over the cellular scene
     if all(abs(world - uniforms.walking_pawn_position) < uniforms.walking_pawn_size * 0.5) {
         return vec4<f32>(1.0);
@@ -169,6 +165,12 @@ fn render_scene_fragment(@builtin(position) position: vec4<f32>) -> @location(0)
     return apply_scene_grid_borders(
         vec4<f32>(surface * (0.12 + incoming * 3.0) + local_emission, 1.0), cell, world,
     );
+}
+
+@fragment
+fn render_scene_overlay_fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    let world: vec2<f32> = scene_world_position_from_fragment_position(position.xy);
+    return scene_overlay_color(world);
 }
 
 fn scene_overlay_color(world: vec2<f32>) -> vec4<f32> {

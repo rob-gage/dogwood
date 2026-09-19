@@ -39,4 +39,8 @@ impl ActorSpriteSheet {
     pub fn rgba_data(&self) -> &[u8] {
         &self.rgba_data
     }
+
+    pub fn rgba_data_shared(&self) -> Arc<[u8]> {
+        Arc::clone(&self.rgba_data)
+    }
 }

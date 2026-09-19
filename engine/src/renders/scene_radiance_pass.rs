@@ -4,6 +4,8 @@ use engine_compute::{Accelerator, AcceleratorBuffer};
 use engine_graphics::SceneGraphics;
 use engine_physics::scenes::Scene;
 
+use super::scene_sprites::SceneSpriteRenderer;
+
 const CASCADE_COUNT: usize = 5;
 const PROBE_SPACING: u32 = 4;
 const DIRECTION_COUNT: u32 = 4;
@@ -36,10 +38,11 @@ pub(super) struct SceneRadiancePass {
     merge_groups: Vec<wgpu::BindGroup>,
     integrate_groups: Vec<wgpu::BindGroup>,
     illumination: Option<(wgpu::Texture, wgpu::TextureView)>,
+    sprite_renderer: SceneSpriteRenderer,
 }
 
 impl SceneRadiancePass {
-    pub(super) const fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             domain: None,
             optical: None,
@@ -59,6 +62,7 @@ impl SceneRadiancePass {
             merge_groups: Vec::new(),
             integrate_groups: Vec::new(),
             illumination: None,
+            sprite_renderer: SceneSpriteRenderer::new(),
         }
     }
 
@@ -178,6 +182,15 @@ impl SceneRadiancePass {
         render_pass.draw(0..3, 0..1);
         drop(render_pass);
 
+        self.sprite_renderer.render_optical(
+            accelerator,
+            &graphics.sprites,
+            domain.world_cell_origin,
+            domain.size_cells,
+            optical_view,
+            command_encoder,
+        );
+
         let mut compute_pass = command_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("Scene radiance cascades"),
             timestamp_writes: None,
@@ -208,6 +221,39 @@ impl SceneRadiancePass {
                 1,
             );
         }
+    }
+
+    pub(super) fn render_sprites(
+        &mut self,
+        accelerator: &Accelerator,
+        scene: &Scene,
+        camera_position: [f32; 2],
+        camera_size: [f32; 2],
+        viewport: [u32; 4],
+        format: wgpu::TextureFormat,
+        target: &wgpu::TextureView,
+        command_encoder: &mut wgpu::CommandEncoder,
+    ) {
+        let Some(domain) = self.domain else {
+            return;
+        };
+        let Some((_, illumination)) = self.illumination.as_ref() else {
+            return;
+        };
+        let graphics: SceneGraphics<'_> = scene.graphics();
+        self.sprite_renderer.render_visible(
+            accelerator,
+            &graphics.sprites,
+            camera_position,
+            camera_size,
+            viewport,
+            domain.world_cell_origin,
+            domain.size_cells,
+            illumination,
+            format,
+            target,
+            command_encoder,
+        );
     }
 
     fn initialize(&mut self, accelerator: &Accelerator) {

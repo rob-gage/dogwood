@@ -43,8 +43,7 @@ impl ActorSpriteAnimation {
             && sprite_sheet.width() >= frame_width.checked_mul(frame_count)?
             && sprite_sheet.height() >= frame_height
             && radiance_sprite_sheet.as_ref().is_none_or(|sheet| {
-                sheet.width() >= frame_width.saturating_mul(frame_count)
-                    && sheet.height() >= frame_height
+                sheet.width() == sprite_sheet.width() && sheet.height() == sprite_sheet.height()
             })
             && playback_rate.is_finite()
             && playback_rate > 0.0

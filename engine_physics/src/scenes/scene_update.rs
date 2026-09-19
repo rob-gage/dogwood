@@ -230,8 +230,10 @@ impl Scene {
             self.gravity,
             &self.physics_world,
         );
-        self.actor_registry
-            .advance_sprites(Duration::from_secs_f32(1.0 / TICK_RATE as f32));
+        if is_simulation_active {
+            self.actor_registry
+                .advance_sprites(Duration::from_secs_f32(1.0 / TICK_RATE as f32));
+        }
         let up: Vector = if self.gravity[0].hypot(self.gravity[1]) > 0.0 {
             Vector::new(-self.gravity[0], -self.gravity[1]).normalize()
         } else {

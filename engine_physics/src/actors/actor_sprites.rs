@@ -16,6 +16,8 @@ pub struct ActorSprites {
     frame_elapsed: Duration,
     animation_speed: f32,
     paused: bool,
+    world_size: [f32; 2],
+    world_offset: [f32; 2],
 }
 
 impl Default for ActorSprites {
@@ -29,6 +31,8 @@ impl Default for ActorSprites {
             frame_elapsed: Duration::ZERO,
             animation_speed: 1.0,
             paused: false,
+            world_size: [1.0, 1.0],
+            world_offset: [0.0, 0.0],
         }
     }
 }
@@ -128,6 +132,33 @@ impl ActorSprites {
         self.paused
     }
 
+    pub const fn world_size(&self) -> [f32; 2] {
+        self.world_size
+    }
+
+    pub fn set_world_size(&mut self, world_size: [f32; 2]) -> bool {
+        if world_size
+            .iter()
+            .any(|value| !value.is_finite() || *value <= 0.0)
+        {
+            return false;
+        }
+        self.world_size = world_size;
+        true
+    }
+
+    pub const fn world_offset(&self) -> [f32; 2] {
+        self.world_offset
+    }
+
+    pub fn set_world_offset(&mut self, world_offset: [f32; 2]) -> bool {
+        if world_offset.iter().any(|value| !value.is_finite()) {
+            return false;
+        }
+        self.world_offset = world_offset;
+        true
+    }
+
     pub(crate) fn advance(&mut self, elapsed: Duration) {
         if self.paused {
             return;
@@ -154,6 +185,11 @@ impl ActorSprites {
                 break;
             }
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn advance_for_test(&mut self, elapsed: Duration) {
+        self.advance(elapsed);
     }
 }
 
@@ -229,5 +265,17 @@ mod tests {
         let sheet = ActorSpriteSheet::new(2, 2, vec![0; 16]).unwrap();
         let animation = ActorSpriteAnimation::new(sheet, None, 2, 2, 1, 1.0, true).unwrap();
         assert!(animation.radiance_sprite_sheet().is_none());
+    }
+
+    #[test]
+    fn world_size_and_offset_reject_invalid_values() {
+        let mut sprites = ActorSprites::new();
+        assert!(!sprites.set_world_size([0.0, 1.0]));
+        assert!(!sprites.set_world_size([f32::NAN, 1.0]));
+        assert!(sprites.set_world_size([2.0, 3.0]));
+        assert_eq!(sprites.world_size(), [2.0, 3.0]);
+        assert!(!sprites.set_world_offset([f32::INFINITY, 0.0]));
+        assert!(sprites.set_world_offset([0.25, -0.5]));
+        assert_eq!(sprites.world_offset(), [0.25, -0.5]);
     }
 }

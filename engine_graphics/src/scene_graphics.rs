@@ -3,6 +3,7 @@
 use super::MaterialGraphics;
 use crate::Color;
 use crate::engine_compute::AcceleratorBuffer;
+use std::sync::Arc;
 
 /// A small world-space overlay drawn above the simulated scene.
 #[derive(Clone, Copy, Debug)]
@@ -24,6 +25,23 @@ pub struct SceneActorGraphics {
     pub position: [f32; 2],
     pub size: [f32; 2],
     pub color: [f32; 4],
+}
+
+#[derive(Clone, Debug)]
+pub struct SceneSpriteSheetGraphics {
+    pub width: u32,
+    pub height: u32,
+    pub rgba_data: Arc<[u8]>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SceneSpriteGraphics {
+    pub position: [f32; 2],
+    pub world_size: [f32; 2],
+    pub world_offset: [f32; 2],
+    pub texture_coordinates: [f32; 4],
+    pub sprite_sheet: SceneSpriteSheetGraphics,
+    pub radiance_sprite_sheet: Option<SceneSpriteSheetGraphics>,
 }
 
 /// Borrowed scene resources exposed to the renderer for one frame.
@@ -60,4 +78,5 @@ pub struct SceneGraphics<'a> {
     /// The center and size of the possessed walking pawn, if one is active
     pub walking_pawn: Option<([f32; 2], [f32; 2])>,
     pub actors: Vec<SceneActorGraphics>,
+    pub sprites: Vec<SceneSpriteGraphics>,
 }

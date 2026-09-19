@@ -16,6 +16,7 @@ pub struct SceneRenderer {
     bind_group_layout: Option<wgpu::BindGroupLayout>,
     /// The scene render pipeline
     pipeline: Option<wgpu::RenderPipeline>,
+    overlay_pipeline: Option<wgpu::RenderPipeline>,
     /// The scene render uniforms
     uniform_buffer: Option<wgpu::Buffer>,
     /// Growable storage for active generic actor graphics.
@@ -28,12 +29,13 @@ pub struct SceneRenderer {
 
 impl SceneRenderer {
     /// Creates a `SceneRenderer`
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             radiance_pass: SceneRadiancePass::new(),
             format: None,
             bind_group_layout: None,
             pipeline: None,
+            overlay_pipeline: None,
             uniform_buffer: None,
             actor_buffer: None,
             actor_buffer_capacity: 0,
@@ -283,6 +285,33 @@ impl SceneRenderer {
                     cache: None,
                 }),
             );
+            self.overlay_pipeline = Some(device.create_render_pipeline(
+                &wgpu::RenderPipelineDescriptor {
+                    label: Some("Scene overlay pipeline"),
+                    layout: Some(&pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("render_scene_fullscreen_triangle_vertex"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        buffers: &[],
+                    },
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some("render_scene_overlay_fragment"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format,
+                            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    multiview_mask: None,
+                    cache: None,
+                },
+            ));
             self.bind_group_layout = Some(bind_group_layout);
             self.uniform_buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Scene uniforms"),
@@ -595,6 +624,57 @@ impl SceneRenderer {
             );
             render_pass.set_scissor_rect(viewport[0], viewport[1], viewport[2], viewport[3]);
             render_pass.draw(0..3, 0..1);
+        }
+        drop(render_pass);
+        if let Some(scene) = scene {
+            self.radiance_pass.render_sprites(
+                accelerator,
+                scene,
+                camera_position,
+                camera_size,
+                viewport,
+                format,
+                target,
+                command_encoder,
+            );
+        }
+        if let (Some(bind_group), Some(overlay_pipeline)) =
+            (bind_group.as_ref(), self.overlay_pipeline.as_ref())
+        {
+            let mut overlay_render_pass =
+                command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Scene overlay pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: target,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+            overlay_render_pass.set_pipeline(overlay_pipeline);
+            overlay_render_pass.set_bind_group(0, bind_group, &[]);
+            overlay_render_pass.set_viewport(
+                viewport[0] as f32,
+                viewport[1] as f32,
+                viewport[2] as f32,
+                viewport[3] as f32,
+                0.0,
+                1.0,
+            );
+            overlay_render_pass.set_scissor_rect(
+                viewport[0],
+                viewport[1],
+                viewport[2],
+                viewport[3],
+            );
+            overlay_render_pass.draw(0..3, 0..1);
         }
     }
 }

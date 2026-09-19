@@ -166,6 +166,9 @@ impl ActorRegistry {
     /// Returns the first physical pawn's position and nominal dimensions for scene rendering
     pub fn first_walking_pawn_graphics(&self, interpolation: f32) -> Option<([f32; 2], [f32; 2])> {
         self.world.iter_entities().find_map(|entity| {
+            if entity.get::<ActorSprites>().is_some() {
+                return None;
+            }
             let pawn: &ActorPawn = entity.get::<ActorPawn>()?;
             let shape: ActorCollisionShape = pawn.collision_shape?;
             let position: ScenePosition = *entity.get::<ScenePosition>()?;

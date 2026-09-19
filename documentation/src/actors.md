@@ -33,9 +33,9 @@ let player: Actor = scene.actor_registry_mutable().spawn_possessable_pawn(
 scene.possess_actor(player);
 ```
 
-Actors can optionally carry `ActorSprites`. Sprite sheets are CPU-side RGBA
-sources for now; rendering is not required to use the actor API. Add named
-horizontal animations, then select them from gameplay code:
+Actors can optionally carry `ActorSprites`. Sprite sheets are shared CPU-side
+RGBA sources used by the world renderer. Add named horizontal animations, then
+select them from gameplay code:
 
 ```rust
 use dogwood_engine::physics::actors::{
@@ -54,10 +54,15 @@ scene.actor_registry_mutable().sprites_mutable(actor)
     .unwrap().play(idle_animation);
 ```
 
+Set `world_size` and `world_offset` through `set_world_size` and
+`set_world_offset`; these control world placement independently of source
+pixels and collision dimensions.
+
 `play` does not restart an already selected animation; use `restart` to do so.
 `pause`, `resume`, and `set_animation_speed` control playback without changing
 the authored rate. A missing radiance sheet means an all-black RGBA radiance
-sheet, with no per-actor black image allocation. Sprite sheets and frames may
+sheet, with no per-actor black image allocation. Radiance RGB emits into the
+scene; radiance alpha is preserved but currently ignored. Sprite sheets and frames may
 have arbitrary positive dimensions; even dimensions are generally preferred
 for authored assets but are not a runtime requirement.
 

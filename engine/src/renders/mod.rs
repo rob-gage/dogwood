@@ -4,6 +4,7 @@
 
 mod scene_radiance_pass;
 mod scene_renderer;
+mod scene_sprites;
 #[cfg(test)]
 mod tests;
 mod user_interface_renderer;

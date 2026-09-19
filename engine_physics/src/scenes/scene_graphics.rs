@@ -2,6 +2,7 @@
 
 use engine_graphics::SceneActorGraphics;
 use engine_graphics::SceneGraphics;
+use engine_graphics::SceneSpriteGraphics;
 
 use super::Scene;
 
@@ -16,6 +17,9 @@ impl Scene {
         let actors: Vec<SceneActorGraphics> = self
             .actor_registry
             .actor_graphics(self.tick_interpolation());
+        let sprites: Vec<SceneSpriteGraphics> = self
+            .actor_registry
+            .sprite_graphics(self.tick_interpolation());
         SceneGraphics {
             material_graphics: self.material_table.graphics(),
             cellular_material_identifiers: &self.cellular_material_identifiers,
@@ -40,6 +44,7 @@ impl Scene {
             ],
             walking_pawn,
             actors,
+            sprites,
         }
     }
 }

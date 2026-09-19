@@ -17,4 +17,6 @@ pub use material_graphics::{
     MaterialGraphics, MaterialGraphicsCellularDynamic, MaterialGraphicsCellularStatic,
     MaterialGraphicsFluid, MaterialGraphicsGas,
 };
-pub use scene_graphics::{SceneActorGraphics, SceneGraphics, SceneOverlay};
+pub use scene_graphics::{
+    SceneActorGraphics, SceneGraphics, SceneOverlay, SceneSpriteGraphics, SceneSpriteSheetGraphics,
+};
