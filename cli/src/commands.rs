@@ -1,7 +1,9 @@
 // Copyright Rob Gage 2026
 
 use crate::{
-    build::{build, command_available},
+    build::{
+        build, build_to, command_available, fingerprint, run_cache_directory, validate_artifact,
+    },
     project::DogwoodProject,
     target::BuildTarget,
 };
@@ -9,34 +11,39 @@ use std::{error::Error, path::PathBuf, process::Command};
 
 #[derive(clap::Args, Default)]
 pub(crate) struct TargetFlags {
-    #[arg(long, group = "target")]
-    pub(crate) windows_x64: bool,
-    #[arg(long, group = "target")]
-    pub(crate) windows_x86: bool,
-    #[arg(long, group = "target")]
-    pub(crate) windows_arm64: bool,
-    #[arg(long, group = "target")]
-    pub(crate) linux_x64: bool,
-    #[arg(long, group = "target")]
-    pub(crate) linux_x86: bool,
-    #[arg(long, group = "target")]
-    pub(crate) linux_arm64: bool,
+    #[arg(long, group = "platform")]
+    pub(crate) windows: bool,
+    #[arg(long, group = "platform")]
+    pub(crate) linux: bool,
+    #[arg(long, group = "architecture")]
+    pub(crate) x86: bool,
+    #[arg(long, group = "architecture")]
+    pub(crate) x64: bool,
+    #[arg(long, group = "architecture")]
+    pub(crate) arm64: bool,
 }
 
 impl TargetFlags {
     pub(crate) fn target(&self) -> Result<BuildTarget, Box<dyn Error>> {
-        let selected = [
-            (self.windows_x64, "windows-x64"),
-            (self.windows_x86, "windows-x86"),
-            (self.windows_arm64, "windows-arm64"),
-            (self.linux_x64, "linux-x64"),
-            (self.linux_x86, "linux-x86"),
-            (self.linux_arm64, "linux-arm64"),
-        ];
-        selected.iter().find(|(selected, _)| *selected).map_or_else(
-            || BuildTarget::host().map_err(Into::into),
-            |(_, name)| name.parse().map_err(Into::into),
-        )
+        let platform_count = self.windows as u8 + self.linux as u8;
+        let architecture_count = self.x86 as u8 + self.x64 as u8 + self.arm64 as u8;
+        if platform_count == 0 && architecture_count == 0 {
+            return BuildTarget::host().map_err(Into::into);
+        }
+        if platform_count != 1 || architecture_count != 1 {
+            return Err("choose exactly one platform (--windows or --linux) and exactly one architecture (--x86, --x64, or --arm64), or omit all target flags".into());
+        }
+        let platform = if self.windows { "windows" } else { "linux" };
+        let architecture = if self.x86 {
+            "x86"
+        } else if self.x64 {
+            "x64"
+        } else {
+            "arm64"
+        };
+        format!("{platform}-{architecture}")
+            .parse()
+            .map_err(Into::into)
     }
 }
 
@@ -60,16 +67,43 @@ pub(crate) fn build_command(directory: PathBuf, flags: TargetFlags) -> Result<()
     let project = DogwoodProject::discover(&directory)?;
     let target = flags.target()?;
     let artifact = build(&project, target)?;
-    println!("Built {target}: {}", artifact.executable.display());
+    println!("Built {target} package: {}", artifact.package_dir.display());
     Ok(())
 }
 
 pub(crate) fn run(directory: PathBuf, flags: TargetFlags) -> Result<(), Box<dyn Error>> {
     let project = DogwoodProject::discover(&directory)?;
     let target = flags.target()?;
-    let artifact = build(&project, target)?;
+    let package_dir = run_cache_directory(&project, target)?;
+    let fingerprint_path = package_dir.join("dogwood-fingerprint");
+    let current_fingerprint = fingerprint(&project, target)?;
+    let cached = std::fs::read_to_string(&fingerprint_path)
+        .is_ok_and(|value| value == current_fingerprint)
+        && validate_artifact(
+            &crate::build::BuildArtifact {
+                package_dir: package_dir.clone(),
+                executable: package_dir.join(target.executable_name()),
+            },
+            target,
+        )
+        .is_ok();
+    let artifact = if cached {
+        println!("Dogwood run: using cached {target} build");
+        crate::build::BuildArtifact {
+            package_dir: package_dir.clone(),
+            executable: package_dir.join(target.executable_name()),
+        }
+    } else {
+        println!("Dogwood run: project changed; rebuilding {target}");
+        if package_dir.exists() {
+            std::fs::remove_dir_all(&package_dir)?;
+        }
+        let artifact = build_to(&project, target, package_dir.clone())?;
+        std::fs::write(&fingerprint_path, current_fingerprint)?;
+        artifact
+    };
     if target != BuildTarget::host()? {
-        println!("Built {target}: {}", artifact.executable.display());
+        println!("Built {target} package: {}", artifact.package_dir.display());
         return Err(format!(
             "cannot execute {target} natively on this host; artifact is at {}",
             artifact.executable.display()
@@ -77,7 +111,7 @@ pub(crate) fn run(directory: PathBuf, flags: TargetFlags) -> Result<(), Box<dyn 
         .into());
     }
     let status = Command::new(&artifact.executable)
-        .current_dir(&project.root)
+        .current_dir(&artifact.package_dir)
         .status()?;
     if !status.success() {
         return Err(format!("game failed for {} with {status}", project.root.display()).into());
@@ -118,4 +152,48 @@ pub(crate) fn check(directory: PathBuf) -> Result<(), Box<dyn Error>> {
 
 fn yes_no(value: bool) -> &'static str {
     if value { "available" } else { "unavailable" }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TargetFlags;
+    use crate::target::BuildTarget;
+
+    #[test]
+    fn target_flags_require_a_complete_pair() {
+        assert!(
+            TargetFlags {
+                windows: true,
+                ..Default::default()
+            }
+            .target()
+            .is_err()
+        );
+        assert!(
+            TargetFlags {
+                x64: true,
+                ..Default::default()
+            }
+            .target()
+            .is_err()
+        );
+        assert_eq!(
+            TargetFlags {
+                windows: true,
+                x64: true,
+                ..Default::default()
+            }
+            .target()
+            .unwrap(),
+            BuildTarget::WindowsX64
+        );
+    }
+
+    #[test]
+    fn no_target_flags_select_the_host() {
+        assert_eq!(
+            TargetFlags::default().target().unwrap(),
+            BuildTarget::host().unwrap()
+        );
+    }
 }

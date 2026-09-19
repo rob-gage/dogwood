@@ -12,6 +12,8 @@ mod accelerator_timing_record;
 #[cfg(debug_assertions)]
 mod accelerator_timing_state;
 mod shader_composition;
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+mod vulkan_loader;
 
 pub use accelerator::Accelerator;
 pub use accelerator_buffer::AcceleratorBuffer;

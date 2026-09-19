@@ -20,14 +20,16 @@ pub(super) enum Subcommand {
         #[arg(default_value = ".", value_name = "DIRECTORY")]
         directory: PathBuf,
     },
-    /// Build an optimized distributable game artifact.
+    /// Build an optimized distributable artifact; target flags are one platform
+    /// plus one architecture, or omitted to use the current target.
     Build {
         #[arg(default_value = ".", value_name = "DIRECTORY")]
         directory: PathBuf,
         #[command(flatten)]
         target: TargetFlags,
     },
-    /// Build and execute an optimized game artifact.
+    /// Build and execute an optimized artifact using the same target flags as
+    /// `build`.
     Run {
         #[arg(default_value = ".", value_name = "DIRECTORY")]
         directory: PathBuf,

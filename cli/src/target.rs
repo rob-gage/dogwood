@@ -64,6 +64,30 @@ impl BuildTarget {
             "game"
         }
     }
+
+    pub(crate) fn runtime_asset(self) -> Option<RuntimeAsset> {
+        match self {
+            Self::WindowsX86 => Some(RuntimeAsset {
+                source: "engine_compute/runtime/windows/vulkan/x86/vulkan-1.dll",
+                filename: "vulkan-1.dll",
+            }),
+            Self::WindowsX64 => Some(RuntimeAsset {
+                source: "engine_compute/runtime/windows/vulkan/x64/vulkan-1.dll",
+                filename: "vulkan-1.dll",
+            }),
+            Self::WindowsArm64 => Some(RuntimeAsset {
+                source: "engine_compute/runtime/windows/vulkan/arm64/vulkan-1.dll",
+                filename: "vulkan-1.dll",
+            }),
+            Self::LinuxX64 | Self::LinuxX86 | Self::LinuxArm64 => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RuntimeAsset {
+    pub(crate) source: &'static str,
+    pub(crate) filename: &'static str,
 }
 
 impl fmt::Display for BuildTarget {
@@ -84,5 +108,33 @@ impl FromStr for BuildTarget {
             "linux-arm64" => Ok(Self::LinuxArm64),
             _ => Err(format!("unsupported target `{value}`")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BuildTarget;
+
+    #[test]
+    fn windows_targets_select_matching_loader_asset() {
+        assert_eq!(
+            BuildTarget::WindowsX86.runtime_asset().unwrap().source,
+            "engine_compute/runtime/windows/vulkan/x86/vulkan-1.dll"
+        );
+        assert_eq!(
+            BuildTarget::WindowsX64.runtime_asset().unwrap().source,
+            "engine_compute/runtime/windows/vulkan/x64/vulkan-1.dll"
+        );
+        assert_eq!(
+            BuildTarget::WindowsArm64.runtime_asset().unwrap().source,
+            "engine_compute/runtime/windows/vulkan/arm64/vulkan-1.dll"
+        );
+    }
+
+    #[test]
+    fn linux_targets_do_not_select_a_windows_loader() {
+        assert!(BuildTarget::LinuxX64.runtime_asset().is_none());
+        assert!(BuildTarget::LinuxX86.runtime_asset().is_none());
+        assert!(BuildTarget::LinuxArm64.runtime_asset().is_none());
     }
 }

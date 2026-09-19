@@ -8,10 +8,21 @@ template project with a shared `Accelerator`.
 The build commands discover a Cargo workspace through Cargo metadata. A game
 project must contain a binary package named `game`, or declare its package in
 `[workspace.metadata.dogwood]` with `version = 1` and `game = "..."`.
-`dogwood debug` runs that package locally. `dogwood build` uses Docker BuildKit
-with cargo-xwin for Windows targets and cargo-zigbuild for Linux targets, then
-exports `dist/<target>/game` (or `game.exe`). `dogwood check` reports project,
-host, Docker, and cross-build readiness without building the game.
+`dogwood debug` runs that package locally through Cargo. `dogwood build` uses
+Docker BuildKit with cargo-xwin for Windows targets and cargo-zigbuild for Linux
+targets, then exports a portable `dist/<target>/` package containing the game
+and the matching packaged Vulkan loader on supported targets. Linux targets
+without a trusted packaged loader use the installed system Vulkan loader.
+`dogwood run` builds the same package layout in reusable temporary storage and
+launches it, rebuilding only when relevant project or Dogwood build inputs
+change. `dogwood check` reports project, host, Docker, and cross-build
+readiness without building the game.
+
+Build and run target flags are split into platform and architecture. Use
+exactly one of `--windows` or `--linux` and exactly one of `--x86`, `--x64`, or
+`--arm64`, for example `dogwood build --windows --x64` or
+`dogwood run --linux --arm64`. Omit all five flags to select the current
+platform and architecture; the Dockerfile is still used.
 
 The template is executable documentation. `template_project` implements
 `Game`, creates temporary scene data, configures a generator, spawns and
