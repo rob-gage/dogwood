@@ -3,6 +3,9 @@
 use super::{AcceleratorBuffer, accelerator_timing::AcceleratorTiming};
 use std::{error::Error, mem::size_of};
 
+#[cfg(target_os = "windows")]
+use super::windows_vulkan_loader::LoadedVulkanLoader;
+
 /// An Accelerator shared by graphics and compute workloads.
 pub struct Accelerator {
     /// The `Accelerator`'s `wgpu::Instance`
@@ -15,6 +18,9 @@ pub struct Accelerator {
     wgpu_queue: wgpu::Queue,
     /// Debug-only Accelerator pass timestamp collection
     accelerator_timing: AcceleratorTiming,
+    #[cfg(target_os = "windows")]
+    /// Keeps the explicitly loaded Vulkan loader alive for all Vulkan objects.
+    _vulkan_loader: Option<LoadedVulkanLoader>,
 }
 
 impl Accelerator {
@@ -25,31 +31,147 @@ impl Accelerator {
     /// adapters and integrated GPUs when the platform does not honor that hint.
     pub fn new() -> Result<Self, Box<dyn Error>> {
         #[cfg(target_os = "windows")]
-        let instance: wgpu::Instance = {
-            // Prefer the Windows SDK redistributable during development. Release
-            // builds may instead ship `dxcompiler.dll` beside the executable.
-            let dxc_path: std::path::PathBuf = std::env::var_os("ProgramFiles(x86)")
-                .map(std::path::PathBuf::from)
-                .map(|directory| {
-                    directory
-                        .join("Windows Kits")
-                        .join("10")
-                        .join("Redist")
-                        .join("D3D")
-                        .join("x64")
-                        .join("dxcompiler.dll")
-                })
-                .filter(|path| path.is_file())
-                .unwrap_or_else(|| std::path::PathBuf::from("dxcompiler.dll"));
-            let mut descriptor: wgpu::InstanceDescriptor =
-                wgpu::InstanceDescriptor::new_without_display_handle();
-            descriptor.backends = wgpu::Backends::DX12;
-            descriptor.backend_options.dx12.shader_compiler = wgpu::Dx12Compiler::DynamicDxc {
-                dxc_path: dxc_path.to_string_lossy().into_owned(),
+        {
+            return match std::env::var("DOGWOOD_WGPU_BACKEND")
+                .unwrap_or_default()
+                .to_ascii_lowercase()
+                .as_str()
+            {
+                "dx12" => Self::try_dx12(),
+                "vulkan" => Self::try_vulkan(),
+                "" => match Self::try_vulkan() {
+                    Ok(accelerator) => Ok(accelerator),
+                    Err(vulkan_error) => {
+                        tracing::warn!(
+                            target: "dogwood_accelerator",
+                            error = %vulkan_error,
+                            "Vulkan initialization failed; falling back to DirectX 12"
+                        );
+                        Self::try_dx12().map_err(|dx12_error| {
+                            format!(
+                                "Vulkan initialization failed: {vulkan_error}; DirectX 12 fallback failed: {dx12_error}"
+                            )
+                            .into()
+                        })
+                    }
+                },
+                backend => Err(format!(
+                    "invalid DOGWOOD_WGPU_BACKEND={backend:?}; expected `vulkan` or `dx12`"
+                )
+                .into()),
             };
-            wgpu::Instance::new(descriptor)
-        };
+        }
+
         #[cfg(not(target_os = "windows"))]
+        Self::try_native()
+    }
+
+    #[cfg(target_os = "windows")]
+    fn is_software_adapter(info: &wgpu::AdapterInfo) -> bool {
+        if info.device_type == wgpu::DeviceType::Cpu {
+            return true;
+        }
+        let description = format!("{} {}", info.name, info.driver).to_ascii_lowercase();
+        [
+            "llvmpipe",
+            "lavapipe",
+            "swiftshader",
+            "softpipe",
+            "software",
+        ]
+        .iter()
+        .any(|marker| description.contains(marker))
+    }
+
+    #[cfg(target_os = "windows")]
+    fn try_vulkan() -> Result<Self, Box<dyn Error>> {
+        let loader: LoadedVulkanLoader = LoadedVulkanLoader::load()?;
+        let mut descriptor: wgpu::InstanceDescriptor =
+            wgpu::InstanceDescriptor::new_without_display_handle();
+        descriptor.backends = wgpu::Backends::VULKAN;
+        let instance: wgpu::Instance = wgpu::Instance::new(descriptor);
+        let adapter: wgpu::Adapter =
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+                apply_limit_buckets: false,
+            }))
+            .map_err(|error| format!("WGPU found no usable Vulkan adapter: {error}"))?;
+        let adapter_info: wgpu::AdapterInfo = adapter.get_info();
+        if is_software_adapter(&adapter_info) {
+            return Err(format!(
+                "WGPU selected a software Vulkan adapter: {} ({})",
+                adapter_info.name, adapter_info.driver
+            )
+            .into());
+        }
+        if adapter_info.device_type == wgpu::DeviceType::IntegratedGpu
+            && pollster::block_on(instance.enumerate_adapters(wgpu::Backends::VULKAN))
+                .iter()
+                .any(|candidate| candidate.get_info().device_type == wgpu::DeviceType::DiscreteGpu)
+        {
+            tracing::warn!(
+                target: "dogwood_accelerator",
+                adapter = %adapter_info.name,
+                "Vulkan selected an integrated GPU despite a discrete Vulkan adapter being available"
+            );
+        }
+        tracing::info!(
+            target: "dogwood_accelerator",
+            backend = ?adapter_info.backend,
+            adapter = %adapter_info.name,
+            device_type = ?adapter_info.device_type,
+            driver = %adapter_info.driver,
+            driver_info = %adapter_info.driver_info,
+            vendor_id = adapter_info.vendor,
+            device_id = adapter_info.device,
+            loader = %loader.path().display(),
+            "WGPU selected Vulkan adapter"
+        );
+        Self::from_adapter(instance, adapter, Some(loader))
+    }
+
+    #[cfg(target_os = "windows")]
+    fn try_dx12() -> Result<Self, Box<dyn Error>> {
+        let dxc_path: std::path::PathBuf = std::env::var_os("ProgramFiles(x86)")
+            .map(std::path::PathBuf::from)
+            .map(|directory| {
+                directory
+                    .join("Windows Kits")
+                    .join("10")
+                    .join("Redist")
+                    .join("D3D")
+                    .join("x64")
+                    .join("dxcompiler.dll")
+            })
+            .filter(|path| path.is_file())
+            .unwrap_or_else(|| std::path::PathBuf::from("dxcompiler.dll"));
+        let mut descriptor: wgpu::InstanceDescriptor =
+            wgpu::InstanceDescriptor::new_without_display_handle();
+        descriptor.backends = wgpu::Backends::DX12;
+        descriptor.backend_options.dx12.shader_compiler = wgpu::Dx12Compiler::DynamicDxc {
+            dxc_path: dxc_path.to_string_lossy().into_owned(),
+        };
+        let instance: wgpu::Instance = wgpu::Instance::new(descriptor);
+        tracing::info!(
+            target: "dogwood_accelerator",
+            dxc_path = %dxc_path.display(),
+            "attempting DirectX 12 accelerator"
+        );
+        let adapter: wgpu::Adapter =
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+                apply_limit_buckets: false,
+            }))
+            .map_err(|error| format!("WGPU found no usable DirectX 12 adapter: {error}"))?;
+        Self::from_adapter(instance, adapter, None)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn try_native() -> Result<Self, Box<dyn Error>> {
         let instance: wgpu::Instance = wgpu::Instance::default();
         let adapter: wgpu::Adapter =
             pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -58,6 +180,14 @@ impl Accelerator {
                 force_fallback_adapter: false,
                 apply_limit_buckets: false,
             }))?;
+        Self::from_adapter(instance, adapter)
+    }
+
+    fn from_adapter(
+        instance: wgpu::Instance,
+        adapter: wgpu::Adapter,
+        #[cfg(target_os = "windows")] loader: Option<LoadedVulkanLoader>,
+    ) -> Result<Self, Box<dyn Error>> {
         let adapter_info: wgpu::AdapterInfo = adapter.get_info();
         match adapter_info.device_type {
             wgpu::DeviceType::Cpu => tracing::warn!(
@@ -113,6 +243,8 @@ impl Accelerator {
             wgpu_device: device,
             wgpu_queue: queue,
             accelerator_timing,
+            #[cfg(target_os = "windows")]
+            _vulkan_loader: loader,
         })
     }
 

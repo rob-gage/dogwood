@@ -19,7 +19,8 @@ pub(crate) fn build(
     std::fs::create_dir_all(&destination)?;
     let dockerfile = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../build/Dockerfile");
     let output = format!("type=local,dest={}", destination.display());
-    let status = Command::new("docker")
+    let mut command = Command::new("docker");
+    command
         .args(["buildx", "build", "--file"])
         .arg(&dockerfile)
         .arg("--build-arg")
@@ -34,7 +35,13 @@ pub(crate) fn build(
         .arg(&output)
         .arg("--tag")
         .arg(format!("dogwood-{}", target.name()))
-        .args(["--progress", "plain"])
+        .args(["--progress", "plain"]);
+    if let Some(feature) = target.engine_compute_feature() {
+        command
+            .arg("--build-arg")
+            .arg(format!("DOGWOOD_ENGINE_FEATURE={feature}"));
+    }
+    let status = command
         .arg(&project.root)
         .stdin(Stdio::null())
         .status()
