@@ -103,9 +103,9 @@ impl ActorRegistry {
                 let texture_sheet_height: f32 = animation.sprite_sheet().height() as f32;
                 let texture_coordinates: [f32; 4] = [
                     (frame_x as f32 + 0.5) / texture_sheet_width,
-                    0.5 / texture_sheet_height,
+                    (animation.frame_height() as f32 - 0.5) / texture_sheet_height,
                     (frame_x + animation.frame_width()) as f32 - 0.5,
-                    animation.frame_height() as f32 - 0.5,
+                    0.5,
                 ];
                 let texture_coordinates: [f32; 4] = [
                     texture_coordinates[0],
