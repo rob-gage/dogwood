@@ -205,6 +205,25 @@ fn test_chunk_initialization_writer_uses_absolute_bounds() {
 }
 
 #[test]
+fn test_large_initialization_uses_tiles_not_absolute_cells() {
+    let coordinates: TileCoordinates = TileCoordinates { x: 0, y: 0 };
+    let region: ChunkGenerationRegion = ChunkGenerationRegion::new(coordinates);
+    let material: MaterialIdentifier = MaterialIdentifier::new(MaterialForm::CellularStatic, 0);
+    let mut chunk: Chunk = Chunk::new_empty(coordinates);
+    let mut writer: ChunkInitializationWriter<'_> = ChunkInitializationWriter::new(&mut chunk);
+    writer.fill_cells(
+        region.cell_origin,
+        region.cell_dimensions[0],
+        region.cell_dimensions[1],
+        material,
+        CellularAppearance::NEUTRAL,
+    );
+    assert_eq!(writer.initialized_cell_count(), 512 * 512);
+    assert_eq!(writer.initialized_tile_count(), 64 * 64);
+    assert_eq!(writer.absolute_cell_write_count(), 0);
+}
+
+#[test]
 fn test_absolute_generation_writes_are_order_independent() {
     let coordinates: TileCoordinates = TileCoordinates { x: 0, y: 0 };
     let region: ChunkGenerationRegion = ChunkGenerationRegion::new(coordinates);

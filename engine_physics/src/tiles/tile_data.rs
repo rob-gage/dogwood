@@ -78,6 +78,29 @@ impl TileData {
         }
     }
 
+    /// Creates a tile filled with one material, appearance, and integrity.
+    pub const fn new_filled_with_appearance_and_integrity(
+        material_identifier: MaterialIdentifier,
+        appearance: CellularAppearance,
+        integrity: f32,
+    ) -> Self {
+        Self {
+            cell_material_identifiers: [[material_identifier; 8]; 8],
+            cell_appearances: [[appearance; 8]; 8],
+            cell_integrities: [[integrity; 8]; 8],
+            cell_amounts: [[if material_identifier.as_u32() == 0 {
+                0.0
+            } else {
+                1.0
+            }; 8]; 8],
+            cell_temperatures: [[if material_identifier.as_u32() == 0 {
+                0.0
+            } else {
+                f32::NAN
+            }; 8]; 8],
+        }
+    }
+
     /// Sets one local cell's material and persistent appearance
     pub fn set_cell(
         &mut self,
