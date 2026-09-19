@@ -247,7 +247,7 @@ impl TemplateMaterials {
         let glass = materials.register(Material::CellularStatic {
             name: "Glass".into(),
             graphics: MaterialAppearance::from_color(Color::new_rgb(190, 215, 225))
-                .with_occlusion(0.03),
+                .with_occlusion(0.005),
             mass: 2.0,
             pressure_ignore_threshold: 5.0,
             default_integrity: 12.0,
