@@ -318,11 +318,11 @@ impl CellularPressure {
                         RigidGranularReactionBatch,
                         String,
                     > = match rigid_reaction_mapping_result {
-                        Ok(()) => mapped_rigid_reaction_readback_buffer
+                        Ok(()) => match mapped_rigid_reaction_readback_buffer
                             .slice(0..mapped_size)
                             .get_mapped_range()
-                            .map_err(|error| error.to_string())
-                            .and_then(|mapped| {
+                        {
+                            Ok(mapped) => (|| {
                                 let mut reactions: Vec<[f32; 3]> =
                                     Vec::with_capacity(rigid_reaction_body_count);
                                 let mut constraints: Vec<[f32; 4]> =
@@ -483,7 +483,12 @@ impl CellularPressure {
                                     source_motion: source_motion.into_boxed_slice(),
                                     fractured_slots,
                                 })
-                            }),
+                            })(),
+                            Err(error) => {
+                                mapped_rigid_reaction_readback_buffer.unmap();
+                                Err(error.to_string())
+                            }
+                        },
                         Err(_) => Err("Rigid granular reaction readback failed".to_owned()),
                     };
                     if let Ok(mut status) = callback_status.lock() {

@@ -321,14 +321,19 @@ impl ThermalPhaseTransitions {
             self.rigid_phase_readback_result.as_ref()?.try_recv().ok()?;
         self.rigid_phase_readback_result = None;
         if rigid_phase_readback_result.is_err() {
-            self.rigid_phase_readback.unmap();
             return Some(Vec::new());
         }
-        let rigid_phase_readback_bytes: wgpu::BufferView = self
+        let rigid_phase_readback_bytes: wgpu::BufferView = match self
             .rigid_phase_readback
             .slice(0..self.rigid_phase_readback_len)
             .get_mapped_range()
-            .ok()?;
+        {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                self.rigid_phase_readback.unmap();
+                return Some(Vec::new());
+            }
+        };
         let rigid_phase_candidate_count: usize =
             u32::from_le_bytes(rigid_phase_readback_bytes[..4].try_into().ok()?)
                 .min(self.rigid_phase_readback_capacity) as usize;

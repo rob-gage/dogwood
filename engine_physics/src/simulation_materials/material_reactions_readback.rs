@@ -9,6 +9,10 @@ use crate::simulation::simulation_constants::RIGID_REMOVAL_EVENT_SIZE;
 use crate::simulation::simulation_constants::RIGID_REMOVAL_EVENTS_OFFSET;
 
 impl MaterialReactions {
+    pub(crate) fn rigid_removal_readback_pending(&self) -> bool {
+        self.rigid_removal_readback_result.is_some()
+    }
+
     pub(crate) fn submit_rigid_removal_readback(&mut self, accelerator: &Accelerator) {
         if self.rigid_removal_readback_result.is_some() {
             return;
@@ -49,14 +53,19 @@ impl MaterialReactions {
             .ok()?;
         self.rigid_removal_readback_result = None;
         if readback_result.is_err() {
-            self.rigid_removal_readback.unmap();
             return Some(Vec::new());
         }
-        let rigid_removal_readback_bytes: wgpu::BufferView = self
+        let rigid_removal_readback_bytes: wgpu::BufferView = match self
             .rigid_removal_readback
             .slice(0..self.rigid_removal_readback_len)
             .get_mapped_range()
-            .ok()?;
+        {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                self.rigid_removal_readback.unmap();
+                return Some(Vec::new());
+            }
+        };
         let rigid_removal_event_count: usize =
             u32::from_le_bytes(rigid_removal_readback_bytes[..4].try_into().ok()?)
                 .min(self.cell_count) as usize;

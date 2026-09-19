@@ -148,22 +148,57 @@ impl SceneDormantRigidBody {
         }
         let mut locals: HashSet<[i32; 2]> = HashSet::with_capacity(self.cells.len());
         for cell in &self.cells {
-            if !locals.insert(cell.local)
-                || !matches!(
-                    materials.get(cell.material),
-                    Some(Material::CellularStatic { .. })
-                )
-                || cell.material.form_checked() != Some(MaterialForm::CellularStatic)
-                || !cell.integrity.is_finite()
-                || !cell.amount.is_finite()
-                || cell.amount <= 0.0
-                || !cell.temperature.is_finite()
-                || cell.temperature < 0.0
-            {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "invalid dormant rigid cell",
-                ));
+            let invalid = |message: String| io::Error::new(io::ErrorKind::InvalidData, message);
+            if !locals.insert(cell.local) {
+                return Err(invalid(format!(
+                    "duplicate dormant rigid cell: body {} local {:?}",
+                    self.identifier, cell.local
+                )));
+            }
+            if !matches!(
+                materials.get(cell.material),
+                Some(Material::CellularStatic { .. })
+            ) {
+                return Err(invalid(format!(
+                    "dormant rigid cell material missing or not CellularStatic: body {} local {:?} material {:?}",
+                    self.identifier, cell.local, cell.material
+                )));
+            }
+            if cell.material.form_checked() != Some(MaterialForm::CellularStatic) {
+                return Err(invalid(format!(
+                    "invalid dormant rigid cell material form: body {} local {:?} material {:?}",
+                    self.identifier, cell.local, cell.material
+                )));
+            }
+            if !cell.integrity.is_finite() {
+                return Err(invalid(format!(
+                    "non-finite dormant rigid integrity: body {} local {:?}",
+                    self.identifier, cell.local
+                )));
+            }
+            if !cell.amount.is_finite() {
+                return Err(invalid(format!(
+                    "non-finite dormant rigid amount: body {} local {:?}",
+                    self.identifier, cell.local
+                )));
+            }
+            if cell.amount <= 0.0 {
+                return Err(invalid(format!(
+                    "non-positive dormant rigid amount: body {} local {:?}",
+                    self.identifier, cell.local
+                )));
+            }
+            if !cell.temperature.is_finite() {
+                return Err(invalid(format!(
+                    "non-finite dormant rigid temperature: body {} local {:?}",
+                    self.identifier, cell.local
+                )));
+            }
+            if cell.temperature < 0.0 {
+                return Err(invalid(format!(
+                    "negative dormant rigid temperature: body {} local {:?}",
+                    self.identifier, cell.local
+                )));
             }
         }
         Ok(())

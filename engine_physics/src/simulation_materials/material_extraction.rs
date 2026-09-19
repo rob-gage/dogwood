@@ -351,6 +351,10 @@ impl MaterialExtraction {
         self.slots.iter().any(|slot| slot.active_request.is_none())
     }
 
+    pub(crate) fn readback_pending(&self) -> bool {
+        self.slots.iter().any(|slot| slot.active_request.is_some())
+    }
+
     pub(crate) fn take_completed(
         &mut self,
         accelerator: &Accelerator,
@@ -367,7 +371,6 @@ impl MaterialExtraction {
             let request: MaterialExtractionRequest = slot.active_request.take().unwrap();
             slot.readback_result = None;
             if readback_result.is_err() {
-                slot.readback.unmap();
                 results.push(MaterialExtractionResult {
                     request,
                     materials: Vec::new(),

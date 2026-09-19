@@ -89,6 +89,18 @@ impl CellularPressure {
     pub(crate) const fn pending_pressure(&self) -> &AcceleratorBuffer {
         &self.pending_impulses
     }
+
+    pub(crate) fn rigid_reaction_readback_pending(&self) -> bool {
+        !self.rigid_reaction_completed.is_empty()
+            || self.rigid_reaction_readback_slots.iter().any(|slot| {
+                slot.status.lock().is_ok_and(|status| {
+                    !matches!(
+                        *status,
+                        crate::simulation::RigidGranularReadbackStatus::Available
+                    )
+                })
+            })
+    }
 }
 
 impl Drop for CellularPressure {
