@@ -18,6 +18,12 @@ launches it, rebuilding only when relevant project or Dogwood build inputs
 change. `dogwood check` reports project, host, Docker, and cross-build
 readiness without building the game.
 
+Build and run target flags are split into platform and architecture. Use
+exactly one of `--windows` or `--linux` and exactly one of `--x86`, `--x64`, or
+`--arm64`, for example `dogwood build --windows --x64` or
+`dogwood run --linux --arm64`. Omit all five flags to select the current
+platform and architecture; the Dockerfile is still used.
+
 The template is executable documentation. `template_project` implements
 `Game`, creates temporary scene data, configures a generator, spawns and
 possesses a pawn, spawns physical square actors, collects actor contact events,
