@@ -2,9 +2,11 @@
 
 use std::{
     error::Error,
-    ffi::c_void,
     path::{Path, PathBuf},
 };
+
+#[cfg(unix)]
+use std::ffi::c_void;
 
 const LOADER_NAME: &str = if cfg!(windows) {
     "vulkan-1.dll"
@@ -41,15 +43,15 @@ impl VulkanLoader {
             let module = unsafe {
                 LoadLibraryExW(
                     wide.as_ptr(),
-                    0,
+                    std::ptr::null_mut(),
                     LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS,
                 )
             };
-            if module == 0 {
+            if module.is_null() {
                 return Err(std::io::Error::last_os_error().into());
             }
             if unsafe { GetProcAddress(module, c"vkGetInstanceProcAddr".as_ptr() as _) }.is_none() {
-                unsafe { windows_sys::Win32::System::LibraryLoader::FreeLibrary(module) };
+                unsafe { windows_sys::Win32::Foundation::FreeLibrary(module) };
                 return Err("packaged Vulkan loader does not export vkGetInstanceProcAddr".into());
             }
             Ok(Self { path, module })
@@ -73,7 +75,7 @@ impl VulkanLoader {
 #[cfg(windows)]
 impl Drop for VulkanLoader {
     fn drop(&mut self) {
-        unsafe { windows_sys::Win32::System::LibraryLoader::FreeLibrary(self.module) };
+        unsafe { windows_sys::Win32::Foundation::FreeLibrary(self.module) };
     }
 }
 
