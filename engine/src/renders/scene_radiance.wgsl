@@ -45,7 +45,6 @@ fn trace(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let angle = (f32(direction_index) + 0.5) * TAU /
         f32(trace_configuration.direction_count);
     let direction = vec2<f32>(cos(angle), sin(angle));
-    var travel = trace_configuration.interval_start;
     var radiance = vec3<f32>(0.0);
     var transmission = 1.0;
     var last_attenuated_cell = vec2<i32>(0x7fffffff);
@@ -56,36 +55,87 @@ fn trace(@builtin(global_invocation_id) invocation: vec3<u32>) {
         origin_cell = vec2<i32>(probe_position);
         escaping_origin_cell = textureLoad(optical_field, origin_cell, 0).a > 0.000001;
     }
-    let step_count = u32(ceil(
-        trace_configuration.interval_end - trace_configuration.interval_start,
-    ));
-    for (var step = 0u; step < step_count; step++) {
-        if travel >= trace_configuration.interval_end || transmission <= 0.001 { break; }
-        let position = probe_position + direction * travel;
-        if any(position < vec2<f32>(0.0)) ||
-                any(position >= vec2<f32>(trace_configuration.scene_size)) { break; }
-        let pixel = vec2<i32>(position);
-        let optical = textureLoad(optical_field, pixel, 0);
-        if optical.a > 0.000001 {
-            let cell = pixel;
-            if escaping_origin_cell && all(cell == origin_cell) {
-                travel += 1.0;
-                continue;
+    var interval_start = trace_configuration.interval_start;
+    var interval_end = trace_configuration.interval_end;
+    for (var axis = 0u; axis < 2u; axis++) {
+        let origin = probe_position[axis];
+        let component = direction[axis];
+        let extent = f32(trace_configuration.scene_size[axis]);
+        if abs(component) < 0.000001 {
+            if origin < 0.0 || origin >= extent {
+                trace_output.values[invocation.x] = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+                return;
             }
-            escaping_origin_cell = false;
-            if any(cell != last_attenuated_cell) {
-                let tau = max(optical.a, 0.0);
-                let cell_transmission = exp(-tau);
-                radiance += transmission * optical.rgb *
-                    ((1.0 - cell_transmission) / max(tau, 0.000001));
-                transmission *= cell_transmission;
-                last_attenuated_cell = cell;
-            }
-            travel += 1.0;
-            continue;
+        } else {
+            let first = (0.0 - origin) / component;
+            let last = (extent - origin) / component;
+            interval_start = max(interval_start, min(first, last));
+            interval_end = min(interval_end, max(first, last));
         }
-        escaping_origin_cell = false;
-        travel += 1.0;
+    }
+    if interval_start >= interval_end {
+        trace_output.values[invocation.x] = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+
+    let position = probe_position + direction * interval_start;
+    var cell = vec2<i32>(floor(position));
+    if direction.x < 0.0 && position.x == floor(position.x) { cell.x -= 1; }
+    if direction.y < 0.0 && position.y == floor(position.y) { cell.y -= 1; }
+    let step = vec2<i32>(
+        select(0, 1, direction.x > 0.0),
+        select(0, 1, direction.y > 0.0),
+    ) - vec2<i32>(
+        select(0, 1, direction.x < 0.0),
+        select(0, 1, direction.y < 0.0),
+    );
+    var next_crossing = vec2<f32>(1e30);
+    var crossing_delta = vec2<f32>(1e30);
+    if abs(direction.x) >= 0.000001 {
+        let boundary = select(f32(cell.x), f32(cell.x + 1), direction.x > 0.0);
+        next_crossing.x = (boundary - probe_position.x) / direction.x;
+        crossing_delta.x = abs(1.0 / direction.x);
+    }
+    if abs(direction.y) >= 0.000001 {
+        let boundary = select(f32(cell.y), f32(cell.y + 1), direction.y > 0.0);
+        next_crossing.y = (boundary - probe_position.y) / direction.y;
+        crossing_delta.y = abs(1.0 / direction.y);
+    }
+
+    var travel = interval_start;
+    while travel < interval_end && transmission > 0.001 {
+        if all(cell >= vec2<i32>(0)) &&
+                all(cell < vec2<i32>(trace_configuration.scene_size)) {
+            let pixel = cell;
+            let optical = textureLoad(optical_field, pixel, 0);
+            if optical.a > 0.000001 {
+                if escaping_origin_cell && all(cell == origin_cell) {
+                    // Keep walking until the ray escapes an opaque origin cell.
+                } else {
+                    escaping_origin_cell = false;
+                    if any(cell != last_attenuated_cell) {
+                        let tau = max(optical.a, 0.0);
+                        let cell_transmission = exp(-tau);
+                        radiance += transmission * optical.rgb *
+                            ((1.0 - cell_transmission) / max(tau, 0.000001));
+                        transmission *= cell_transmission;
+                        last_attenuated_cell = cell;
+                    }
+                }
+            } else {
+                escaping_origin_cell = false;
+            }
+        }
+        let next_travel = min(min(next_crossing.x, next_crossing.y), interval_end);
+        if next_crossing.x <= next_crossing.y {
+            cell.x += step.x;
+            next_crossing.x += crossing_delta.x;
+        }
+        if next_crossing.y <= next_crossing.x {
+            cell.y += step.y;
+            next_crossing.y += crossing_delta.y;
+        }
+        travel = next_travel;
     }
     trace_output.values[invocation.x] = vec4<f32>(max(radiance, vec3<f32>(0.0)),
         clamp(transmission, 0.0, 1.0));
