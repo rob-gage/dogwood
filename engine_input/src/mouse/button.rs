@@ -2,15 +2,15 @@
 
 /// A mouse button
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-pub struct Button(winit::mouse::MouseButton);
+pub struct Button(pub(crate) winit::event::MouseButton);
 
-impl Button{
+impl Button {
     /// The left mouse button
-    pub const LEFT: Self = Self(winit::mouse::MouseButton::Left);
+    pub const LEFT: Self = Self(winit::event::MouseButton::Left);
 
     /// The right mouse button
-    pub const RIGHT: Self = Self(winit::mouse::MouseButton::Right);
+    pub const RIGHT: Self = Self(winit::event::MouseButton::Right);
 
     /// The middle mouse button
-    pub const MIDDLE: Self = Self(winit::mouse::MouseButton::Middle);
+    pub const MIDDLE: Self = Self(winit::event::MouseButton::Middle);
 }

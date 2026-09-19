@@ -15,6 +15,10 @@ locomotion, override `pass_input` and inspect the state before calling or
 replacing the default behavior. Keep input mapping in the game layer; actors
 consume `ActorControlState`.
 
+`MouseInputState` similarly retains held mouse buttons. Winit supplies mouse
+input as a `WindowEvent::MouseInput` with separate `state` and `button` fields;
+pass both fields to `process_event`, then query a button with
+
 ## Gameplay Pointer Input
 
 `Game::pass_pointer_input` receives `GamePointerInput` before each ordinary
