@@ -12,8 +12,9 @@ impl Scene {
         if !self.actor_initialized_regions.insert(region) {
             return;
         }
-        let spawns: Vec<ActorPhysicalSpawn> =
-            self.generator().generate_actor_spawns_with_seed(0, region);
+        let spawns: Vec<ActorPhysicalSpawn> = self
+            .generator()
+            .generate_actor_spawns_with_seed(self.world_seed, region);
         for spawn in spawns {
             self.actor_registry_mutable().spawn_physical_actor(
                 spawn.configuration,

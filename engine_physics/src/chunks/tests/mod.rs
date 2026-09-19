@@ -175,3 +175,63 @@ fn test_occupied_cells_normalize_before_persistence() {
     assert_eq!(tile.cell_amount(1, 2), 1.0);
     assert_eq!(tile.cell_temperature(1, 2), 301.5);
 }
+
+#[test]
+fn test_chunk_initialization_writer_uses_absolute_bounds() {
+    let coordinates: TileCoordinates = TileCoordinates { x: -64, y: 32 };
+    let region: ChunkGenerationRegion = ChunkGenerationRegion::new(coordinates);
+    assert_eq!(region.cell_origin.x, -512);
+    assert_eq!(region.cell_origin.y, 256);
+    assert!(region.contains_cell(crate::tiles::CellCoordinates { x: -1, y: 767 }));
+    assert!(!region.contains_cell(crate::tiles::CellCoordinates { x: 0, y: 768 }));
+
+    let material: MaterialIdentifier = MaterialIdentifier::new(MaterialForm::CellularStatic, 0);
+    let mut chunk: Chunk = Chunk::new_empty(coordinates);
+    let mut writer: ChunkInitializationWriter<'_> = ChunkInitializationWriter::new(&mut chunk);
+    writer.fill_cells(
+        region.cell_origin,
+        8,
+        8,
+        material,
+        CellularAppearance::NEUTRAL,
+    );
+    assert_eq!(writer.initialized_cell_count(), 64);
+    assert_eq!(
+        chunk
+            .get_tile_unchecked(coordinates)
+            .cell_material_identifier(0, 0),
+        material
+    );
+}
+
+#[test]
+fn test_absolute_generation_writes_are_order_independent() {
+    let coordinates: TileCoordinates = TileCoordinates { x: 0, y: 0 };
+    let region: ChunkGenerationRegion = ChunkGenerationRegion::new(coordinates);
+    let material: MaterialIdentifier = MaterialIdentifier::new(MaterialForm::CellularStatic, 0);
+    let generate = |reverse: bool| {
+        let mut chunk: Chunk = Chunk::new_empty(coordinates);
+        let mut writer: ChunkInitializationWriter<'_> = ChunkInitializationWriter::new(&mut chunk);
+        let mut cells: Vec<crate::tiles::CellCoordinates> = (0..8)
+            .flat_map(|y| (0..8).map(move |x| crate::tiles::CellCoordinates { x, y }))
+            .collect();
+        if reverse {
+            cells.reverse();
+        }
+        for cell in cells {
+            writer.set_cell(
+                crate::tiles::CellCoordinates {
+                    x: cell.x + region.cell_origin.x,
+                    y: cell.y + region.cell_origin.y,
+                },
+                material,
+                CellularAppearance::NEUTRAL,
+            );
+        }
+        chunk.resolve_uninitialized_temperatures(|_| 293.15);
+        let mut bytes: Vec<u8> = Vec::new();
+        chunk.serialize(&mut bytes).unwrap();
+        bytes
+    };
+    assert_eq!(generate(false), generate(true));
+}

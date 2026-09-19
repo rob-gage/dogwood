@@ -8,6 +8,7 @@ use std::sync::mpsc::SyncSender;
 use super::Scene;
 use crate::chunks::Chunk;
 use crate::chunks::ChunkEntry;
+use crate::chunks::ChunkInitializationWriter;
 use crate::chunks::ChunkStreamingResponse;
 use crate::scenes::SceneData;
 use crate::scenes::SceneGenerator;
@@ -99,12 +100,27 @@ impl Scene {
             },
         );
         let generator: Arc<dyn SceneGenerator> = self.generator.clone();
+        let world_seed: u128 = self.world_seed;
         let sender: SyncSender<ChunkStreamingResponse> =
             self.chunk_streaming_response_sender.clone();
         // spawn new thread for generation
         std::thread::spawn(move || {
+            let started: std::time::Instant = std::time::Instant::now();
+            let mut chunk: Chunk = Chunk::new_empty(coordinates);
+            let region: crate::chunks::ChunkGenerationRegion =
+                crate::chunks::ChunkGenerationRegion::new(coordinates);
+            let mut initialization: ChunkInitializationWriter<'_> =
+                ChunkInitializationWriter::new(&mut chunk);
+            generator.generate_chunk(world_seed, region, &mut initialization);
+            tracing::debug!(
+                chunk_x = coordinates.x,
+                chunk_y = coordinates.y,
+                duration_micros = started.elapsed().as_micros(),
+                initialized_cells = initialization.initialized_cell_count(),
+                "generated streamed scene chunk"
+            );
             let chunk_streaming_result: Result<Box<Chunk>, Box<dyn Error + Send + Sync>> =
-                Ok(Box::new(generator.generate_chunk(coordinates)));
+                Ok(Box::new(chunk));
             if sender
                 .send(ChunkStreamingResponse::Generated {
                     streaming_identifier,

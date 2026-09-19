@@ -18,6 +18,34 @@ The generator supplies missing chunks and may provide initial actor spawns.
 Generated content becomes ordinary scene state after creation; it is not a
 second runtime authority.
 
+For deterministic generation, use `new_with_generator_and_seed` or
+`load_with_generator_and_seed`. Implement `SceneGenerator::generate_chunk` and
+write directly through the supplied `ChunkInitializationWriter`:
+
+```rust
+fn generate_chunk(
+    &self,
+    world_seed: u128,
+    region: ChunkGenerationRegion,
+    initialization: &mut ChunkInitializationWriter<'_>,
+) {
+    let material = self.material_for(world_seed, region.cell_origin);
+    initialization.fill_cells(
+        region.cell_origin,
+        8,
+        8,
+        material,
+        CellularAppearance::NEUTRAL,
+    );
+}
+```
+
+`ChunkGenerationRegion` exposes exact absolute tile and cell bounds. The writer
+writes directly into the new persistent CPU chunk without runtime edit queues
+or per-cell simulation. A persisted chunk file always wins over the generator,
+including a serialized all-air chunk. Generation runs once on the existing
+streaming worker; normal activation and one-time uploads follow afterward.
+
 ## Update Lifecycle
 
 The application passes elapsed wall time to `Scene::update`. The scene consumes

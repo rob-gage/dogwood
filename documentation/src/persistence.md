@@ -15,6 +15,17 @@ does. Its temporary directory is removed after the last `SceneData` owner is
 dropped. `read_chunk` and `write_chunk` are the explicit chunk persistence
 boundary.
 
+Streaming first reads the requested chunk file. Only a missing file invokes the
+configured `SceneGenerator`; an existing file is restored unchanged, including
+a serialized all-air chunk. Use the seeded constructor when generation must be
+stable across restart and streaming order:
+
+```rust
+let scene: Scene = Scene::load_with_generator_and_seed(
+    &accelerator, configuration, data, world_seed, generator,
+)?;
+```
+
 Scenes stream a resident tile buffer around the requested area (normally the
 possessed pawn). `area_buffered`, `is_position_resident`, `tiles_download`, and
 `tiles_upload` are the useful game-facing controls. Tile, fluid, gas, and

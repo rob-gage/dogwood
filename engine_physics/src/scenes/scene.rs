@@ -93,6 +93,8 @@ pub struct Scene {
     data: SceneData,
     /// The `SceneGenerator` used to generate new tiles for this `Scene`
     generator: Arc<dyn SceneGenerator>,
+    /// Stable seed supplied to the scene generator
+    pub(super) world_seed: u128,
     /// The `ActorRegistry` currently managed by this `Scene`
     actor_registry: ActorRegistry,
     /// The actor currently receiving player control, if any

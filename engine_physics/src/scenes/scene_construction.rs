@@ -20,6 +20,7 @@ use super::SceneRigidBodyStreamingResponse;
 use crate::actors::ActorRegistry;
 use crate::chunks::Chunk;
 use crate::chunks::ChunkEntry;
+use crate::chunks::ChunkInitializationWriter;
 use crate::chunks::ChunkStreamingResponse;
 use crate::materials::MaterialTable;
 use crate::scenes::SceneData;
@@ -56,6 +57,17 @@ impl Scene {
         accelerator: &Arc<Accelerator>,
         simulation: SceneSimulationConfiguration,
         data: SceneData,
+        generator: impl SceneGenerator + 'static,
+    ) -> Result<Self, Box<dyn Error>> {
+        Self::load_with_generator_and_seed(accelerator, simulation, data, 0, generator)
+    }
+
+    /// Loads scene data and generates missing chunks with a stable world seed.
+    pub fn load_with_generator_and_seed(
+        accelerator: &Arc<Accelerator>,
+        simulation: SceneSimulationConfiguration,
+        data: SceneData,
+        world_seed: u128,
         generator: impl SceneGenerator + 'static,
     ) -> Result<Self, Box<dyn Error>> {
         simulation.validate()?;
@@ -388,6 +400,7 @@ impl Scene {
             accelerator,
             data,
             generator,
+            world_seed,
             actor_registry: ActorRegistry::new(),
             possessed_actor: None,
             actor_contact_events: Vec::new(),
@@ -490,7 +503,23 @@ impl Scene {
                 Some(chunk) => chunk,
                 None => {
                     generated = true;
-                    scene.generator.generate_chunk(coordinates)
+                    let mut chunk: Chunk = Chunk::new_empty(coordinates);
+                    let region: crate::chunks::ChunkGenerationRegion =
+                        crate::chunks::ChunkGenerationRegion::new(coordinates);
+                    let started: std::time::Instant = std::time::Instant::now();
+                    let mut initialization: ChunkInitializationWriter<'_> =
+                        ChunkInitializationWriter::new(&mut chunk);
+                    scene
+                        .generator
+                        .generate_chunk(world_seed, region, &mut initialization);
+                    tracing::debug!(
+                        chunk_x = coordinates.x,
+                        chunk_y = coordinates.y,
+                        duration_micros = started.elapsed().as_micros(),
+                        initialized_cells = initialization.initialized_cell_count(),
+                        "generated initial scene chunk"
+                    );
+                    chunk
                 }
             };
             chunk.resolve_uninitialized_temperatures(|identifier| {

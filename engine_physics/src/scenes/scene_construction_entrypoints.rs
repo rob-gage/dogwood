@@ -29,10 +29,22 @@ impl Scene {
         simulation: SceneSimulationConfiguration,
         generator: impl super::SceneGenerator + 'static,
     ) -> Result<Self, Box<dyn Error>> {
-        Self::load_with_generator(
+        Self::new_with_generator_and_seed(accelerator, materials, simulation, 0, generator)
+    }
+
+    /// Creates a temporary scene with a generator and stable world seed.
+    pub fn new_with_generator_and_seed(
+        accelerator: &Arc<engine_compute::Accelerator>,
+        materials: MaterialRegistry,
+        simulation: SceneSimulationConfiguration,
+        world_seed: u128,
+        generator: impl super::SceneGenerator + 'static,
+    ) -> Result<Self, Box<dyn Error>> {
+        Self::load_with_generator_and_seed(
             accelerator,
             simulation,
             SceneData::new_temporary(materials)?,
+            world_seed,
             generator,
         )
     }

@@ -12,9 +12,11 @@ use super::append_record;
 use super::owner_chunk;
 use super::remove_ids;
 use super::world_aabb;
+use crate::chunks::Chunk;
 use crate::materials::Material;
 use crate::materials::MaterialIdentifier;
 use crate::materials::MaterialRegistry;
+use crate::scene_data::SceneData;
 use crate::tiles::CellularAppearance;
 use crate::tiles::TileCoordinates;
 
@@ -160,4 +162,14 @@ fn test_owner_mutations_preserve_current_records() {
         .iter()
         .try_for_each(|record| record.validate(&materials))
         .unwrap();
+}
+
+#[test]
+fn test_persisted_empty_chunk_is_distinct_from_missing_chunk() {
+    let (materials, _material): (MaterialRegistry, MaterialIdentifier) = test_materials();
+    let data: SceneData = SceneData::new_temporary(materials).unwrap();
+    let coordinates: TileCoordinates = TileCoordinates { x: 0, y: 0 };
+    assert!(data.read_chunk(coordinates).unwrap().is_none());
+    data.write_chunk(&Chunk::new_empty(coordinates)).unwrap();
+    assert!(data.read_chunk(coordinates).unwrap().is_some());
 }

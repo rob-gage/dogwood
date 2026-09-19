@@ -21,8 +21,12 @@ and temperature. Active cell arrays are packed into Accelerator buffers in the
 same logical row-major tile/cell layout, with ring offsets translating logical
 world coordinates to physical slots.
 
-`SceneGenerator` supplies missing chunks. Generated chunks become normal active
-or persistent chunks; generation is not a separate simulation authority.
+`SceneGenerator` supplies missing chunks. `ChunkGenerationRegion` gives exact
+absolute tile/cell bounds and `ChunkInitializationWriter` writes directly into
+the new `Chunk`; this bypasses `SceneEditBatch` and per-cell simulation work.
+Generated chunks become normal active or persistent chunks; generation is not a
+separate simulation authority. Persisted chunks, including empty ones, always
+take precedence over generation.
 `SceneEditBatch` is the common ingress for gameplay/editor placements, erases,
 destruction, thermal edits, and rigid-body placement. The scene applies batches
 at update boundaries so edits are ordered relative to GPU stages.
