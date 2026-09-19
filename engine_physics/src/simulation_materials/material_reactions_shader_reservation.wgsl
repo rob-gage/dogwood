@@ -48,10 +48,20 @@ fn compact_candidates(@builtin(global_invocation_id) invocation: vec3<u32>) {
 @compute @workgroup_size(1)
 fn prepare_sort_dispatch(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if (invocation.x == 0u) {
-        sort_indirect[0] = (arrayLength(&candidate_indices) + 63u) / 64u;
+        let active_padded_capacity = active_candidate_capacity();
+        sort_indirect[0] = (active_padded_capacity + 63u) / 64u;
         sort_indirect[1] = 1u;
         sort_indirect[2] = 1u;
     }
+}
+
+fn active_candidate_capacity() -> u32 {
+    let candidate_count_value = min(atomicLoad(&candidate_count[0]), arrayLength(&candidate_indices));
+    var active_padded_capacity = 1u;
+    while (active_padded_capacity < candidate_count_value) {
+        active_padded_capacity = active_padded_capacity << 1u;
+    }
+    return min(active_padded_capacity, arrayLength(&candidate_indices));
 }
 
 fn candidate_before(a: u32, b: u32) -> bool {
@@ -67,8 +77,12 @@ fn candidate_before(a: u32, b: u32) -> bool {
 @compute @workgroup_size(64)
 fn sort_candidates(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let material_sort_index = invocation.x;
+    let active_padded_capacity = active_candidate_capacity();
+    if (sort_parameters.k > active_padded_capacity || material_sort_index >= active_padded_capacity) {
+        return;
+    }
     let partner = material_sort_index ^ sort_parameters.j;
-    if (partner <= material_sort_index || partner >= arrayLength(&candidate_indices)) {
+    if (partner <= material_sort_index || partner >= active_padded_capacity) {
         return;
     }
     let a = candidate_indices[material_sort_index];

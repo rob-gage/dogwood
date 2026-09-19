@@ -46,6 +46,8 @@ impl MaterialReactions {
     ) -> Self {
         let device: &wgpu::Device = accelerator.wgpu_device();
         let candidates: AcceleratorBuffer = accelerator.allocate::<[u32; 32]>(cell_count as usize);
+        // Candidate indices are padded to a power of two for bitonic sorting. The shader
+        // derives a smaller active padded range from candidate_count on every tick.
         let sort_capacity: u32 = cell_count.max(1).next_power_of_two();
         let candidate_indices: AcceleratorBuffer =
             accelerator.allocate::<u32>(sort_capacity as usize);

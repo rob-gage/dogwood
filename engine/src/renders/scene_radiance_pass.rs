@@ -344,7 +344,12 @@ impl SceneRadiancePass {
 
     fn resize(&mut self, accelerator: &Accelerator, size: [u32; 2], world_origin: [i32; 2]) {
         if self.domain.map(|domain| domain.size_cells) == Some(size) {
-            self.update_origins(accelerator, size, world_origin);
+            if self
+                .domain
+                .is_none_or(|domain| domain.world_cell_origin != world_origin)
+            {
+                self.update_origins(accelerator, size, world_origin);
+            }
             return;
         }
         let device = accelerator.wgpu_device();
