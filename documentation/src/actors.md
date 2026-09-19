@@ -39,20 +39,31 @@ select them from gameplay code:
 
 ```rust
 use dogwood_engine::physics::actors::{
-    ActorSpriteAnimation, ActorSpriteSheet, ActorSprites,
+    ActorSpriteAnimation, ActorSpriteImage, ActorSprites,
 };
 
-let sprite_sheet: ActorSpriteSheet =
-    ActorSpriteSheet::new(64, 16, vec![0; 64 * 16 * 4]).expect("valid RGBA sheet");
-let animation: ActorSpriteAnimation = ActorSpriteAnimation::new(
-    sprite_sheet, None, 16, 16, 4, 8.0, true,
-).expect("valid animation");
+// In a game crate, replace the byte slices with include_bytes!("player_idle.png")
+// and include_bytes!("player_idle_radiance.png").
+let sprite_sheet = ActorSpriteImage::from_png_bytes(&[])?;
+let animation: ActorSpriteAnimation = ActorSpriteAnimation::from_rgba_sprite_sheet(
+    sprite_sheet, None, [16, 16], 4, 8.0, true,
+)?;
 let mut sprites: ActorSprites = ActorSprites::new();
-let idle_animation = sprites.add_animation("idle", animation).unwrap();
+let idle_animation = sprites.register_animation("idle", animation)?;
 scene.actor_registry_mutable().set_sprites(actor, sprites);
 scene.actor_registry_mutable().sprites_mutable(actor)
     .unwrap().play(idle_animation);
+scene.actor_registry_mutable().sprites_mutable(actor)
+    .unwrap().set_animation_speed(1.25);
 ```
+
+`ActorSpriteImage::from_png_bytes` decodes an 8-bit RGBA PNG once. A real game
+crate can use `ActorSpriteImage::from_png_bytes(include_bytes!("player_idle.png"))`
+for compile-time embedded assets. Ordinary sprite RGB is visible color and
+alpha is coverage. Radiance RGB is emission; radiance alpha is preserved but
+currently ignored. Missing radiance images mean zero emission without creating
+a black fallback image. Sprite sheets are shared, so the same image can be
+used by many actors without duplicating its RGBA pixels.
 
 Set `world_size` and `world_offset` through `set_world_size` and
 `set_world_offset`; these control world placement independently of source

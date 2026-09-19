@@ -40,12 +40,14 @@ impl ActorRegistry {
     }
 
     /// Returns mutable access to an actor's sprite and animation state.
-    pub fn sprites_mutable(
-        &mut self,
-        identifier: Actor,
-    ) -> Option<bevy_ecs::world::Mut<'_, ActorSprites>> {
-        self.bevy_entity(identifier)
-            .and_then(|entity| self.world.get_mut::<ActorSprites>(entity))
+    pub fn sprites_mutable(&mut self, identifier: Actor) -> Option<&mut ActorSprites> {
+        let entity = self.bevy_entity(identifier)?;
+        let mut sprites = self.world.get_mut::<ActorSprites>(entity)?;
+        let sprites_pointer: *mut ActorSprites = &mut *sprites;
+        drop(sprites);
+        // The component remains in `self.world` for this mutable registry
+        // borrow, so Bevy's guard need not leak into the public API.
+        Some(unsafe { &mut *sprites_pointer })
     }
 
     /// Attaches or replaces an actor's sprite and animation state.

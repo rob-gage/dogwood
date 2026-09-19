@@ -3,9 +3,14 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use super::{ActorSpriteAnimation, ActorSpriteAnimationIdentifier};
+use super::{ActorSpriteAnimation, ActorSpriteAnimationIdentifier, ActorSpriteError};
 
 /// Sprite and animation playback state carried by any actor type.
+///
+/// Sprite sheets are shared between animations and actors, so attaching this
+/// component does not duplicate their RGBA image data. Animation selection is
+/// gameplay-controlled; this component never chooses animations from actor
+/// movement or other gameplay state.
 #[derive(bevy_ecs::component::Component, Clone, Debug)]
 pub struct ActorSprites {
     animations: HashMap<ActorSpriteAnimationIdentifier, ActorSpriteAnimation>,
@@ -38,19 +43,20 @@ impl Default for ActorSprites {
 }
 
 impl ActorSprites {
+    /// Creates empty sprite state with a one-by-one world size.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Adds a named animation and returns its stable identifier.
-    pub fn add_animation(
+    /// Registers a named animation and returns its stable identifier.
+    pub fn register_animation(
         &mut self,
         name: impl Into<String>,
         animation: ActorSpriteAnimation,
-    ) -> Option<ActorSpriteAnimationIdentifier> {
+    ) -> Result<ActorSpriteAnimationIdentifier, ActorSpriteError> {
         let name: String = name.into();
         if self.animation_names.contains_key(&name) {
-            return None;
+            return Err(ActorSpriteError::DuplicateAnimationName(name));
         }
         let identifier: ActorSpriteAnimationIdentifier =
             ActorSpriteAnimationIdentifier::new(self.next_animation_identifier);
@@ -60,9 +66,22 @@ impl ActorSprites {
         if self.current_animation_identifier.is_none() {
             self.current_animation_identifier = Some(identifier);
         }
-        Some(identifier)
+        Ok(identifier)
     }
 
+    /// Adds a named animation and returns `None` for a duplicate name.
+    ///
+    /// Prefer [`Self::register_animation`] when the construction error should
+    /// be reported to a game developer.
+    pub fn add_animation(
+        &mut self,
+        name: impl Into<String>,
+        animation: ActorSpriteAnimation,
+    ) -> Option<ActorSpriteAnimationIdentifier> {
+        self.register_animation(name, animation).ok()
+    }
+
+    /// Resolves a human-readable name once for runtime control calls.
     pub fn animation_identifier(&self, name: &str) -> Option<ActorSpriteAnimationIdentifier> {
         self.animation_names.get(name).copied()
     }
@@ -74,6 +93,7 @@ impl ActorSprites {
         self.animations.get(&identifier)
     }
 
+    /// Selects an animation without restarting it when it is already active.
     pub fn play(&mut self, identifier: ActorSpriteAnimationIdentifier) -> bool {
         if !self.animations.contains_key(&identifier) {
             return false;
@@ -87,6 +107,7 @@ impl ActorSprites {
         true
     }
 
+    /// Selects an animation and resets its frame and elapsed time.
     pub fn restart(&mut self, identifier: ActorSpriteAnimationIdentifier) -> bool {
         if !self.play(identifier) {
             return false;
@@ -104,6 +125,7 @@ impl ActorSprites {
         self.paused = false;
     }
 
+    /// Sets the runtime multiplier applied to an animation's authored rate.
     pub fn set_animation_speed(&mut self, multiplier: f32) -> bool {
         if !multiplier.is_finite() || multiplier <= 0.0 {
             return false;

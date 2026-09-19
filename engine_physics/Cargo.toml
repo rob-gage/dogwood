@@ -12,6 +12,7 @@ bevy_ecs = { workspace = true }
 dogwood_engine_compute = { workspace = true }
 dogwood_engine_graphics = { workspace = true }
 dogwood_engine_input = { workspace = true }
+png.workspace = true
 rapier2d = { workspace = true }
 tracing.workspace = true
 tempfile.workspace = true

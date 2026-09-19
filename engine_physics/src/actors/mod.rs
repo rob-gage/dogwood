@@ -40,7 +40,7 @@ pub use actor_physical_spawn::ActorPhysicalSpawn;
 pub use actor_possessable::ActorPossessable;
 pub(crate) use actor_previous_position::ActorPreviousPosition;
 pub use actor_sprite_animation::{ActorSpriteAnimation, ActorSpriteAnimationIdentifier};
-pub use actor_sprite_sheet::ActorSpriteSheet;
+pub use actor_sprite_sheet::{ActorSpriteError, ActorSpriteImage, ActorSpriteSheet};
 pub use actor_sprites::ActorSprites;
 
 pub(crate) use crate::actors_utility::ActorCellularProxyState;

@@ -45,6 +45,7 @@ egui = "=0.36.1"
 egui-wgpu = { version = "=0.36.1", default-features = false, features = ["winit"] }
 egui-winit = { version = "=0.36.1", default-features = false }
 naga_oil = "=0.23.0"
+png = "=0.17.16"
 pollster = "=0.4.0"
 rapier2d = { version = "=0.35.3", features = ["parallel"] }
 tracing = { version = "=0.1.44", features = ["release_max_level_off"] }
