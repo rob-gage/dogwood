@@ -52,6 +52,7 @@ tracing-appender = "=0.2.5"
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter"] }
 tempfile = "=3.27.0"
 sha2 = "=0.10.9"
+libloading = "=0.8.9"
 windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_System_LibraryLoader"] }
 # Backend features are supplied by engine_compute per target. Keeping them out
 # of this shared dependency prevents unrelated crates from selecting OpenGL.

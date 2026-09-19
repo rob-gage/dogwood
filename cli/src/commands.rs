@@ -1,7 +1,9 @@
 // Copyright Rob Gage 2026
 
 use crate::{
-    build::{build, command_available},
+    build::{
+        build, build_to, command_available, fingerprint, run_cache_directory, validate_artifact,
+    },
     project::DogwoodProject,
     target::BuildTarget,
 };
@@ -60,16 +62,43 @@ pub(crate) fn build_command(directory: PathBuf, flags: TargetFlags) -> Result<()
     let project = DogwoodProject::discover(&directory)?;
     let target = flags.target()?;
     let artifact = build(&project, target)?;
-    println!("Built {target}: {}", artifact.executable.display());
+    println!("Built {target} package: {}", artifact.package_dir.display());
     Ok(())
 }
 
 pub(crate) fn run(directory: PathBuf, flags: TargetFlags) -> Result<(), Box<dyn Error>> {
     let project = DogwoodProject::discover(&directory)?;
     let target = flags.target()?;
-    let artifact = build(&project, target)?;
+    let package_dir = run_cache_directory(&project, target)?;
+    let fingerprint_path = package_dir.join("dogwood-fingerprint");
+    let current_fingerprint = fingerprint(&project, target)?;
+    let cached = std::fs::read_to_string(&fingerprint_path)
+        .is_ok_and(|value| value == current_fingerprint)
+        && validate_artifact(
+            &crate::build::BuildArtifact {
+                package_dir: package_dir.clone(),
+                executable: package_dir.join(target.executable_name()),
+            },
+            target,
+        )
+        .is_ok();
+    let artifact = if cached {
+        println!("Dogwood run: using cached {target} build");
+        crate::build::BuildArtifact {
+            package_dir: package_dir.clone(),
+            executable: package_dir.join(target.executable_name()),
+        }
+    } else {
+        println!("Dogwood run: project changed; rebuilding {target}");
+        if package_dir.exists() {
+            std::fs::remove_dir_all(&package_dir)?;
+        }
+        let artifact = build_to(&project, target, package_dir.clone())?;
+        std::fs::write(&fingerprint_path, current_fingerprint)?;
+        artifact
+    };
     if target != BuildTarget::host()? {
-        println!("Built {target}: {}", artifact.executable.display());
+        println!("Built {target} package: {}", artifact.package_dir.display());
         return Err(format!(
             "cannot execute {target} natively on this host; artifact is at {}",
             artifact.executable.display()
@@ -77,7 +106,7 @@ pub(crate) fn run(directory: PathBuf, flags: TargetFlags) -> Result<(), Box<dyn 
         .into());
     }
     let status = Command::new(&artifact.executable)
-        .current_dir(&project.root)
+        .current_dir(&artifact.package_dir)
         .status()?;
     if !status.success() {
         return Err(format!("game failed for {} with {status}", project.root.display()).into());

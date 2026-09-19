@@ -1,8 +1,8 @@
-# Embedded Windows Vulkan loader
+# Windows Vulkan loader assets
 
-Dogwood embeds only the official Khronos Vulkan loader DLL. The loader is
-materialized at runtime so a Windows game remains one executable; the user's
-installed graphics driver still supplies the Vulkan ICD.
+Dogwood packages only the official Khronos Vulkan loader DLL beside a Windows
+game executable. The user's installed graphics driver still supplies the
+Vulkan ICD.
 
 ## Source and version
 
@@ -17,7 +17,7 @@ The upstream Vulkan Loader project is maintained by Khronos:
 <https://github.com/KhronosGroup/Vulkan-Loader>. The runtime package's
 attribution and MIT/Apache license text is in `VulkanRT-License.txt`.
 
-## Embedded files
+## Packaged files
 
 | Architecture | PE architecture | SHA-256 |
 | --- | --- | --- |
@@ -25,7 +25,7 @@ attribution and MIT/Apache license text is in `VulkanRT-License.txt`.
 | x64 | x86-64 | `cd862090370454630b31b174e3d4eb474fda38ea034998d1fe1767b0c99a8696` |
 | ARM64 | ARM64 | `cc5dd0bec8a7afef013c61ddd511d31500a3b3a45c229150a9ae73ead708ab76` |
 
-Only the architecture selected by the Cargo feature is embedded. To update a
-loader, replace the matching DLL, recalculate its SHA-256, update the metadata
-in `src/windows_vulkan_loader.rs`, and update this document and the license if
-the upstream package changes.
+The Dogwood CLI selects the matching asset from `BuildTarget`; no loader Cargo
+feature controls executable contents. To update a loader, replace the matching
+DLL, recalculate its SHA-256, and update this document and the license if the
+upstream package changes.

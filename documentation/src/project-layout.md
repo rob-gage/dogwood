@@ -36,8 +36,11 @@ version = 1
 game = "game"
 ```
 
-From the workspace root, use `dogwood debug` for local development,
-`dogwood build --linux-x64` (or another supported target) for a release
-artifact, `dogwood run` to build and run the host target, and `dogwood check`
-to validate the project and Docker build tools. Build outputs are written to
-`dist/<target>/`.
+From the workspace root, use `dogwood debug` for local Cargo development,
+`dogwood build --linux-x64` (or another supported target) for a portable
+release package, `dogwood run` to build and run that package from a reusable
+temporary cache, and `dogwood check` to validate the project and Docker build
+tools. Build outputs are written to `dist/<target>/`; Windows packages include
+`vulkan-1.dll` beside the executable. Linux packages use a packaged loader when
+one is supplied and otherwise fall back to the system Vulkan loader. No Vulkan
+SDK is required; the installed GPU driver must provide the Vulkan ICD.

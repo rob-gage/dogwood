@@ -3,8 +3,8 @@
 use super::{AcceleratorBuffer, accelerator_timing::AcceleratorTiming};
 use std::{error::Error, mem::size_of};
 
-#[cfg(target_os = "windows")]
-use super::windows_vulkan_loader::LoadedVulkanLoader;
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+use super::vulkan_loader::VulkanLoader;
 
 /// An Accelerator shared by graphics and compute workloads.
 pub struct Accelerator {
@@ -18,9 +18,9 @@ pub struct Accelerator {
     wgpu_queue: wgpu::Queue,
     /// Debug-only Accelerator pass timestamp collection
     accelerator_timing: AcceleratorTiming,
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     /// Keeps the explicitly loaded Vulkan loader alive for all Vulkan objects.
-    _vulkan_loader: Option<LoadedVulkanLoader>,
+    _vulkan_loader: Option<VulkanLoader>,
 }
 
 impl Accelerator {
@@ -45,7 +45,7 @@ impl Accelerator {
                         tracing::warn!(
                             target: "dogwood_accelerator",
                             error = %vulkan_error,
-                            "Vulkan initialization failed; falling back to DirectX 12"
+                            "WARNING: packaged Vulkan initialization failed; starting with DirectX 12 fallback"
                         );
                         Self::try_dx12().map_err(|dx12_error| {
                             format!(
@@ -62,11 +62,14 @@ impl Accelerator {
             };
         }
 
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
+        return Self::try_linux();
+
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
         Self::try_native()
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     fn is_software_adapter(info: &wgpu::AdapterInfo) -> bool {
         if info.device_type == wgpu::DeviceType::Cpu {
             return true;
@@ -83,9 +86,15 @@ impl Accelerator {
         .any(|marker| description.contains(marker))
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     fn try_vulkan() -> Result<Self, Box<dyn Error>> {
-        let loader: LoadedVulkanLoader = LoadedVulkanLoader::load()?;
+        let loader: VulkanLoader = VulkanLoader::load_packaged()?;
+        Self::try_vulkan_with_loader(loader)
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    fn try_vulkan_with_loader(loader: VulkanLoader) -> Result<Self, Box<dyn Error>> {
+        tracing::info!(target: "dogwood_accelerator", path = %loader.path().display(), "Using packaged Vulkan loader");
         let mut descriptor: wgpu::InstanceDescriptor =
             wgpu::InstanceDescriptor::new_without_display_handle();
         descriptor.backends = wgpu::Backends::VULKAN;
@@ -99,7 +108,7 @@ impl Accelerator {
             }))
             .map_err(|error| format!("WGPU found no usable Vulkan adapter: {error}"))?;
         let adapter_info: wgpu::AdapterInfo = adapter.get_info();
-        if is_software_adapter(&adapter_info) {
+        if Self::is_software_adapter(&adapter_info) {
             return Err(format!(
                 "WGPU selected a software Vulkan adapter: {} ({})",
                 adapter_info.name, adapter_info.driver
@@ -170,7 +179,45 @@ impl Accelerator {
         Self::from_adapter(instance, adapter, None)
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    fn try_linux() -> Result<Self, Box<dyn Error>> {
+        match std::env::var("DOGWOOD_VULKAN_LOADER")
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "system" => Self::try_system_vulkan(),
+            "packaged" => Self::try_vulkan(),
+            "" => match Self::try_vulkan() {
+                Ok(accelerator) => Ok(accelerator),
+                Err(packaged_error) => {
+                    tracing::warn!(target: "dogwood_accelerator", error = %packaged_error, "WARNING: packaged Vulkan initialization failed; falling back to system Vulkan");
+                    Self::try_system_vulkan().map_err(|system_error| format!("packaged Vulkan failed: {packaged_error}; system Vulkan fallback failed: {system_error}").into())
+                }
+            },
+            mode => Err(format!(
+                "invalid DOGWOOD_VULKAN_LOADER={mode:?}; expected `packaged` or `system`"
+            )
+            .into()),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn try_system_vulkan() -> Result<Self, Box<dyn Error>> {
+        tracing::warn!(target: "dogwood_accelerator", "Using system Vulkan loader");
+        let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+        descriptor.backends = wgpu::Backends::VULKAN;
+        let instance = wgpu::Instance::new(descriptor);
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+            apply_limit_buckets: false,
+        }))?;
+        Self::from_adapter(instance, adapter, None)
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     fn try_native() -> Result<Self, Box<dyn Error>> {
         let instance: wgpu::Instance = wgpu::Instance::default();
         let adapter: wgpu::Adapter =
@@ -186,7 +233,7 @@ impl Accelerator {
     fn from_adapter(
         instance: wgpu::Instance,
         adapter: wgpu::Adapter,
-        #[cfg(target_os = "windows")] loader: Option<LoadedVulkanLoader>,
+        #[cfg(any(target_os = "windows", target_os = "linux"))] loader: Option<VulkanLoader>,
     ) -> Result<Self, Box<dyn Error>> {
         let adapter_info: wgpu::AdapterInfo = adapter.get_info();
         match adapter_info.device_type {
@@ -243,7 +290,7 @@ impl Accelerator {
             wgpu_device: device,
             wgpu_queue: queue,
             accelerator_timing,
-            #[cfg(target_os = "windows")]
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
             _vulkan_loader: loader,
         })
     }

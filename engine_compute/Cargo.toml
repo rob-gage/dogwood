@@ -7,15 +7,9 @@ edition.workspace = true
 license.workspace = true
 description.workspace = true
 
-[features]
-windows-vulkan-loader-x86 = ["dep:sha2"]
-windows-vulkan-loader-x64 = ["dep:sha2"]
-windows-vulkan-loader-arm64 = ["dep:sha2"]
-
 [dependencies]
 naga_oil = { workspace = true }
 pollster = { workspace = true }
-sha2 = { workspace = true, optional = true }
 tracing = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
@@ -28,8 +22,8 @@ windows-sys = { workspace = true }
 [target.'cfg(not(windows))'.dependencies]
 # Keep the existing Linux/macOS-friendly native backends out of Windows builds.
 wgpu = { workspace = true, features = ["vulkan", "gles"] }
+libloading = { workspace = true }
 
 [dev-dependencies]
 tracing-appender = { workspace = true }
 tracing-subscriber = { workspace = true }
-tempfile = { workspace = true }

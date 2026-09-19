@@ -849,6 +849,7 @@ version = "0.0.1"
 dependencies = [
  "cargo_metadata",
  "clap",
+ "sha2",
 ]
 
 [[package]]
@@ -896,10 +897,9 @@ dependencies = [
 name = "dogwood_engine_compute"
 version = "0.0.1"
 dependencies = [
+ "libloading",
  "naga_oil",
  "pollster",
- "sha2",
- "tempfile",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",

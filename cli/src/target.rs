@@ -65,14 +65,29 @@ impl BuildTarget {
         }
     }
 
-    pub(crate) fn engine_compute_feature(self) -> Option<&'static str> {
+    pub(crate) fn runtime_asset(self) -> Option<RuntimeAsset> {
         match self {
-            Self::WindowsX86 => Some("dogwood_engine_compute/windows-vulkan-loader-x86"),
-            Self::WindowsX64 => Some("dogwood_engine_compute/windows-vulkan-loader-x64"),
-            Self::WindowsArm64 => Some("dogwood_engine_compute/windows-vulkan-loader-arm64"),
+            Self::WindowsX86 => Some(RuntimeAsset {
+                source: "engine_compute/runtime/windows/vulkan/x86/vulkan-1.dll",
+                filename: "vulkan-1.dll",
+            }),
+            Self::WindowsX64 => Some(RuntimeAsset {
+                source: "engine_compute/runtime/windows/vulkan/x64/vulkan-1.dll",
+                filename: "vulkan-1.dll",
+            }),
+            Self::WindowsArm64 => Some(RuntimeAsset {
+                source: "engine_compute/runtime/windows/vulkan/arm64/vulkan-1.dll",
+                filename: "vulkan-1.dll",
+            }),
             Self::LinuxX64 | Self::LinuxX86 | Self::LinuxArm64 => None,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RuntimeAsset {
+    pub(crate) source: &'static str,
+    pub(crate) filename: &'static str,
 }
 
 impl fmt::Display for BuildTarget {
@@ -101,25 +116,25 @@ mod tests {
     use super::BuildTarget;
 
     #[test]
-    fn windows_targets_select_one_matching_loader_feature() {
+    fn windows_targets_select_matching_loader_asset() {
         assert_eq!(
-            BuildTarget::WindowsX86.engine_compute_feature(),
-            Some("dogwood_engine_compute/windows-vulkan-loader-x86")
+            BuildTarget::WindowsX86.runtime_asset().unwrap().source,
+            "engine_compute/runtime/windows/vulkan/x86/vulkan-1.dll"
         );
         assert_eq!(
-            BuildTarget::WindowsX64.engine_compute_feature(),
-            Some("dogwood_engine_compute/windows-vulkan-loader-x64")
+            BuildTarget::WindowsX64.runtime_asset().unwrap().source,
+            "engine_compute/runtime/windows/vulkan/x64/vulkan-1.dll"
         );
         assert_eq!(
-            BuildTarget::WindowsArm64.engine_compute_feature(),
-            Some("dogwood_engine_compute/windows-vulkan-loader-arm64")
+            BuildTarget::WindowsArm64.runtime_asset().unwrap().source,
+            "engine_compute/runtime/windows/vulkan/arm64/vulkan-1.dll"
         );
     }
 
     #[test]
     fn linux_targets_do_not_select_a_windows_loader() {
-        assert!(BuildTarget::LinuxX64.engine_compute_feature().is_none());
-        assert!(BuildTarget::LinuxX86.engine_compute_feature().is_none());
-        assert!(BuildTarget::LinuxArm64.engine_compute_feature().is_none());
+        assert!(BuildTarget::LinuxX64.runtime_asset().is_none());
+        assert!(BuildTarget::LinuxX86.runtime_asset().is_none());
+        assert!(BuildTarget::LinuxArm64.runtime_asset().is_none());
     }
 }
