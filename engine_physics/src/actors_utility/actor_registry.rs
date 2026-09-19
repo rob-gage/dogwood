@@ -17,11 +17,13 @@ use crate::actors::ActorPawnWalkingState;
 use crate::actors::ActorPhysicalConfiguration;
 use crate::actors::ActorPossessable;
 use crate::actors::ActorPreviousPosition;
+use crate::actors::ActorSprites;
 use crate::scenes::Scene;
 use crate::scenes::ScenePosition;
 use crate::scenes::SceneVelocity;
 use crate::simulation::ScenePhysicsWorld;
 use crate::simulation_actors::SceneSimulation;
+use std::time::Duration;
 /// Owns the ECS world and provides the engine's actor-facing API.
 pub struct ActorRegistry {
     /// ECS entities and their actor components.
@@ -164,6 +166,9 @@ impl ActorRegistry {
     /// Returns the first physical pawn's position and nominal dimensions for scene rendering
     pub fn first_walking_pawn_graphics(&self, interpolation: f32) -> Option<([f32; 2], [f32; 2])> {
         self.world.iter_entities().find_map(|entity| {
+            if entity.get::<ActorSprites>().is_some() {
+                return None;
+            }
             let pawn: &ActorPawn = entity.get::<ActorPawn>()?;
             let shape: ActorCollisionShape = pawn.collision_shape?;
             let position: ScenePosition = *entity.get::<ScenePosition>()?;
@@ -431,6 +436,14 @@ impl ActorRegistry {
             gravity,
             physics_world,
         );
+    }
+
+    /// Advances playback for every loaded actor carrying `ActorSprites`.
+    pub(crate) fn advance_sprites(&mut self, elapsed: Duration) {
+        let mut query = self.world.query::<&mut ActorSprites>();
+        for mut sprites in query.iter_mut(&mut self.world) {
+            sprites.advance(elapsed);
+        }
     }
 
     /// Returns whether an actor is eligible for possession

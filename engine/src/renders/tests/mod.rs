@@ -2,9 +2,11 @@ use super::scene_renderer::SceneRenderer;
 use engine_compute::Accelerator;
 use engine_graphics::{Color, MaterialAppearance};
 use engine_physics::{
+    actors::{ActorSpriteAnimation, ActorSpriteSheet, ActorSprites},
     materials::{Material, MaterialRegistry},
-    scenes::Scene,
+    scenes::{Scene, ScenePosition},
     simulation::SceneSimulationConfiguration,
+    tiles::TileCoordinates,
 };
 use std::sync::Arc;
 
@@ -21,7 +23,7 @@ fn test_scene_shader_builds_without_a_window_surface() {
         dissipation: 0.0,
         compressibility: 0.05,
     });
-    let scene: Scene = Scene::new(
+    let mut scene: Scene = Scene::new(
         &accelerator,
         materials,
         SceneSimulationConfiguration {
@@ -37,6 +39,16 @@ fn test_scene_shader_builds_without_a_window_surface() {
         },
     )
     .unwrap();
+    let actor = scene.actor_registry_mutable().spawn(ScenePosition {
+        tile_coordinates: TileCoordinates { x: 0, y: 0 },
+        x_offset: 0.5,
+        y_offset: 0.5,
+    });
+    let sprite_sheet = ActorSpriteSheet::new(2, 2, vec![255; 16]).unwrap();
+    let animation = ActorSpriteAnimation::new(sprite_sheet, None, 2, 2, 1, 1.0, true).unwrap();
+    let mut sprites = ActorSprites::new();
+    sprites.add_animation("test", animation).unwrap();
+    scene.actor_registry_mutable().set_sprites(actor, sprites);
     let texture: wgpu::Texture =
         accelerator
             .wgpu_device()

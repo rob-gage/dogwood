@@ -33,6 +33,50 @@ let player: Actor = scene.actor_registry_mutable().spawn_possessable_pawn(
 scene.possess_actor(player);
 ```
 
+Actors can optionally carry `ActorSprites`. Sprite sheets are shared CPU-side
+RGBA sources used by the world renderer. Add named horizontal animations, then
+select them from gameplay code:
+
+```rust
+use dogwood_engine::physics::actors::{
+    ActorSpriteAnimation, ActorSpriteImage, ActorSprites,
+};
+
+// In a game crate, replace the byte slices with include_bytes!("player_idle.png")
+// and include_bytes!("player_idle_radiance.png").
+let sprite_sheet = ActorSpriteImage::from_png_bytes(&[])?;
+let animation: ActorSpriteAnimation = ActorSpriteAnimation::from_rgba_sprite_sheet(
+    sprite_sheet, None, [16, 16], 4, 8.0, true,
+)?;
+let mut sprites: ActorSprites = ActorSprites::new();
+let idle_animation = sprites.register_animation("idle", animation)?;
+scene.actor_registry_mutable().set_sprites(actor, sprites);
+scene.actor_registry_mutable().sprites_mutable(actor)
+    .unwrap().play(idle_animation);
+scene.actor_registry_mutable().sprites_mutable(actor)
+    .unwrap().set_animation_speed(1.25);
+```
+
+`ActorSpriteImage::from_png_bytes` decodes an 8-bit RGBA PNG once. A real game
+crate can use `ActorSpriteImage::from_png_bytes(include_bytes!("player_idle.png"))`
+for compile-time embedded assets. Ordinary sprite RGB is visible color and
+alpha is coverage. Radiance RGB is emission; radiance alpha is preserved but
+currently ignored. Missing radiance images mean zero emission without creating
+a black fallback image. Sprite sheets are shared, so the same image can be
+used by many actors without duplicating its RGBA pixels.
+
+Set `world_size` and `world_offset` through `set_world_size` and
+`set_world_offset`; these control world placement independently of source
+pixels and collision dimensions.
+
+`play` does not restart an already selected animation; use `restart` to do so.
+`pause`, `resume`, and `set_animation_speed` control playback without changing
+the authored rate. A missing radiance sheet means an all-black RGBA radiance
+sheet, with no per-actor black image allocation. Radiance RGB emits into the
+scene; radiance alpha is preserved but currently ignored. Sprite sheets and frames may
+have arbitrary positive dimensions; even dimensions are generally preferred
+for authored assets but are not a runtime requirement.
+
 Use `spawn_pawn` for non-player pawns and `spawn_possessable_pawn` for player
 candidates. Set controls through `set_control_state`; the default
 `Game::pass_input` sends arrow/WASD controls to the possessed actor. Read

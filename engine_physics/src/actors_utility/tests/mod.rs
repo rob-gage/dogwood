@@ -6,6 +6,9 @@ use crate::actors::ActorPawnMovement;
 use crate::actors::ActorPawnSwimmingConfiguration;
 use crate::actors::ActorPawnWalkingConfiguration;
 use crate::actors::ActorPhysicalConfiguration;
+use crate::actors::ActorSpriteAnimation;
+use crate::actors::ActorSpriteSheet;
+use crate::actors::ActorSprites;
 use crate::actors_utility::ActorCollisionShape;
 use crate::actors_utility::ActorRegistry;
 use crate::scenes::ScenePosition;
@@ -121,6 +124,23 @@ fn test_unloaded_actor_queries_are_safe_and_restore_keeps_identity() {
         },
         SceneVelocity { x: 1.0, y: 0.0 },
     );
+    let animation = ActorSpriteAnimation::new(
+        ActorSpriteSheet::new(4, 2, vec![0; 32]).unwrap(),
+        None,
+        2,
+        2,
+        2,
+        1.0,
+        true,
+    )
+    .unwrap();
+    let mut sprites = ActorSprites::new();
+    sprites.add_animation("idle", animation).unwrap();
+    registry.set_sprites(actor, sprites);
+    registry
+        .sprites_mutable(actor)
+        .unwrap()
+        .advance_for_test(std::time::Duration::from_secs(1));
     let snapshot = registry.physical_snapshot(actor).unwrap();
     assert!(registry.despawn(actor));
     assert!(!registry.contains(actor));
@@ -128,8 +148,9 @@ fn test_unloaded_actor_queries_are_safe_and_restore_keeps_identity() {
     assert!(registry.get_velocity(actor).is_none());
     assert!(!registry.set_position(actor, snapshot.position));
     assert!(!registry.set_velocity(actor, snapshot.velocity));
-    assert!(registry.restore_physical_snapshot(snapshot));
+    assert!(registry.restore_physical_snapshot(snapshot.clone()));
     assert!(registry.contains(actor));
+    assert_eq!(registry.sprites(actor).unwrap().frame_index(), 1);
     assert_eq!(registry.get_velocity(actor).unwrap().x, 1.0);
     let restored = registry.get_render_position(actor, 0.5).unwrap();
     assert_eq!(
@@ -166,4 +187,112 @@ fn test_physical_actor_interpolation_tracks_consecutive_fixed_states() {
     registry.apply_physical_proxy_states(&[(actor, [0.5, 2.0], [0.0, 0.0])]);
     let rendered = registry.get_render_position(actor, 0.5).unwrap();
     assert!((rendered.tile_coordinates.y as f32 + rendered.y_offset - 2.25).abs() < f32::EPSILON);
+}
+
+#[test]
+fn test_actor_sprites_attach_read_mutate_remove_and_ignore_missing_state() {
+    let mut registry = ActorRegistry::new();
+    let actor = registry.spawn(ScenePosition {
+        tile_coordinates: TileCoordinates { x: 0, y: 0 },
+        x_offset: 0.0,
+        y_offset: 0.0,
+    });
+    let actor_without_sprites = registry.spawn(ScenePosition {
+        tile_coordinates: TileCoordinates { x: 1, y: 0 },
+        x_offset: 0.0,
+        y_offset: 0.0,
+    });
+    let animation = ActorSpriteAnimation::new(
+        ActorSpriteSheet::new(2, 2, vec![0; 16]).unwrap(),
+        None,
+        2,
+        2,
+        1,
+        1.0,
+        true,
+    )
+    .unwrap();
+    let mut sprites = ActorSprites::new();
+    let identifier = sprites.add_animation("idle", animation).unwrap();
+    assert!(registry.set_sprites(actor, sprites));
+    assert_eq!(
+        registry
+            .sprites(actor)
+            .unwrap()
+            .current_animation_identifier(),
+        Some(identifier)
+    );
+    assert!(registry.sprites(actor_without_sprites).is_none());
+    assert!(
+        registry
+            .sprites_mutable(actor)
+            .unwrap()
+            .set_animation_speed(2.0)
+    );
+    assert_eq!(registry.sprites(actor).unwrap().animation_speed(), 2.0);
+    assert!(registry.remove_sprites(actor).is_some());
+    assert!(registry.sprites(actor).is_none());
+    assert!(registry.remove_sprites(actor_without_sprites).is_none());
+}
+
+#[test]
+fn test_actor_sprite_extraction_uses_current_frame_and_interpolated_position() {
+    let mut registry = ActorRegistry::new();
+    let actor = registry.spawn(ScenePosition {
+        tile_coordinates: TileCoordinates { x: 1, y: 2 },
+        x_offset: 0.0,
+        y_offset: 0.0,
+    });
+    registry.set_position(
+        actor,
+        ScenePosition {
+            tile_coordinates: TileCoordinates { x: 2, y: 2 },
+            x_offset: 0.0,
+            y_offset: 0.0,
+        },
+    );
+    let sheet = ActorSpriteSheet::new(4, 2, vec![0; 32]).unwrap();
+    let animation = ActorSpriteAnimation::new(sheet, None, 2, 2, 2, 1.0, true).unwrap();
+    let mut sprites = ActorSprites::new();
+    let identifier = sprites.add_animation("idle", animation).unwrap();
+    sprites.play(identifier);
+    registry.set_sprites(actor, sprites);
+    registry
+        .sprites_mutable(actor)
+        .unwrap()
+        .advance_for_test(std::time::Duration::from_secs(1));
+    let extracted = registry.sprite_graphics(0.5);
+    assert_eq!(extracted.len(), 1);
+    assert_eq!(extracted[0].position, [2.0, 2.0]);
+    assert_eq!(extracted[0].texture_coordinates, [0.625, 0.75, 0.875, 0.25]);
+}
+
+#[test]
+fn test_sprite_physical_actors_replace_fallback_graphics() {
+    let mut registry = ActorRegistry::new();
+    let actor = registry.spawn_physical_actor(
+        ActorPhysicalConfiguration::default(),
+        ScenePosition {
+            tile_coordinates: TileCoordinates { x: 0, y: 0 },
+            x_offset: 0.0,
+            y_offset: 0.0,
+        },
+        SceneVelocity { x: 0.0, y: 0.0 },
+    );
+    assert_eq!(registry.actor_graphics(0.0).len(), 1);
+    let animation = ActorSpriteAnimation::new(
+        ActorSpriteSheet::new(2, 2, vec![0; 16]).unwrap(),
+        None,
+        2,
+        2,
+        1,
+        1.0,
+        true,
+    )
+    .unwrap();
+    let mut sprites = ActorSprites::new();
+    sprites.add_animation("idle", animation).unwrap();
+    registry.set_sprites(actor, sprites);
+    assert!(registry.actor_graphics(0.0).is_empty());
+    assert_eq!(registry.sprite_graphics(0.0).len(), 1);
 }
