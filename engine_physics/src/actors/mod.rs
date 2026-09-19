@@ -18,6 +18,9 @@ mod actor_physical_snapshot;
 mod actor_physical_spawn;
 mod actor_possessable;
 mod actor_previous_position;
+mod actor_sprite_animation;
+mod actor_sprite_sheet;
+mod actor_sprites;
 
 pub use actor::Actor;
 pub use actor_contact::ActorContactEvent;
@@ -36,6 +39,9 @@ pub use actor_physical_snapshot::ActorPhysicalSnapshot;
 pub use actor_physical_spawn::ActorPhysicalSpawn;
 pub use actor_possessable::ActorPossessable;
 pub(crate) use actor_previous_position::ActorPreviousPosition;
+pub use actor_sprite_animation::{ActorSpriteAnimation, ActorSpriteAnimationIdentifier};
+pub use actor_sprite_sheet::ActorSpriteSheet;
+pub use actor_sprites::ActorSprites;
 
 pub(crate) use crate::actors_utility::ActorCellularProxyState;
 pub use crate::actors_utility::ActorCollisionShape;

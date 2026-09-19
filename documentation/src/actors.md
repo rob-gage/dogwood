@@ -33,6 +33,34 @@ let player: Actor = scene.actor_registry_mutable().spawn_possessable_pawn(
 scene.possess_actor(player);
 ```
 
+Actors can optionally carry `ActorSprites`. Sprite sheets are CPU-side RGBA
+sources for now; rendering is not required to use the actor API. Add named
+horizontal animations, then select them from gameplay code:
+
+```rust
+use dogwood_engine::physics::actors::{
+    ActorSpriteAnimation, ActorSpriteSheet, ActorSprites,
+};
+
+let sprite_sheet: ActorSpriteSheet =
+    ActorSpriteSheet::new(64, 16, vec![0; 64 * 16 * 4]).expect("valid RGBA sheet");
+let animation: ActorSpriteAnimation = ActorSpriteAnimation::new(
+    sprite_sheet, None, 16, 16, 4, 8.0, true,
+).expect("valid animation");
+let mut sprites: ActorSprites = ActorSprites::new();
+let idle_animation = sprites.add_animation("idle", animation).unwrap();
+scene.actor_registry_mutable().set_sprites(actor, sprites);
+scene.actor_registry_mutable().sprites_mutable(actor)
+    .unwrap().play(idle_animation);
+```
+
+`play` does not restart an already selected animation; use `restart` to do so.
+`pause`, `resume`, and `set_animation_speed` control playback without changing
+the authored rate. A missing radiance sheet means an all-black RGBA radiance
+sheet, with no per-actor black image allocation. Sprite sheets and frames may
+have arbitrary positive dimensions; even dimensions are generally preferred
+for authored assets but are not a runtime requirement.
+
 Use `spawn_pawn` for non-player pawns and `spawn_possessable_pawn` for player
 candidates. Set controls through `set_control_state`; the default
 `Game::pass_input` sends arrow/WASD controls to the possessed actor. Read

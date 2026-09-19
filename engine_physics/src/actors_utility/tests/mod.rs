@@ -6,6 +6,9 @@ use crate::actors::ActorPawnMovement;
 use crate::actors::ActorPawnSwimmingConfiguration;
 use crate::actors::ActorPawnWalkingConfiguration;
 use crate::actors::ActorPhysicalConfiguration;
+use crate::actors::ActorSpriteAnimation;
+use crate::actors::ActorSpriteSheet;
+use crate::actors::ActorSprites;
 use crate::actors_utility::ActorCollisionShape;
 use crate::actors_utility::ActorRegistry;
 use crate::scenes::ScenePosition;
@@ -166,4 +169,50 @@ fn test_physical_actor_interpolation_tracks_consecutive_fixed_states() {
     registry.apply_physical_proxy_states(&[(actor, [0.5, 2.0], [0.0, 0.0])]);
     let rendered = registry.get_render_position(actor, 0.5).unwrap();
     assert!((rendered.tile_coordinates.y as f32 + rendered.y_offset - 2.25).abs() < f32::EPSILON);
+}
+
+#[test]
+fn test_actor_sprites_attach_read_mutate_remove_and_ignore_missing_state() {
+    let mut registry = ActorRegistry::new();
+    let actor = registry.spawn(ScenePosition {
+        tile_coordinates: TileCoordinates { x: 0, y: 0 },
+        x_offset: 0.0,
+        y_offset: 0.0,
+    });
+    let actor_without_sprites = registry.spawn(ScenePosition {
+        tile_coordinates: TileCoordinates { x: 1, y: 0 },
+        x_offset: 0.0,
+        y_offset: 0.0,
+    });
+    let animation = ActorSpriteAnimation::new(
+        ActorSpriteSheet::new(2, 2, vec![0; 16]).unwrap(),
+        None,
+        2,
+        2,
+        1,
+        1.0,
+        true,
+    )
+    .unwrap();
+    let mut sprites = ActorSprites::new();
+    let identifier = sprites.add_animation("idle", animation).unwrap();
+    assert!(registry.set_sprites(actor, sprites));
+    assert_eq!(
+        registry
+            .sprites(actor)
+            .unwrap()
+            .current_animation_identifier(),
+        Some(identifier)
+    );
+    assert!(registry.sprites(actor_without_sprites).is_none());
+    assert!(
+        registry
+            .sprites_mutable(actor)
+            .unwrap()
+            .set_animation_speed(2.0)
+    );
+    assert_eq!(registry.sprites(actor).unwrap().animation_speed(), 2.0);
+    assert!(registry.remove_sprites(actor).is_some());
+    assert!(registry.sprites(actor).is_none());
+    assert!(registry.remove_sprites(actor_without_sprites).is_none());
 }
