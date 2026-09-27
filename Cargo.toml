@@ -1,5 +1,7 @@
 # Copyright Rob Gage 2026
 
 [workspace]
-members = []
+members = [
+    "engine",
+]
 resolver = "3"
