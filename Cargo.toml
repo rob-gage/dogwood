@@ -3,5 +3,6 @@
 [workspace]
 members = [
     "engine",
+    "engine_host",
 ]
 resolver = "3"
