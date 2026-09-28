@@ -1,7 +1,9 @@
 # Copyright Rob Gage 2026
 
 [workspace]
-members = ["cli", "editor",
+members = [
+    "cli",
+    "editor",
     "engine",
     "engine_host",
 ]
