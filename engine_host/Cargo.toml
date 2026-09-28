@@ -6,3 +6,4 @@ version = "0.0.0"
 edition = "2024"
 
 [dependencies]
+winit = { version = "0.30.13", default-features = false, features = ["wayland", "x11"] }
