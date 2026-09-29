@@ -1,6 +1,12 @@
 // Copyright Rob Gage 2026
 
-use std::path::PathBuf;
+mod utility;
+
+use utility::locate_cargo;
+use std::{
+    path::PathBuf,
+    process::exit,
+};
 
 #[derive(Debug, clap::Parser)]
 #[command(version, about)]
@@ -25,16 +31,21 @@ enum Subcommand {
         /// Builds the project in debug mode if set
         #[arg(long)]
         debug: bool,
+        #[arg(long, value_name = "PATH", default_value = ".")]
+        path: PathBuf,
     },
     /// Runs a project that uses the engine
     Run {
         /// Runs the project in debug mode if set
         #[arg(long)]
         debug: bool,
+        #[arg(long, value_name = "PATH", default_value = ".")]
+        path: PathBuf,
     },
     /// Runs a project that uses the engine in the engine editor
     Edit {
-
+        #[arg(long, value_name = "PATH", default_value = ".")]
+        path: PathBuf,
     },
 }
 
@@ -48,14 +59,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return Ok(());
             }
             todo!()
-        },
-        Subcommand::Build { debug } => {
+        }
+        Subcommand::Build { .. } => {
+            let cargo_path: PathBuf = locate_cargo().unwrap_or_else(|()| exit(1));
             todo!()
-        },
-        Subcommand::Run { debug } => {
+        }
+        Subcommand::Run { .. } => {
+            let cargo_path: PathBuf = locate_cargo().unwrap_or_else(|()| exit(1));
             todo!()
-        },
-        Subcommand::Edit { } => {
+        }
+        Subcommand::Edit { .. } => {
+            let cargo_path: PathBuf = locate_cargo().unwrap_or_else(|()| exit(1));
             todo!()
         }
     }
