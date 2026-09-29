@@ -1,12 +1,10 @@
 // Copyright Rob Gage 2026
 
+mod commands;
 mod utility;
 
+use std::{path::PathBuf, process::exit};
 use utility::locate_cargo;
-use std::{
-    path::PathBuf,
-    process::exit,
-};
 
 #[derive(Debug, clap::Parser)]
 #[command(version, about)]
@@ -58,19 +56,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("A directory already exists at {}.", path.display());
                 return Ok(());
             }
-            todo!()
+            commands::new();
+            Ok(())
         }
         Subcommand::Build { .. } => {
             let cargo_path: PathBuf = locate_cargo().unwrap_or_else(|()| exit(1));
-            todo!()
+            commands::build(cargo_path);
+            Ok(())
         }
         Subcommand::Run { .. } => {
             let cargo_path: PathBuf = locate_cargo().unwrap_or_else(|()| exit(1));
-            todo!()
+            commands::run(cargo_path);
+            Ok(())
         }
         Subcommand::Edit { .. } => {
             let cargo_path: PathBuf = locate_cargo().unwrap_or_else(|()| exit(1));
-            todo!()
+            commands::edit(cargo_path);
+            Ok(())
         }
     }
 }

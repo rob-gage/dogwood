@@ -1,10 +1,7 @@
 // Copyright Rob Gage 2026
 
 use semver::Version;
-use std::{
-    path::PathBuf,
-    process::Command
-};
+use std::{path::PathBuf, process::Command};
 
 /// Locates a valid installation of Cargo on the system that can be used with the engine
 pub fn locate_cargo() -> Result<PathBuf, ()> {
