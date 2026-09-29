@@ -6,4 +6,14 @@ version = "0.0.0"
 edition = "2024"
 
 [dependencies]
+pollster = "=0.4.0"
 winit = { version = "0.30.13", default-features = false, features = ["wayland", "x11"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+wgpu = { version = "=30.0.0", default-features = false, features = ["dx12", "naga-ir", "vulkan"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+wgpu = { version = "=30.0.0", default-features = false, features = ["naga-ir", "vulkan"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+wgpu = { version = "=30.0.0", default-features = false, features = ["metal", "naga-ir"] }
