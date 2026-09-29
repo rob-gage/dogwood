@@ -1,28 +1,28 @@
 // Copyright Rob Gage 2026
 
-use super::HostWindowError;
+use super::WindowError;
 
 /// A native window managed by the host system
-pub struct HostWindow {
+pub struct Window {
     /// The `winit` `Window`
     window: Option<winit::window::Window>,
     /// An error encountered while creating the native window
-    error: Option<HostWindowError>,
+    error: Option<WindowError>,
 }
 
-impl HostWindow {
+impl Window {
 
     /// Opens the `HostWindow`
-    pub fn open() -> Result<(), HostWindowError> {
+    pub fn open() -> Result<(), WindowError> {
         let event_loop: winit::event_loop::EventLoop<()> =
-            winit::event_loop::EventLoop::new().map_err(HostWindowError::from)?;
+            winit::event_loop::EventLoop::new().map_err(WindowError::from)?;
         let mut host_window = Self { window: None, error: None, };
-        event_loop.run_app(&mut host_window).map_err(HostWindowError::from)?;
+        event_loop.run_app(&mut host_window).map_err(WindowError::from)?;
         host_window.error.map_or(Ok(()), Err)
     }
 }
 
-impl winit::application::ApplicationHandler for HostWindow {
+impl winit::application::ApplicationHandler for Window {
 
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         if self.window.is_none() {
@@ -32,7 +32,7 @@ impl winit::application::ApplicationHandler for HostWindow {
                     self.window = Some(window);
                 }
                 Err(error) => {
-                    self.error = Some(HostWindowError::from(error));
+                    self.error = Some(WindowError::from(error));
                     event_loop.exit();
                 }
             }

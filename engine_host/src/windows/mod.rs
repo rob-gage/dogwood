@@ -1,7 +1,7 @@
 // Copyright Rob Gage 2026
 
-mod host_window;
-mod host_window_error;
+mod window;
+mod window_error;
 
-pub use host_window::HostWindow;
-pub use host_window_error::HostWindowError;
+pub use window::Window;
+pub use window_error::WindowError;
