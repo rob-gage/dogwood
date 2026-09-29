@@ -354,11 +354,27 @@ name = "engine"
 version = "0.0.0"
 
 [[package]]
+name = "engine_audio"
+version = "0.0.0"
+
+[[package]]
+name = "engine_graphics"
+version = "0.0.0"
+
+[[package]]
 name = "engine_host"
 version = "0.0.0"
 dependencies = [
  "winit",
 ]
+
+[[package]]
+name = "engine_user_interface"
+version = "0.0.0"
+
+[[package]]
+name = "engine_world"
+version = "0.0.0"
 
 [[package]]
 name = "equivalent"

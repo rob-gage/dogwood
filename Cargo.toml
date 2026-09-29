@@ -5,6 +5,10 @@ members = [
     "cli",
     "editor",
     "engine",
+    "engine_audio",
+    "engine_graphics",
     "engine_host",
+    "engine_user_interface",
+    "engine_world",
 ]
 resolver = "3"
