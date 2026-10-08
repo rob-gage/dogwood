@@ -1,6 +1,7 @@
 // Copyright Rob Gage 2026
 
 /// An error that can occur with a `HostWindow`
+#[derive(Debug)]
 pub enum WindowError {
     /// An error that occurs with the `winit` event loop
     WinitEventLoop(winit::error::EventLoopError),

@@ -6,14 +6,16 @@ use crate::runtime::Engine;
 /// An instance of a `Game` running on the `Engine`
 pub struct GameInstance<G: Game> {
     /// The engine being used to run the `Game`
-    engine: Engine,
+    _engine: Engine,
     /// The `Game` running in this `GameInstance`
-    game: G,
+    pub(crate) game: G,
 }
 
 impl<G: Game> GameInstance<G> {
 
     /// Creates a new `GameInstance` from an `Engine` and a `Game`
-    pub const fn new(engine: Engine, game: G) -> GameInstance<G> { GameInstance { engine, game } }
+    pub const fn new(engine: Engine, game: G) -> GameInstance<G> {
+        GameInstance { _engine: engine, game }
+    }
 
 }

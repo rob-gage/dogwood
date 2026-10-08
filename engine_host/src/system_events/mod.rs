@@ -1,11 +1,9 @@
 // Copyright Rob Gage 2026
 
-mod system_event_handler;
 mod system_keyboard_event;
 mod system_mouse_event;
 mod system_window_event;
 
-pub use system_event_handler::SystemEventHandler;
 pub use system_keyboard_event::SystemKeyboardEvent;
 pub use system_mouse_event::SystemMouseEvent;
 pub use system_window_event::SystemWindowEvent;
