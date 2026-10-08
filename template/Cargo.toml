@@ -1,0 +1,9 @@
+# Copyright Rob Gage 2026
+
+[package]
+name = "{{project_name}}"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+engine = {{engine_dependency}}

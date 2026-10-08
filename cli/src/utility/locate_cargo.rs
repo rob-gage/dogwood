@@ -1,7 +1,10 @@
 // Copyright Rob Gage 2026
 
+use std::{
+    path::PathBuf,
+    process::Command
+};
 use semver::Version;
-use std::{path::PathBuf, process::Command};
 
 /// Locates a valid installation of Cargo on the system that can be used with the engine
 pub fn locate_cargo() -> Result<PathBuf, ()> {
@@ -11,14 +14,11 @@ pub fn locate_cargo() -> Result<PathBuf, ()> {
             if output.status.success() {
                 let output: String = String::from_utf8_lossy(&output.stdout).into_owned();
                 let has_version: bool = output.split("cargo ").skip(1).any(|output| {
-                    output
-                        .split_whitespace()
+                    output.split_whitespace()
                         .next()
                         .is_some_and(|version| Version::parse(version).is_ok())
                 });
-                if has_version {
-                    return Ok(path);
-                }
+                if has_version { return Ok(path); }
             }
         }
     }
@@ -30,14 +30,11 @@ pub fn locate_cargo() -> Result<PathBuf, ()> {
             if output.status.success() {
                 let output: String = String::from_utf8_lossy(&output.stdout).into_owned();
                 let has_version: bool = output.split("cargo ").skip(1).any(|output| {
-                    output
-                        .split_whitespace()
+                    output.split_whitespace()
                         .next()
                         .is_some_and(|version| Version::parse(version).is_ok())
                 });
-                if has_version {
-                    return Ok(path);
-                }
+                if has_version { return Ok(path); }
             }
         }
     }
