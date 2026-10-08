@@ -3,8 +3,18 @@
 /// An error that can occur while using an `Engine`
 #[derive(Debug)]
 pub enum EngineError {
+    /// An error encountered while creating the shared GPU context
+    Accelerator(engine_host::acceleration::AcceleratorError),
     /// An error raised while creating or running the host window
     Window(engine_host::windows::WindowError),
+
+}
+
+impl From<engine_host::acceleration::AcceleratorError> for EngineError {
+
+    fn from(error: engine_host::acceleration::AcceleratorError) -> Self {
+        EngineError::Accelerator(error)
+    }
 
 }
 

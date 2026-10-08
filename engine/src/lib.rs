@@ -2,3 +2,8 @@
 
 pub mod games;
 pub mod runtime;
+
+pub use engine_host::acceleration::{
+    Accelerator,
+    AcceleratorError,
+};

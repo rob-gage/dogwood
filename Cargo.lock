@@ -923,6 +923,7 @@ dependencies = [
  "log",
  "ndk-sys",
  "num_enum",
+ "raw-window-handle",
  "thiserror 1.0.69",
 ]
 
@@ -2467,6 +2468,7 @@ dependencies = [
  "orbclient",
  "percent-encoding",
  "pin-project",
+ "raw-window-handle",
  "redox_syscall 0.4.1",
  "rustix 0.38.44",
  "smithay-client-toolkit",

@@ -4,39 +4,48 @@ use super::{
     WindowConfiguration,
     WindowError,
 };
-use crate::system_events::{
-    SystemKeyboardEvent,
-    SystemMouseEvent,
-    SystemWindowEvent,
+use crate::{
+    acceleration::Accelerator,
+    system_events::{
+        SystemKeyboardEvent,
+        SystemMouseEvent,
+        SystemWindowEvent,
+    }
 };
 use std::time::{
     Duration,
     Instant,
 };
-
-/// Fixed update frequency in updates per second
-const UPDATES_PER_SECOND: u32 = 60;
-/// Maximum number of fixed updates retained after a delayed event-loop iteration
-const MAXIMUM_ACCUMULATED_UPDATES: u32 = 5;
+use std::sync::Arc;
 
 /// A native window managed by the host system
-pub struct Window<'handler> {
-    /// Native Winit window
-    window: Option<winit::window::Window>,
+pub struct Window<'a> {
+    /// Native `winit` window
+    window: Option<Arc<winit::window::Window>>,
+    /// Shared GPU context used by this window
+    accelerator: &'a Accelerator,
+    /// Presentation surface owned by this window
+    surface: Option<wgpu::Surface<'static>>,
+    /// Current presentation settings, absent while minimized
+    surface_configuration: Option<wgpu::SurfaceConfiguration>,
     /// Error encountered while creating the native window
     error: Option<WindowError>,
     /// Consumer of translated window events
-    window_event_handler: &'handler mut dyn FnMut(SystemWindowEvent),
+    window_event_handler: &'a mut dyn FnMut(SystemWindowEvent),
     /// Consumer of translated keyboard events
-    keyboard_event_handler: &'handler mut dyn FnMut(SystemKeyboardEvent),
+    keyboard_event_handler: &'a mut dyn FnMut(SystemKeyboardEvent),
     /// Consumer of translated mouse events
-    mouse_event_handler: &'handler mut dyn FnMut(SystemMouseEvent),
+    mouse_event_handler: &'a mut dyn FnMut(SystemMouseEvent),
     /// Consumer of fixed-step game updates
-    update_handler: &'handler mut dyn FnMut(Duration),
+    update_handler: &'a mut dyn FnMut(Duration),
     /// Consumer of native redraw requests
-    render_handler: &'handler mut dyn FnMut(),
+    render_handler: &'a mut dyn FnMut(),
     /// Runtime settings for the native game window
     window_configuration: WindowConfiguration,
+    /// Duration between fixed-step updates
+    update_interval: Duration,
+    /// Maximum elapsed update time retained after a delayed iteration
+    maximum_accumulated_time: Duration,
     /// Time of the most recent scheduler iteration
     last_update_time: Instant,
     /// Elapsed time waiting for the next fixed-step update
@@ -45,21 +54,27 @@ pub struct Window<'handler> {
     next_render_time: Instant,
 }
 
-impl<'handler> Window<'handler> {
+impl<'a> Window<'a> {
 
     /// Opens a native window and dispatches its host events
     pub fn open(
-        window_event_handler: &'handler mut dyn FnMut(SystemWindowEvent),
-        keyboard_event_handler: &'handler mut dyn FnMut(SystemKeyboardEvent),
-        mouse_event_handler: &'handler mut dyn FnMut(SystemMouseEvent),
-        update_handler: &'handler mut dyn FnMut(Duration),
-        render_handler: &'handler mut dyn FnMut(),
+        window_event_handler: &'a mut dyn FnMut(SystemWindowEvent),
+        keyboard_event_handler: &'a mut dyn FnMut(SystemKeyboardEvent),
+        mouse_event_handler: &'a mut dyn FnMut(SystemMouseEvent),
+        update_handler: &'a mut dyn FnMut(Duration),
+        render_handler: &'a mut dyn FnMut(),
+        accelerator: &'a Accelerator,
         window_configuration: WindowConfiguration,
+        update_interval: Duration,
+        maximum_accumulated_time: Duration,
     ) -> Result<(), WindowError> {
         let event_loop: winit::event_loop::EventLoop<()> =
             winit::event_loop::EventLoop::new().map_err(WindowError::from)?;
         let mut window: Self = Self {
             window: None,
+            accelerator,
+            surface: None,
+            surface_configuration: None,
             error: None,
             window_event_handler,
             keyboard_event_handler,
@@ -67,6 +82,8 @@ impl<'handler> Window<'handler> {
             update_handler,
             render_handler,
             window_configuration,
+            update_interval,
+            maximum_accumulated_time,
             last_update_time: Instant::now(),
             update_accumulator: Duration::ZERO,
             next_render_time: Instant::now(),
@@ -75,9 +92,117 @@ impl<'handler> Window<'handler> {
         window.error.map_or(Ok(()), Err)
     }
 
+    /// Resizes the presentation surface or suspends it for a zero-sized window
+    fn resize_surface(&mut self, width: u32, height: u32) -> Result<(), WindowError> {
+        if width == 0 || height == 0 {
+            self.surface_configuration = None;
+            return Ok(());
+        }
+        let surface: &wgpu::Surface<'static> = self.surface.as_ref().ok_or(WindowError::UnsupportedSurface)?;
+        let accelerator: &Accelerator = self.accelerator;
+        let mut configuration: wgpu::SurfaceConfiguration = match self.surface_configuration.clone() {
+            Some(configuration) => configuration,
+            None => surface
+                .get_default_config(accelerator.adapter(), width, height)
+                .ok_or(WindowError::UnsupportedSurface)?,
+        };
+        configuration.width = width;
+        configuration.height = height;
+        surface.configure(accelerator.device(), &configuration);
+        self.surface_configuration = Some(configuration);
+        Ok(())
+    }
+
+    /// Clears and presents one frame, recovering a lost or outdated surface
+    fn present(&mut self) -> Result<(), WindowError> {
+        if self.surface_configuration.is_none() { return Ok(()); }
+        let current_texture: wgpu::CurrentSurfaceTexture = self.surface
+            .as_ref()
+            .ok_or(WindowError::UnsupportedSurface)?
+            .get_current_texture();
+        let (frame, suboptimal): (wgpu::SurfaceTexture, bool) = match current_texture {
+            wgpu::CurrentSurfaceTexture::Success(frame) => (frame, false),
+            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => (frame, true),
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => return Ok(()),
+            wgpu::CurrentSurfaceTexture::Outdated => {
+                self.reconfigure_surface();
+                return self.present_after_reconfigure();
+            }
+            wgpu::CurrentSurfaceTexture::Lost => {
+                let window: Arc<winit::window::Window> = self.window
+                    .as_ref()
+                    .ok_or(WindowError::UnsupportedSurface)?
+                    .clone();
+                self.surface = Some(self.accelerator
+                    .instance()
+                    .create_surface(window)?);
+                self.reconfigure_surface();
+                return self.present_after_reconfigure();
+            }
+            wgpu::CurrentSurfaceTexture::Validation => return Err(WindowError::SurfaceValidation),
+        };
+        self.clear_and_present(frame);
+        if suboptimal { self.reconfigure_surface(); }
+        Ok(())
+    }
+
+    fn present_after_reconfigure(&mut self) -> Result<(), WindowError> {
+        let current_texture: wgpu::CurrentSurfaceTexture = self.surface
+            .as_ref()
+            .ok_or(WindowError::UnsupportedSurface)?
+            .get_current_texture();
+        let (frame, suboptimal): (wgpu::SurfaceTexture, bool) = match current_texture {
+            wgpu::CurrentSurfaceTexture::Success(frame) => (frame, false),
+            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => (frame, true),
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded
+            | wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => return Ok(()),
+            wgpu::CurrentSurfaceTexture::Validation => return Err(WindowError::SurfaceValidation),
+        };
+        self.clear_and_present(frame);
+        if suboptimal { self.reconfigure_surface(); }
+        Ok(())
+    }
+
+    fn reconfigure_surface(&self) {
+        if let (Some(surface), Some(configuration)) = (
+            self.surface.as_ref(),
+            self.surface_configuration.as_ref(),
+        ) {
+            surface.configure(self.accelerator.device(), configuration);
+        }
+    }
+
+    fn clear_and_present(&self, frame: wgpu::SurfaceTexture) {
+        let accelerator: &Accelerator = self.accelerator;
+        let view: wgpu::TextureView = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder: wgpu::CommandEncoder = accelerator
+            .device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        {
+            let _render_pass: wgpu::RenderPass<'_> = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.08, g: 0.10, b: 0.14, a: 1.0 }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+        }
+        accelerator.queue().submit([encoder.finish()]);
+        accelerator.queue().present(frame);
+    }
+
 }
 
-impl<'handler> winit::application::ApplicationHandler for Window<'handler> {
+impl<'a> winit::application::ApplicationHandler for Window<'a> {
 
     /// Creates the native window when the event loop resumes
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
@@ -90,6 +215,34 @@ impl<'handler> winit::application::ApplicationHandler for Window<'handler> {
                 winit::window::Window::default_attributes().with_transparent(false),
             ) {
                 Ok(window) => {
+                    let window: Arc<winit::window::Window> = Arc::new(window);
+                    let surface: wgpu::Surface<'static> = match self.accelerator.instance().create_surface(window.clone()) {
+                        Ok(surface) => surface,
+                        Err(error) => {
+                            self.error = Some(WindowError::from(error));
+                            event_loop.exit();
+                            return;
+                        }
+                    };
+                    let size: winit::dpi::PhysicalSize<u32> = window.inner_size();
+                    let surface_configuration: Option<wgpu::SurfaceConfiguration> =
+                        if size.width > 0 && size.height > 0 {
+                            match surface.get_default_config(self.accelerator.adapter(), size.width, size.height) {
+                                Some(configuration) => {
+                                    surface.configure(self.accelerator.device(), &configuration);
+                                    Some(configuration)
+                                }
+                                None => {
+                                    self.error = Some(WindowError::UnsupportedSurface);
+                                    event_loop.exit();
+                                    return;
+                                }
+                            }
+                        } else {
+                            None
+                    };
+                    self.surface = Some(surface);
+                    self.surface_configuration = surface_configuration;
                     window.request_redraw();
                     self.window = Some(window);
                 }
@@ -126,6 +279,11 @@ impl<'handler> winit::application::ApplicationHandler for Window<'handler> {
                     width: size.width,
                     height: size.height,
                 };
+                if let Err(error) = self.resize_surface(size.width, size.height) {
+                    self.error = Some(error);
+                    event_loop.exit();
+                    return;
+                }
                 (self.window_event_handler)(host_event);
             }
             winit::event::WindowEvent::Focused(focused) => {
@@ -179,13 +337,24 @@ impl<'handler> winit::application::ApplicationHandler for Window<'handler> {
                     (self.mouse_event_handler)(host_event);
                 }
             },
-            winit::event::WindowEvent::RedrawRequested => (self.render_handler)(),
+            winit::event::WindowEvent::RedrawRequested => {
+                let is_minimized: bool = self.surface_configuration.is_none();
+                if !is_minimized {
+                    (self.render_handler)();
+                    if let Err(error) = self.present() {
+                        self.error = Some(error);
+                        event_loop.exit();
+                    }
+                }
+            }
             _ => {}
         }
     }
 
     /// Releases the native window while the event loop is suspended
     fn suspended(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
+        self.surface = None;
+        self.surface_configuration = None;
         self.window = None;
         self.update_accumulator = Duration::ZERO;
     }
@@ -196,19 +365,22 @@ impl<'handler> winit::application::ApplicationHandler for Window<'handler> {
             event_loop.set_control_flow(winit::event_loop::ControlFlow::Wait);
             return;
         }
-        let update_step: Duration = Duration::from_nanos(1_000_000_000 / UPDATES_PER_SECOND as u64);
-        let maximum_accumulated_time: Duration = update_step * MAXIMUM_ACCUMULATED_UPDATES;
         let current_time: Instant = Instant::now();
         let elapsed_time: Duration = current_time.duration_since(self.last_update_time);
         self.last_update_time = current_time;
         self.update_accumulator =
-            self.update_accumulator.saturating_add(elapsed_time).min(maximum_accumulated_time);
-        while self.update_accumulator >= update_step {
-            (self.update_handler)(update_step);
-            self.update_accumulator -= update_step;
+            self.update_accumulator.saturating_add(elapsed_time).min(self.maximum_accumulated_time);
+        while self.update_accumulator >= self.update_interval {
+            (self.update_handler)(self.update_interval);
+            self.update_accumulator -= self.update_interval;
         }
-        let time_until_update: Duration = update_step - self.update_accumulator;
+        let time_until_update: Duration = self.update_interval - self.update_accumulator;
         let next_update_time: Instant = current_time + time_until_update;
+        if self.surface_configuration.is_none() {
+            event_loop
+                .set_control_flow(winit::event_loop::ControlFlow::WaitUntil(next_update_time));
+            return;
+        }
         if self.window_configuration.fps_limit < u32::MAX {
             let fps_limit: u32 = self.window_configuration.fps_limit.max(1);
             if current_time >= self.next_render_time {
@@ -219,7 +391,8 @@ impl<'handler> winit::application::ApplicationHandler for Window<'handler> {
                 self.next_render_time = current_time + render_interval;
             }
             let next_wakeup_time: Instant = next_update_time.min(self.next_render_time);
-            event_loop.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(next_wakeup_time));
+            event_loop
+                .set_control_flow(winit::event_loop::ControlFlow::WaitUntil(next_wakeup_time));
         } else {
             if let Some(window) = self.window.as_ref() { window.request_redraw(); }
             event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);

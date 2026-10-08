@@ -4,7 +4,7 @@ use super::AcceleratorError;
 
 /// Shared host hardware context for graphics and compute workloads
 pub struct Accelerator {
-    /// WGPU instance that owns the adapter
+    /// WGPU instance that owns the available backends
     instance: wgpu::Instance,
     /// Adapter selected for this context
     adapter: wgpu::Adapter,
@@ -16,52 +16,52 @@ pub struct Accelerator {
 
 impl Accelerator {
 
-    /// Creates a high performance hardware context synchronously
-    pub fn new() -> Result<Self, AcceleratorError> {
+    /// Creates a WGPU instance for the current platform
+    fn create_instance() -> Result<wgpu::Instance, AcceleratorError> {
         #[cfg(target_os = "windows")]
-        {
-            return match pollster::block_on(Self::initialize(wgpu::Backends::VULKAN)) {
-                Ok(accelerator) => Ok(accelerator),
-                Err(_) => pollster::block_on(Self::initialize(wgpu::Backends::DX12)),
-            };
-        }
+        let backends: wgpu::Backends = wgpu::Backends::VULKAN | wgpu::Backends::DX12;
         #[cfg(target_os = "linux")]
         let backends: wgpu::Backends = wgpu::Backends::VULKAN;
         #[cfg(target_os = "macos")]
         let backends: wgpu::Backends = wgpu::Backends::METAL;
         #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
         return Err(AcceleratorError::UnsupportedPlatform);
-        pollster::block_on(Self::initialize(backends))
-    }
 
-    /// Initializes WGPU resources for the desired backend
-    async fn initialize(backends: wgpu::Backends) -> Result<Self, AcceleratorError> {
         let mut instance_descriptor: wgpu::InstanceDescriptor =
             wgpu::InstanceDescriptor::new_without_display_handle();
         instance_descriptor.backends = backends;
-        let instance: wgpu::Instance = wgpu::Instance::new(instance_descriptor);
+        Ok(wgpu::Instance::new(instance_descriptor))
+    }
+
+    /// Creates a shared graphics and compute device context
+    pub fn new() -> Result<Self, AcceleratorError> {
+        let instance: wgpu::Instance = Self::create_instance()?;
+        let (adapter, device, queue): (wgpu::Adapter, wgpu::Device, wgpu::Queue) =
+            pollster::block_on(Self::initialize(&instance))?;
+        Ok(Self { instance, adapter, device, queue })
+    }
+
+    /// Initializes the adapter, device, and queue
+    async fn initialize(
+        instance: &wgpu::Instance,
+    ) -> Result<(wgpu::Adapter, wgpu::Device, wgpu::Queue), AcceleratorError> {
         let adapter: wgpu::Adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: None,
                 force_fallback_adapter: false,
                 apply_limit_buckets: false,
-            }).await.map_err(|error| match backends {
-                wgpu::Backends::DX12 => AcceleratorError::Dx12RequestAdapter(error),
-                wgpu::Backends::METAL => AcceleratorError::MetalRequestAdapter(error),
-                _ => AcceleratorError::VulkanRequestAdapter(error),
-            })?;
+            })
+            .await
+            .map_err(AcceleratorError::RequestAdapter)?;
         let (device, queue): (wgpu::Device, wgpu::Queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default()).await
-            .map_err(|error| match backends {
-                wgpu::Backends::DX12 => AcceleratorError::Dx12RequestDevice(error),
-                wgpu::Backends::METAL => AcceleratorError::MetalRequestDevice(error),
-                _ => AcceleratorError::VulkanRequestDevice(error),
-            })?;
-        Ok(Self { instance, adapter, device, queue })
+            .request_device(&wgpu::DeviceDescriptor::default())
+            .await
+            .map_err(AcceleratorError::RequestDevice)?;
+        Ok((adapter, device, queue))
     }
 
-    /// Returns the WGPU instance that owns this context
+    /// Returns the WGPU instance used by this context
     pub const fn instance(&self) -> &wgpu::Instance { &self.instance }
 
     /// Returns the selected WGPU adapter

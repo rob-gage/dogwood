@@ -18,4 +18,7 @@ impl<G: Game> GameInstance<G> {
         GameInstance { _engine: engine, game }
     }
 
+    /// Separates the running engine from its game for host event dispatch
+    pub(crate) fn into_parts(self) -> (Engine, G) { (self._engine, self.game) }
+
 }
