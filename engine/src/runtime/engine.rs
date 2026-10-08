@@ -10,7 +10,10 @@ use engine_host::system_events::{
     SystemMouseEvent,
     SystemWindowEvent,
 };
-use engine_host::windows::Window;
+use engine_host::windows::{
+    Window,
+    WindowConfiguration,
+};
 use std::cell::RefCell;
 use std::time::Duration;
 
@@ -24,6 +27,7 @@ impl Engine {
     /// Launches a game using this `Engine`
     pub fn launch<G: Game>(self, game: G) -> Result<(), EngineError> {
         let mut game_instance: GameInstance<G> = GameInstance::new(self, game);
+        let window_configuration: WindowConfiguration = game_instance.game.window_configuration();
         let shared_game_instance: RefCell<&mut GameInstance<G>> = RefCell::new(&mut game_instance);
         let mut window_event_handler: Box<dyn FnMut(SystemWindowEvent)> =
             Box::new(|event: SystemWindowEvent| {
@@ -47,6 +51,7 @@ impl Engine {
             &mut mouse_event_handler,
             &mut update_handler,
             &mut render_handler,
+            window_configuration,
         ).map_err(EngineError::from)
     }
 

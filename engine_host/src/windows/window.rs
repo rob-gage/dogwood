@@ -1,6 +1,9 @@
 // Copyright Rob Gage 2026
 
-use super::WindowError;
+use super::{
+    WindowConfiguration,
+    WindowError,
+};
 use crate::system_events::{
     SystemKeyboardEvent,
     SystemMouseEvent,
@@ -32,6 +35,8 @@ pub struct Window<'handler> {
     update_handler: &'handler mut dyn FnMut(Duration),
     /// Consumer of native redraw requests
     render_handler: &'handler mut dyn FnMut(),
+    /// Runtime settings for the native game window
+    window_configuration: WindowConfiguration,
     /// Time of the most recent scheduler iteration
     last_update_time: Instant,
     /// Elapsed time waiting for the next fixed-step update
@@ -49,6 +54,7 @@ impl<'handler> Window<'handler> {
         mouse_event_handler: &'handler mut dyn FnMut(SystemMouseEvent),
         update_handler: &'handler mut dyn FnMut(Duration),
         render_handler: &'handler mut dyn FnMut(),
+        window_configuration: WindowConfiguration,
     ) -> Result<(), WindowError> {
         let event_loop: winit::event_loop::EventLoop<()> =
             winit::event_loop::EventLoop::new().map_err(WindowError::from)?;
@@ -60,6 +66,7 @@ impl<'handler> Window<'handler> {
             mouse_event_handler,
             update_handler,
             render_handler,
+            window_configuration,
             last_update_time: Instant::now(),
             update_accumulator: Duration::ZERO,
             next_render_time: Instant::now(),
@@ -79,7 +86,9 @@ impl<'handler> winit::application::ApplicationHandler for Window<'handler> {
             self.last_update_time = current_time;
             self.next_render_time = current_time;
             self.update_accumulator = Duration::ZERO;
-            match event_loop.create_window(winit::window::Window::default_attributes()) {
+            match event_loop.create_window(
+                winit::window::Window::default_attributes().with_transparent(false),
+            ) {
                 Ok(window) => {
                     window.request_redraw();
                     self.window = Some(window);
@@ -189,7 +198,6 @@ impl<'handler> winit::application::ApplicationHandler for Window<'handler> {
         }
         let update_step: Duration = Duration::from_nanos(1_000_000_000 / UPDATES_PER_SECOND as u64);
         let maximum_accumulated_time: Duration = update_step * MAXIMUM_ACCUMULATED_UPDATES;
-        let render_step: Duration = update_step;
         let current_time: Instant = Instant::now();
         let elapsed_time: Duration = current_time.duration_since(self.last_update_time);
         self.last_update_time = current_time;
@@ -201,12 +209,21 @@ impl<'handler> winit::application::ApplicationHandler for Window<'handler> {
         }
         let time_until_update: Duration = update_step - self.update_accumulator;
         let next_update_time: Instant = current_time + time_until_update;
-        if current_time >= self.next_render_time {
+        if self.window_configuration.fps_limit < u32::MAX {
+            let fps_limit: u32 = self.window_configuration.fps_limit.max(1);
+            if current_time >= self.next_render_time {
+                if let Some(window) = self.window.as_ref() { window.request_redraw(); }
+                let render_interval_nanoseconds: u64 =
+                    (1_000_000_000_u64 / u64::from(fps_limit)).max(1);
+                let render_interval: Duration = Duration::from_nanos(render_interval_nanoseconds);
+                self.next_render_time = current_time + render_interval;
+            }
+            let next_wakeup_time: Instant = next_update_time.min(self.next_render_time);
+            event_loop.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(next_wakeup_time));
+        } else {
             if let Some(window) = self.window.as_ref() { window.request_redraw(); }
-            self.next_render_time = current_time + render_step;
+            event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
         }
-        let next_wakeup_time: Instant = next_update_time.min(self.next_render_time);
-        event_loop.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(next_wakeup_time));
     }
 
 }
