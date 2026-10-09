@@ -6,3 +6,4 @@ version = "0.0.0"
 edition = "2024"
 
 [dependencies]
+engine_graphics = { version = "0.0.0", path = "../engine_graphics" }

@@ -492,6 +492,9 @@ version = "0.0.0"
 [[package]]
 name = "engine_world"
 version = "0.0.0"
+dependencies = [
+ "engine_graphics",
+]
 
 [[package]]
 name = "equivalent"
