@@ -2,3 +2,4 @@
 
 pub mod materials;
 pub mod chunks;
+pub mod scenes;

@@ -7,3 +7,4 @@ edition = "2024"
 
 [dependencies]
 engine_graphics = { version = "0.0.0", path = "../engine_graphics" }
+rayon = "=1.12.0"
