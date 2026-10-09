@@ -7,15 +7,16 @@ use crate::games::{
 };
 use engine_host::{
     acceleration::Accelerator,
+    processors::Processor,
     system_events::{
         SystemKeyboardEvent,
         SystemMouseEvent,
         SystemWindowEvent,
-    }
-};
-use engine_host::windows::{
-    Window,
-    WindowConfiguration,
+    },
+    windows::{
+        Window,
+        WindowConfiguration,
+    },
 };
 use std::{
     cell::RefCell,
@@ -32,15 +33,22 @@ const MAXIMUM_ACCUMULATED_UPDATES: u32 = 6;
 pub struct Engine {
     /// Shared graphics and compute context used by this engine
     accelerator: Accelerator,
+    /// Named CPU execution pools used by this engine
+    processor: Processor,
 }
 
 impl Engine {
 
-    /// Creates an engine from an initialized graphics and compute context
-    pub const fn new(accelerator: Accelerator) -> Self { Self { accelerator } }
+    /// Creates an engine from initialized graphics and CPU processing resources
+    pub const fn new(accelerator: Accelerator, processor: Processor) -> Self {
+        Self { accelerator, processor }
+    }
 
     /// Returns the shared graphics and compute context
     pub const fn accelerator(&self) -> &Accelerator { &self.accelerator }
+
+    /// Returns the CPU execution pool manager
+    pub const fn processor(&self) -> &Processor { &self.processor }
 
     /// Launches a game using this `Engine`
     pub fn launch<G: Game>(self, game: G) -> Result<(), EngineError> {

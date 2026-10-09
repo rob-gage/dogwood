@@ -5,6 +5,8 @@
 pub enum EngineError {
     /// An error encountered while creating the shared GPU context
     Accelerator(engine_host::acceleration::AcceleratorError),
+    /// Configuration or pool creation failure while creating the CPU processor
+    Processor(engine_host::processors::ProcessorError),
     /// An error raised while creating or running the host window
     Window(engine_host::windows::WindowError),
 
@@ -14,6 +16,14 @@ impl From<engine_host::acceleration::AcceleratorError> for EngineError {
 
     fn from(error: engine_host::acceleration::AcceleratorError) -> Self {
         EngineError::Accelerator(error)
+    }
+
+}
+
+impl From<engine_host::processors::ProcessorError> for EngineError {
+
+    fn from(error: engine_host::processors::ProcessorError) -> Self {
+        EngineError::Processor(error)
     }
 
 }
