@@ -1,15 +1,21 @@
 // Copyright Rob Gage 2026
 
 mod scene;
+mod scene_cellular_tile_index;
+mod scene_cellular_tile_streaming_state;
+mod scene_cellular_tile_streaming_request;
+mod scene_cellular_tile_streaming_response;
 mod scene_chunk;
-mod scene_chunk_region;
+mod scene_chunk_region_index;
 mod scene_chunk_streaming_request;
 mod scene_chunk_streaming_response;
 mod scene_chunk_streaming_state;
 mod scene_error;
 
 pub use scene::Scene;
-pub use scene_chunk_region::SceneChunkRegion;
+pub use scene_cellular_tile_index::SceneCellularTileIndex;
+pub use scene_cellular_tile_streaming_state::SceneCellularTileStreamingState;
+pub use scene_chunk_region_index::SceneChunkRegionIndex;
 pub use scene_chunk_streaming_state::SceneChunkStreamingState;
 pub use scene_error::SceneError;
 
@@ -24,3 +30,6 @@ const SCENE_CHUNK_RESIDENT_COUNT_MAXIMUM: usize = 256;
 
 /// Maximum attempts to save one dirty chunk before dropping a scene panics
 const SCENE_CHUNK_SAVE_ATTEMPT_COUNT_MAXIMUM: usize = 3;
+
+/// Maximum cellular tile streaming requests awaiting application to chunks
+const SCENE_CELLULAR_TILE_STREAMING_REQUEST_COUNT_MAXIMUM: usize = 4;

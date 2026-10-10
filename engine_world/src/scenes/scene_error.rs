@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-use super::scene_chunk_region::SceneChunkRegion;
+use super::scene_chunk_region_index::SceneChunkRegionIndex;
 use crate::chunks::{
     ChunkCoordinates,
     ChunkError,
@@ -19,7 +19,7 @@ pub enum SceneError {
     /// No active request has the supplied region identifier
     ChunkRegionRequestNotFound {
         /// Identifier of the missing region request
-        chunk_region_identifier: SceneChunkRegion,
+        chunk_region_identifier: SceneChunkRegionIndex,
     },
     /// A chunk has no failed streaming request to retry
     ChunkRetryUnavailable {
@@ -59,4 +59,18 @@ pub enum SceneError {
         /// Coordinates of the chunk being saved
         coordinates: ChunkCoordinates,
     },
+    /// A cellular tile region is empty or does not match the GPU tile ring dimensions
+    InvalidCellularTileRegion,
+    /// A cellular tile streaming request staging buffer could not be mapped
+    CellularTileStreamingResponse {
+        /// Mapping error returned by WGPU
+        error: wgpu::BufferAsyncError,
+    },
+    /// A cellular tile streaming response cannot be applied because its chunk is not active
+    CellularTileStreamingResponseChunkInactive {
+        /// Coordinates of the inactive chunk
+        coordinates: ChunkCoordinates,
+    },
+    /// The accelerator could not be polled for cellular tile streaming responses
+    CellularTileStreamingPoll,
 }

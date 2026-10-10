@@ -11,7 +11,7 @@ pub enum ChunkError {
     CellIndexOutOfRange,
     /// A serialized cell occurs more than once
     CellIndexIsDuplicate,
-    /// Empty material identifiers must not be stored in sparse chunks
+    /// Cells with an empty material identifier and no color must not be stored in sparse chunks
     CellIsEmpty,
     /// The serialized chunk coordinates do not match the requested coordinates
     CoordinateMismatch,

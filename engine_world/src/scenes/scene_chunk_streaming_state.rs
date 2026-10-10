@@ -2,7 +2,7 @@
 
 use super::{
     scene_chunk::SceneChunk,
-    scene_chunk_region::SceneChunkRegion,
+    scene_chunk_region_index::SceneChunkRegionIndex,
     scene_chunk_streaming_request::SceneChunkStreamingRequest,
     scene_chunk_streaming_response::SceneChunkStreamingResponse,
     scene_error::SceneError,
@@ -11,11 +11,15 @@ use super::{
     SCENE_CHUNK_RESIDENT_COUNT_MAXIMUM,
     SCENE_CHUNK_SAVE_ATTEMPT_COUNT_MAXIMUM,
 };
-use crate::chunks::{
-    Chunk,
-    ChunkCoordinates,
-    ChunkData,
-    ChunkRegion,
+use crate::{
+    cellular_tiles::CellularTileCoordinates,
+    chunks::{
+        Chunk,
+        ChunkCoordinates,
+        ChunkData,
+        ChunkRegion,
+    },
+    materials::MaterialIdentifier,
 };
 use std::{
     collections::{
@@ -59,7 +63,7 @@ pub struct SceneChunkStreamingState {
     /// Whether the next sole slot goes to a required load; `false` gives it to a dirty save
     requested_loads_prioritized: bool,
     /// Active rectangular residency requests
-    retained_chunk_regions: BTreeMap<SceneChunkRegion, ChunkRegion>,
+    retained_chunk_regions: BTreeMap<SceneChunkRegionIndex, ChunkRegion>,
     /// Sender for nonblocking load and save responses
     response_sender: Sender<SceneChunkStreamingResponse>,
     /// Responses incorporated during scene advancement
@@ -97,7 +101,7 @@ impl SceneChunkStreamingState {
     /// Releases one persistent residency request
     pub fn release_chunk_region_request(
         &mut self,
-        chunk_region_identifier: SceneChunkRegion,
+        chunk_region_identifier: SceneChunkRegionIndex,
     ) -> Result<(), SceneError> {
         if self.retained_chunk_regions.remove(&chunk_region_identifier).is_some() { Ok(()) }
         else { Err(SceneError::ChunkRegionRequestNotFound { chunk_region_identifier }) }
@@ -107,7 +111,7 @@ impl SceneChunkStreamingState {
     pub fn retain_chunk_region(
         &mut self,
         region: ChunkRegion,
-    ) -> Result<SceneChunkRegion, SceneError> {
+    ) -> Result<SceneChunkRegionIndex, SceneError> {
         if self.retained_chunk_regions.len() >= SCENE_CHUNK_REGION_COUNT_MAXIMUM {
             return Err(SceneError::ChunkRegionRequestLimitReached);
         }
@@ -117,7 +121,7 @@ impl SceneChunkStreamingState {
         if !self.can_retain_chunk_region(None, region) {
             return Err(SceneError::ChunkResidentLimitReached);
         }
-        let chunk_region_identifier: SceneChunkRegion = self.next_chunk_region_identifier();
+        let chunk_region_identifier: SceneChunkRegionIndex = self.next_chunk_region_identifier();
         self.retained_chunk_regions.insert(chunk_region_identifier, region);
         Ok(chunk_region_identifier)
     }
@@ -125,7 +129,7 @@ impl SceneChunkStreamingState {
     /// Updates one existing rectangular residency request
     pub fn update_retained_chunk_region(
         &mut self,
-        chunk_region_identifier: SceneChunkRegion,
+        chunk_region_identifier: SceneChunkRegionIndex,
         region: ChunkRegion,
     ) -> Result<(), SceneError> {
         if !self.retained_chunk_regions.contains_key(&chunk_region_identifier) {
@@ -147,7 +151,7 @@ impl SceneChunkStreamingState {
     /// Returns whether every required chunk for one request is resident and active
     pub fn is_chunk_region_active(
         &self,
-        chunk_region_identifier: SceneChunkRegion,
+        chunk_region_identifier: SceneChunkRegionIndex,
     ) -> bool {
         let region_request: Option<&ChunkRegion> =
             self.retained_chunk_regions.get(&chunk_region_identifier);
@@ -176,6 +180,50 @@ impl SceneChunkStreamingState {
         }
     }
 
+    /// Returns one cellular tile's material identifiers from its active chunk
+    pub(crate) fn cellular_tile_material_identifiers(
+        &self,
+        coordinates: CellularTileCoordinates,
+    ) -> Option<[MaterialIdentifier; 64]> {
+        match self.chunks.get(&coordinates.chunk_coordinates()) {
+            Some(SceneChunk::Active { chunk, .. }) =>
+                chunk.cellular_tile_material_identifiers(coordinates).ok(),
+            _ => None,
+        }
+    }
+
+    /// Returns one cellular tile's packed RGBA colors from its active chunk
+    pub(crate) fn cellular_tile_colors(
+        &self,
+        coordinates: CellularTileCoordinates,
+    ) -> Option<[u32; 64]> {
+        match self.chunks.get(&coordinates.chunk_coordinates()) {
+            Some(SceneChunk::Active { chunk, .. }) => chunk.cellular_tile_colors(coordinates).ok(),
+            _ => None,
+        }
+    }
+
+    /// Writes one cellular tile's cells into its active chunk, marking the chunk dirty on change
+    pub(crate) fn set_cellular_tile_cells(
+        &mut self,
+        coordinates: CellularTileCoordinates,
+        material_identifiers: &[MaterialIdentifier; 64],
+        colors: &[u32; 64],
+    ) -> bool {
+        let Some(SceneChunk::Active { chunk, is_dirty }) =
+            self.chunks.get_mut(&coordinates.chunk_coordinates())
+        else { return false; };
+        if chunk.cellular_tile_material_identifiers(coordinates).ok().as_ref()
+            == Some(material_identifiers)
+            && chunk.cellular_tile_colors(coordinates).ok().as_ref() == Some(colors)
+        { return true; }
+        if chunk.set_cellular_tile_material_identifiers(coordinates, material_identifiers).is_err()
+            || chunk.set_cellular_tile_colors(coordinates, colors).is_err()
+        { return false; }
+        *is_dirty = true;
+        true
+    }
+
     /// Retries a failed save or a failed load that remains inside a requested region
     pub fn retry_chunk_streaming_request(
         &mut self,
@@ -187,7 +235,7 @@ impl SceneChunkStreamingState {
         else { return Err(SceneError::ChunkRetryUnavailable { coordinates }); };
         match chunk {
             Some(chunk) if is_dirty => {
-                if let Err(retry_error) = self.request_chunk_save(coordinates, chunk) {
+                if let Err(retry_error) = self.stream_chunks_request_save(coordinates, chunk) {
                     // restore the dirty chunk after the bounded scheduler rejects this retry
                     let failed_entry: Option<SceneChunk> = self.chunks.remove(&coordinates);
                     let failed_save_chunk: Option<Chunk> = match failed_entry {
@@ -222,7 +270,7 @@ impl SceneChunkStreamingState {
                     });
                     return Err(SceneError::ChunkRetryUnavailable { coordinates });
                 }
-                if let Err(retry_error) = self.request_chunk_load(coordinates) {
+                if let Err(retry_error) = self.stream_chunks_request_load(coordinates) {
                     self.chunks.insert(coordinates, SceneChunk::Error {
                         error,
                         chunk: None,
@@ -238,17 +286,17 @@ impl SceneChunkStreamingState {
     pub fn stream_chunks(&mut self) -> Result<(), SceneError> {
         // collect the exact coordinates requested by active regions
         let required_coordinates: HashSet<ChunkCoordinates> =
-            self.stream_chunks_collect_requested_coordinates();
+            self.stream_chunks_collect_coordinates();
         // apply completed loads and saves before deciding what remains resident
-        self.stream_chunks_apply_completed_responses(&required_coordinates)?;
+        self.stream_chunks_apply_responses(&required_coordinates)?;
         // unload clean chunks that are no longer required
-        self.unload_clean_chunks(&required_coordinates);
+        self.stream_chunks_unload(&required_coordinates);
         // submit bounded requests for required loads and dirty saves
         self.stream_chunks_schedule_requests(&required_coordinates)
     }
 
     /// Collects the exact union of coordinates covered by active region requests
-    fn stream_chunks_collect_requested_coordinates(&self) -> HashSet<ChunkCoordinates> {
+    fn stream_chunks_collect_coordinates(&self) -> HashSet<ChunkCoordinates> {
         // collect the exact union of requested rectangles without filling their gaps
         let mut required_coordinates: HashSet<ChunkCoordinates> = HashSet::new();
         for region in self.retained_chunk_regions.values() {
@@ -261,7 +309,7 @@ impl SceneChunkStreamingState {
     }
 
     /// Applies completed load and save responses, rejecting responses for stale requests
-    fn stream_chunks_apply_completed_responses(
+    fn stream_chunks_apply_responses(
         &mut self,
         required_coordinates: &HashSet<ChunkCoordinates>,
     ) -> Result<(), SceneError> {
@@ -371,28 +419,6 @@ impl SceneChunkStreamingState {
         Ok(())
     }
 
-    /// Unloads clean chunks outside every active region request
-    fn unload_clean_chunks(
-        &mut self,
-        required_coordinates: &HashSet<ChunkCoordinates>,
-    ) {
-        // remove unrequested clean chunks while keeping dirty data and active requests
-        let unneeded_coordinates: Vec<ChunkCoordinates> = self
-            .chunks
-            .iter()
-            .filter_map(|(coordinates, entry)| {
-                if required_coordinates.contains(coordinates)
-                    || matches!(entry, SceneChunk::Loading { .. } | SceneChunk::Saving { .. })
-                { return None; }
-                match entry {
-                    SceneChunk::Active { is_dirty: false, .. }
-                    | SceneChunk::Error { is_dirty: false, .. } => Some(*coordinates),
-                    _ => None,
-                }
-            }).collect();
-        for coordinates in unneeded_coordinates { self.chunks.remove(&coordinates); }
-    }
-
     /// Schedules bounded load and save requests according to their priority
     fn stream_chunks_schedule_requests(
         &mut self,
@@ -416,9 +442,9 @@ impl SceneChunkStreamingState {
             && dirty_chunk_count > 0
         {
             if self.requested_loads_prioritized {
-                self.schedule_chunk_load_requests(&required_chunk_coordinates, 1)?;
+                self.stream_chunks_schedule_loads(&required_chunk_coordinates, 1)?;
             } else {
-                self.schedule_chunk_save_requests(&required_chunk_coordinates, 1)?;
+                self.stream_chunks_schedule_saves(&required_chunk_coordinates, 1)?;
             }
             self.requested_loads_prioritized = !self.requested_loads_prioritized;
             return Ok(());
@@ -428,13 +454,16 @@ impl SceneChunkStreamingState {
             && required_chunk_coordinates_missing
             && available_chunk_request_count > 1
         { available_chunk_request_count - 1 } else { available_chunk_request_count };
-        self.schedule_chunk_load_requests(&required_chunk_coordinates, maximum_required_chunk_load_request_count)?;
+        self.stream_chunks_schedule_loads(
+            &required_chunk_coordinates,
+            maximum_required_chunk_load_request_count
+        )?;
         let remaining_chunk_request_count: usize = self.pending_chunk_request_count_maximum
             .saturating_sub(self.pending_chunk_request_count);
         let maximum_chunk_save_request_count: usize = if required_chunk_coordinates_missing {
             remaining_chunk_request_count.min(1)
         } else { remaining_chunk_request_count };
-        self.schedule_chunk_save_requests(
+        self.stream_chunks_schedule_saves(
             &required_chunk_coordinates,
             maximum_chunk_save_request_count
         )?;
@@ -444,7 +473,7 @@ impl SceneChunkStreamingState {
     /// Checks the bounded union before creating or updating a region request
     fn can_retain_chunk_region(
         &self,
-        excluded_chunk_region_identifier: Option<SceneChunkRegion>,
+        excluded_chunk_region_identifier: Option<SceneChunkRegionIndex>,
         region: ChunkRegion,
     ) -> bool {
         // build the proposed retained union while excluding the region being updated
@@ -500,14 +529,17 @@ impl SceneChunkStreamingState {
     }
 
     /// Returns the next retained chunk region identifier
-    fn next_chunk_region_identifier(&mut self) -> SceneChunkRegion {
+    fn next_chunk_region_identifier(&mut self) -> SceneChunkRegionIndex {
         let chunk_region_identifier_value: u64 = self.next_chunk_region_identifier;
         self.next_chunk_region_identifier = self.next_chunk_region_identifier.wrapping_add(1);
-        SceneChunkRegion::from(chunk_region_identifier_value)
+        SceneChunkRegionIndex::from(chunk_region_identifier_value)
     }
 
     /// Requests one missing chunk load on the caller-supplied pool
-    fn request_chunk_load(&mut self, coordinates: ChunkCoordinates) -> Result<(), SceneError> {
+    fn stream_chunks_request_load(
+        &mut self,
+        coordinates: ChunkCoordinates,
+    ) -> Result<(), SceneError> {
         if self.chunks.contains_key(&coordinates) {
             return Err(SceneError::ChunkStreamingRequestAlreadyActive { coordinates });
         }
@@ -526,14 +558,14 @@ impl SceneChunkStreamingState {
         self.pending_chunk_request_count += 1;
         self.thread_pool.spawn(move || {
             let completion: SceneChunkStreamingResponse =
-                Self::handle_chunk_streaming_request(stream_request, chunk_data);
+                Self::stream_chunks_handle_request(stream_request, chunk_data);
             let _ = completion_sender.send(completion);
         });
         Ok(())
     }
 
     /// Starts one dirty save by transferring chunk ownership to a Rayon job
-    fn request_chunk_save(
+    fn stream_chunks_request_save(
         &mut self,
         coordinates: ChunkCoordinates,
         chunk: Chunk,
@@ -554,7 +586,7 @@ impl SceneChunkStreamingState {
         self.pending_chunk_request_count += 1;
         self.thread_pool.spawn(move || {
             let completion: SceneChunkStreamingResponse =
-                Self::handle_chunk_streaming_request(stream_request, chunk_data);
+                Self::stream_chunks_handle_request(stream_request, chunk_data);
             let _ = completion_sender.send(completion);
         });
         Ok(())
@@ -587,7 +619,7 @@ impl SceneChunkStreamingState {
     }
 
     /// Schedules required loads in a rotating order across independent requests
-    fn schedule_chunk_load_requests(
+    fn stream_chunks_schedule_loads(
         &mut self,
         required_chunk_coordinates: &HashSet<ChunkCoordinates>,
         maximum_new_chunk_load_request_count: usize,
@@ -596,7 +628,7 @@ impl SceneChunkStreamingState {
         if maximum_new_chunk_load_request_count == 0 || self.retained_chunk_regions.is_empty() {
             return Ok(());
         }
-        let chunk_region_identifiers: Vec<SceneChunkRegion> =
+        let chunk_region_identifiers: Vec<SceneChunkRegionIndex> =
             self.retained_chunk_regions.keys().copied().collect();
         // rotate the first request so independent regions receive slots fairly
         let chunk_region_request_count: usize = chunk_region_identifiers.len();
@@ -615,10 +647,10 @@ impl SceneChunkStreamingState {
             };
             let mut required_chunk_coordinates_for_region: Vec<ChunkCoordinates> = Vec::new();
             // collect required coordinates belonging to this request for fair round-robin schedule
-            for chunk_y in
-                i64::from(chunk_region.bottom_left.y)..=i64::from(chunk_region.top_right.y) {
-                    for chunk_x in
-                        i64::from(chunk_region.bottom_left.x)..=i64::from(chunk_region.top_right.x) {
+            for chunk_y in i64::from(chunk_region.bottom_left.y)
+                ..=i64::from(chunk_region.top_right.y) {
+                    for chunk_x in i64::from(chunk_region.bottom_left.x)
+                        ..=i64::from(chunk_region.top_right.x) {
                             let chunk_coordinates: ChunkCoordinates = ChunkCoordinates {
                                 x: chunk_x as i32,
                                 y: chunk_y as i32,
@@ -651,7 +683,7 @@ impl SceneChunkStreamingState {
                     chunk_region_load_coordinate_queues[chunk_region_request_index].pop_front();
                 let Some(chunk_coordinates) = next_chunk_load_coordinate else { continue; };
                 chunk_region_queues_with_loads_remaining += 1;
-                self.request_chunk_load(chunk_coordinates)?;
+                self.stream_chunks_request_load(chunk_coordinates)?;
                 started_chunk_load_request_count += 1;
                 if started_chunk_load_request_count >= maximum_new_chunk_load_request_count
                 { break; }
@@ -663,7 +695,7 @@ impl SceneChunkStreamingState {
     }
 
     /// Schedules dirty authoritative chunks outside every requested region
-    fn schedule_chunk_save_requests(
+    fn stream_chunks_schedule_saves(
         &mut self,
         requested_chunk_coordinates: &HashSet<ChunkCoordinates>,
         maximum_new_chunk_save_request_count: usize,
@@ -696,13 +728,13 @@ impl SceneChunkStreamingState {
             else {
                 continue;
             };
-            self.request_chunk_save(chunk_coordinates, chunk)?;
+            self.stream_chunks_request_save(chunk_coordinates, chunk)?;
         }
         Ok(())
     }
 
     /// Executes one chunk request on a Rayon worker and returns its response
-    fn handle_chunk_streaming_request(
+    fn stream_chunks_handle_request(
         chunk_streaming_request: SceneChunkStreamingRequest,
         chunk_data: ChunkData,
     ) -> SceneChunkStreamingResponse {
@@ -748,6 +780,28 @@ impl SceneChunkStreamingState {
                 }
             }
         }
+    }
+
+    /// Unloads clean chunks outside every active region request
+    fn stream_chunks_unload(
+        &mut self,
+        required_coordinates: &HashSet<ChunkCoordinates>,
+    ) {
+        // remove unrequested clean chunks while keeping dirty data and active requests
+        let unneeded_coordinates: Vec<ChunkCoordinates> = self
+            .chunks
+            .iter()
+            .filter_map(|(coordinates, entry)| {
+                if required_coordinates.contains(coordinates)
+                    || matches!(entry, SceneChunk::Loading { .. } | SceneChunk::Saving { .. })
+                { return None; }
+                match entry {
+                    SceneChunk::Active { is_dirty: false, .. }
+                    | SceneChunk::Error { is_dirty: false, .. } => Some(*coordinates),
+                    _ => None,
+                }
+            }).collect();
+        for coordinates in unneeded_coordinates { self.chunks.remove(&coordinates); }
     }
 
 }
