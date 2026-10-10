@@ -2,6 +2,7 @@
 
 use super::scene_chunk_streaming_state::SceneChunkStreamingState;
 use crate::{
+    actors::ActorRegistry,
     cellular_tiles::CellularTileBuffers,
     chunks::ChunkData,
 };
@@ -14,6 +15,8 @@ pub struct Scene {
     chunk_streaming_state: SceneChunkStreamingState,
     /// GPU storage for the properties of every resident cellular tile
     cellular_tile_buffers: CellularTileBuffers,
+    /// ECS world and fixed-tick systems of every live actor
+    actor_registry: ActorRegistry,
 }
 
 impl Scene {
@@ -30,7 +33,8 @@ impl Scene {
             SceneChunkStreamingState::new(chunk_data, thread_pool);
         let cellular_tile_buffers: CellularTileBuffers =
             CellularTileBuffers::new(accelerator, width, height);
-        Self { chunk_streaming_state, cellular_tile_buffers }
+        let actor_registry: ActorRegistry = ActorRegistry::new();
+        Self { chunk_streaming_state, cellular_tile_buffers, actor_registry }
     }
 
 }

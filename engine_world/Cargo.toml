@@ -8,5 +8,6 @@ edition = "2024"
 [dependencies]
 engine_graphics = { version = "0.0.0", path = "../engine_graphics" }
 engine_host = { version = "0.0.0", path = "../engine_host" }
+bevy_ecs = { version = "=0.20.0", default-features = false, features = ["std"] }
 rayon = "=1.12.0"
 wgpu = { version = "=30.0.0", default-features = false }
