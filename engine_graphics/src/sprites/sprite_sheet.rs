@@ -52,10 +52,34 @@ impl SpriteSheet {
             .map_err(SpriteSheetError::Decode)?
             .to_rgba8();
         let (width, height): (u32, u32) = pixels.dimensions();
+        Self::from_rgba(accelerator, pixels.as_raw(), width, height, columns, rows)
+    }
+
+    /// Uploads a single frame filled with one straight-alpha sRGB color
+    pub fn from_color(
+        accelerator: &Accelerator,
+        red: u8,
+        green: u8,
+        blue: u8,
+        alpha: u8,
+    ) -> Result<Self, SpriteSheetError> {
+        Self::from_rgba(accelerator, &[red, green, blue, alpha], 1, 1, 1, 1)
+    }
+
+    /// Uploads straight-alpha sRGB RGBA8 pixels as a grid of frames
+    pub fn from_rgba(
+        accelerator: &Accelerator,
+        pixels: &[u8],
+        width: u32,
+        height: u32,
+        columns: u32,
+        rows: u32,
+    ) -> Result<Self, SpriteSheetError> {
         let maximum_dimension: u32 = accelerator.device().limits().max_texture_dimension_2d;
         if width == 0 || height == 0 || columns == 0 || rows == 0
             || width > maximum_dimension || height > maximum_dimension
             || width % columns != 0 || height % rows != 0
+            || pixels.len() as u64 != u64::from(width) * u64::from(height) * 4
         { return Err(SpriteSheetError::InvalidDimensions); }
         let size: wgpu::Extent3d = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
         let texture: wgpu::Texture = accelerator.device().create_texture(&wgpu::TextureDescriptor {
@@ -65,12 +89,14 @@ impl SpriteSheet {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         accelerator.queue().write_texture(
             texture.as_image_copy(),
-            pixels.as_raw(),
+            pixels,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(width * 4),

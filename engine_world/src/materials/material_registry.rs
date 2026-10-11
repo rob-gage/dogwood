@@ -4,13 +4,17 @@ use super::{
     Material,
     MaterialError,
     MaterialForm,
-    MaterialIdentifier
+    MaterialIdentifier,
+    MaterialPropertiesCellularStatic,
 };
+use engine_graphics::world::materials::MaterialGraphicsCellularStatic;
 
 /// Owns registered materials and their identifiers
 pub struct MaterialRegistry {
     /// The `Material::CellularStatic`s in this `MaterialRegistry`
     cellular_statics: Vec<Material>,
+    /// The properties of each `Material::CellularStatic`, if registered with properties
+    cellular_static_properties: Vec<Option<MaterialPropertiesCellularStatic>>,
     /// The `Material::CellularDynamic`s in this `MaterialRegistry`
     cellular_dynamics: Vec<Material>,
     /// The `Material::Fluid`s in this `MaterialRegistry`
@@ -25,6 +29,7 @@ impl MaterialRegistry {
     pub const fn new() -> Self {
         Self {
             cellular_statics: Vec::new(),
+            cellular_static_properties: Vec::new(),
             cellular_dynamics: Vec::new(),
             fluids: Vec::new(),
             gases: Vec::new(),
@@ -53,7 +58,33 @@ impl MaterialRegistry {
             .map_err(|_| MaterialError::CapacityExceeded)?;
         let identifier: MaterialIdentifier = MaterialIdentifier::new(form, material_index)?;
         materials.push(material);
+        if form == MaterialForm::CellularStatic { self.cellular_static_properties.push(None); }
         Ok(identifier)
+    }
+
+    /// Registers a cellular static material with its properties
+    pub fn register_cellular_static(
+        &mut self,
+        name: String,
+        properties: MaterialPropertiesCellularStatic,
+    ) -> Result<MaterialIdentifier, MaterialError> {
+        let identifier: MaterialIdentifier =
+            self.register(Material { name, form: MaterialForm::CellularStatic })?;
+        if let Some(registered_properties) = self.cellular_static_properties.last_mut() {
+            *registered_properties = Some(properties);
+        }
+        Ok(identifier)
+    }
+
+    /// Iterates over the graphics of every cellular static material index, starting with empty
+    pub fn cellular_static_graphics(
+        &self,
+    ) -> impl Iterator<Item = Option<&MaterialGraphicsCellularStatic>> {
+        std::iter::once(None).chain(self.cellular_static_properties.iter().map(
+            |properties: &Option<MaterialPropertiesCellularStatic>| {
+                properties.as_ref().map(|properties| &properties.graphics)
+            },
+        ))
     }
 
     /// Returns the material represented by a valid registered identifier

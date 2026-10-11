@@ -7,7 +7,7 @@ pub struct Actor(u64);
 impl Actor {
 
     /// Creates an actor from an identifier allocated by `ActorEntities`
-    pub(crate) const fn new(identifier: u64) -> Self {
+    pub const fn new(identifier: u64) -> Self {
         Self(identifier)
     }
 

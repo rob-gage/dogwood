@@ -17,6 +17,13 @@ pub enum SceneChunk {
         /// Identifier used to reject stale load completions
         streaming_request_identifier: u64,
     },
+    /// Chunk without a persisted file awaiting a generation request
+    Missing,
+    /// Chunk generation running in the shared processor pool
+    Generating {
+        /// Identifier used to reject stale generation completions
+        streaming_request_identifier: u64,
+    },
     /// Dirty chunk ownership is held by a background save request
     Saving {
         /// Identifier used to reject stale save completions

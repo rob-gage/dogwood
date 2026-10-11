@@ -3,8 +3,6 @@
 pub mod games;
 pub mod runtime;
 
-pub use engine_graphics::world::scenes;
-
 pub use engine_host::{
     acceleration::{
         Accelerator,
@@ -15,4 +13,11 @@ pub use engine_host::{
         ProcessorConfiguration,
         ProcessorError,
     },
+};
+pub use engine_world::{
+    actor_components,
+    actors,
+    chunks,
+    materials,
+    scenes,
 };

@@ -1,18 +1,20 @@
 // Copyright Rob Gage 2026
 
+mod template_game;
+mod template_scene_generator;
+
 use engine::{
     Accelerator,
     Processor,
-    games::Game,
-    runtime::Engine,
+    runtime::{
+        Engine,
+        EngineError,
+    },
 };
+use template_game::TemplateGame;
 
-struct MyGame;
-
-impl Game for MyGame {}
-
-fn main() -> Result<(), engine::runtime::EngineError> {
+fn main() -> Result<(), EngineError> {
     let accelerator: Accelerator = Accelerator::default();
     let processor: Processor = Processor::default();
-    Engine::new(accelerator, processor).launch(MyGame)
+    Engine::new(accelerator, processor).launch(TemplateGame::new())
 }

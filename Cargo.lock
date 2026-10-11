@@ -765,6 +765,7 @@ version = "0.0.0"
 dependencies = [
  "engine_graphics",
  "engine_host",
+ "engine_world",
  "wgpu",
  "winit",
 ]

@@ -6,6 +6,7 @@ use super::{
     scene_chunk_streaming_request::SceneChunkStreamingRequest,
     scene_chunk_streaming_response::SceneChunkStreamingResponse,
     scene_error::SceneError,
+    scene_generator::SceneGenerator,
     SCENE_CHUNK_REGION_COUNT_MAXIMUM,
     SCENE_CHUNK_REGION_SIZE_MAXIMUM,
     SCENE_CHUNK_RESIDENT_COUNT_MAXIMUM,
@@ -17,6 +18,7 @@ use crate::{
         Chunk,
         ChunkCoordinates,
         ChunkData,
+        ChunkError,
         ChunkRegion,
     },
     materials::MaterialIdentifier,
@@ -28,6 +30,7 @@ use std::{
         HashSet,
         VecDeque,
     },
+    io,
     mem,
     panic::{
         AssertUnwindSafe,
@@ -181,7 +184,7 @@ impl SceneChunkStreamingState {
     }
 
     /// Returns one cellular tile's material identifiers from its active chunk
-    pub(crate) fn cellular_tile_material_identifiers(
+    pub fn cellular_tile_material_identifiers(
         &self,
         coordinates: CellularTileCoordinates,
     ) -> Option<[MaterialIdentifier; 64]> {
@@ -193,7 +196,7 @@ impl SceneChunkStreamingState {
     }
 
     /// Returns one cellular tile's packed RGBA colors from its active chunk
-    pub(crate) fn cellular_tile_colors(
+    pub fn cellular_tile_colors(
         &self,
         coordinates: CellularTileCoordinates,
     ) -> Option<[u32; 64]> {
@@ -204,7 +207,7 @@ impl SceneChunkStreamingState {
     }
 
     /// Writes one cellular tile's cells into its active chunk, marking the chunk dirty on change
-    pub(crate) fn set_cellular_tile_cells(
+    pub fn set_cellular_tile_cells(
         &mut self,
         coordinates: CellularTileCoordinates,
         material_identifiers: &[MaterialIdentifier; 64],
@@ -283,7 +286,11 @@ impl SceneChunkStreamingState {
     }
 
     /// Advances chunk streaming through its four scene-owned phases without waiting
-    pub fn stream_chunks(&mut self) -> Result<(), SceneError> {
+    pub fn stream_chunks(
+        &mut self,
+        generator: &Arc<dyn SceneGenerator>,
+        world_seed: u64,
+    ) -> Result<(), SceneError> {
         // collect the exact coordinates requested by active regions
         let required_coordinates: HashSet<ChunkCoordinates> =
             self.stream_chunks_collect_coordinates();
@@ -292,7 +299,7 @@ impl SceneChunkStreamingState {
         // unload clean chunks that are no longer required
         self.stream_chunks_unload(&required_coordinates);
         // submit bounded requests for required loads and dirty saves
-        self.stream_chunks_schedule_requests(&required_coordinates)
+        self.stream_chunks_schedule_requests(&required_coordinates, generator, world_seed)
     }
 
     /// Collects the exact union of coordinates covered by active region requests
@@ -324,8 +331,30 @@ impl SceneChunkStreamingState {
             };
             self.pending_chunk_request_count = self.pending_chunk_request_count.saturating_sub(1);
             match response {
-                // accept a load only while its coordinate remains requested
+                // queue generation for a missing file only while its coordinate remains requested
+                SceneChunkStreamingResponse::Missing {
+                    coordinates,
+                    streaming_request_identifier,
+                } => {
+                    let is_current: bool = matches!(
+                        self.chunks.get(&coordinates),
+                        Some(SceneChunk::Loading {
+                            streaming_request_identifier: current_identifier,
+                        }) if *current_identifier == streaming_request_identifier
+                    );
+                    if !is_current { continue; }
+                    if required_coordinates.contains(&coordinates) {
+                        self.chunks.insert(coordinates, SceneChunk::Missing);
+                    } else {
+                        self.chunks.remove(&coordinates);
+                    }
+                }
+                // accept a load or generation only while its coordinate remains requested
                 SceneChunkStreamingResponse::Loaded {
+                    coordinates,
+                    streaming_request_identifier,
+                    result,
+                } | SceneChunkStreamingResponse::Generated {
                     coordinates,
                     streaming_request_identifier,
                     result,
@@ -333,6 +362,8 @@ impl SceneChunkStreamingState {
                     let is_current: bool = matches!(
                         self.chunks.get(&coordinates),
                         Some(SceneChunk::Loading {
+                            streaming_request_identifier: current_identifier,
+                        } | SceneChunk::Generating {
                             streaming_request_identifier: current_identifier,
                         }) if *current_identifier == streaming_request_identifier
                     );
@@ -342,7 +373,7 @@ impl SceneChunkStreamingState {
                         continue;
                     }
                     match result {
-                        // install the loaded chunk as clean scene storage
+                        // install the loaded or generated chunk as clean scene storage
                         Ok(chunk) => {
                             self.chunks.insert(
                                 coordinates,
@@ -423,6 +454,8 @@ impl SceneChunkStreamingState {
     fn stream_chunks_schedule_requests(
         &mut self,
         required_chunk_coordinates: &HashSet<ChunkCoordinates>,
+        generator: &Arc<dyn SceneGenerator>,
+        world_seed: u64,
     ) -> Result<(), SceneError> {
         // calculate bounded capacity and whether required loads or dirty saves need service
         let available_chunk_request_count: usize = self.pending_chunk_request_count_maximum
@@ -430,7 +463,9 @@ impl SceneChunkStreamingState {
         if available_chunk_request_count == 0 { return Ok(()); }
         // detect required loads and dirty data that must be saved before eviction
         let required_chunk_coordinates_missing: bool = required_chunk_coordinates.iter()
-            .any(|coordinates| !self.chunks.contains_key(coordinates));
+            .any(|coordinates| {
+                matches!(self.chunks.get(coordinates), None | Some(SceneChunk::Missing))
+            });
         let dirty_chunk_count: usize = self.chunks.iter()
             .filter(|(coordinates, entry)| {
                 !required_chunk_coordinates.contains(coordinates)
@@ -442,7 +477,12 @@ impl SceneChunkStreamingState {
             && dirty_chunk_count > 0
         {
             if self.requested_loads_prioritized {
-                self.stream_chunks_schedule_loads(&required_chunk_coordinates, 1)?;
+                self.stream_chunks_schedule_loads(
+                    &required_chunk_coordinates,
+                    1,
+                    generator,
+                    world_seed,
+                )?;
             } else {
                 self.stream_chunks_schedule_saves(&required_chunk_coordinates, 1)?;
             }
@@ -456,7 +496,9 @@ impl SceneChunkStreamingState {
         { available_chunk_request_count - 1 } else { available_chunk_request_count };
         self.stream_chunks_schedule_loads(
             &required_chunk_coordinates,
-            maximum_required_chunk_load_request_count
+            maximum_required_chunk_load_request_count,
+            generator,
+            world_seed,
         )?;
         let remaining_chunk_request_count: usize = self.pending_chunk_request_count_maximum
             .saturating_sub(self.pending_chunk_request_count);
@@ -564,6 +606,38 @@ impl SceneChunkStreamingState {
         Ok(())
     }
 
+    /// Requests generation of one chunk that has no persisted file
+    fn stream_chunks_request_generation(
+        &mut self,
+        coordinates: ChunkCoordinates,
+        generator: &Arc<dyn SceneGenerator>,
+        world_seed: u64,
+    ) -> Result<(), SceneError> {
+        if !matches!(self.chunks.get(&coordinates), Some(SceneChunk::Missing)) {
+            return Err(SceneError::ChunkStreamingRequestAlreadyActive { coordinates });
+        }
+        if self.pending_chunk_request_count >= self.pending_chunk_request_count_maximum {
+            return Err(SceneError::ChunkStreamingCapacityReached);
+        }
+        let streaming_request_identifier: u64 = self.next_streaming_request_identifier();
+        let chunk_data: ChunkData = self.chunk_data.clone();
+        let stream_request: SceneChunkStreamingRequest = SceneChunkStreamingRequest::Generate {
+            coordinates,
+            streaming_request_identifier,
+            generator: generator.clone(),
+            world_seed,
+        };
+        let completion_sender: Sender<SceneChunkStreamingResponse> = self.response_sender.clone();
+        self.chunks.insert(coordinates, SceneChunk::Generating { streaming_request_identifier });
+        self.pending_chunk_request_count += 1;
+        self.thread_pool.spawn(move || {
+            let completion: SceneChunkStreamingResponse =
+                Self::stream_chunks_handle_request(stream_request, chunk_data);
+            let _ = completion_sender.send(completion);
+        });
+        Ok(())
+    }
+
     /// Starts one dirty save by transferring chunk ownership to a Rayon job
     fn stream_chunks_request_save(
         &mut self,
@@ -623,6 +697,8 @@ impl SceneChunkStreamingState {
         &mut self,
         required_chunk_coordinates: &HashSet<ChunkCoordinates>,
         maximum_new_chunk_load_request_count: usize,
+        generator: &Arc<dyn SceneGenerator>,
+        world_seed: u64,
     ) -> Result<(), SceneError> {
         // prepare one missing-coordinate queue per region so requests share slots fairly
         if maximum_new_chunk_load_request_count == 0 || self.retained_chunk_regions.is_empty() {
@@ -663,7 +739,7 @@ impl SceneChunkStreamingState {
             // deduplicate overlapping regions and omit coordinates with an existing request
             let unique_chunk_load_coordinates: VecDeque<ChunkCoordinates> =
                 required_chunk_coordinates_for_region.into_iter().filter(|chunk_coordinates| {
-                    !self.chunks.contains_key(chunk_coordinates)
+                    matches!(self.chunks.get(chunk_coordinates), None | Some(SceneChunk::Missing))
                         && queued_chunk_load_coordinates.insert(*chunk_coordinates)
                 }).collect();
             chunk_region_load_coordinate_queues.push(unique_chunk_load_coordinates);
@@ -683,7 +759,15 @@ impl SceneChunkStreamingState {
                     chunk_region_load_coordinate_queues[chunk_region_request_index].pop_front();
                 let Some(chunk_coordinates) = next_chunk_load_coordinate else { continue; };
                 chunk_region_queues_with_loads_remaining += 1;
-                self.stream_chunks_request_load(chunk_coordinates)?;
+                if matches!(self.chunks.get(&chunk_coordinates), Some(SceneChunk::Missing)) {
+                    self.stream_chunks_request_generation(
+                        chunk_coordinates,
+                        generator,
+                        world_seed,
+                    )?;
+                } else {
+                    self.stream_chunks_request_load(chunk_coordinates)?;
+                }
                 started_chunk_load_request_count += 1;
                 if started_chunk_load_request_count >= maximum_new_chunk_load_request_count
                 { break; }
@@ -739,21 +823,56 @@ impl SceneChunkStreamingState {
         chunk_data: ChunkData,
     ) -> SceneChunkStreamingResponse {
         match chunk_streaming_request {
-            // read stored chunks and create empty data only when storage reports no file
+            // read stored chunks and report coordinates without a persisted file
             SceneChunkStreamingRequest::Load { coordinates, streaming_request_identifier } => {
-                let load_result: Result<Option<Chunk>, SceneError> = match catch_unwind(
+                let result: Result<Chunk, SceneError> = match catch_unwind(
                     AssertUnwindSafe(|| chunk_data.load(coordinates)),
                 ) {
-                    Ok(Ok(chunk)) => Ok(chunk),
+                    Ok(Ok(Some(chunk))) => Ok(chunk),
+                    Ok(Ok(None)) => return SceneChunkStreamingResponse::Missing {
+                        coordinates,
+                        streaming_request_identifier,
+                    },
                     Ok(Err(error)) => Err(SceneError::ChunkLoad {
                         coordinates,
                         error: Arc::new(error),
                     }),
-                    Err(_) => Err(SceneError::ChunkLoadPanicked { coordinates }),
+                    Err(_) => Err(SceneError::ChunkLoad {
+                        coordinates,
+                        error: Arc::new(ChunkError::Io(io::Error::other("Chunk load panicked"))),
+                    }),
                 };
-                let result: Result<Chunk, SceneError> = load_result
-                    .map(|loaded_chunk| loaded_chunk.unwrap_or_else(|| Chunk::new(coordinates)));
                 SceneChunkStreamingResponse::Loaded {
+                    coordinates,
+                    streaming_request_identifier,
+                    result,
+                }
+            }
+            // generate chunks without persisted files, treating panics as generation errors
+            SceneChunkStreamingRequest::Generate {
+                coordinates,
+                streaming_request_identifier,
+                generator,
+                world_seed,
+            } => {
+                let result: Result<Chunk, SceneError> = match catch_unwind(AssertUnwindSafe(|| {
+                    generator.generate_chunk(coordinates, world_seed)
+                })) {
+                    Ok(Ok(chunk)) if chunk.coordinates == coordinates => Ok(chunk),
+                    Ok(Ok(_)) => Err(SceneError::ChunkGeneration {
+                        coordinates,
+                        error: Arc::new(io::Error::other("Chunk generator returned another chunk")),
+                    }),
+                    Ok(Err(error)) => Err(SceneError::ChunkGeneration {
+                        coordinates,
+                        error: Arc::from(error),
+                    }),
+                    Err(_) => Err(SceneError::ChunkGeneration {
+                        coordinates,
+                        error: Arc::new(io::Error::other("Chunk generator panicked")),
+                    }),
+                };
+                SceneChunkStreamingResponse::Generated {
                     coordinates,
                     streaming_request_identifier,
                     result,
@@ -770,7 +889,10 @@ impl SceneChunkStreamingState {
                         coordinates,
                         error: Arc::new(error),
                     }),
-                    Err(_) => Err(SceneError::ChunkSavePanicked { coordinates }),
+                    Err(_) => Err(SceneError::ChunkSave {
+                        coordinates,
+                        error: Arc::new(ChunkError::Io(io::Error::other("Chunk save panicked"))),
+                    }),
                 };
                 SceneChunkStreamingResponse::Saved {
                     coordinates,
@@ -793,10 +915,16 @@ impl SceneChunkStreamingState {
             .iter()
             .filter_map(|(coordinates, entry)| {
                 if required_coordinates.contains(coordinates)
-                    || matches!(entry, SceneChunk::Loading { .. } | SceneChunk::Saving { .. })
+                    || matches!(
+                        entry,
+                        SceneChunk::Loading { .. }
+                        | SceneChunk::Generating { .. }
+                        | SceneChunk::Saving { .. }
+                    )
                 { return None; }
                 match entry {
                     SceneChunk::Active { is_dirty: false, .. }
+                    | SceneChunk::Missing
                     | SceneChunk::Error { is_dirty: false, .. } => Some(*coordinates),
                     _ => None,
                 }
@@ -866,7 +994,12 @@ impl Drop for SceneChunkStreamingState {
                             coordinates,
                             error: Arc::new(error),
                         }),
-                        Err(_) => Err(SceneError::ChunkSavePanicked { coordinates }),
+                        Err(_) => Err(SceneError::ChunkSave {
+                            coordinates,
+                            error: Arc::new(ChunkError::Io(
+                                io::Error::other("Chunk save panicked"),
+                            )),
+                        }),
                     };
                 if save_result.is_ok() { break; }
             }

@@ -13,7 +13,7 @@ use bevy_ecs::{
 /// Unique identity component making an entity the live form of one actor
 #[derive(Component, Debug, Eq, PartialEq, Hash)]
 #[component(immutable, on_insert, on_discard, clone_behavior = Ignore)]
-pub(crate) struct ActorIdentityComponent {
+pub struct ActorIdentityComponent {
     /// Actor this entity is the live form of
     actor: Actor,
 }
@@ -21,12 +21,12 @@ pub(crate) struct ActorIdentityComponent {
 impl ActorIdentityComponent {
 
     /// Creates the only identity component of a newly allocated actor
-    pub(crate) const fn new(actor: Actor) -> Self {
+    pub const fn new(actor: Actor) -> Self {
         Self { actor }
     }
 
     /// Returns the actor this identity belongs to
-    pub(crate) const fn actor(&self) -> Actor {
+    pub const fn actor(&self) -> Actor {
         self.actor
     }
 

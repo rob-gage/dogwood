@@ -8,7 +8,7 @@ pub struct GameInstance<G: Game> {
     /// The engine being used to run the `Game`
     _engine: Engine,
     /// The `Game` running in this `GameInstance`
-    pub(crate) game: G,
+    game: G,
 }
 
 impl<G: Game> GameInstance<G> {
@@ -19,6 +19,6 @@ impl<G: Game> GameInstance<G> {
     }
 
     /// Separates the running engine from its game for host event dispatch
-    pub(crate) fn into_parts(self) -> (Engine, G) { (self._engine, self.game) }
+    pub fn into_parts(self) -> (Engine, G) { (self._engine, self.game) }
 
 }

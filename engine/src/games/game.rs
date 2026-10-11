@@ -1,12 +1,15 @@
 // Copyright Rob Gage 2026
 
-use engine_graphics::world::scenes::SceneGraphics;
 use engine_host::system_events::{
     SystemKeyboardEvent,
     SystemMouseEvent,
     SystemWindowEvent,
 };
 use engine_host::windows::WindowConfiguration;
+use engine_world::{
+    actors::Actor,
+    scenes::Scene,
+};
 use std::time::Duration;
 
 /// A game that runs on the `Engine`
@@ -18,8 +21,8 @@ pub trait Game {
     /// Advances game state by one fixed update step
     fn update(&mut self, _elapsed_time: Duration) {}
 
-    /// Returns the scene graphics drawn after a native redraw request, or `None` to draw nothing
-    fn render(&mut self) -> Option<SceneGraphics<'_>> { None }
+    /// Returns the scene streamed and drawn by the engine with its camera actor, or `None`
+    fn scene(&mut self) -> Option<(&mut Scene, Actor)> { None }
 
     /// Handles a host window event
     fn window_event(&mut self, _event: SystemWindowEvent) {}

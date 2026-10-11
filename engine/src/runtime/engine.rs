@@ -5,7 +5,10 @@ use crate::games::{
     Game,
     GameInstance,
 };
-use engine_graphics::renders::SceneRenderer;
+use engine_graphics::{
+    renders::SceneRenderer,
+    world::scenes::SceneGraphics,
+};
 use engine_host::{
     acceleration::Accelerator,
     processors::Processor,
@@ -74,13 +77,19 @@ impl Engine {
             });
         let mut update_handler: Box<dyn FnMut(Duration)> =
             Box::new(|elapsed_time: Duration| {
-                shared_game.borrow_mut().update(elapsed_time);
+                let mut game: RefMut<'_, &mut G> = shared_game.borrow_mut();
+                game.update(elapsed_time);
+                let Some((scene, camera_actor)) = game.scene() else { return; };
+                scene.stream(engine.accelerator(), engine.processor(), camera_actor)
+                    .unwrap_or_else(|error| panic!("Scene streaming failed: {error:?}"));
             });
         let mut scene_renderer: SceneRenderer = SceneRenderer::new(engine.accelerator());
         let mut render_handler: Box<dyn FnMut(&wgpu::TextureView)> =
             Box::new(|texture_view: &wgpu::TextureView| {
                 let mut game: RefMut<'_, &mut G> = shared_game.borrow_mut();
-                let Some(graphics) = game.render() else { return; };
+                let Some((scene, camera_actor)) = game.scene() else { return; };
+                let graphics: SceneGraphics<'_> = scene.graphics(camera_actor)
+                    .unwrap_or_else(|error| panic!("Scene graphics failed: {error:?}"));
                 scene_renderer.render(engine.accelerator(), texture_view, &graphics);
             });
         let update_interval: Duration = Duration::from_nanos(

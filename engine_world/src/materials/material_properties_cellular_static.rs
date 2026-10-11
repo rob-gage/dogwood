@@ -5,5 +5,5 @@ use engine_graphics::world::materials::MaterialGraphicsCellularStatic;
 /// Properties for a cellular static material
 pub struct MaterialPropertiesCellularStatic {
     /// Graphics for this cellular static material
-    graphics: MaterialGraphicsCellularStatic,
+    pub graphics: MaterialGraphicsCellularStatic,
 }

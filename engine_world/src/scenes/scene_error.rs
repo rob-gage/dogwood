@@ -1,11 +1,17 @@
 // Copyright Rob Gage 2026
 
 use super::scene_chunk_region_index::SceneChunkRegionIndex;
-use crate::chunks::{
-    ChunkCoordinates,
-    ChunkError,
+use crate::{
+    actors::ActorError,
+    chunks::{
+        ChunkCoordinates,
+        ChunkError,
+    },
 };
-use std::sync::Arc;
+use std::{
+    error::Error,
+    sync::Arc,
+};
 
 /// An error encountered while streaming scene chunks
 #[derive(Clone, Debug)]
@@ -49,15 +55,19 @@ pub enum SceneError {
         /// Storage error returned while saving
         error: Arc<ChunkError>,
     },
-    /// A chunk load task panicked while reading persistent storage
-    ChunkLoadPanicked {
-        /// Coordinates of the chunk being loaded
+    /// A chunk generator failed to produce the requested chunk
+    ChunkGeneration {
+        /// Coordinates of the chunk that failed to generate
         coordinates: ChunkCoordinates,
+        /// Generation error returned by the scene generator
+        error: Arc<dyn Error + Send + Sync>,
     },
-    /// A chunk save task panicked while writing persistent storage
-    ChunkSavePanicked {
-        /// Coordinates of the chunk being saved
-        coordinates: ChunkCoordinates,
+    /// The processor has no thread pool for chunk streaming
+    ChunkThreadPoolUnavailable,
+    /// A camera actor used for streaming lacks its camera or position
+    CameraActor {
+        /// Error returned while accessing the camera actor
+        error: ActorError,
     },
     /// A cellular tile region is empty or does not match the GPU tile ring dimensions
     InvalidCellularTileRegion,

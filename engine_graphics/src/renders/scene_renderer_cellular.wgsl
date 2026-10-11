@@ -11,7 +11,7 @@ struct CellularUniforms {
     ring_offset_x: u32,
     ring_offset_y: u32,
     cellular_tile_size: u32,
-    padding_0: u32,
+    material_count: u32,
     padding_1: u32,
     padding_2: u32,
 };
@@ -24,6 +24,19 @@ var<storage, read> material_identifiers: array<u32>;
 
 @group(0) @binding(2)
 var<storage, read> colors: array<u32>;
+
+struct CellularMaterial {
+    atlas_origin: vec2<u32>,
+    atlas_size: vec2<u32>,
+    repetition_size: vec2<f32>,
+    repetition_phase: vec2<f32>,
+};
+
+@group(0) @binding(3)
+var<storage, read> materials: array<CellularMaterial>;
+
+@group(0) @binding(4)
+var material_atlas: texture_2d<f32>;
 
 /// Converts one sRGB channel to linear light
 fn srgb_to_linear(value: f32) -> f32 {
@@ -81,5 +94,22 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         srgb_to_linear(srgb_color.g),
         srgb_to_linear(srgb_color.b),
     );
-    return vec4<f32>(linear_rgb * srgb_color.a, srgb_color.a);
+    // tint the repeated static material albedo, or draw the tint alone without an albedo frame
+    var albedo: vec4<f32> = vec4<f32>(1.0);
+    let material_index: u32 = material_identifier & 0x3fffffffu;
+    if material_identifier >> 30u == 0u && material_index < uniforms.material_count {
+        let material: CellularMaterial = materials[material_index];
+        if material.atlas_size.x != 0u {
+            let repetition: vec2<f32> =
+                fract(material.repetition_phase + local / material.repetition_size);
+            let texture_coordinate: vec2<f32> = vec2<f32>(repetition.x, 1.0 - repetition.y);
+            let texel: vec2<u32> = min(
+                vec2<u32>(texture_coordinate * vec2<f32>(material.atlas_size)),
+                material.atlas_size - vec2<u32>(1u),
+            );
+            albedo = textureLoad(material_atlas, material.atlas_origin + texel, 0);
+        }
+    }
+    let alpha: f32 = albedo.a * srgb_color.a;
+    return vec4<f32>(albedo.rgb * linear_rgb * alpha, alpha);
 }

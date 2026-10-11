@@ -48,6 +48,12 @@ impl Chunk {
         }
     }
 
+    /// Fills every cell in this chunk with one material and packed color
+    pub fn fill(&mut self, material_identifier: MaterialIdentifier, color: u32) {
+        self.material_identifiers.fill(material_identifier);
+        self.colors.fill(color);
+    }
+
     /// Reads a versioned sparse chunk from a reader
     pub fn read<R: io::Read>(r: &mut R) -> Result<Self, ChunkError> {
         let mut header: [u8; 22] = [0; 22];

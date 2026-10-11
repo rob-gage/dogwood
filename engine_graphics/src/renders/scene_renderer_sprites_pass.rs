@@ -149,7 +149,7 @@ impl SceneRendererSpritesPass {
     }
 
     /// Uploads sprite uniforms and prepares the target-format pipeline
-    pub(crate) fn prepare(
+    pub fn prepare(
         &mut self,
         accelerator: &Accelerator,
         format: wgpu::TextureFormat,
@@ -323,7 +323,7 @@ impl SceneRendererSpritesPass {
     }
 
     /// Draws prepared sprites for one target format
-    pub(crate) fn draw(&self, render_pass: &mut wgpu::RenderPass<'_>, format: wgpu::TextureFormat) {
+    pub fn draw(&self, render_pass: &mut wgpu::RenderPass<'_>, format: wgpu::TextureFormat) {
         let render_pipeline: &wgpu::RenderPipeline = match self.pipelines.get(&format) {
             Some(render_pipeline) => render_pipeline,
             None => return,

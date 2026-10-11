@@ -3,7 +3,10 @@
 use super::{
     scene_cellular_tile_streaming_state::SceneCellularTileStreamingState,
     scene_chunk_streaming_state::SceneChunkStreamingState,
+    scene_error::SceneError,
+    scene_generator::SceneGenerator,
     scene_position::ScenePosition,
+    SCENE_CHUNK_THREAD_POOL_NAME,
 };
 use crate::{
     actor_components::{
@@ -18,52 +21,134 @@ use crate::{
     },
     cellular_tiles::{
         CellularTileBuffers,
+        CellularTileCoordinates,
         CellularTileRegion,
         CELLULAR_TILE_SIZE,
     },
     chunks::ChunkData,
+    materials::MaterialRegistry,
 };
-use engine_graphics::world::scenes::{
-    SceneGraphics,
-    SceneGraphicsCellular,
-    SceneGraphicsSprites,
+use engine_graphics::world::{
+    materials::MaterialGraphicsCellularStatic,
+    scenes::{
+        SceneGraphics,
+        SceneGraphicsCellular,
+        SceneGraphicsSprites,
+    },
 };
-use engine_host::acceleration::Accelerator;
+use engine_host::{
+    acceleration::Accelerator,
+    processors::Processor,
+};
 use std::sync::Arc;
 
 /// A playable scene
 pub struct Scene {
-    /// Handles the streaming of chunks between the disk and native memory
-    chunk_streaming_state: SceneChunkStreamingState,
-    /// GPU storage for the properties of every resident cellular tile
-    cellular_tile_buffers: CellularTileBuffers,
+    /// Persistent storage of this scene's chunks
+    chunk_data: ChunkData,
+    /// Handles the streaming of chunks between the disk and native memory, absent until streamed
+    chunk_streaming_state: Option<SceneChunkStreamingState>,
+    /// GPU storage for the properties of every resident cellular tile, absent until streamed
+    cellular_tile_buffers: Option<CellularTileBuffers>,
     /// GPU tile ring around the active region, absent until a cellular region is requested
     cellular_tile_streaming_state: Option<SceneCellularTileStreamingState>,
     /// ECS world and fixed-tick systems of every live actor
     actor_registry: ActorRegistry,
+    /// Materials of every cell in this scene
+    material_registry: MaterialRegistry,
+    /// Generates chunks that have no persisted file
+    generator: Arc<dyn SceneGenerator>,
+    /// Stable seed supplied to the generator
+    world_seed: u64,
 }
 
 impl Scene {
 
-    /// Creates a scene with chunk storage, a shared Rayon pool, and cellular tile buffers
+    /// Creates a scene whose chunks are stored in chunk data or generated when absent
     pub fn new(
         chunk_data: ChunkData,
-        thread_pool: Arc<rayon::ThreadPool>,
-        accelerator: &Accelerator,
-        width: u32,
-        height: u32,
+        material_registry: MaterialRegistry,
+        generator: Arc<dyn SceneGenerator>,
+        world_seed: u64,
     ) -> Self {
-        let chunk_streaming_state: SceneChunkStreamingState =
-            SceneChunkStreamingState::new(chunk_data, thread_pool);
-        let cellular_tile_buffers: CellularTileBuffers =
-            CellularTileBuffers::new(accelerator, width, height);
-        let actor_registry: ActorRegistry = ActorRegistry::new();
         Self {
-            chunk_streaming_state,
-            cellular_tile_buffers,
+            chunk_data,
+            chunk_streaming_state: None,
+            cellular_tile_buffers: None,
             cellular_tile_streaming_state: None,
-            actor_registry,
+            actor_registry: ActorRegistry::new(),
+            material_registry,
+            generator,
+            world_seed,
         }
+    }
+
+    /// Returns the actors of this scene for modification
+    pub fn actor_registry_mutable(&mut self) -> &mut ActorRegistry { &mut self.actor_registry }
+
+    /// Streams chunks and the cellular tiles around a camera actor without waiting
+    pub fn stream(
+        &mut self,
+        accelerator: &Accelerator,
+        processor: &Processor,
+        camera_actor: Actor,
+    ) -> Result<(), SceneError> {
+        // center a region twice the camera's unzoomed view on the camera
+        let camera: &ActorCameraComponent = self.actor_registry.component(camera_actor)
+            .map_err(|error: ActorError| SceneError::CameraActor { error })?;
+        let region_width: i64 = i64::from(camera.width) * 2;
+        let region_height: i64 = i64::from(camera.height) * 2;
+        let camera_position: ScenePosition = self.actor_registry
+            .component::<ActorKinematicsPositionComponent>(camera_actor)
+            .map_err(|error: ActorError| SceneError::CameraActor { error })?
+            .position;
+        let bottom_left: CellularTileCoordinates = CellularTileCoordinates {
+            x: camera_position.tile_x - region_width / 2,
+            y: camera_position.tile_y - region_height / 2,
+        };
+        let region: CellularTileRegion = CellularTileRegion {
+            bottom_left,
+            top_right: CellularTileCoordinates {
+                x: bottom_left.x + region_width - 1,
+                y: bottom_left.y + region_height - 1,
+            },
+        };
+        // create chunk streaming and the GPU tile ring when first streamed
+        if self.chunk_streaming_state.is_none() {
+            let thread_pool: Arc<rayon::ThreadPool> = processor
+                .thread_pool(SCENE_CHUNK_THREAD_POOL_NAME)
+                .ok_or(SceneError::ChunkThreadPoolUnavailable)?;
+            self.chunk_streaming_state =
+                Some(SceneChunkStreamingState::new(self.chunk_data.clone(), thread_pool));
+        }
+        let Some(chunk_streaming_state) = self.chunk_streaming_state.as_mut()
+        else { return Ok(()); };
+        let cellular_tile_buffers: &CellularTileBuffers = self.cellular_tile_buffers
+            .get_or_insert_with(|| {
+                CellularTileBuffers::new(accelerator, region_width as u32, region_height as u32)
+            });
+        match self.cellular_tile_streaming_state.as_mut() {
+            Some(cellular_tile_streaming_state) => {
+                cellular_tile_streaming_state.set_cellular_tile_region(region)?;
+            }
+            None => {
+                self.cellular_tile_streaming_state = Some(SceneCellularTileStreamingState::new(
+                    cellular_tile_buffers,
+                    chunk_streaming_state,
+                    region,
+                )?);
+            }
+        }
+        // advance chunk streaming before moving resident tiles
+        chunk_streaming_state.stream_chunks(&self.generator, self.world_seed)?;
+        if let Some(cellular_tile_streaming_state) = self.cellular_tile_streaming_state.as_mut() {
+            cellular_tile_streaming_state.stream_cellular_tiles(
+                accelerator,
+                cellular_tile_buffers,
+                chunk_streaming_state,
+            )?;
+        }
+        Ok(())
     }
 
     /// Returns the graphical representation of this scene seen through an actor's camera
@@ -121,6 +206,7 @@ impl Scene {
     ) -> Option<SceneGraphicsCellular<'_>> {
         let cellular_tile_streaming_state: &SceneCellularTileStreamingState =
             self.cellular_tile_streaming_state.as_ref()?;
+        let cellular_tile_buffers: &CellularTileBuffers = self.cellular_tile_buffers.as_ref()?;
         let active_region: CellularTileRegion =
             cellular_tile_streaming_state.active_cellular_tile_region()?;
         let (ring_offset_x, ring_offset_y): (u32, u32) =
@@ -132,9 +218,25 @@ impl Scene {
             offset_y: 0,
         };
         let (region_x, region_y): (f64, f64) = region_position.relative_position(camera_position);
+        let materials: Vec<Option<(&wgpu::TextureView, [f32; 4], f32, f32)>> = self
+            .material_registry
+            .cellular_static_graphics()
+            .map(|graphics: Option<&MaterialGraphicsCellularStatic>| {
+                let graphics: &MaterialGraphicsCellularStatic = graphics?;
+                Some((
+                    graphics.sprite_sheet.texture_view(),
+                    graphics.sprite_sheet.frame_texture_region(graphics.frame)?,
+                    graphics.width,
+                    graphics.height,
+                ))
+            })
+            .collect();
         Some(SceneGraphicsCellular {
-            material_identifier_buffer: self.cellular_tile_buffers.material_identifier_buffer(),
-            color_buffer: self.cellular_tile_buffers.color_buffer(),
+            material_identifier_buffer: cellular_tile_buffers.material_identifier_buffer(),
+            color_buffer: cellular_tile_buffers.color_buffer(),
+            materials,
+            region_tile_x: active_region.bottom_left.x,
+            region_tile_y: active_region.bottom_left.y,
             region_x: region_x as f32,
             region_y: region_y as f32,
             region_width: active_region.width() as u32,
