@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-use engine_graphics::materials::MaterialGraphicsGas;
+use engine_graphics::world::materials::MaterialGraphicsGas;
 
 /// Properties for a gas material
 pub struct MaterialPropertiesGas {

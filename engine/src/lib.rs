@@ -3,6 +3,8 @@
 pub mod games;
 pub mod runtime;
 
+pub use engine_graphics::world::scenes;
+
 pub use engine_host::{
     acceleration::{
         Accelerator,

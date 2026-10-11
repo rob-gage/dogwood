@@ -124,6 +124,13 @@ impl SceneCellularTileStreamingState {
         self.active_region == Some(self.active_region_requested)
     }
 
+    /// Returns the resident active region, or `None` before the first request is resident
+    pub fn active_cellular_tile_region(&self) -> Option<CellularTileRegion> { self.active_region }
+
+    /// Returns the physical ring column and row holding the active region's bottom-left tile
+    pub fn cellular_tile_ring_offset(&self) -> (u32, u32)
+    { (self.ring_offset_x, self.ring_offset_y) }
+
     /// Returns the cellular tile buffer index of a resident active cellular tile
     pub fn cellular_tile_index(
         &self,

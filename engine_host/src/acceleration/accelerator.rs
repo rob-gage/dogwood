@@ -33,14 +33,6 @@ impl Accelerator {
         Ok(wgpu::Instance::new(instance_descriptor))
     }
 
-    /// Creates a shared graphics and compute device context
-    pub fn new() -> Result<Self, AcceleratorError> {
-        let instance: wgpu::Instance = Self::create_instance()?;
-        let (adapter, device, queue): (wgpu::Adapter, wgpu::Device, wgpu::Queue) =
-            pollster::block_on(Self::initialize(&instance))?;
-        Ok(Self { instance, adapter, device, queue })
-    }
-
     /// Initializes the adapter, device, and queue
     async fn initialize(
         instance: &wgpu::Instance,
@@ -72,5 +64,19 @@ impl Accelerator {
 
     /// Returns the queue used to submit graphics and compute work
     pub const fn queue(&self) -> &wgpu::Queue { &self.queue }
+
+}
+
+impl Default for Accelerator {
+
+    /// Creates a shared graphics and compute device context, panicking if no device is available
+    fn default() -> Self {
+        let instance: wgpu::Instance = Self::create_instance()
+            .unwrap_or_else(|error: AcceleratorError| panic!("{error}"));
+        let (adapter, device, queue): (wgpu::Adapter, wgpu::Device, wgpu::Queue) =
+            pollster::block_on(Self::initialize(&instance))
+                .unwrap_or_else(|error: AcceleratorError| panic!("{error}"));
+        Self { instance, adapter, device, queue }
+    }
 
 }

@@ -1,6 +1,7 @@
 // Copyright Rob Gage 2026
 
 mod actor_attachment;
+mod actor_camera;
 mod actor_collision_groups;
 mod actor_collision_shape;
 mod actor_contact_groups;
@@ -18,6 +19,7 @@ mod actor_sampler_materials;
 mod actor_sprites;
 
 pub use actor_attachment::ActorAttachmentComponent;
+pub use actor_camera::ActorCameraComponent;
 pub use actor_collision_groups::ActorCollisionGroupsComponent;
 pub use actor_collision_shape::ActorCollisionShapeComponent;
 pub use actor_contact_groups::ActorContactGroupsComponent;

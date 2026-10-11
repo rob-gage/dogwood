@@ -14,7 +14,10 @@ use bevy_ecs::{
         Mutable,
     },
     entity::Entity,
-    world::World,
+    world::{
+        EntityRef,
+        World,
+    },
 };
 
 /// Scene-owned ECS storage of every live actor and its components
@@ -56,6 +59,13 @@ impl ActorRegistry {
     pub fn component<T: Component>(&self, actor: Actor) -> Result<&T, ActorError> {
         let entity: Entity = self.entity(actor)?;
         self.world.get::<T>(entity).ok_or(ActorError::ActorComponentMissing { actor })
+    }
+
+    /// Iterates over every live actor's pair of components, skipping actors missing either one
+    pub fn components<A: Component, B: Component>(&self) -> impl Iterator<Item = (&A, &B)> {
+        self.world.iter_entities().filter_map(|entity: EntityRef<'_>| {
+            Some((entity.get::<A>()?, entity.get::<B>()?))
+        })
     }
 
     /// Returns a mutable component of a live actor

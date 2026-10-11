@@ -1,5 +1,6 @@
 // Copyright Rob Gage 2026
 
+use engine_graphics::world::scenes::SceneGraphics;
 use engine_host::system_events::{
     SystemKeyboardEvent,
     SystemMouseEvent,
@@ -17,8 +18,8 @@ pub trait Game {
     /// Advances game state by one fixed update step
     fn update(&mut self, _elapsed_time: Duration) {}
 
-    /// Renders the game after a native redraw request
-    fn render(&mut self) {}
+    /// Returns the scene graphics drawn after a native redraw request, or `None` to draw nothing
+    fn render(&mut self) -> Option<SceneGraphics<'_>> { None }
 
     /// Handles a host window event
     fn window_event(&mut self, _event: SystemWindowEvent) {}

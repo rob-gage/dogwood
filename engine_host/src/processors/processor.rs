@@ -12,7 +12,7 @@ use std::{
     sync::Arc,
 };
 
-/// Named Rayon pools with worker-count limits and no outstanding-job limit
+/// Named thread pools with worker-count limits and no outstanding-job limit
 pub struct Processor {
     /// Configured Rayon pools indexed by their unique names
     thread_pools: HashMap<String, Arc<rayon::ThreadPool>>,
@@ -145,6 +145,23 @@ impl Processor {
             allocated_cpu_workers[*pool_index].1 += 1;
         }
         Ok(allocated_cpu_workers)
+    }
+
+}
+
+impl Default for Processor {
+
+    /// Creates the engine's pools sized to the processor capacity, panicking if one cannot start
+    fn default() -> Self {
+        let mut configuration: ProcessorConfiguration = ProcessorConfiguration::default();
+        let available_cpu_workers: usize =
+            configuration.processor_capacity - configuration.processor_capacity_reserved;
+        configuration.add_cpu_bound_pool("simulation", 3);
+        if available_cpu_workers >= 2 {
+            configuration.add_cpu_bound_pool("world_generation", 1);
+        }
+        configuration.add_dedicated_worker_pool("chunk_io", 2);
+        Self::new(configuration).unwrap_or_else(|error: ProcessorError| panic!("{error}"))
     }
 
 }

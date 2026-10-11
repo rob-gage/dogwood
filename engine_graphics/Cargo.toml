@@ -6,3 +6,6 @@ version = "0.0.0"
 edition = "2024"
 
 [dependencies]
+engine_host = { path = "../engine_host" }
+image = { version = "=0.25.10", default-features = false, features = ["png", "tga"] }
+wgpu = { version = "=30.0.0", default-features = false, features = ["wgsl"] }

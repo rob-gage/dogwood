@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-use engine_graphics::materials::MaterialGraphicsCellularStatic;
+use engine_graphics::world::materials::MaterialGraphicsCellularStatic;
 
 /// Properties for a cellular static material
 pub struct MaterialPropertiesCellularStatic {

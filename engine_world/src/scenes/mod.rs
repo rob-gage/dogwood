@@ -11,6 +11,7 @@ mod scene_chunk_streaming_request;
 mod scene_chunk_streaming_response;
 mod scene_chunk_streaming_state;
 mod scene_error;
+mod scene_position;
 
 pub use scene::Scene;
 pub use scene_cellular_tile_index::SceneCellularTileIndex;
@@ -18,6 +19,7 @@ pub use scene_cellular_tile_streaming_state::SceneCellularTileStreamingState;
 pub use scene_chunk_region_index::SceneChunkRegionIndex;
 pub use scene_chunk_streaming_state::SceneChunkStreamingState;
 pub use scene_error::SceneError;
+pub use scene_position::ScenePosition;
 
 /// Maximum number of persistent retained regions
 const SCENE_CHUNK_REGION_COUNT_MAXIMUM: usize = 32;

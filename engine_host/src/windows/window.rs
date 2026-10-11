@@ -38,8 +38,8 @@ pub struct Window<'a> {
     mouse_event_handler: &'a mut dyn FnMut(SystemMouseEvent),
     /// Consumer of fixed-step game updates
     update_handler: &'a mut dyn FnMut(Duration),
-    /// Consumer of native redraw requests
-    render_handler: &'a mut dyn FnMut(),
+    /// Consumer of native redraw requests, drawing into the acquired surface texture
+    render_handler: &'a mut dyn FnMut(&wgpu::TextureView),
     /// Runtime settings for the native game window
     window_configuration: WindowConfiguration,
     /// Duration between fixed-step updates
@@ -62,7 +62,7 @@ impl<'a> Window<'a> {
         keyboard_event_handler: &'a mut dyn FnMut(SystemKeyboardEvent),
         mouse_event_handler: &'a mut dyn FnMut(SystemMouseEvent),
         update_handler: &'a mut dyn FnMut(Duration),
-        render_handler: &'a mut dyn FnMut(),
+        render_handler: &'a mut dyn FnMut(&wgpu::TextureView),
         accelerator: &'a Accelerator,
         window_configuration: WindowConfiguration,
         update_interval: Duration,
@@ -102,9 +102,18 @@ impl<'a> Window<'a> {
         let accelerator: &Accelerator = self.accelerator;
         let mut configuration: wgpu::SurfaceConfiguration = match self.surface_configuration.clone() {
             Some(configuration) => configuration,
-            None => surface
-                .get_default_config(accelerator.adapter(), width, height)
-                .ok_or(WindowError::UnsupportedSurface)?,
+            None => {
+                let mut configuration: wgpu::SurfaceConfiguration = surface
+                    .get_default_config(accelerator.adapter(), width, height)
+                    .ok_or(WindowError::UnsupportedSurface)?;
+                // scene rendering writes linear color that the surface encodes as sRGB
+                let formats: Vec<wgpu::TextureFormat> =
+                    surface.get_capabilities(accelerator.adapter()).formats;
+                if let Some(format) = formats.into_iter().find(|format| format.is_srgb()) {
+                    configuration.format = format;
+                }
+                configuration
+            }
         };
         configuration.width = width;
         configuration.height = height;
@@ -113,7 +122,7 @@ impl<'a> Window<'a> {
         Ok(())
     }
 
-    /// Clears and presents one frame, recovering a lost or outdated surface
+    /// Renders and presents one frame, recovering a lost or outdated surface
     fn present(&mut self) -> Result<(), WindowError> {
         if self.surface_configuration.is_none() { return Ok(()); }
         let current_texture: wgpu::CurrentSurfaceTexture = self.surface
@@ -141,7 +150,7 @@ impl<'a> Window<'a> {
             }
             wgpu::CurrentSurfaceTexture::Validation => return Err(WindowError::SurfaceValidation),
         };
-        self.clear_and_present(frame);
+        self.render_and_present(frame);
         if suboptimal { self.reconfigure_surface(); }
         Ok(())
     }
@@ -158,7 +167,7 @@ impl<'a> Window<'a> {
             | wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => return Ok(()),
             wgpu::CurrentSurfaceTexture::Validation => return Err(WindowError::SurfaceValidation),
         };
-        self.clear_and_present(frame);
+        self.render_and_present(frame);
         if suboptimal { self.reconfigure_surface(); }
         Ok(())
     }
@@ -172,32 +181,11 @@ impl<'a> Window<'a> {
         }
     }
 
-    fn clear_and_present(&self, frame: wgpu::SurfaceTexture) {
-        let accelerator: &Accelerator = self.accelerator;
+    /// Lets the render handler draw into the frame, then presents it
+    fn render_and_present(&mut self, frame: wgpu::SurfaceTexture) {
         let view: wgpu::TextureView = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder: wgpu::CommandEncoder = accelerator
-            .device()
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        {
-            let _render_pass: wgpu::RenderPass<'_> = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: None,
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.08, g: 0.10, b: 0.14, a: 1.0 }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-        }
-        accelerator.queue().submit([encoder.finish()]);
-        accelerator.queue().present(frame);
+        (self.render_handler)(&view);
+        self.accelerator.queue().present(frame);
     }
 
 }
@@ -228,7 +216,13 @@ impl<'a> winit::application::ApplicationHandler for Window<'a> {
                     let surface_configuration: Option<wgpu::SurfaceConfiguration> =
                         if size.width > 0 && size.height > 0 {
                             match surface.get_default_config(self.accelerator.adapter(), size.width, size.height) {
-                                Some(configuration) => {
+                                Some(mut configuration) => {
+                                    let formats: Vec<wgpu::TextureFormat> = surface
+                                        .get_capabilities(self.accelerator.adapter())
+                                        .formats;
+                                    if let Some(format) =
+                                        formats.into_iter().find(|format| format.is_srgb())
+                                    { configuration.format = format; }
                                     surface.configure(self.accelerator.device(), &configuration);
                                     Some(configuration)
                                 }
@@ -340,7 +334,6 @@ impl<'a> winit::application::ApplicationHandler for Window<'a> {
             winit::event::WindowEvent::RedrawRequested => {
                 let is_minimized: bool = self.surface_configuration.is_none();
                 if !is_minimized {
-                    (self.render_handler)();
                     if let Err(error) = self.present() {
                         self.error = Some(error);
                         event_loop.exit();

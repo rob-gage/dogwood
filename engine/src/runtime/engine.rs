@@ -5,6 +5,7 @@ use crate::games::{
     Game,
     GameInstance,
 };
+use engine_graphics::renders::SceneRenderer;
 use engine_host::{
     acceleration::Accelerator,
     processors::Processor,
@@ -19,7 +20,10 @@ use engine_host::{
     },
 };
 use std::{
-    cell::RefCell,
+    cell::{
+        RefCell,
+        RefMut,
+    },
     time::Duration,
 };
 
@@ -72,9 +76,12 @@ impl Engine {
             Box::new(|elapsed_time: Duration| {
                 shared_game.borrow_mut().update(elapsed_time);
             });
-        let mut render_handler: Box<dyn FnMut()> =
-            Box::new(|| {
-                shared_game.borrow_mut().render();
+        let mut scene_renderer: SceneRenderer = SceneRenderer::new(engine.accelerator());
+        let mut render_handler: Box<dyn FnMut(&wgpu::TextureView)> =
+            Box::new(|texture_view: &wgpu::TextureView| {
+                let mut game: RefMut<'_, &mut G> = shared_game.borrow_mut();
+                let Some(graphics) = game.render() else { return; };
+                scene_renderer.render(engine.accelerator(), texture_view, &graphics);
             });
         let update_interval: Duration = Duration::from_nanos(
             1_000_000_000 / u64::from(UPDATES_PER_SECOND),
