@@ -1,6 +1,9 @@
 // Copyright Rob Gage 2026
 
-use crate::template_scene_generator::TemplateSceneGenerator;
+use crate::{
+    materials,
+    template_scene_generator::TemplateSceneGenerator,
+};
 use engine::{
     actor_components::{
         ActorCameraComponent,
@@ -10,14 +13,15 @@ use engine::{
     chunks::ChunkData,
     games::Game,
     materials::{
-        Material,
-        MaterialForm,
         MaterialIdentifier,
         MaterialRegistry,
+        MaterialTable,
     },
     scenes::Scene,
+    Accelerator,
 };
 use std::{
+    collections::HashMap,
     path::PathBuf,
     sync::Arc,
 };
@@ -33,14 +37,30 @@ pub struct TemplateGame {
 impl TemplateGame {
 
     /// Creates the scene and its camera actor at the world origin
-    pub fn new() -> Self {
+    pub fn new(accelerator: &Accelerator) -> Self {
         let mut material_registry: MaterialRegistry = MaterialRegistry::new();
-        let stone: MaterialIdentifier = material_registry
-            .register(Material { name: String::from("stone"), form: MaterialForm::CellularStatic })
-            .unwrap();
+        let mut material_identifiers: HashMap<String, MaterialIdentifier> = HashMap::new();
+        for material in materials::definitions(accelerator) {
+            let material_name: String = String::from(material.name());
+            let identifier: MaterialIdentifier = material_registry
+                .register(material)
+                .unwrap_or_else(|error| {
+                    panic!("failed to register template material {material_name}: {error:?}")
+                });
+            material_identifiers.insert(material_name, identifier);
+        }
+        let stone: MaterialIdentifier = material_identifiers
+            .get("stone")
+            .copied()
+            .expect("template stone material must be registered");
+        let material_table: MaterialTable = material_registry
+            .compile(accelerator)
+            .unwrap_or_else(|error| {
+                panic!("failed to compile template materials: {error:?}")
+            });
         let mut scene: Scene = Scene::new(
             ChunkData::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("world")),
-            material_registry,
+            material_table,
             Arc::new(TemplateSceneGenerator { stone }),
             0,
         );

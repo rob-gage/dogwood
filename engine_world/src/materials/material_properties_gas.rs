@@ -5,5 +5,5 @@ use engine_graphics::world::materials::MaterialGraphicsGas;
 /// Properties for a gas material
 pub struct MaterialPropertiesGas {
     /// Graphics for this gas material
-    graphics: MaterialGraphicsGas,
+    pub graphics: MaterialGraphicsGas,
 }

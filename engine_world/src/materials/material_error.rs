@@ -9,4 +9,6 @@ pub enum MaterialError {
     EmptyName,
     /// The material index cannot be represented by a `MaterialIdentifier`
     IdentifierIndexOutOfRange,
+    /// Graphics resources could not be compiled for a material table
+    Compilation(String),
 }

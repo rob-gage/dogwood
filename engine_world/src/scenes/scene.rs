@@ -26,15 +26,12 @@ use crate::{
         CELLULAR_TILE_SIZE,
     },
     chunks::ChunkData,
-    materials::MaterialRegistry,
+    materials::MaterialTable,
 };
-use engine_graphics::world::{
-    materials::MaterialGraphicsCellularStatic,
-    scenes::{
-        SceneGraphics,
-        SceneGraphicsCellular,
-        SceneGraphicsSprites,
-    },
+use engine_graphics::world::scenes::{
+    SceneGraphics,
+    SceneGraphicsCellular,
+    SceneGraphicsSprites,
 };
 use engine_host::{
     acceleration::Accelerator,
@@ -55,7 +52,7 @@ pub struct Scene {
     /// ECS world and fixed-tick systems of every live actor
     actor_registry: ActorRegistry,
     /// Materials of every cell in this scene
-    material_registry: MaterialRegistry,
+    material_table: MaterialTable,
     /// Generates chunks that have no persisted file
     generator: Arc<dyn SceneGenerator>,
     /// Stable seed supplied to the generator
@@ -67,7 +64,7 @@ impl Scene {
     /// Creates a scene whose chunks are stored in chunk data or generated when absent
     pub fn new(
         chunk_data: ChunkData,
-        material_registry: MaterialRegistry,
+        material_table: MaterialTable,
         generator: Arc<dyn SceneGenerator>,
         world_seed: u64,
     ) -> Self {
@@ -77,7 +74,7 @@ impl Scene {
             cellular_tile_buffers: None,
             cellular_tile_streaming_state: None,
             actor_registry: ActorRegistry::new(),
-            material_registry,
+            material_table,
             generator,
             world_seed,
         }
@@ -85,6 +82,9 @@ impl Scene {
 
     /// Returns the actors of this scene for modification
     pub fn actor_registry_mutable(&mut self) -> &mut ActorRegistry { &mut self.actor_registry }
+
+    /// Returns the compiled materials of this scene
+    pub fn material_table(&self) -> &MaterialTable { &self.material_table }
 
     /// Streams chunks and the cellular tiles around a camera actor without waiting
     pub fn stream(
@@ -218,23 +218,15 @@ impl Scene {
             offset_y: 0,
         };
         let (region_x, region_y): (f64, f64) = region_position.relative_position(camera_position);
-        let materials: Vec<Option<(&wgpu::TextureView, [f32; 4], f32, f32)>> = self
-            .material_registry
-            .cellular_static_graphics()
-            .map(|graphics: Option<&MaterialGraphicsCellularStatic>| {
-                let graphics: &MaterialGraphicsCellularStatic = graphics?;
-                Some((
-                    graphics.sprite_sheet.texture_view(),
-                    graphics.sprite_sheet.frame_texture_region(graphics.frame)?,
-                    graphics.width,
-                    graphics.height,
-                ))
-            })
-            .collect();
         Some(SceneGraphicsCellular {
             material_identifier_buffer: cellular_tile_buffers.material_identifier_buffer(),
             color_buffer: cellular_tile_buffers.color_buffer(),
-            materials,
+            cellular_static_properties_buffer: self.material_table
+                .cellular_static_properties_buffer(),
+            cellular_static_albedo_atlas_texture_view: self.material_table
+                .cellular_static_albedo_atlas_texture_view(),
+            cellular_static_repetition_sizes: self.material_table
+                .cellular_static_repetition_sizes(),
             region_tile_x: active_region.bottom_left.x,
             region_tile_y: active_region.bottom_left.y,
             region_x: region_x as f32,

@@ -7,8 +7,12 @@ pub struct SceneGraphicsCellular<'a> {
     pub material_identifier_buffer: &'a wgpu::Buffer,
     /// Little-endian packed sRGB RGBA8 colors with one `u32` per cell
     pub color_buffer: &'a wgpu::Buffer,
-    /// Static materials by index as texture, texture region, and repeated width and height in tiles
-    pub materials: Vec<Option<(&'a wgpu::TextureView, [f32; 4], f32, f32)>>,
+    /// Immutable static cellular material properties indexed by material identifier
+    pub cellular_static_properties_buffer: &'a wgpu::Buffer,
+    /// Atlas containing static cellular material albedo frames
+    pub cellular_static_albedo_atlas_texture_view: &'a wgpu::TextureView,
+    /// Repetition sizes indexed by material identifier, including empty index zero
+    pub cellular_static_repetition_sizes: &'a [[f32; 2]],
     /// Horizontal tile coordinate of the region's bottom-left corner
     pub region_tile_x: i64,
     /// Vertical tile coordinate of the region's bottom-left corner

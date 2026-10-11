@@ -1,5 +1,6 @@
 // Copyright Rob Gage 2026
 
+mod materials;
 mod template_game;
 mod template_scene_generator;
 
@@ -16,5 +17,6 @@ use template_game::TemplateGame;
 fn main() -> Result<(), EngineError> {
     let accelerator: Accelerator = Accelerator::default();
     let processor: Processor = Processor::default();
-    Engine::new(accelerator, processor).launch(TemplateGame::new())
+    let game: TemplateGame = TemplateGame::new(&accelerator);
+    Engine::new(accelerator, processor).launch(game)
 }

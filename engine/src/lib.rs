@@ -3,6 +3,10 @@
 pub mod games;
 pub mod runtime;
 
+pub use engine_graphics::{
+    sprites::SpriteSheet,
+    world::materials::MaterialGraphicsCellularStatic,
+};
 pub use engine_host::{
     acceleration::{
         Accelerator,
