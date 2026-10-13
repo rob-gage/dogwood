@@ -82,6 +82,8 @@ impl Engine {
                 let Some((scene, camera_actor)) = game.scene() else { return; };
                 scene.stream(engine.accelerator(), engine.processor(), camera_actor)
                     .unwrap_or_else(|error| panic!("Scene streaming failed: {error:?}"));
+                scene.simulate(engine.accelerator())
+                    .unwrap_or_else(|error| panic!("Scene simulation failed: {error:?}"));
             });
         let mut scene_renderer: SceneRenderer = SceneRenderer::new(engine.accelerator());
         let mut render_handler: Box<dyn FnMut(&wgpu::TextureView)> =

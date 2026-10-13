@@ -1,6 +1,7 @@
 // Copyright Rob Gage 2026
 
 use super::{
+    collisions::SceneCollision,
     scene_cellular_tile_streaming_state::SceneCellularTileStreamingState,
     scene_chunk_streaming_state::SceneChunkStreamingState,
     scene_error::SceneError,
@@ -49,6 +50,8 @@ pub struct Scene {
     cellular_tile_buffers: Option<CellularTileBuffers>,
     /// GPU tile ring around the active region, absent until a cellular region is requested
     cellular_tile_streaming_state: Option<SceneCellularTileStreamingState>,
+    /// Rapier simulation of actors against the active cellular tiles, absent until simulated
+    collision: Option<SceneCollision>,
     /// ECS world and fixed-tick systems of every live actor
     actor_registry: ActorRegistry,
     /// Materials of every cell in this scene
@@ -73,6 +76,7 @@ impl Scene {
             chunk_streaming_state: None,
             cellular_tile_buffers: None,
             cellular_tile_streaming_state: None,
+            collision: None,
             actor_registry: ActorRegistry::new(),
             material_table,
             generator,
@@ -151,6 +155,26 @@ impl Scene {
         Ok(())
     }
 
+    /// Simulates actor collisions against the active cellular tiles, waiting for the GPU
+    pub fn simulate(&mut self, accelerator: &Accelerator) -> Result<(), SceneError> {
+        // nothing is simulated before the active region is resident
+        let (Some(cellular_tile_streaming_state), Some(cellular_tile_buffers)) = (
+            self.cellular_tile_streaming_state.as_ref(),
+            self.cellular_tile_buffers.as_ref(),
+        ) else { return Ok(()); };
+        let Some(active_region): Option<CellularTileRegion> =
+            cellular_tile_streaming_state.active_cellular_tile_region()
+        else { return Ok(()); };
+        self.collision
+            .get_or_insert_with(|| SceneCollision::new(accelerator, cellular_tile_buffers))
+            .simulate_collisions(
+                accelerator,
+                active_region,
+                cellular_tile_streaming_state.cellular_tile_ring_offset(),
+                &mut self.actor_registry,
+            )
+    }
+
     /// Returns the graphical representation of this scene seen through an actor's camera
     pub fn graphics(&self, camera_actor: Actor) -> Result<SceneGraphics<'_>, ActorError> {
         let camera: &ActorCameraComponent = self.actor_registry.component(camera_actor)?;
@@ -158,6 +182,7 @@ impl Scene {
             .component::<ActorKinematicsPositionComponent>(camera_actor)?
             .position;
         // place every actor sprite relative to the camera, skipping frames outside their sheet
+        // and drawing one sheet pixel per cell at a scale of one
         let mut sprites: SceneGraphicsSprites<'_> = SceneGraphicsSprites::default();
         for (actor_sprites, position) in self.actor_registry
             .components::<ActorSpritesComponent, ActorKinematicsPositionComponent>()
@@ -169,8 +194,8 @@ impl Scene {
                 frame,
                 offset_x,
                 offset_y,
-                width,
-                height,
+                scale_x,
+                scale_y,
                 rotation,
                 color,
                 depth,
@@ -182,8 +207,8 @@ impl Scene {
                     sprite_sheet.texture_view(),
                     (actor_x + f64::from(*offset_x)) as f32,
                     (actor_y + f64::from(*offset_y)) as f32,
-                    *width,
-                    *height,
+                    sprite_sheet.width() as f32 * *scale_x / CELLULAR_TILE_SIZE as f32,
+                    sprite_sheet.height() as f32 * *scale_y / CELLULAR_TILE_SIZE as f32,
                     *rotation,
                     *depth,
                     texture_region,

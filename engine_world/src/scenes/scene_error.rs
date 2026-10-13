@@ -2,7 +2,10 @@
 
 use super::scene_chunk_region_index::SceneChunkRegionIndex;
 use crate::{
-    actors::ActorError,
+    actors::{
+        Actor,
+        ActorError,
+    },
     chunks::{
         ChunkCoordinates,
         ChunkError,
@@ -83,4 +86,21 @@ pub enum SceneError {
     },
     /// The accelerator could not be polled for cellular tile streaming responses
     CellularTileStreamingPoll,
+    /// A collision cellular tile staging buffer could not be mapped
+    CollisionCellularTileResponse {
+        /// Mapping error returned by WGPU
+        error: wgpu::BufferAsyncError,
+    },
+    /// The accelerator could not be polled for collision cellular tiles
+    CollisionCellularTilePoll,
+    /// An actor's collider has a nonpositive, nonfinite, or capsule-violating dimension
+    InvalidCollider {
+        /// Actor owning the invalid collider
+        actor: Actor,
+    },
+    /// An actor leaving the active region could not be despawned
+    ActorDespawn {
+        /// Error returned while despawning the actor
+        error: ActorError,
+    },
 }

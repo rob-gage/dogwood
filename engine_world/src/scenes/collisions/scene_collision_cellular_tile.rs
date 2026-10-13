@@ -27,4 +27,7 @@ impl SceneCollisionCellularTile {
     /// Returns this occupancy as a `u64`
     pub const fn as_u64(self) -> u64 { self.0 }
 
+    /// Creates an occupancy from a `u64`
+    pub const fn from_u64(value: u64) -> Self { Self(value) }
+
 }
