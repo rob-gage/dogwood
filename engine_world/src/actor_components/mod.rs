@@ -2,10 +2,8 @@
 
 mod actor_attachment;
 mod actor_camera;
-mod actor_collision_groups;
-mod actor_collision_shape;
-mod actor_contact_groups;
-mod actor_contact_shape;
+mod actor_collision;
+mod actor_contact;
 mod actor_identity;
 mod actor_kinematics_angular_velocity;
 mod actor_kinematics_position;
@@ -20,10 +18,8 @@ mod actor_sprites;
 
 pub use actor_attachment::ActorAttachmentComponent;
 pub use actor_camera::ActorCameraComponent;
-pub use actor_collision_groups::ActorCollisionGroupsComponent;
-pub use actor_collision_shape::ActorCollisionShapeComponent;
-pub use actor_contact_groups::ActorContactGroupsComponent;
-pub use actor_contact_shape::ActorContactShapeComponent;
+pub use actor_collision::ActorCollisionComponent;
+pub use actor_contact::ActorContactComponent;
 pub use actor_identity::ActorIdentityComponent;
 pub use actor_kinematics_angular_velocity::ActorKinematicsAngularVelocityComponent;
 pub use actor_kinematics_position::ActorKinematicsPositionComponent;

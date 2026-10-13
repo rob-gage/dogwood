@@ -1,5 +1,6 @@
 // Copyright Rob Gage 2026
 
+mod collisions;
 mod scene;
 mod scene_cellular_tile_index;
 mod scene_cellular_tile_streaming_state;
@@ -14,6 +15,12 @@ mod scene_error;
 mod scene_generator;
 mod scene_position;
 
+pub use collisions::{
+    SceneCollider,
+    SceneColliderShape,
+    SceneCollisionBody,
+    SceneCollisionCellularTile,
+};
 pub use scene::Scene;
 pub use scene_cellular_tile_index::SceneCellularTileIndex;
 pub use scene_cellular_tile_streaming_state::SceneCellularTileStreamingState;

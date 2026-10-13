@@ -1,0 +1,30 @@
+// Copyright Rob Gage 2026
+
+use crate::materials::{
+    MaterialForm,
+    MaterialIdentifier,
+};
+
+/// Cells of one cellular tile holding solid `CellularStatic` materials, as bit `y * 8 + x` per cell
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+pub struct SceneCollisionCellularTile(u64);
+
+impl SceneCollisionCellularTile {
+
+    /// Creates the occupancy of one cellular tile from its row-major material identifiers
+    pub fn new(material_identifiers: &[MaterialIdentifier; 64]) -> Self {
+        let mut occupancy: u64 = 0;
+        for (cell_index, material_identifier) in material_identifiers.iter().enumerate() {
+            if *material_identifier != MaterialIdentifier::EMPTY
+                && material_identifier.form() == MaterialForm::CellularStatic
+            {
+                occupancy |= 1 << cell_index;
+            }
+        }
+        Self(occupancy)
+    }
+
+    /// Returns this occupancy as a `u64`
+    pub const fn as_u64(self) -> u64 { self.0 }
+
+}
