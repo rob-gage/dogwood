@@ -6,6 +6,8 @@ use super::{
     collision_body::CollisionBody,
     collision_cellular_tile::CollisionCellularTile,
     collision_cellular_tile_pass::CollisionCellularTilePass,
+    COLLISION_GROUP_CELLULAR_TILE,
+    COLLISION_GROUP_EDIT,
     COLLISION_ORIGIN_DISTANCE_MAXIMUM,
 };
 use crate::{
@@ -49,6 +51,8 @@ pub struct Collision {
     cellular_tiles: Option<(CellularTileRegion, Vec<CollisionCellularTile>)>,
     /// Ring offset of the active region when its occupancies were read
     ring_offset: (u32, u32),
+    /// Whether edits changed the GPU cells since their occupancies were read
+    is_cellular_tile_read_requested: bool,
     /// Number of solid cells held by the cellular tile collider
     solid_cell_count: u64,
     /// Fixed voxel collider of every solid cell in the active region, absent while none are solid
@@ -96,6 +100,7 @@ impl Collision {
             origin: CellularTileCoordinates { x: 0, y: 0 },
             cellular_tiles: None,
             ring_offset: (0, 0),
+            is_cellular_tile_read_requested: false,
             solid_cell_count: 0,
             cellular_tile_collider: None,
             actors: HashMap::new(),
@@ -133,10 +138,13 @@ impl Collision {
         gravity: f32,
         actor_registry: &mut ActorRegistry,
     ) -> Result<(), SceneError> {
-        // GPU cells only change when streaming moves the ring, so an unmoved ring needs no readback
+        // GPU cells only change when streaming moves the ring or edits write them, so otherwise
+        // no readback is needed
         if self.cellular_tiles.as_ref().is_some_and(|(region, _)| *region == active_region)
             && self.ring_offset == ring_offset
+            && !self.is_cellular_tile_read_requested
         { return self.simulate_collisions_step_actors(active_region, gravity, actor_registry); }
+        self.is_cellular_tile_read_requested = false;
         // read this tick's GPU occupancy before simulating against it
         let cellular_tiles: Vec<CollisionCellularTile> = self.cellular_tile_pass
             .read_cellular_tiles(accelerator, active_region, ring_offset)?;
@@ -152,6 +160,72 @@ impl Collision {
         self.simulate_collisions_apply_cellular_tiles(active_region, cellular_tiles);
         self.ring_offset = ring_offset;
         self.simulate_collisions_step_actors(active_region, gravity, actor_registry)
+    }
+
+    /// Requests that the next simulation read the GPU cells after edits wrote them
+    pub fn request_cellular_tile_read(&mut self) { self.is_cellular_tile_read_requested = true; }
+
+    /// Returns the cells of cellular tiles overlapped by colliders in the edit collision group
+    pub fn intersect_collisions(
+        actor_registry: &ActorRegistry,
+        cellular_tiles: &HashSet<CellularTileCoordinates>,
+    ) -> Result<HashMap<CellularTileCoordinates, u64>, SceneError> {
+        // shrink each cell slightly so colliders only touching it do not overlap it
+        let cell_size: f32 = 1.0 / CELLULAR_TILE_SIZE as f32;
+        let cell: rapier2d::parry::shape::Cuboid = rapier2d::parry::shape::Cuboid::new(
+            rapier2d::math::Vector::splat(cell_size / 2.0 - 1.0e-4),
+        );
+        let mut intersections: HashMap<CellularTileCoordinates, u64> = HashMap::new();
+        for (actor_identity, position) in actor_registry
+            .components::<ActorIdentityComponent, ActorKinematicsPositionComponent>()
+        {
+            let actor: Actor = actor_identity.actor();
+            let Ok(collision) = actor_registry.component::<ActorCollisionComponent>(actor)
+            else { continue; };
+            if collision.memberships & COLLISION_GROUP_EDIT == 0 { continue; }
+            // place the origin at the actor's tile so nearby cells are located exactly
+            let position: ScenePosition = position.position;
+            let translation: rapier2d::math::Vector = Self::rapier_translation(
+                CellularTileCoordinates { x: position.tile_x, y: position.tile_y },
+                position,
+            );
+            let bounds: rapier2d::parry::bounding_volume::Aabb =
+                Self::simulate_collisions_collider_bounds(actor, &collision.collider, translation)?;
+            let shape: rapier2d::geometry::SharedShape = Self::rapier_shape(&collision.collider);
+            let pose: rapier2d::math::Pose = rapier2d::math::Pose::new(
+                translation + rapier2d::math::Vector::new(
+                    collision.collider.offset_x,
+                    collision.collider.offset_y,
+                ),
+                collision.collider.rotation,
+            );
+            for coordinates in cellular_tiles {
+                let tile_x: f32 = coordinates.x.saturating_sub(position.tile_x) as f32;
+                let tile_y: f32 = coordinates.y.saturating_sub(position.tile_y) as f32;
+                if tile_x + 1.0 < bounds.mins.x || tile_x > bounds.maxs.x
+                    || tile_y + 1.0 < bounds.mins.y || tile_y > bounds.maxs.y
+                { continue; }
+                let mut cells: u64 = 0;
+                for cell_index in 0..64 {
+                    let cell_center: rapier2d::math::Vector = rapier2d::math::Vector::new(
+                        tile_x + ((cell_index % 8) as f32 + 0.5) * cell_size,
+                        tile_y + ((cell_index / 8) as f32 + 0.5) * cell_size,
+                    );
+                    let is_intersecting: bool = matches!(
+                        rapier2d::parry::query::intersection_test(
+                            &pose,
+                            &*shape,
+                            &rapier2d::math::Pose::new(cell_center, 0.0),
+                            &cell,
+                        ),
+                        Ok(true),
+                    );
+                    if is_intersecting { cells |= 1 << cell_index; }
+                }
+                if cells != 0 { *intersections.entry(*coordinates).or_insert(0) |= cells; }
+            }
+        }
+        Ok(intersections)
     }
 
     /// Moves the origin, removing the cellular tile collider and re-placing every body
@@ -253,7 +327,15 @@ impl Collision {
                 let collider: rapier2d::geometry::Collider =
                     rapier2d::geometry::ColliderBuilder::new(
                         rapier2d::geometry::SharedShape::new(voxels),
-                    ).build();
+                    )
+                        .collision_groups(rapier2d::geometry::InteractionGroups::new(
+                            rapier2d::geometry::Group::from_bits_retain(
+                                COLLISION_GROUP_CELLULAR_TILE,
+                            ),
+                            rapier2d::geometry::Group::ALL,
+                            rapier2d::geometry::InteractionTestMode::And,
+                        ))
+                        .build();
                 self.cellular_tile_collider = Some(self.colliders.insert(collider));
             }
         }
@@ -620,14 +702,6 @@ impl Collision {
         filter: u32,
         is_sensor: bool,
     ) -> rapier2d::geometry::ColliderHandle {
-        let shape: rapier2d::geometry::SharedShape = match collider.shape {
-            ColliderShape::Circle { radius } =>
-                rapier2d::geometry::SharedShape::ball(radius),
-            ColliderShape::Rectangle { width, height } =>
-                rapier2d::geometry::SharedShape::cuboid(width / 2.0, height / 2.0),
-            ColliderShape::Capsule { width, height } =>
-                rapier2d::geometry::SharedShape::capsule_y((height - width) / 2.0, width / 2.0),
-        };
         // contact sensors sense every body type, including fixed and kinematic ones
         let active_collision_types: rapier2d::geometry::ActiveCollisionTypes = if is_sensor {
             rapier2d::geometry::ActiveCollisionTypes::all()
@@ -635,7 +709,7 @@ impl Collision {
             rapier2d::geometry::ActiveCollisionTypes::default()
         };
         let rapier_collider: rapier2d::geometry::Collider =
-            rapier2d::geometry::ColliderBuilder::new(shape)
+            rapier2d::geometry::ColliderBuilder::new(Self::rapier_shape(collider))
                 .position(rapier2d::math::Pose::new(
                     rapier2d::math::Vector::new(collider.offset_x, collider.offset_y),
                     collider.rotation,
@@ -676,25 +750,19 @@ impl Collision {
             translation + rapier2d::math::Vector::new(collider.offset_x, collider.offset_y),
             collider.rotation,
         );
-        Ok(match collider.shape {
+        Ok(Self::rapier_shape(collider).compute_aabb(&pose))
+    }
+
+    /// Returns the Rapier shape of a collider centered on its offset
+    fn rapier_shape(collider: &Collider) -> rapier2d::geometry::SharedShape {
+        match collider.shape {
             ColliderShape::Circle { radius } =>
-                rapier2d::parry::shape::Shape::compute_aabb(
-                    &rapier2d::parry::shape::Ball::new(radius),
-                    &pose,
-                ),
+                rapier2d::geometry::SharedShape::ball(radius),
             ColliderShape::Rectangle { width, height } =>
-                rapier2d::parry::shape::Shape::compute_aabb(
-                    &rapier2d::parry::shape::Cuboid::new(
-                        rapier2d::math::Vector::new(width / 2.0, height / 2.0),
-                    ),
-                    &pose,
-                ),
+                rapier2d::geometry::SharedShape::cuboid(width / 2.0, height / 2.0),
             ColliderShape::Capsule { width, height } =>
-                rapier2d::parry::shape::Shape::compute_aabb(
-                    &rapier2d::parry::shape::Capsule::new_y((height - width) / 2.0, width / 2.0),
-                    &pose,
-                ),
-        })
+                rapier2d::geometry::SharedShape::capsule_y((height - width) / 2.0, width / 2.0),
+        }
     }
 
     /// Returns the Rapier translation of an exact scene position relative to the origin

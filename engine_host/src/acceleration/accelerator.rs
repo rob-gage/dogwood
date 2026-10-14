@@ -3,6 +3,7 @@
 use super::AcceleratorError;
 
 /// Shared host hardware context for graphics and compute workloads
+#[derive(Clone)]
 pub struct Accelerator {
     /// WGPU instance that owns the available backends
     instance: wgpu::Instance,

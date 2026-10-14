@@ -67,6 +67,10 @@ pub struct ChunkStreamingState {
     requested_loads_prioritized: bool,
     /// Active rectangular residency requests
     retained_chunk_regions: BTreeMap<ChunkRegionIndex, ChunkRegion>,
+    /// Whether every dirty chunk, including retained ones, must be saved
+    is_save_requested: bool,
+    /// Save request identifiers of copies of active chunks that remain resident while saved
+    copy_save_streaming_request_identifiers: HashMap<ChunkCoordinates, u64>,
     /// Sender for nonblocking load and save responses
     response_sender: Sender<ChunkStreamingResponse>,
     /// Responses incorporated during scene advancement
@@ -92,6 +96,8 @@ impl ChunkStreamingState {
             response_sender: completion_sender,
             response_receiver: completion_receiver,
             retained_chunk_regions: BTreeMap::new(),
+            is_save_requested: false,
+            copy_save_streaming_request_identifiers: HashMap::new(),
             next_streaming_request_identifier: 1,
             next_chunk_region_identifier: 1,
             pending_chunk_request_count: 0,
@@ -182,6 +188,12 @@ impl ChunkStreamingState {
             _ => None,
         }
     }
+
+    /// Requests that every dirty chunk be saved, saving copies of chunks that remain retained
+    pub fn save_chunks(&mut self) { self.is_save_requested = true; }
+
+    /// Returns whether a requested save has not yet persisted every dirty chunk
+    pub fn is_chunk_save_requested(&self) -> bool { self.is_save_requested }
 
     /// Returns one cellular tile's material identifiers from its active chunk
     pub fn cellular_tile_material_identifiers(
@@ -299,7 +311,10 @@ impl ChunkStreamingState {
         // unload clean chunks that are no longer required
         self.stream_chunks_unload(&required_coordinates);
         // submit bounded requests for required loads and dirty saves
-        self.stream_chunks_schedule_requests(&required_coordinates, generator, world_seed)
+        self.stream_chunks_schedule_requests(&required_coordinates, generator, world_seed)?;
+        // save copies of retained dirty chunks while a save is requested
+        if self.is_save_requested { self.stream_chunks_schedule_copy_saves(&required_coordinates); }
+        Ok(())
     }
 
     /// Collects the exact union of coordinates covered by active region requests
@@ -402,6 +417,26 @@ impl ChunkStreamingState {
                     chunk,
                     result,
                 } => {
+                    // a failed copy save retains the newer active chunk for an explicit retry
+                    if self.copy_save_streaming_request_identifiers.get(&coordinates)
+                        == Some(&streaming_request_identifier)
+                    {
+                        self.copy_save_streaming_request_identifiers.remove(&coordinates);
+                        if let Err(error) = result
+                            && let Some(ChunkResident::Active { chunk, .. }) =
+                                self.chunks.remove(&coordinates)
+                        {
+                            self.chunks.insert(
+                                coordinates,
+                                ChunkResident::Error {
+                                    error,
+                                    chunk: Some(chunk),
+                                    is_dirty: true,
+                                },
+                            );
+                        }
+                        continue;
+                    }
                     let is_current: bool = matches!(
                         self.chunks.get(&coordinates),
                         Some(ChunkResident::Saving {
@@ -794,6 +829,7 @@ impl ChunkStreamingState {
             .iter()
             .filter_map(|(chunk_coordinates, entry)| {
                 if requested_chunk_coordinates.contains(chunk_coordinates)
+                    || self.copy_save_streaming_request_identifiers.contains_key(chunk_coordinates)
                     || !matches!(entry, ChunkResident::Active { is_dirty: true, .. })
                 { return None; }
                 Some(*chunk_coordinates)
@@ -815,6 +851,57 @@ impl ChunkStreamingState {
             self.stream_chunks_request_save(chunk_coordinates, chunk)?;
         }
         Ok(())
+    }
+
+    /// Saves copies of retained dirty chunks and completes the requested save once all are saved
+    fn stream_chunks_schedule_copy_saves(
+        &mut self,
+        required_coordinates: &HashSet<ChunkCoordinates>,
+    ) {
+        // sort retained dirty chunks so copy selection stays deterministic between advances
+        let mut dirty_chunk_coordinates: Vec<ChunkCoordinates> = self.chunks.iter()
+            .filter_map(|(coordinates, entry)| {
+                if !required_coordinates.contains(coordinates)
+                    || self.copy_save_streaming_request_identifiers.contains_key(coordinates)
+                    || !matches!(entry, ChunkResident::Active { is_dirty: true, .. })
+                { return None; }
+                Some(*coordinates)
+            }).collect();
+        dirty_chunk_coordinates.sort();
+        // save a copy so the chunk stays active, marking it clean until tiles change it again
+        for coordinates in dirty_chunk_coordinates {
+            if self.pending_chunk_request_count >= self.pending_chunk_request_count_maximum {
+                break;
+            }
+            let streaming_request_identifier: u64 = self.next_streaming_request_identifier();
+            let Some(ChunkResident::Active { chunk, is_dirty }) = self.chunks.get_mut(&coordinates)
+            else { continue; };
+            *is_dirty = false;
+            let stream_request: ChunkStreamingRequest = ChunkStreamingRequest::Save {
+                streaming_request_identifier,
+                chunk: chunk.clone(),
+            };
+            let chunk_data: ChunkData = self.chunk_data.clone();
+            let completion_sender: Sender<ChunkStreamingResponse> = self.response_sender.clone();
+            self.copy_save_streaming_request_identifiers
+                .insert(coordinates, streaming_request_identifier);
+            self.pending_chunk_request_count += 1;
+            self.thread_pool.spawn(move || {
+                let completion: ChunkStreamingResponse =
+                    Self::stream_chunks_handle_request(stream_request, chunk_data);
+                let _ = completion_sender.send(completion);
+            });
+        }
+        // the save completes once no chunk awaits persistence
+        let is_dirty_chunk_remaining: bool = self.chunks.values().any(|entry| matches!(
+            entry,
+            ChunkResident::Active { is_dirty: true, .. }
+            | ChunkResident::Error { is_dirty: true, .. }
+            | ChunkResident::Saving { .. }
+        ));
+        if !is_dirty_chunk_remaining && self.copy_save_streaming_request_identifiers.is_empty() {
+            self.is_save_requested = false;
+        }
     }
 
     /// Executes one chunk request on a Rayon worker and returns its response
@@ -915,6 +1002,7 @@ impl ChunkStreamingState {
             .iter()
             .filter_map(|(coordinates, entry)| {
                 if required_coordinates.contains(coordinates)
+                    || self.copy_save_streaming_request_identifiers.contains_key(coordinates)
                     || matches!(
                         entry,
                         ChunkResident::Loading { .. }
@@ -937,7 +1025,7 @@ impl ChunkStreamingState {
 impl Drop for ChunkStreamingState {
 
     fn drop(&mut self) {
-        // wait for active saves and return failed chunks to scene ownership
+        // wait for active saves and copy saves so none can finish after the final saves
         let mut pending_save_identifiers: HashSet<(ChunkCoordinates, u64)> = self
             .chunks
             .iter()
@@ -947,6 +1035,8 @@ impl Drop for ChunkStreamingState {
                 } => Some((*coordinates, *streaming_request_identifier)),
                 _ => None,
             })
+            .chain(self.copy_save_streaming_request_identifiers.iter()
+                .map(|(coordinates, identifier)| (*coordinates, *identifier)))
             .collect();
         while !pending_save_identifiers.is_empty() {
             let response: ChunkStreamingResponse = match self.response_receiver.recv() {
@@ -960,6 +1050,17 @@ impl Drop for ChunkStreamingState {
                 result,
             } = response {
                 pending_save_identifiers.remove(&(coordinates, streaming_request_identifier));
+                // a failed copy leaves its newer active chunk dirty for the final save
+                if self.copy_save_streaming_request_identifiers.get(&coordinates)
+                    == Some(&streaming_request_identifier)
+                {
+                    if result.is_err()
+                        && let Some(ChunkResident::Active { is_dirty, .. }) =
+                            self.chunks.get_mut(&coordinates)
+                    { *is_dirty = true; }
+                    continue;
+                }
+                // return failed chunks to scene ownership
                 if let Err(error) = result {
                     self.chunks.insert(
                         coordinates,

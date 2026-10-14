@@ -1,5 +1,6 @@
 // Copyright Rob Gage 2026
 
+mod cell_coordinates;
 mod cellular_tile_buffers;
 mod cellular_tile_coordinates;
 mod cellular_tile_index;
@@ -8,6 +9,7 @@ mod cellular_tile_streaming_request;
 mod cellular_tile_streaming_response;
 mod cellular_tile_streaming_state;
 
+pub use cell_coordinates::CellCoordinates;
 pub use cellular_tile_buffers::CellularTileBuffers;
 pub use cellular_tile_coordinates::CellularTileCoordinates;
 pub use cellular_tile_index::CellularTileIndex;
