@@ -117,16 +117,43 @@ impl TemplateCache {
                     &template_crate_path,
                     relative_path,
                 )?;
+                let mut state_contents: Vec<u8> = contents.clone();
                 if safe_project_path && project_file.is_file() {
                     let can_update: bool = previous_file.is_file()
                         && fs::read(&project_file)? == fs::read(&previous_file)?;
                     if can_update {
                         Self::write_file(&project_file, contents)?;
+                    } else if previous_file.is_file() {
+                        // Keep the actual generated baseline when preserving a user edit.
+                        state_contents = fs::read(&previous_file)?;
                     }
                 } else if safe_project_path && !project_file.exists() {
                     Self::write_file(&project_file, contents)?;
                 }
-                Self::write_file(&next_state_file, contents)?;
+                Self::write_file(&next_state_file, &state_contents)?;
+            }
+            // Remove obsolete generated files before a later template can reuse their names.
+            if template_state_path.is_dir() {
+                for (relative_path, previous_contents) in
+                    TemplateSource::filesystem(template_state_path.clone()).files()?
+                {
+                    if rendered_files.iter().any(|(path, _)| path == &relative_path) {
+                        continue;
+                    }
+                    let project_file: PathBuf = template_crate_path.join(&relative_path);
+                    if !Self::contains_symlink(&template_crate_path, &relative_path)?
+                        && project_file.is_file()
+                        && fs::read(&project_file)? == previous_contents
+                    {
+                        fs::remove_file(&project_file)?;
+                    } else {
+                        // Retain the baseline for edited files that may be reintroduced.
+                        Self::write_file(
+                            &template_state_staging_path.join(&relative_path),
+                            &previous_contents,
+                        )?;
+                    }
+                }
             }
             Ok(())
         })();

@@ -8,6 +8,7 @@ pub use engine_graphics::{
     world::materials::MaterialGraphicsCellularStatic,
 };
 pub use engine_host::{
+    system_events,
     acceleration::{
         Accelerator,
         AcceleratorError,

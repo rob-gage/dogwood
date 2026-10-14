@@ -9,8 +9,8 @@ pub struct MaterialGraphicsCellularStatic {
     pub sprite_sheet: Arc<SpriteSheet>,
     /// Albedo frame repeated across the material
     pub frame: u32,
-    /// Width in tiles covered by one repetition of the frame
+    /// Horizontal texture scale in cells per pixel; `1.0` maps each pixel to one cell
     pub width: f32,
-    /// Height in tiles covered by one repetition of the frame
+    /// Vertical texture scale in cells per pixel; `1.0` maps each pixel to one cell
     pub height: f32,
 }
