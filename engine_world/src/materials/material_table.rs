@@ -11,6 +11,7 @@ use super::{
     MaterialRegistry,
 };
 use engine_host::acceleration::Accelerator;
+use crate::scenes::cellular_tiles::CELLULAR_TILE_SIZE;
 
 /// Immutable registered materials and compiled GPU resources
 pub struct MaterialTable {
@@ -88,17 +89,29 @@ impl MaterialTable {
                 return Err("static cellular material atlas capacity exceeded".to_owned());
             }
             let atlas_region: [u32; 4] = [row_x, row_y, frame_width, frame_height];
+            // Convert the per-pixel cell scale to the frame's repetition size in tiles.
+            let repetition_width: f32 =
+                frame_width as f32 * material.width / CELLULAR_TILE_SIZE as f32;
+            let repetition_height: f32 =
+                frame_height as f32 * material.height / CELLULAR_TILE_SIZE as f32;
+            if !repetition_width.is_finite() || !repetition_height.is_finite()
+                || repetition_width <= 0.0 || repetition_height <= 0.0
+            {
+                return Err(String::from(
+                    "static cellular material repetition sizes must be finite and positive",
+                ));
+            }
             material_records.push([
                 atlas_region[0],
                 atlas_region[1],
                 atlas_region[2],
                 atlas_region[3],
-                material.width.to_bits(),
-                material.height.to_bits(),
+                repetition_width.to_bits(),
+                repetition_height.to_bits(),
                 0,
                 0,
             ]);
-            repetition_sizes.push([material.width, material.height]);
+            repetition_sizes.push([repetition_width, repetition_height]);
             copy_sources.push(Some((texture_view, texture_region)));
             atlas_regions.push(atlas_region);
             row_x += frame_width;

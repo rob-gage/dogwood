@@ -102,8 +102,11 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     if material_identifier >> 30u == 0u && material_index < uniforms.material_count {
         let material: CellularMaterial = materials[material_index];
         if material.atlas.z != 0u {
+            // Every fragment belonging to a cell samples the same texture pixel.
+            let cell_center: vec2<f32> =
+                (vec2<f32>(cell) + vec2<f32>(0.5)) / cellular_tile_size_float;
             let repetition: vec2<f32> =
-                fract(material_phases[material_index] + local / material.repetition_size);
+                fract(material_phases[material_index] + cell_center / material.repetition_size);
             let texture_coordinate: vec2<f32> = vec2<f32>(repetition.x, 1.0 - repetition.y);
             let texel: vec2<u32> = min(
                 vec2<u32>(texture_coordinate * vec2<f32>(material.atlas.zw)),

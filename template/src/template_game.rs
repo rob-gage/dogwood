@@ -32,6 +32,11 @@ use engine::{
         ScenePosition,
     },
     runtime::EngineError,
+    system_events::{
+        KeyCode,
+        PhysicalKey,
+        SystemKeyboardEvent,
+    },
     Accelerator,
     MaterialGraphicsCellularStatic,
     SpriteSheet,
@@ -116,6 +121,21 @@ impl TemplateGame {
 }
 
 impl Game for TemplateGame {
+
+    fn keyboard_event(&mut self, event: SystemKeyboardEvent) {
+        if !event.pressed { return; }
+        let zoom_factor: f32 = match event.physical_key {
+            PhysicalKey::Code(KeyCode::Equal | KeyCode::NumpadAdd) => 1.0 / 1.1,
+            PhysicalKey::Code(KeyCode::Minus | KeyCode::NumpadSubtract) => 1.1,
+            _ => return,
+        };
+        let camera: &mut ActorCameraComponent = self.scene.actor_registry_mutable()
+            .component_mutable(self.player)
+            .expect("Template player must have a camera");
+        // Zoom changes only the view; width and height keep the simulation area fixed.
+        // The widest view fits within the streamed region, twice the unzoomed view.
+        camera.zoom = (camera.zoom * zoom_factor).clamp(0.25, 2.0);
+    }
 
     fn scene(&mut self) -> Option<(&mut Scene, Actor)> {
         Some((&mut self.scene, self.player))
