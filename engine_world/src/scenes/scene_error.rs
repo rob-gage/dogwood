@@ -1,15 +1,13 @@
 // Copyright Rob Gage 2026
 
-use super::scene_chunk_region_index::SceneChunkRegionIndex;
-use crate::{
-    actors::{
-        Actor,
-        ActorError,
-    },
-    chunks::{
-        ChunkCoordinates,
-        ChunkError,
-    },
+use super::chunks::{
+    ChunkCoordinates,
+    ChunkError,
+    ChunkRegionIndex,
+};
+use crate::actors::{
+    Actor,
+    ActorError,
 };
 use std::{
     error::Error,
@@ -28,7 +26,7 @@ pub enum SceneError {
     /// No active request has the supplied region identifier
     ChunkRegionRequestNotFound {
         /// Identifier of the missing region request
-        chunk_region_identifier: SceneChunkRegionIndex,
+        chunk_region_identifier: ChunkRegionIndex,
     },
     /// A chunk has no failed streaming request to retry
     ChunkRetryUnavailable {

@@ -1,10 +1,10 @@
 // Copyright Rob Gage 2026
 
-use super::scene_error::SceneError;
-use crate::chunks::Chunk;
+use super::Chunk;
+use crate::scenes::SceneError;
 
 /// Resident chunk data or one outstanding chunk streaming request
-pub enum SceneChunk {
+pub enum ChunkResident {
     /// Loaded CPU chunk owned by this scene
     Active {
         /// Resident chunk data

@@ -1,26 +1,26 @@
 // Copyright Rob Gage 2026
 
 use super::{
-    scene_cellular_tile_index::SceneCellularTileIndex,
-    scene_cellular_tile_streaming_request::SceneCellularTileStreamingRequest,
-    scene_cellular_tile_streaming_response::SceneCellularTileStreamingResponse,
-    scene_chunk_region_index::SceneChunkRegionIndex,
-    scene_chunk_streaming_state::SceneChunkStreamingState,
-    scene_error::SceneError,
-    SCENE_CELLULAR_TILE_STREAMING_REQUEST_COUNT_MAXIMUM,
+    cellular_tile_streaming_request::CellularTileStreamingRequest,
+    cellular_tile_streaming_response::CellularTileStreamingResponse,
+    CellularTileBuffers,
+    CellularTileCoordinates,
+    CellularTileIndex,
+    CellularTileRegion,
+    CELLULAR_TILE_SIZE,
 };
 use crate::{
-    cellular_tiles::{
-        CellularTileBuffers,
-        CellularTileCoordinates,
-        CellularTileRegion,
-        CELLULAR_TILE_SIZE,
-    },
-    chunks::{
-        ChunkCoordinates,
-        ChunkRegion,
-    },
     materials::MaterialIdentifier,
+    scenes::{
+        chunks::{
+            ChunkCoordinates,
+            ChunkRegion,
+            ChunkRegionIndex,
+            ChunkStreamingState,
+        },
+        SceneError,
+        SCENE_CELLULAR_TILE_STREAMING_REQUEST_COUNT_MAXIMUM,
+    },
 };
 use engine_host::acceleration::Accelerator;
 use std::{
@@ -40,7 +40,7 @@ const CELLULAR_TILE_CELL_COUNT: usize = (CELLULAR_TILE_SIZE * CELLULAR_TILE_SIZE
 const CELLULAR_TILE_BYTE_COUNT: u64 = CELLULAR_TILE_CELL_COUNT as u64 * 4;
 
 /// GPU-resident cellular tiles stored in a two-dimensional ring around the active region
-pub struct SceneCellularTileStreamingState {
+pub struct CellularTileStreamingState {
     /// Active region whose tiles are resident, or `None` before the first request
     active_region: Option<CellularTileRegion>,
     /// Active region requested by the caller
@@ -50,25 +50,25 @@ pub struct SceneCellularTileStreamingState {
     /// Physical ring row holding the active region's bottom tiles
     ring_offset_y: u32,
     /// Retained chunk region covering every chunk overlapped by the resident active region
-    chunk_region_index: Option<SceneChunkRegionIndex>,
+    chunk_region_index: Option<ChunkRegionIndex>,
     /// Retained chunk region covering every chunk overlapped by the requested region
-    requested_chunk_region_index: Option<SceneChunkRegionIndex>,
+    requested_chunk_region_index: Option<ChunkRegionIndex>,
     /// Outgoing tile streaming requests awaiting application to their retained chunks
-    streaming_requests: HashMap<u64, SceneCellularTileStreamingRequest>,
+    streaming_requests: HashMap<u64, CellularTileStreamingRequest>,
     /// Next identifier assigned to a streaming request
     next_streaming_request_identifier: u64,
     /// Sender for staging buffer mapping responses
-    response_sender: Sender<SceneCellularTileStreamingResponse>,
+    response_sender: Sender<CellularTileStreamingResponse>,
     /// Mapping responses incorporated during tile streaming
-    response_receiver: Receiver<SceneCellularTileStreamingResponse>,
+    response_receiver: Receiver<CellularTileStreamingResponse>,
 }
 
-impl SceneCellularTileStreamingState {
+impl CellularTileStreamingState {
 
     /// Creates the GPU tile ring for an active region and retains its chunks
     pub fn new(
         cellular_tile_buffers: &CellularTileBuffers,
-        chunk_streaming_state: &mut SceneChunkStreamingState,
+        chunk_streaming_state: &mut ChunkStreamingState,
         region: CellularTileRegion,
     ) -> Result<Self, SceneError> {
         if region.width() == 0 || region.height() == 0 {
@@ -82,8 +82,8 @@ impl SceneCellularTileStreamingState {
             return Err(SceneError::InvalidCellularTileRegion);
         }
         let (response_sender, response_receiver): (
-            Sender<SceneCellularTileStreamingResponse>,
-            Receiver<SceneCellularTileStreamingResponse>,
+            Sender<CellularTileStreamingResponse>,
+            Receiver<CellularTileStreamingResponse>,
         ) = channel();
         let mut cellular_tile_streaming: Self = Self {
             active_region_requested: region,
@@ -135,7 +135,7 @@ impl SceneCellularTileStreamingState {
     pub fn cellular_tile_index(
         &self,
         coordinates: CellularTileCoordinates,
-    ) -> Option<SceneCellularTileIndex> {
+    ) -> Option<CellularTileIndex> {
         let active_region: CellularTileRegion = self.active_region?;
         if !active_region.contains(coordinates) { return None; }
         let logical_x: u32 = (coordinates.x - active_region.bottom_left.x) as u32;
@@ -144,7 +144,7 @@ impl SceneCellularTileStreamingState {
         let height: u32 = active_region.height() as u32;
         let physical_x: u32 = (logical_x + self.ring_offset_x) % width;
         let physical_y: u32 = (logical_y + self.ring_offset_y) % height;
-        Some(SceneCellularTileIndex::from(physical_y * width + physical_x))
+        Some(CellularTileIndex::from(physical_y * width + physical_x))
     }
 
     /// Returns every active tile to its chunk, waiting for every response
@@ -152,7 +152,7 @@ impl SceneCellularTileStreamingState {
         &mut self,
         accelerator: &Accelerator,
         cellular_tile_buffers: &CellularTileBuffers,
-        chunk_streaming_state: &mut SceneChunkStreamingState,
+        chunk_streaming_state: &mut ChunkStreamingState,
     ) -> Result<(), SceneError> {
         // copy every resident tile so the chunks match the authoritative GPU state
         if let Some(active_region) = self.active_region {
@@ -187,7 +187,7 @@ impl SceneCellularTileStreamingState {
         &mut self,
         accelerator: &Accelerator,
         cellular_tile_buffers: &CellularTileBuffers,
-        chunk_streaming_state: &mut SceneChunkStreamingState,
+        chunk_streaming_state: &mut ChunkStreamingState,
     ) -> Result<(), SceneError> {
         // incorporate mapped responses and return their chunks to normal streaming
         accelerator.device().poll(wgpu::PollType::Poll)
@@ -206,7 +206,7 @@ impl SceneCellularTileStreamingState {
     /// Applies mapped responses to their chunks and remaps failed staging buffers
     fn stream_cellular_tiles_apply_responses(
         &mut self,
-        chunk_streaming_state: &mut SceneChunkStreamingState,
+        chunk_streaming_state: &mut ChunkStreamingState,
     ) -> Result<(), SceneError> {
         // record mapping results, keeping failed requests for another mapping attempt
         let mut first_error: Option<SceneError> = None;
@@ -303,7 +303,7 @@ impl SceneCellularTileStreamingState {
         &mut self,
         accelerator: &Accelerator,
         cellular_tile_buffers: &CellularTileBuffers,
-        chunk_streaming_state: &mut SceneChunkStreamingState,
+        chunk_streaming_state: &mut ChunkStreamingState,
     ) -> Result<(), SceneError> {
         // release a pending incoming retention when the request returns to the resident region
         if self.active_region == Some(self.active_region_requested) {
@@ -358,7 +358,7 @@ impl SceneCellularTileStreamingState {
                 .cellular_tile_coordinates()
                 .filter(|coordinates| !requested_region.contains(*coordinates))
                 .collect();
-            let chunk_region_index: Option<SceneChunkRegionIndex> =
+            let chunk_region_index: Option<ChunkRegionIndex> =
                 self.chunk_region_index.take();
             if outgoing_coordinates.is_empty() {
                 if let Some(chunk_region_index) = chunk_region_index {
@@ -427,7 +427,7 @@ impl SceneCellularTileStreamingState {
         accelerator: &Accelerator,
         cellular_tile_buffers: &CellularTileBuffers,
         coordinates: Vec<CellularTileCoordinates>,
-        chunk_region_index: Option<SceneChunkRegionIndex>,
+        chunk_region_index: Option<ChunkRegionIndex>,
     ) {
         let buffer: wgpu::Buffer = accelerator.device().create_buffer(&wgpu::BufferDescriptor {
             label: Some("Scene cellular tile streaming request"),
@@ -465,8 +465,8 @@ impl SceneCellularTileStreamingState {
         let streaming_request_identifier: u64 = self.next_streaming_request_identifier;
         self.next_streaming_request_identifier = self.next_streaming_request_identifier
             .wrapping_add(1);
-        let mut streaming_request: SceneCellularTileStreamingRequest =
-            SceneCellularTileStreamingRequest {
+        let mut streaming_request: CellularTileStreamingRequest =
+            CellularTileStreamingRequest {
                 coordinates,
                 buffer,
                 chunk_region_index,
@@ -484,16 +484,16 @@ impl SceneCellularTileStreamingState {
     /// Asks WGPU to send a response once the staging buffer is readable by the CPU
     fn map_cellular_tile_streaming_request(
         streaming_request_identifier: u64,
-        streaming_request: &mut SceneCellularTileStreamingRequest,
-        response_sender: &Sender<SceneCellularTileStreamingResponse>,
+        streaming_request: &mut CellularTileStreamingRequest,
+        response_sender: &Sender<CellularTileStreamingResponse>,
     ) {
-        let response_sender: Sender<SceneCellularTileStreamingResponse> = response_sender.clone();
+        let response_sender: Sender<CellularTileStreamingResponse> = response_sender.clone();
         streaming_request.is_response_requested = true;
         streaming_request.buffer.map_async(
             wgpu::MapMode::Read,
             ..,
             move |result: Result<(), wgpu::BufferAsyncError>| {
-                let _ = response_sender.send(SceneCellularTileStreamingResponse {
+                let _ = response_sender.send(CellularTileStreamingResponse {
                     streaming_request_identifier,
                     result,
                 });

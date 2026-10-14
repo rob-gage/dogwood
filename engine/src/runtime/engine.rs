@@ -9,13 +9,13 @@ use engine_graphics::{
     renders::SceneRenderer,
     world::scenes::SceneGraphics,
 };
-use engine_world::{
-    actor_components::{
+use engine_world::actors::{
+    components::{
         ActorIdentityComponent,
         ActorPawnControlComponent,
         ActorPawnPossessionComponent,
     },
-    actors::Actor,
+    Actor,
 };
 use engine_host::{
     acceleration::Accelerator,

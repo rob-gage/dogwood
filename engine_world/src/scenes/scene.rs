@@ -1,9 +1,18 @@
 // Copyright Rob Gage 2026
 
 use super::{
-    collisions::SceneCollision,
-    scene_cellular_tile_streaming_state::SceneCellularTileStreamingState,
-    scene_chunk_streaming_state::SceneChunkStreamingState,
+    cellular_tiles::{
+        CellularTileBuffers,
+        CellularTileCoordinates,
+        CellularTileRegion,
+        CellularTileStreamingState,
+        CELLULAR_TILE_SIZE,
+    },
+    chunks::{
+        ChunkData,
+        ChunkStreamingState,
+    },
+    collisions::Collision,
     scene_error::SceneError,
     scene_generator::SceneGenerator,
     scene_position::ScenePosition,
@@ -11,23 +20,16 @@ use super::{
     SCENE_GRAVITY_DEFAULT,
 };
 use crate::{
-    actor_components::{
-        ActorCameraComponent,
-        ActorKinematicsPositionComponent,
-        ActorSpritesComponent,
-    },
     actors::{
+        components::{
+            ActorCameraComponent,
+            ActorKinematicsPositionComponent,
+            ActorSpritesComponent,
+        },
         Actor,
         ActorError,
         ActorRegistry,
     },
-    cellular_tiles::{
-        CellularTileBuffers,
-        CellularTileCoordinates,
-        CellularTileRegion,
-        CELLULAR_TILE_SIZE,
-    },
-    chunks::ChunkData,
     materials::MaterialTable,
 };
 use engine_graphics::world::scenes::{
@@ -46,13 +48,13 @@ pub struct Scene {
     /// Persistent storage of this scene's chunks
     chunk_data: ChunkData,
     /// Handles the streaming of chunks between the disk and native memory, absent until streamed
-    chunk_streaming_state: Option<SceneChunkStreamingState>,
+    chunk_streaming_state: Option<ChunkStreamingState>,
     /// GPU storage for the properties of every resident cellular tile, absent until streamed
     cellular_tile_buffers: Option<CellularTileBuffers>,
     /// GPU tile ring around the active region, absent until a cellular region is requested
-    cellular_tile_streaming_state: Option<SceneCellularTileStreamingState>,
+    cellular_tile_streaming_state: Option<CellularTileStreamingState>,
     /// Rapier simulation of actors against the active cellular tiles, absent until simulated
-    collision: Option<SceneCollision>,
+    collision: Option<Collision>,
     /// Downward acceleration of dynamic bodies and pawns in tiles per second squared
     gravity: f32,
     /// ECS world and fixed-tick systems of every live actor
@@ -130,7 +132,7 @@ impl Scene {
                 .thread_pool(SCENE_CHUNK_THREAD_POOL_NAME)
                 .ok_or(SceneError::ChunkThreadPoolUnavailable)?;
             self.chunk_streaming_state =
-                Some(SceneChunkStreamingState::new(self.chunk_data.clone(), thread_pool));
+                Some(ChunkStreamingState::new(self.chunk_data.clone(), thread_pool));
         }
         let Some(chunk_streaming_state) = self.chunk_streaming_state.as_mut()
         else { return Ok(()); };
@@ -143,7 +145,7 @@ impl Scene {
                 cellular_tile_streaming_state.set_cellular_tile_region(region)?;
             }
             None => {
-                self.cellular_tile_streaming_state = Some(SceneCellularTileStreamingState::new(
+                self.cellular_tile_streaming_state = Some(CellularTileStreamingState::new(
                     cellular_tile_buffers,
                     chunk_streaming_state,
                     region,
@@ -173,7 +175,7 @@ impl Scene {
             cellular_tile_streaming_state.active_cellular_tile_region()
         else { return Ok(()); };
         self.collision
-            .get_or_insert_with(|| SceneCollision::new(accelerator, cellular_tile_buffers))
+            .get_or_insert_with(|| Collision::new(accelerator, cellular_tile_buffers))
             .simulate_collisions(
                 accelerator,
                 active_region,
@@ -237,7 +239,7 @@ impl Scene {
         &self,
         camera_position: ScenePosition,
     ) -> Option<SceneGraphicsCellular<'_>> {
-        let cellular_tile_streaming_state: &SceneCellularTileStreamingState =
+        let cellular_tile_streaming_state: &CellularTileStreamingState =
             self.cellular_tile_streaming_state.as_ref()?;
         let cellular_tile_buffers: &CellularTileBuffers = self.cellular_tile_buffers.as_ref()?;
         let active_region: CellularTileRegion =

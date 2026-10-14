@@ -1,13 +1,15 @@
 // Copyright Rob Gage 2026
 
-use super::scene_collision_cellular_tile::SceneCollisionCellularTile;
+use super::collision_cellular_tile::CollisionCellularTile;
 use crate::{
-    cellular_tiles::{
-        CellularTileBuffers,
-        CellularTileRegion,
-        CELLULAR_TILE_SIZE,
+    scenes::{
+        cellular_tiles::{
+            CellularTileBuffers,
+            CellularTileRegion,
+            CELLULAR_TILE_SIZE,
+        },
+        SceneError,
     },
-    scenes::SceneError,
 };
 use engine_host::acceleration::Accelerator;
 use std::sync::mpsc::{
@@ -26,7 +28,7 @@ const CELLULAR_TILE_OCCUPANCY_BYTE_COUNT: u64 = 8;
 const WORKGROUP_SIZE: u32 = 64;
 
 /// GPU extraction of the static occupancy of every active cellular tile
-pub struct SceneCollisionCellularTilePass {
+pub struct CollisionCellularTilePass {
     /// Pipeline packing one active tile's occupancy per invocation
     pipeline: wgpu::ComputePipeline,
     /// Bind group of the uniforms, material identifiers, and occupancies
@@ -43,7 +45,7 @@ pub struct SceneCollisionCellularTilePass {
     response_receiver: Receiver<Result<(), wgpu::BufferAsyncError>>,
 }
 
-impl SceneCollisionCellularTilePass {
+impl CollisionCellularTilePass {
 
     /// Creates occupancy extraction resources for every tile the cellular tile buffers can hold
     pub fn new(accelerator: &Accelerator, cellular_tile_buffers: &CellularTileBuffers) -> Self {
@@ -52,7 +54,7 @@ impl SceneCollisionCellularTilePass {
             cellular_tile_buffers.material_identifier_buffer().size() / CELLULAR_TILE_BYTE_COUNT;
         let bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
-                label: Some("`SceneCollisionCellularTilePass.bind_group_layout`"),
+                label: Some("`CollisionCellularTilePass.bind_group_layout`"),
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
@@ -89,22 +91,22 @@ impl SceneCollisionCellularTilePass {
         );
         let pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
-                label: Some("`SceneCollisionCellularTilePass.pipeline_layout`"),
+                label: Some("`CollisionCellularTilePass.pipeline_layout`"),
                 bind_group_layouts: &[Some(&bind_group_layout)],
                 immediate_size: 0,
             },
         );
         let shader_module: wgpu::ShaderModule = device.create_shader_module(
             wgpu::ShaderModuleDescriptor {
-                label: Some("`SceneCollisionCellularTilePass.shader_module`"),
+                label: Some("`CollisionCellularTilePass.shader_module`"),
                 source: wgpu::ShaderSource::Wgsl(
-                    include_str!("scene_collision_cellular_tile.wgsl").into(),
+                    include_str!("collision_cellular_tile.wgsl").into(),
                 ),
             },
         );
         let pipeline: wgpu::ComputePipeline = device.create_compute_pipeline(
             &wgpu::ComputePipelineDescriptor {
-                label: Some("`SceneCollisionCellularTilePass.pipeline`"),
+                label: Some("`CollisionCellularTilePass.pipeline`"),
                 layout: Some(&pipeline_layout),
                 module: &shader_module,
                 entry_point: Some("compute"),
@@ -113,25 +115,25 @@ impl SceneCollisionCellularTilePass {
             },
         );
         let uniform_buffer: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("`SceneCollisionCellularTilePass.uniform_buffer`"),
+            label: Some("`CollisionCellularTilePass.uniform_buffer`"),
             size: 16,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let cellular_tile_buffer: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("`SceneCollisionCellularTilePass.cellular_tile_buffer`"),
+            label: Some("`CollisionCellularTilePass.cellular_tile_buffer`"),
             size: cellular_tile_count.max(1) * CELLULAR_TILE_OCCUPANCY_BYTE_COUNT,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
         let staging_buffer: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("`SceneCollisionCellularTilePass.staging_buffer`"),
+            label: Some("`CollisionCellularTilePass.staging_buffer`"),
             size: cellular_tile_buffer.size(),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("`SceneCollisionCellularTilePass.bind_group`"),
+            label: Some("`CollisionCellularTilePass.bind_group`"),
             layout: &bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -170,7 +172,7 @@ impl SceneCollisionCellularTilePass {
         accelerator: &Accelerator,
         active_region: CellularTileRegion,
         ring_offset: (u32, u32),
-    ) -> Result<Vec<SceneCollisionCellularTile>, SceneError> {
+    ) -> Result<Vec<CollisionCellularTile>, SceneError> {
         let width: u32 = active_region.width() as u32;
         let height: u32 = active_region.height() as u32;
         let cellular_tile_count: u32 = width * height;
@@ -221,13 +223,13 @@ impl SceneCollisionCellularTilePass {
         let response: Result<(), wgpu::BufferAsyncError> = self.response_receiver.try_recv()
             .map_err(|_| SceneError::CollisionCellularTilePoll)?;
         response.map_err(|error| SceneError::CollisionCellularTileResponse { error })?;
-        let cellular_tiles: Vec<SceneCollisionCellularTile> = {
+        let cellular_tiles: Vec<CollisionCellularTile> = {
             let mapped_bytes: wgpu::BufferView = self.staging_buffer
                 .get_mapped_range(..byte_count)
                 .expect("mapped collision cellular tile buffer should be readable");
             mapped_bytes.chunks_exact(CELLULAR_TILE_OCCUPANCY_BYTE_COUNT as usize)
                 .map(|tile_bytes: &[u8]| {
-                    SceneCollisionCellularTile::from_u64(u64::from_le_bytes([
+                    CollisionCellularTile::from_u64(u64::from_le_bytes([
                         tile_bytes[0],
                         tile_bytes[1],
                         tile_bytes[2],

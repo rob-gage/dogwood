@@ -1,12 +1,14 @@
 // Copyright Rob Gage 2026
 
 use engine::{
-    chunks::{
-        Chunk,
-        ChunkCoordinates,
-    },
     materials::MaterialIdentifier,
-    scenes::SceneGenerator,
+    scenes::{
+        chunks::{
+            Chunk,
+            ChunkCoordinates,
+        },
+        SceneGenerator,
+    },
 };
 use std::error::Error;
 

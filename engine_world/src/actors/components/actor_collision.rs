@@ -1,8 +1,8 @@
 // Copyright Rob Gage 2026
 
-use crate::scenes::{
-    SceneCollider,
-    SceneCollisionBody,
+use crate::scenes::collisions::{
+    Collider,
+    CollisionBody,
 };
 use bevy_ecs::component::Component;
 
@@ -10,9 +10,9 @@ use bevy_ecs::component::Component;
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct ActorCollisionComponent {
     /// Motion of the body carrying both colliders, kinematic for actors with only a contact
-    pub body: SceneCollisionBody,
+    pub body: CollisionBody,
     /// Collider physically colliding with other actors and cellular tiles
-    pub collider: SceneCollider,
+    pub collider: Collider,
     /// Bitmask of the groups this actor belongs to
     pub memberships: u32,
     /// Bitmask of the groups this actor collides with, colliding only when both actors accept

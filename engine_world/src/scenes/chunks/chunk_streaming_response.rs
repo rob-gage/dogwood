@@ -1,13 +1,13 @@
 // Copyright Rob Gage 2026
 
-use super::scene_error::SceneError;
-use crate::chunks::{
+use super::{
     Chunk,
     ChunkCoordinates,
 };
+use crate::scenes::SceneError;
 
 /// Completed background chunk request returned to the scene
-pub enum SceneChunkStreamingResponse {
+pub enum ChunkStreamingResponse {
     /// Completed chunk load
     Loaded {
         /// Requested chunk coordinates

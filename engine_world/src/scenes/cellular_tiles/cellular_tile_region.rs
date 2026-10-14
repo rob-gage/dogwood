@@ -1,7 +1,7 @@
 // Copyright Rob Gage 2026
 
 use super::CellularTileCoordinates;
-use crate::chunks::ChunkRegion;
+use crate::scenes::chunks::ChunkRegion;
 
 /// Inclusive cellular tile bounds of one rectangular region
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]

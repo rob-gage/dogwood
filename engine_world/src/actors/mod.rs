@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+pub mod components;
+
 mod actor;
 mod actor_allocator;
 mod actor_error;

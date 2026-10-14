@@ -19,9 +19,7 @@ pub use engine_host::{
     },
 };
 pub use engine_world::{
-    actor_components,
     actors,
-    chunks,
     materials,
     scenes,
 };

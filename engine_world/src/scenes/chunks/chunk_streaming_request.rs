@@ -1,14 +1,14 @@
 // Copyright Rob Gage 2026
 
-use super::SceneGenerator;
-use crate::chunks::{
+use super::{
     Chunk,
     ChunkCoordinates,
 };
+use crate::scenes::SceneGenerator;
 use std::sync::Arc;
 
 /// One chunk load or save submitted to the shared Rayon pool
-pub enum SceneChunkStreamingRequest {
+pub enum ChunkStreamingRequest {
     /// Load one chunk from persistent storage
     Load {
         /// Chunk coordinates to load

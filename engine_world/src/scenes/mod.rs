@@ -1,31 +1,14 @@
 // Copyright Rob Gage 2026
 
-mod collisions;
+pub mod cellular_tiles;
+pub mod chunks;
+pub mod collisions;
 mod scene;
-mod scene_cellular_tile_index;
-mod scene_cellular_tile_streaming_state;
-mod scene_cellular_tile_streaming_request;
-mod scene_cellular_tile_streaming_response;
-mod scene_chunk;
-mod scene_chunk_region_index;
-mod scene_chunk_streaming_request;
-mod scene_chunk_streaming_response;
-mod scene_chunk_streaming_state;
 mod scene_error;
 mod scene_generator;
 mod scene_position;
 
-pub use collisions::{
-    SceneCollider,
-    SceneColliderShape,
-    SceneCollisionBody,
-    SceneCollisionCellularTile,
-};
 pub use scene::Scene;
-pub use scene_cellular_tile_index::SceneCellularTileIndex;
-pub use scene_cellular_tile_streaming_state::SceneCellularTileStreamingState;
-pub use scene_chunk_region_index::SceneChunkRegionIndex;
-pub use scene_chunk_streaming_state::SceneChunkStreamingState;
 pub use scene_error::SceneError;
 pub use scene_generator::SceneGenerator;
 pub use scene_position::ScenePosition;

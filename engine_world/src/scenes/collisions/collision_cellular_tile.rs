@@ -7,9 +7,9 @@ use crate::materials::{
 
 /// Cells of one cellular tile holding solid `CellularStatic` materials, as bit `y * 8 + x` per cell
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
-pub struct SceneCollisionCellularTile(u64);
+pub struct CollisionCellularTile(u64);
 
-impl SceneCollisionCellularTile {
+impl CollisionCellularTile {
 
     /// Creates the occupancy of one cellular tile from its row-major material identifiers
     pub fn new(material_identifiers: &[MaterialIdentifier; 64]) -> Self {

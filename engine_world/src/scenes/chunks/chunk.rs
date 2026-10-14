@@ -6,7 +6,7 @@ use super::{
     CHUNK_SIZE,
 };
 use crate::{
-    cellular_tiles::{
+    scenes::cellular_tiles::{
         CellularTileCoordinates,
         CELLULAR_TILE_SIZE,
     },

@@ -2,15 +2,15 @@
 
 /// Index of one cellular tile's contiguous cells within the scene's cellular tile buffers
 #[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct SceneCellularTileIndex(u32);
+pub struct CellularTileIndex(u32);
 
-impl From<u32> for SceneCellularTileIndex {
+impl From<u32> for CellularTileIndex {
 
-    fn from(u32: u32) -> Self { SceneCellularTileIndex(u32) }
+    fn from(u32: u32) -> Self { CellularTileIndex(u32) }
 
 }
 
-impl Into<u32> for SceneCellularTileIndex {
+impl Into<u32> for CellularTileIndex {
 
     fn into(self) -> u32 { self.0 }
 

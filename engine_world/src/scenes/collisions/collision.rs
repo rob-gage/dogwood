@@ -1,35 +1,35 @@
 // Copyright Rob Gage 2026
 
 use super::{
-    scene_collider::SceneCollider,
-    scene_collider_shape::SceneColliderShape,
-    scene_collision_body::SceneCollisionBody,
-    scene_collision_cellular_tile::SceneCollisionCellularTile,
-    scene_collision_cellular_tile_pass::SceneCollisionCellularTilePass,
-    SCENE_COLLISION_ORIGIN_DISTANCE_MAXIMUM,
+    collider::Collider,
+    collider_shape::ColliderShape,
+    collision_body::CollisionBody,
+    collision_cellular_tile::CollisionCellularTile,
+    collision_cellular_tile_pass::CollisionCellularTilePass,
+    COLLISION_ORIGIN_DISTANCE_MAXIMUM,
 };
 use crate::{
-    actor_components::{
-        ActorCollisionComponent,
-        ActorContactComponent,
-        ActorIdentityComponent,
-        ActorKinematicsPositionComponent,
-        ActorPawnControlComponent,
-        ActorPawnMovementComponent,
-        ActorPersistenceComponent,
-    },
     actors::{
+        components::{
+            ActorCollisionComponent,
+            ActorContactComponent,
+            ActorIdentityComponent,
+            ActorKinematicsPositionComponent,
+            ActorPawnControlComponent,
+            ActorPawnMovementComponent,
+            ActorPersistenceComponent,
+        },
         Actor,
         ActorError,
         ActorRegistry,
     },
-    cellular_tiles::{
-        CellularTileBuffers,
-        CellularTileCoordinates,
-        CellularTileRegion,
-        CELLULAR_TILE_SIZE,
-    },
     scenes::{
+        cellular_tiles::{
+            CellularTileBuffers,
+            CellularTileCoordinates,
+            CellularTileRegion,
+            CELLULAR_TILE_SIZE,
+        },
         SceneError,
         ScenePosition,
     },
@@ -42,11 +42,11 @@ use std::collections::{
 };
 
 /// Rapier simulation of a scene's actors against the solid cells of its active cellular tiles
-pub struct SceneCollision {
+pub struct Collision {
     /// Cellular tile whose bottom-left corner is the origin of every Rapier position
     origin: CellularTileCoordinates,
     /// Active region and occupancies held by the cellular tile collider, absent before a readback
-    cellular_tiles: Option<(CellularTileRegion, Vec<SceneCollisionCellularTile>)>,
+    cellular_tiles: Option<(CellularTileRegion, Vec<CollisionCellularTile>)>,
     /// Ring offset of the active region when its occupancies were read
     ring_offset: (u32, u32),
     /// Number of solid cells held by the cellular tile collider
@@ -65,7 +65,7 @@ pub struct SceneCollision {
     /// Character controller moving every pawn against the colliders it collides with
     pawn_movement_controller: rapier2d::control::KinematicCharacterController,
     /// GPU extraction of active cellular tile occupancies
-    cellular_tile_pass: SceneCollisionCellularTilePass,
+    cellular_tile_pass: CollisionCellularTilePass,
     /// Rigid bodies of every simulated actor
     rigid_bodies: rapier2d::dynamics::RigidBodySet,
     /// Cellular tile collider and every simulated actor collider
@@ -88,7 +88,7 @@ pub struct SceneCollision {
     ccd_solver: rapier2d::dynamics::CCDSolver,
 }
 
-impl SceneCollision {
+impl Collision {
 
     /// Creates an empty simulation reading occupancies from the cellular tile buffers
     pub fn new(accelerator: &Accelerator, cellular_tile_buffers: &CellularTileBuffers) -> Self {
@@ -107,7 +107,7 @@ impl SceneCollision {
                 snap_to_ground: Some(rapier2d::control::CharacterLength::Absolute(0.2)),
                 ..rapier2d::control::KinematicCharacterController::default()
             },
-            cellular_tile_pass: SceneCollisionCellularTilePass::new(
+            cellular_tile_pass: CollisionCellularTilePass::new(
                 accelerator,
                 cellular_tile_buffers,
             ),
@@ -138,7 +138,7 @@ impl SceneCollision {
             && self.ring_offset == ring_offset
         { return self.simulate_collisions_step_actors(active_region, gravity, actor_registry); }
         // read this tick's GPU occupancy before simulating against it
-        let cellular_tiles: Vec<SceneCollisionCellularTile> = self.cellular_tile_pass
+        let cellular_tiles: Vec<CollisionCellularTile> = self.cellular_tile_pass
             .read_cellular_tiles(accelerator, active_region, ring_offset)?;
         // keep the origin near the active region so f32 positions keep sub-cell precision
         let center: CellularTileCoordinates = CellularTileCoordinates {
@@ -146,8 +146,8 @@ impl SceneCollision {
             y: active_region.bottom_left.y + active_region.height() as i64 / 2,
         };
         if self.cellular_tiles.is_none()
-            || center.x.abs_diff(self.origin.x) > SCENE_COLLISION_ORIGIN_DISTANCE_MAXIMUM
-            || center.y.abs_diff(self.origin.y) > SCENE_COLLISION_ORIGIN_DISTANCE_MAXIMUM
+            || center.x.abs_diff(self.origin.x) > COLLISION_ORIGIN_DISTANCE_MAXIMUM
+            || center.y.abs_diff(self.origin.y) > COLLISION_ORIGIN_DISTANCE_MAXIMUM
         { self.simulate_collisions_move_origin(center); }
         self.simulate_collisions_apply_cellular_tiles(active_region, cellular_tiles);
         self.ring_offset = ring_offset;
@@ -183,12 +183,12 @@ impl SceneCollision {
     fn simulate_collisions_apply_cellular_tiles(
         &mut self,
         active_region: CellularTileRegion,
-        cellular_tiles: Vec<SceneCollisionCellularTile>,
+        cellular_tiles: Vec<CollisionCellularTile>,
     ) {
         let mut cell_changes: Vec<(rapier2d::parry::math::IVector, bool)> = Vec::new();
         let previous_cellular_tiles: Option<(
             CellularTileRegion,
-            Vec<SceneCollisionCellularTile>,
+            Vec<CollisionCellularTile>,
         )> = self.cellular_tiles.take();
         // compare every previous tile with its current occupancy, which is empty once it leaves
         if let Some((previous_region, previous_tiles)) = &previous_cellular_tiles {
@@ -349,7 +349,7 @@ impl SceneCollision {
                 .copied()
                 .filter(|_| {
                     collision.as_ref()
-                        .is_some_and(|collision| collision.body == SceneCollisionBody::Kinematic)
+                        .is_some_and(|collision| collision.body == CollisionBody::Kinematic)
                 });
             if let Some(pawn_movement) = pawn_movement {
                 let pawn_control: ActorPawnControlComponent = actor_registry
@@ -514,9 +514,9 @@ impl SceneCollision {
         // actors with only a contact are kinematic
         let rigid_body_type: rapier2d::dynamics::RigidBodyType =
             match collision.as_ref().map(|collision| collision.body) {
-                Some(SceneCollisionBody::Fixed) => rapier2d::dynamics::RigidBodyType::Fixed,
-                Some(SceneCollisionBody::Dynamic) => rapier2d::dynamics::RigidBodyType::Dynamic,
-                Some(SceneCollisionBody::Kinematic) | None =>
+                Some(CollisionBody::Fixed) => rapier2d::dynamics::RigidBodyType::Fixed,
+                Some(CollisionBody::Dynamic) => rapier2d::dynamics::RigidBodyType::Dynamic,
+                Some(CollisionBody::Kinematic) | None =>
                     rapier2d::dynamics::RigidBodyType::KinematicPositionBased,
             };
         let rigid_body_handle: rapier2d::dynamics::RigidBodyHandle =
@@ -615,17 +615,17 @@ impl SceneCollision {
     fn simulate_collisions_insert_collider(
         &mut self,
         rigid_body_handle: rapier2d::dynamics::RigidBodyHandle,
-        collider: &SceneCollider,
+        collider: &Collider,
         memberships: u32,
         filter: u32,
         is_sensor: bool,
     ) -> rapier2d::geometry::ColliderHandle {
         let shape: rapier2d::geometry::SharedShape = match collider.shape {
-            SceneColliderShape::Circle { radius } =>
+            ColliderShape::Circle { radius } =>
                 rapier2d::geometry::SharedShape::ball(radius),
-            SceneColliderShape::Rectangle { width, height } =>
+            ColliderShape::Rectangle { width, height } =>
                 rapier2d::geometry::SharedShape::cuboid(width / 2.0, height / 2.0),
-            SceneColliderShape::Capsule { width, height } =>
+            ColliderShape::Capsule { width, height } =>
                 rapier2d::geometry::SharedShape::capsule_y((height - width) / 2.0, width / 2.0),
         };
         // contact sensors sense every body type, including fixed and kinematic ones
@@ -658,17 +658,17 @@ impl SceneCollision {
     /// Returns the bounds of a collider on an actor, rejecting invalid dimensions
     fn simulate_collisions_collider_bounds(
         actor: Actor,
-        collider: &SceneCollider,
+        collider: &Collider,
         translation: rapier2d::math::Vector,
     ) -> Result<rapier2d::parry::bounding_volume::Aabb, SceneError> {
         let is_valid: bool = collider.offset_x.is_finite()
             && collider.offset_y.is_finite()
             && collider.rotation.is_finite()
             && match collider.shape {
-                SceneColliderShape::Circle { radius } => radius.is_finite() && radius > 0.0,
-                SceneColliderShape::Rectangle { width, height } =>
+                ColliderShape::Circle { radius } => radius.is_finite() && radius > 0.0,
+                ColliderShape::Rectangle { width, height } =>
                     width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0,
-                SceneColliderShape::Capsule { width, height } =>
+                ColliderShape::Capsule { width, height } =>
                     width.is_finite() && height.is_finite() && width > 0.0 && height >= width,
             };
         if !is_valid { return Err(SceneError::InvalidCollider { actor }); }
@@ -677,19 +677,19 @@ impl SceneCollision {
             collider.rotation,
         );
         Ok(match collider.shape {
-            SceneColliderShape::Circle { radius } =>
+            ColliderShape::Circle { radius } =>
                 rapier2d::parry::shape::Shape::compute_aabb(
                     &rapier2d::parry::shape::Ball::new(radius),
                     &pose,
                 ),
-            SceneColliderShape::Rectangle { width, height } =>
+            ColliderShape::Rectangle { width, height } =>
                 rapier2d::parry::shape::Shape::compute_aabb(
                     &rapier2d::parry::shape::Cuboid::new(
                         rapier2d::math::Vector::new(width / 2.0, height / 2.0),
                     ),
                     &pose,
                 ),
-            SceneColliderShape::Capsule { width, height } =>
+            ColliderShape::Capsule { width, height } =>
                 rapier2d::parry::shape::Shape::compute_aabb(
                     &rapier2d::parry::shape::Capsule::new_y((height - width) / 2.0, width / 2.0),
                     &pose,

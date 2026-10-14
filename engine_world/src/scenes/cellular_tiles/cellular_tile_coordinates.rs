@@ -1,7 +1,7 @@
 // Copyright Rob Gage 2026
 
 use super::CELLULAR_TILE_SIZE;
-use crate::chunks::{
+use crate::scenes::chunks::{
     ChunkCoordinates,
     CHUNK_SIZE,
 };

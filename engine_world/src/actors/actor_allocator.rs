@@ -4,7 +4,7 @@ use super::{
     actor::Actor,
     actor_error::ActorError,
 };
-use crate::actor_components::ActorIdentityComponent;
+use super::components::ActorIdentityComponent;
 use bevy_ecs::{
     entity::Entity,
     resource::Resource,

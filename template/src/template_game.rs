@@ -2,17 +2,18 @@
 
 use crate::template_scene_generator::TemplateSceneGenerator;
 use engine::{
-    actor_components::{
-        ActorCameraComponent,
-        ActorCollisionComponent,
-        ActorKinematicsPositionComponent,
-        ActorPawnMovementComponent,
-        ActorPawnPossessionComponent,
-        ActorPersistenceComponent,
-        ActorSpritesComponent,
+    actors::{
+        components::{
+            ActorCameraComponent,
+            ActorCollisionComponent,
+            ActorKinematicsPositionComponent,
+            ActorPawnMovementComponent,
+            ActorPawnPossessionComponent,
+            ActorPersistenceComponent,
+            ActorSpritesComponent,
+        },
+        Actor,
     },
-    actors::Actor,
-    chunks::ChunkData,
     games::Game,
     materials::{
         Material,
@@ -21,10 +22,13 @@ use engine::{
         MaterialRegistry,
     },
     scenes::{
+        chunks::ChunkData,
+        collisions::{
+            Collider,
+            ColliderShape,
+            CollisionBody,
+        },
         Scene,
-        SceneCollider,
-        SceneColliderShape,
-        SceneCollisionBody,
         ScenePosition,
     },
     runtime::EngineError,
@@ -91,9 +95,9 @@ impl TemplateGame {
                 )],
             },
             ActorCollisionComponent {
-                body: SceneCollisionBody::Kinematic,
-                collider: SceneCollider {
-                    shape: SceneColliderShape::Circle { radius: 0.5 },
+                body: CollisionBody::Kinematic,
+                collider: Collider {
+                    shape: ColliderShape::Circle { radius: 0.5 },
                     offset_x: 0.0,
                     offset_y: 0.0,
                     rotation: 0.0,

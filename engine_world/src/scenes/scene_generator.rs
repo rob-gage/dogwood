@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-use crate::chunks::{
+use super::chunks::{
     Chunk,
     ChunkCoordinates,
 };

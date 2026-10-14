@@ -1,8 +1,8 @@
 // Copyright Rob Gage 2026
 
-/// Geometry of a `SceneCollider` centered on its offset, measured in tiles
+/// Geometry of a `Collider` centered on its offset, measured in tiles
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub enum SceneColliderShape {
+pub enum ColliderShape {
     /// A circle
     Circle {
         /// Radius of the circle
