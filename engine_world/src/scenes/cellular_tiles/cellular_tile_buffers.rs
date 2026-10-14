@@ -5,6 +5,8 @@ use engine_host::acceleration::Accelerator;
 
 /// GPU storage for every cellular tile property, with tiles stored contiguously
 pub struct CellularTileBuffers {
+    /// Accelerator owning these buffers, kept so a dropped scene can return its tiles
+    accelerator: Accelerator,
     /// Tile-major material identifiers with one `u32` per row-major cell
     material_identifier_buffer: wgpu::Buffer,
     /// Tile-major packed RGBA colors with one `u32` per row-major cell
@@ -34,8 +36,15 @@ impl CellularTileBuffers {
                 usage,
                 mapped_at_creation: false,
             });
-        Self { material_identifier_buffer: material_identifiers, color_buffer: colors }
+        Self {
+            accelerator: accelerator.clone(),
+            material_identifier_buffer: material_identifiers,
+            color_buffer: colors,
+        }
     }
+
+    /// Returns the accelerator owning these buffers
+    pub fn accelerator(&self) -> &Accelerator { &self.accelerator }
 
     /// Returns the material identifier buffer
     pub fn material_identifier_buffer(&self) -> &wgpu::Buffer { &self.material_identifier_buffer }

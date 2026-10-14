@@ -24,7 +24,7 @@ use crate::{
 };
 use engine_host::acceleration::Accelerator;
 use std::{
-    collections::HashMap,
+    collections::BTreeMap,
     slice::ChunksExact,
     sync::mpsc::{
         Receiver,
@@ -53,10 +53,14 @@ pub struct CellularTileStreamingState {
     chunk_region_index: Option<ChunkRegionIndex>,
     /// Retained chunk region covering every chunk overlapped by the requested region
     requested_chunk_region_index: Option<ChunkRegionIndex>,
-    /// Outgoing tile streaming requests awaiting application to their retained chunks
-    streaming_requests: HashMap<u64, CellularTileStreamingRequest>,
+    /// Outgoing tile streaming requests awaiting application to their chunks in request order
+    streaming_requests: BTreeMap<u64, CellularTileStreamingRequest>,
     /// Next identifier assigned to a streaming request
     next_streaming_request_identifier: u64,
+    /// Whether every active tile must be returned to its chunk before the chunks are saved
+    is_save_requested: bool,
+    /// Streaming request returning every active tile for a requested save
+    save_streaming_request_identifier: Option<u64>,
     /// Sender for staging buffer mapping responses
     response_sender: Sender<CellularTileStreamingResponse>,
     /// Mapping responses incorporated during tile streaming
@@ -92,8 +96,10 @@ impl CellularTileStreamingState {
             ring_offset_y: 0,
             chunk_region_index: None,
             requested_chunk_region_index: None,
-            streaming_requests: HashMap::new(),
+            streaming_requests: BTreeMap::new(),
             next_streaming_request_identifier: 1,
+            is_save_requested: false,
+            save_streaming_request_identifier: None,
             response_sender,
             response_receiver,
         };
@@ -122,6 +128,14 @@ impl CellularTileStreamingState {
     /// Returns whether the requested region is resident and active
     pub fn is_cellular_tile_region_active(&self) -> bool {
         self.active_region == Some(self.active_region_requested)
+    }
+
+    /// Requests that every active tile be returned to its chunk and every dirty chunk be saved
+    pub fn save_cellular_tiles(&mut self) { self.is_save_requested = true; }
+
+    /// Returns whether a requested save has not yet returned every active tile to its chunk
+    pub fn is_cellular_tile_save_requested(&self) -> bool {
+        self.is_save_requested || self.save_streaming_request_identifier.is_some()
     }
 
     /// Returns the resident active region, or `None` before the first request is resident
@@ -194,6 +208,29 @@ impl CellularTileStreamingState {
             .map_err(|_| SceneError::CellularTileStreamingPoll)?;
         let response_result: Result<(), SceneError> =
             self.stream_cellular_tiles_apply_responses(chunk_streaming_state);
+        // save the chunks once every tile returned for a requested save has reached them
+        if let Some(streaming_request_identifier) = self.save_streaming_request_identifier
+            && !self.streaming_requests.contains_key(&streaming_request_identifier)
+        {
+            self.save_streaming_request_identifier = None;
+            chunk_streaming_state.save_chunks();
+        }
+        // return every active tile for a requested save while keeping its chunks retained
+        if self.is_save_requested {
+            self.is_save_requested = false;
+            match self.active_region {
+                Some(active_region) => {
+                    self.save_streaming_request_identifier =
+                        Some(self.stream_cellular_tiles_request_return(
+                            accelerator,
+                            cellular_tile_buffers,
+                            active_region.cellular_tile_coordinates().collect(),
+                            None,
+                        ));
+                }
+                None => chunk_streaming_state.save_chunks(),
+            }
+        }
         // move the ring once the requested region's chunks are active
         self.stream_cellular_tiles_shift(
             accelerator,
@@ -222,14 +259,15 @@ impl CellularTileStreamingState {
                 }
             }
         }
-        // apply each mapped response only when all of its destination chunks are active
+        // apply mapped responses in request order so an older copy never overwrites a newer one,
+        // each only when all of its destination chunks are active
         let mut applied_streaming_request_identifiers: Vec<u64> = Vec::new();
         for (streaming_request_identifier, streaming_request) in &self.streaming_requests {
             if !streaming_request.is_response_ready
                 || !streaming_request.coordinates.iter().all(|coordinates| {
                     chunk_streaming_state.is_chunk_active(coordinates.chunk_coordinates())
                 })
-            { continue; }
+            { break; }
             {
                 let mapped_bytes: wgpu::BufferView = streaming_request.buffer
                     .get_mapped_range(..)
@@ -421,14 +459,14 @@ impl CellularTileStreamingState {
         Ok(())
     }
 
-    /// Copies departing tiles into a new staging buffer and requests their response
+    /// Copies tiles into a new staging buffer, requests their response, and returns its identifier
     fn stream_cellular_tiles_request_return(
         &mut self,
         accelerator: &Accelerator,
         cellular_tile_buffers: &CellularTileBuffers,
         coordinates: Vec<CellularTileCoordinates>,
         chunk_region_index: Option<ChunkRegionIndex>,
-    ) {
+    ) -> u64 {
         let buffer: wgpu::Buffer = accelerator.device().create_buffer(&wgpu::BufferDescriptor {
             label: Some("Scene cellular tile streaming request"),
             size: coordinates.len() as u64 * CELLULAR_TILE_BYTE_COUNT * 2,
@@ -479,6 +517,7 @@ impl CellularTileStreamingState {
             &self.response_sender,
         );
         self.streaming_requests.insert(streaming_request_identifier, streaming_request);
+        streaming_request_identifier
     }
 
     /// Asks WGPU to send a response once the staging buffer is readable by the CPU

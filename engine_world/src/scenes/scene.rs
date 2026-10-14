@@ -13,6 +13,11 @@ use super::{
         ChunkStreamingState,
     },
     collisions::Collision,
+    edits::{
+        Edit,
+        EditError,
+        EditStreamingState,
+    },
     scene_error::SceneError,
     scene_generator::SceneGenerator,
     scene_position::ScenePosition,
@@ -55,6 +60,8 @@ pub struct Scene {
     cellular_tile_streaming_state: Option<CellularTileStreamingState>,
     /// Rapier simulation of actors against the active cellular tiles, absent until simulated
     collision: Option<Collision>,
+    /// Requested edits awaiting their write into the GPU-resident cellular tiles
+    edit_streaming_state: EditStreamingState,
     /// Downward acceleration of dynamic bodies and pawns in tiles per second squared
     gravity: f32,
     /// ECS world and fixed-tick systems of every live actor
@@ -82,6 +89,7 @@ impl Scene {
             cellular_tile_buffers: None,
             cellular_tile_streaming_state: None,
             collision: None,
+            edit_streaming_state: EditStreamingState::new(),
             gravity: SCENE_GRAVITY_DEFAULT,
             actor_registry: ActorRegistry::new(),
             material_table,
@@ -98,6 +106,34 @@ impl Scene {
 
     /// Returns the compiled materials of this scene
     pub fn material_table(&self) -> &MaterialTable { &self.material_table }
+
+    /// Returns the resident active region, or `None` before it streams
+    pub fn active_cellular_tile_region(&self) -> Option<CellularTileRegion> {
+        self.cellular_tile_streaming_state.as_ref()?.active_cellular_tile_region()
+    }
+
+    /// Requests an edit of resident cells, written before the next stream moves resident tiles
+    pub fn edit(&mut self, edit: Edit) -> Result<(), EditError> {
+        let active_region: Option<CellularTileRegion> = self.active_cellular_tile_region();
+        self.edit_streaming_state.request_edit(edit, &self.material_table, active_region)
+    }
+
+    /// Requests that every edit be saved without unloading the resident tiles
+    pub fn save(&mut self) {
+        if let Some(cellular_tile_streaming_state) = self.cellular_tile_streaming_state.as_mut() {
+            cellular_tile_streaming_state.save_cellular_tiles();
+        } else if let Some(chunk_streaming_state) = self.chunk_streaming_state.as_mut() {
+            chunk_streaming_state.save_chunks();
+        }
+    }
+
+    /// Returns whether every requested save has completed
+    pub fn is_saved(&self) -> bool {
+        !self.cellular_tile_streaming_state.as_ref()
+            .is_some_and(|state| state.is_cellular_tile_save_requested())
+            && !self.chunk_streaming_state.as_ref()
+                .is_some_and(|state| state.is_chunk_save_requested())
+    }
 
     /// Streams chunks and the cellular tiles around a camera actor without waiting
     pub fn stream(
@@ -151,6 +187,16 @@ impl Scene {
                     region,
                 )?);
             }
+        }
+        // write requested edits before streaming can move the tiles they were requested for
+        if let Some(cellular_tile_streaming_state) = self.cellular_tile_streaming_state.as_ref() {
+            self.edit_streaming_state.stream_edits(
+                accelerator,
+                cellular_tile_buffers,
+                cellular_tile_streaming_state,
+                &self.actor_registry,
+                self.collision.as_mut(),
+            )?;
         }
         // advance chunk streaming before moving resident tiles
         chunk_streaming_state.stream_chunks(&self.generator, self.world_seed)?;
@@ -272,6 +318,40 @@ impl Scene {
             ring_offset_y,
             cellular_tile_size: CELLULAR_TILE_SIZE as u32,
         })
+    }
+
+}
+
+impl Drop for Scene {
+
+    fn drop(&mut self) {
+        // write requested edits and return every active tile so the dropped chunks save them
+        let (
+            Some(chunk_streaming_state),
+            Some(cellular_tile_buffers),
+            Some(cellular_tile_streaming_state),
+        ) = (
+            self.chunk_streaming_state.as_mut(),
+            self.cellular_tile_buffers.as_ref(),
+            self.cellular_tile_streaming_state.as_mut(),
+        ) else { return; };
+        let accelerator: &Accelerator = cellular_tile_buffers.accelerator();
+        let result: Result<(), SceneError> = self.edit_streaming_state
+            .stream_edits(
+                accelerator,
+                cellular_tile_buffers,
+                cellular_tile_streaming_state,
+                &self.actor_registry,
+                None,
+            )
+            .and_then(|()| cellular_tile_streaming_state.return_cellular_tiles(
+                accelerator,
+                cellular_tile_buffers,
+                chunk_streaming_state,
+            ));
+        if let Err(error) = result {
+            panic!("Scene cellular tiles could not be returned: {error:?}");
+        }
     }
 
 }

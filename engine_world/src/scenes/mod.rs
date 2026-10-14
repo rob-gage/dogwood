@@ -3,6 +3,7 @@
 pub mod cellular_tiles;
 pub mod chunks;
 pub mod collisions;
+pub mod edits;
 mod scene;
 mod scene_error;
 mod scene_generator;
