@@ -9,6 +9,14 @@ use engine_graphics::{
     renders::SceneRenderer,
     world::scenes::SceneGraphics,
 };
+use engine_world::{
+    actor_components::{
+        ActorIdentityComponent,
+        ActorPawnControlComponent,
+        ActorPawnPossessionComponent,
+    },
+    actors::Actor,
+};
 use engine_host::{
     acceleration::Accelerator,
     processors::Processor,
@@ -24,9 +32,11 @@ use engine_host::{
 };
 use std::{
     cell::{
+        Ref,
         RefCell,
         RefMut,
     },
+    collections::HashSet,
     time::Duration,
 };
 
@@ -63,12 +73,22 @@ impl Engine {
         let (engine, mut game): (Engine, G) = game_instance.into_parts();
         let window_configuration: WindowConfiguration = game.window_configuration();
         let shared_game: RefCell<&mut G> = RefCell::new(&mut game);
+        // held keys survive between fixed updates and are released when focus is lost
+        let held_keys: RefCell<HashSet<winit::keyboard::KeyCode>> = RefCell::new(HashSet::new());
         let mut window_event_handler: Box<dyn FnMut(SystemWindowEvent)> =
             Box::new(|event: SystemWindowEvent| {
+                if let SystemWindowEvent::FocusReleased = event { held_keys.borrow_mut().clear(); }
                 shared_game.borrow_mut().window_event(event);
             });
         let mut keyboard_event_handler: Box<dyn FnMut(SystemKeyboardEvent)> =
             Box::new(|event: SystemKeyboardEvent| {
+                if let winit::keyboard::PhysicalKey::Code(key_code) = event.physical_key {
+                    if event.pressed {
+                        held_keys.borrow_mut().insert(key_code);
+                    } else {
+                        held_keys.borrow_mut().remove(&key_code);
+                    }
+                }
                 shared_game.borrow_mut().keyboard_event(event);
             });
         let mut mouse_event_handler: Box<dyn FnMut(SystemMouseEvent)> =
@@ -78,6 +98,40 @@ impl Engine {
         let mut update_handler: Box<dyn FnMut(Duration)> =
             Box::new(|elapsed_time: Duration| {
                 let mut game: RefMut<'_, &mut G> = shared_game.borrow_mut();
+                // the keyboard controls possessed pawns before the game updates them
+                if let Some((scene, _)) = game.scene() {
+                    let held_keys: Ref<'_, HashSet<winit::keyboard::KeyCode>> = held_keys.borrow();
+                    let is_held = |key_codes: [winit::keyboard::KeyCode; 2]| -> bool {
+                        key_codes.iter().any(|key_code| held_keys.contains(key_code))
+                    };
+                    let left: bool = is_held([
+                        winit::keyboard::KeyCode::KeyA,
+                        winit::keyboard::KeyCode::ArrowLeft,
+                    ]);
+                    let right: bool = is_held([
+                        winit::keyboard::KeyCode::KeyD,
+                        winit::keyboard::KeyCode::ArrowRight,
+                    ]);
+                    let pawn_control: ActorPawnControlComponent = ActorPawnControlComponent {
+                        movement: f32::from(right as u8) - f32::from(left as u8),
+                        is_jumping: is_held([
+                            winit::keyboard::KeyCode::KeyW,
+                            winit::keyboard::KeyCode::ArrowUp,
+                        ]),
+                        is_crouching: is_held([
+                            winit::keyboard::KeyCode::KeyS,
+                            winit::keyboard::KeyCode::ArrowDown,
+                        ]),
+                    };
+                    let possessed_actors: Vec<Actor> = scene.actor_registry_mutable()
+                        .components::<ActorIdentityComponent, ActorPawnPossessionComponent>()
+                        .map(|(actor_identity, _)| actor_identity.actor())
+                        .collect();
+                    for actor in possessed_actors {
+                        scene.actor_registry_mutable().insert(actor, pawn_control)
+                            .unwrap_or_else(|error| panic!("Pawn possession failed: {error:?}"));
+                    }
+                }
                 game.update(elapsed_time);
                 let Some((scene, camera_actor)) = game.scene() else { return; };
                 scene.stream(engine.accelerator(), engine.processor(), camera_actor)
@@ -110,5 +164,12 @@ impl Engine {
             maximum_accumulated_time,
         ).map_err(EngineError::from)
     }
+
+}
+
+impl Default for Engine {
+
+    /// Creates an engine with the default accelerator and processor, panicking if either fails
+    fn default() -> Self { Self::new(Accelerator::default(), Processor::default()) }
 
 }

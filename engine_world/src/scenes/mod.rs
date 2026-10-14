@@ -45,5 +45,8 @@ const SCENE_CHUNK_SAVE_ATTEMPT_COUNT_MAXIMUM: usize = 3;
 /// Maximum cellular tile streaming requests awaiting application to chunks
 const SCENE_CELLULAR_TILE_STREAMING_REQUEST_COUNT_MAXIMUM: usize = 4;
 
+/// Downward acceleration of dynamic bodies and pawns in tiles per second squared
+const SCENE_GRAVITY_DEFAULT: f32 = 50.0;
+
 /// Name of the processor thread pool running chunk loads, generation, and saves
 const SCENE_CHUNK_THREAD_POOL_NAME: &str = "chunk_io";

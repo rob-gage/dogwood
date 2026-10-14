@@ -8,6 +8,7 @@ use super::{
     scene_generator::SceneGenerator,
     scene_position::ScenePosition,
     SCENE_CHUNK_THREAD_POOL_NAME,
+    SCENE_GRAVITY_DEFAULT,
 };
 use crate::{
     actor_components::{
@@ -52,6 +53,8 @@ pub struct Scene {
     cellular_tile_streaming_state: Option<SceneCellularTileStreamingState>,
     /// Rapier simulation of actors against the active cellular tiles, absent until simulated
     collision: Option<SceneCollision>,
+    /// Downward acceleration of dynamic bodies and pawns in tiles per second squared
+    gravity: f32,
     /// ECS world and fixed-tick systems of every live actor
     actor_registry: ActorRegistry,
     /// Materials of every cell in this scene
@@ -77,6 +80,7 @@ impl Scene {
             cellular_tile_buffers: None,
             cellular_tile_streaming_state: None,
             collision: None,
+            gravity: SCENE_GRAVITY_DEFAULT,
             actor_registry: ActorRegistry::new(),
             material_table,
             generator,
@@ -86,6 +90,9 @@ impl Scene {
 
     /// Returns the actors of this scene for modification
     pub fn actor_registry_mutable(&mut self) -> &mut ActorRegistry { &mut self.actor_registry }
+
+    /// Sets the downward acceleration of dynamic bodies and pawns in tiles per second squared
+    pub fn set_gravity(&mut self, gravity: f32) { self.gravity = gravity; }
 
     /// Returns the compiled materials of this scene
     pub fn material_table(&self) -> &MaterialTable { &self.material_table }
@@ -171,6 +178,7 @@ impl Scene {
                 accelerator,
                 active_region,
                 cellular_tile_streaming_state.cellular_tile_ring_offset(),
+                self.gravity,
                 &mut self.actor_registry,
             )
     }

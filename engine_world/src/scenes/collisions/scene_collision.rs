@@ -14,6 +14,8 @@ use crate::{
         ActorContactComponent,
         ActorIdentityComponent,
         ActorKinematicsPositionComponent,
+        ActorPawnControlComponent,
+        ActorPawnMovementComponent,
         ActorPersistenceComponent,
     },
     actors::{
@@ -51,14 +53,17 @@ pub struct SceneCollision {
     solid_cell_count: u64,
     /// Fixed voxel collider of every solid cell in the active region, absent while none are solid
     cellular_tile_collider: Option<rapier2d::geometry::ColliderHandle>,
-    /// Body, collision and contact colliders, exact position, and body translation of each actor
+    /// Body, colliders, position, translation, and pawn velocity, grounding, and held jump
     actors: HashMap<Actor, (
         rapier2d::dynamics::RigidBodyHandle,
         Option<(rapier2d::geometry::ColliderHandle, ActorCollisionComponent)>,
         Option<(rapier2d::geometry::ColliderHandle, ActorContactComponent)>,
         ScenePosition,
         rapier2d::math::Vector,
+        Option<(rapier2d::math::Vector, bool, bool)>,
     )>,
+    /// Character controller moving every pawn against the colliders it collides with
+    pawn_movement_controller: rapier2d::control::KinematicCharacterController,
     /// GPU extraction of active cellular tile occupancies
     cellular_tile_pass: SceneCollisionCellularTilePass,
     /// Rigid bodies of every simulated actor
@@ -94,6 +99,14 @@ impl SceneCollision {
             solid_cell_count: 0,
             cellular_tile_collider: None,
             actors: HashMap::new(),
+            // round pawns roll over steps lower than their radius, so taller ledges are walls
+            pawn_movement_controller: rapier2d::control::KinematicCharacterController {
+                offset: rapier2d::control::CharacterLength::Absolute(0.01),
+                max_slope_climb_angle: 50.0_f32.to_radians(),
+                min_slope_slide_angle: 50.0_f32.to_radians(),
+                snap_to_ground: Some(rapier2d::control::CharacterLength::Absolute(0.2)),
+                ..rapier2d::control::KinematicCharacterController::default()
+            },
             cellular_tile_pass: SceneCollisionCellularTilePass::new(
                 accelerator,
                 cellular_tile_buffers,
@@ -117,12 +130,13 @@ impl SceneCollision {
         accelerator: &Accelerator,
         active_region: CellularTileRegion,
         ring_offset: (u32, u32),
+        gravity: f32,
         actor_registry: &mut ActorRegistry,
     ) -> Result<(), SceneError> {
         // GPU cells only change when streaming moves the ring, so an unmoved ring needs no readback
         if self.cellular_tiles.as_ref().is_some_and(|(region, _)| *region == active_region)
             && self.ring_offset == ring_offset
-        { return self.simulate_collisions_step_actors(active_region, actor_registry); }
+        { return self.simulate_collisions_step_actors(active_region, gravity, actor_registry); }
         // read this tick's GPU occupancy before simulating against it
         let cellular_tiles: Vec<SceneCollisionCellularTile> = self.cellular_tile_pass
             .read_cellular_tiles(accelerator, active_region, ring_offset)?;
@@ -137,7 +151,7 @@ impl SceneCollision {
         { self.simulate_collisions_move_origin(center); }
         self.simulate_collisions_apply_cellular_tiles(active_region, cellular_tiles);
         self.ring_offset = ring_offset;
-        self.simulate_collisions_step_actors(active_region, actor_registry)
+        self.simulate_collisions_step_actors(active_region, gravity, actor_registry)
     }
 
     /// Moves the origin, removing the cellular tile collider and re-placing every body
@@ -154,7 +168,7 @@ impl SceneCollision {
         self.cellular_tiles = None;
         self.solid_cell_count = 0;
         // derive each translation from its exact position so moving the origin never drifts
-        for (rigid_body_handle, _, _, position, translation) in self.actors.values_mut() {
+        for (rigid_body_handle, _, _, position, translation, _) in self.actors.values_mut() {
             *translation = Self::rapier_translation(origin, *position);
             if let Some(rigid_body) = self.rigid_bodies.get_mut(*rigid_body_handle) {
                 rigid_body.set_translation(*translation, true);
@@ -280,6 +294,7 @@ impl SceneCollision {
     fn simulate_collisions_step_actors(
         &mut self,
         active_region: CellularTileRegion,
+        gravity: f32,
         actor_registry: &mut ActorRegistry,
     ) -> Result<(), SceneError> {
         let region_minimum: rapier2d::math::Vector = rapier2d::math::Vector::new(
@@ -296,6 +311,8 @@ impl SceneCollision {
             .collect();
         let mut exiting_actors: Vec<Actor> = Vec::new();
         let mut simulated_actors: HashSet<Actor> = HashSet::new();
+        let mut pawns: Vec<(Actor, ActorPawnMovementComponent, ActorPawnControlComponent)> =
+            Vec::new();
         for (actor, position) in actor_positions {
             let collision: Option<ActorCollisionComponent> = actor_registry
                 .component::<ActorCollisionComponent>(actor)
@@ -325,12 +342,29 @@ impl SceneCollision {
             }
             if collision.is_none() && contact.is_none() { continue; }
             simulated_actors.insert(actor);
+            // only kinematic actors with a collision collider are moved as pawns
+            let pawn_movement: Option<ActorPawnMovementComponent> = actor_registry
+                .component::<ActorPawnMovementComponent>(actor)
+                .ok()
+                .copied()
+                .filter(|_| {
+                    collision.as_ref()
+                        .is_some_and(|collision| collision.body == SceneCollisionBody::Kinematic)
+                });
+            if let Some(pawn_movement) = pawn_movement {
+                let pawn_control: ActorPawnControlComponent = actor_registry
+                    .component::<ActorPawnControlComponent>(actor)
+                    .copied()
+                    .unwrap_or_default();
+                pawns.push((actor, pawn_movement, pawn_control));
+            }
             self.simulate_collisions_update_actor(
                 actor,
                 position,
                 translation,
                 collision,
                 contact,
+                pawn_movement.is_some(),
             );
         }
         // remove the bodies of actors that despawned, exited, or lost both colliders
@@ -339,7 +373,7 @@ impl SceneCollision {
             .copied()
             .collect();
         for actor in removed_actors {
-            let Some((rigid_body_handle, _, _, _, _)) = self.actors.remove(&actor)
+            let Some((rigid_body_handle, _, _, _, _, _)) = self.actors.remove(&actor)
             else { continue; };
             self.rigid_bodies.remove(
                 rigid_body_handle,
@@ -356,9 +390,9 @@ impl SceneCollision {
             actor_registry.despawn(actor)
                 .map_err(|error: ActorError| SceneError::ActorDespawn { error })?;
         }
-        // gravity stays zero until a gravity system exists
+        self.simulate_collisions_move_pawns(&pawns, gravity);
         self.physics_pipeline.step(
-            rapier2d::math::Vector::ZERO,
+            rapier2d::math::Vector::new(0.0, -gravity),
             &self.integration_parameters,
             &mut self.island_manager,
             &mut self.broad_phase,
@@ -371,11 +405,11 @@ impl SceneCollision {
             &(),
             &(),
         );
-        // write the exact positions of dynamic bodies that moved back to their actors
+        // write the exact positions of dynamic bodies and pawns that moved back to their actors
         let origin: CellularTileCoordinates = self.origin;
-        for (actor, (rigid_body_handle, _, _, position, translation)) in &mut self.actors {
+        for (actor, (rigid_body_handle, _, _, position, translation, _)) in &mut self.actors {
             let Some(rigid_body) = self.rigid_bodies.get(*rigid_body_handle) else { continue; };
-            if !rigid_body.is_dynamic() || rigid_body.translation() == *translation { continue; }
+            if rigid_body.translation() == *translation { continue; }
             *translation = rigid_body.translation();
             let x: f64 = f64::from(translation.x);
             let y: f64 = f64::from(translation.y);
@@ -392,6 +426,81 @@ impl SceneCollision {
         Ok(())
     }
 
+    /// Moves every pawn by its controlled velocity and gravity with the character controller
+    fn simulate_collisions_move_pawns(
+        &mut self,
+        pawns: &[(Actor, ActorPawnMovementComponent, ActorPawnControlComponent)],
+        gravity: f32,
+    ) {
+        let time_step: f32 = self.integration_parameters.dt;
+        for (actor, pawn_movement, pawn_control) in pawns {
+            let Some((rigid_body_handle, Some((collider_handle, _)), _, _, _, Some(pawn))) =
+                self.actors.get_mut(actor)
+            else { continue; };
+            let (velocity, is_grounded, is_jump_held): &mut (rapier2d::math::Vector, bool, bool) =
+                pawn;
+            let (Some(rigid_body), Some(collider)) = (
+                self.rigid_bodies.get(*rigid_body_handle),
+                self.colliders.get(*collider_handle),
+            ) else { continue; };
+            // approach the controlled speed, jumping once per press while grounded
+            let speed: f32 = if pawn_control.is_crouching {
+                pawn_movement.crouching_speed
+            } else {
+                pawn_movement.speed
+            };
+            let target_velocity_x: f32 = pawn_control.movement.clamp(-1.0, 1.0) * speed;
+            let velocity_change: f32 = pawn_movement.acceleration * time_step;
+            velocity.x += (target_velocity_x - velocity.x).clamp(-velocity_change, velocity_change);
+            if pawn_control.is_jumping && !*is_jump_held && *is_grounded {
+                velocity.y = pawn_movement.jump_speed;
+            }
+            *is_jump_held = pawn_control.is_jumping;
+            // grounded pawns rest on the ground instead of pressing into it
+            if *is_grounded && velocity.y <= 0.0 {
+                velocity.y = 0.0;
+            } else {
+                velocity.y -= gravity * time_step;
+            }
+            // cast from the body's next pose so gameplay placement this tick is respected
+            let collider_pose: rapier2d::math::Pose = *rigid_body.next_position()
+                * collider.position_wrt_parent().copied().unwrap_or_default();
+            let desired_translation: rapier2d::math::Vector = *velocity * time_step;
+            let mut resolved_velocity: rapier2d::math::Vector = *velocity;
+            let movement: rapier2d::control::EffectiveCharacterMovement =
+                self.pawn_movement_controller.move_shape(
+                    time_step,
+                    &self.broad_phase.as_query_pipeline(
+                        self.narrow_phase.query_dispatcher(),
+                        &self.rigid_bodies,
+                        &self.colliders,
+                        rapier2d::pipeline::QueryFilter::default()
+                            .exclude_rigid_body(*rigid_body_handle)
+                            .exclude_sensors()
+                            .groups(collider.collision_groups()),
+                    ),
+                    collider.shape(),
+                    &collider_pose,
+                    desired_translation,
+                    // each surface hit removes only the velocity pushing into it
+                    |character_collision: rapier2d::control::CharacterCollision| {
+                        let normal: rapier2d::math::Vector = character_collision.hit.normal1;
+                        let approach_speed: f32 = resolved_velocity.dot(normal);
+                        if approach_speed < 0.0 { resolved_velocity -= normal * approach_speed; }
+                    },
+                );
+            // snapping to the ground stops a fall without reporting a hit
+            if movement.grounded && resolved_velocity.y < 0.0 { resolved_velocity.y = 0.0; }
+            *velocity = resolved_velocity;
+            *is_grounded = movement.grounded;
+            let next_translation: rapier2d::math::Vector =
+                rigid_body.next_position().translation + movement.translation;
+            if let Some(rigid_body) = self.rigid_bodies.get_mut(*rigid_body_handle) {
+                rigid_body.set_next_kinematic_translation(next_translation);
+            }
+        }
+    }
+
     /// Creates or updates an actor's body and replaces colliders whose components changed
     fn simulate_collisions_update_actor(
         &mut self,
@@ -400,6 +509,7 @@ impl SceneCollision {
         translation: rapier2d::math::Vector,
         collision: Option<ActorCollisionComponent>,
         contact: Option<ActorContactComponent>,
+        is_pawn: bool,
     ) {
         // actors with only a contact are kinematic
         let rigid_body_type: rapier2d::dynamics::RigidBodyType =
@@ -421,20 +531,30 @@ impl SceneCollision {
                             .build();
                     let rigid_body_handle: rapier2d::dynamics::RigidBodyHandle =
                         self.rigid_bodies.insert(rigid_body);
-                    entry.insert((rigid_body_handle, None, None, position, translation)).0
+                    entry.insert((rigid_body_handle, None, None, position, translation, None)).0
                 }
             };
-        let Some((_, actor_collision, actor_contact, actor_position, actor_translation)) =
+        let Some((_, actor_collision, actor_contact, actor_position, actor_translation, pawn)) =
             self.actors.get_mut(&actor)
         else { return; };
+        // pawns start at rest and ungrounded
+        match (is_pawn, pawn.is_some()) {
+            (true, false) => *pawn = Some((rapier2d::math::Vector::ZERO, false, false)),
+            (false, true) => *pawn = None,
+            _ => {}
+        }
         if let Some(rigid_body) = self.rigid_bodies.get_mut(rigid_body_handle) {
             if rigid_body.body_type() != rigid_body_type {
                 rigid_body.set_body_type(rigid_body_type, true);
             }
-            // move the body where gameplay placed the actor since the last step
+            // move the body where gameplay placed the actor since the last step, at rest
             if *actor_position != position {
                 *actor_position = position;
                 *actor_translation = translation;
+                if let Some((velocity, is_grounded, _)) = pawn {
+                    *velocity = rapier2d::math::Vector::ZERO;
+                    *is_grounded = false;
+                }
                 if rigid_body.is_kinematic() {
                     rigid_body.set_next_kinematic_translation(translation);
                 } else {
@@ -472,7 +592,7 @@ impl SceneCollision {
                     collision.filter,
                     false,
                 );
-            if let Some((_, actor_collision, _, _, _)) = self.actors.get_mut(&actor) {
+            if let Some((_, actor_collision, _, _, _, _)) = self.actors.get_mut(&actor) {
                 *actor_collision = Some((collider_handle, collision));
             }
         }
@@ -485,7 +605,7 @@ impl SceneCollision {
                     contact.filter,
                     true,
                 );
-            if let Some((_, _, actor_contact, _, _)) = self.actors.get_mut(&actor) {
+            if let Some((_, _, actor_contact, _, _, _)) = self.actors.get_mut(&actor) {
                 *actor_contact = Some((collider_handle, contact));
             }
         }

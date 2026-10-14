@@ -1,14 +1,13 @@
 // Copyright Rob Gage 2026
 
-use crate::{
-    materials,
-    template_scene_generator::TemplateSceneGenerator,
-};
+use crate::template_scene_generator::TemplateSceneGenerator;
 use engine::{
     actor_components::{
         ActorCameraComponent,
         ActorCollisionComponent,
         ActorKinematicsPositionComponent,
+        ActorPawnMovementComponent,
+        ActorPawnPossessionComponent,
         ActorPersistenceComponent,
         ActorSpritesComponent,
     },
@@ -16,9 +15,10 @@ use engine::{
     chunks::ChunkData,
     games::Game,
     materials::{
+        Material,
         MaterialIdentifier,
+        MaterialPropertiesCellularStatic,
         MaterialRegistry,
-        MaterialTable,
     },
     scenes::{
         Scene,
@@ -27,89 +27,86 @@ use engine::{
         SceneCollisionBody,
         ScenePosition,
     },
+    runtime::EngineError,
     Accelerator,
+    MaterialGraphicsCellularStatic,
     SpriteSheet,
 };
 use std::{
-    collections::HashMap,
     path::PathBuf,
     sync::Arc,
 };
 
-/// Flat stone world viewed by an invisible camera above a white test actor
+/// Flat stone world explored by a white square player
 pub struct TemplateGame {
-    /// Scene holding the world and camera
+    /// Scene holding the world and player
     scene: Scene,
-    /// Invisible actor whose camera displays the scene
-    camera_actor: Actor,
+    /// Keyboard-controlled pawn whose camera displays the scene
+    player: Actor,
 }
 
 impl TemplateGame {
 
-    /// Creates the scene, its camera actor at the world origin, and a test actor above the stone
-    pub fn new(accelerator: &Accelerator) -> Self {
+    /// Creates the stone world and a player falling onto it from above
+    pub fn new(accelerator: &Accelerator) -> Result<Self, EngineError> {
         let mut material_registry: MaterialRegistry = MaterialRegistry::new();
-        let mut material_identifiers: HashMap<String, MaterialIdentifier> = HashMap::new();
-        for material in materials::definitions(accelerator) {
-            let material_name: String = String::from(material.name());
-            let identifier: MaterialIdentifier = material_registry
-                .register(material)
-                .unwrap_or_else(|error| {
-                    panic!("failed to register template material {material_name}: {error:?}")
-                });
-            material_identifiers.insert(material_name, identifier);
-        }
-        let stone: MaterialIdentifier = material_identifiers
-            .get("stone")
-            .copied()
-            .expect("template stone material must be registered");
-        let material_table: MaterialTable = material_registry
-            .compile(accelerator)
-            .unwrap_or_else(|error| {
-                panic!("failed to compile template materials: {error:?}")
-            });
+        let stone: MaterialIdentifier = material_registry.register(Material::CellularStatic {
+            name: String::from("stone"),
+            properties: MaterialPropertiesCellularStatic {
+                graphics: MaterialGraphicsCellularStatic {
+                    sprite_sheet: Arc::new(SpriteSheet::from_png(
+                        accelerator,
+                        include_bytes!("../assets/sprites/stone.png"),
+                        1,
+                        1,
+                    )?),
+                    frame: 0,
+                    width: 1.0,
+                    height: 1.0,
+                },
+            },
+        })?;
         let mut scene: Scene = Scene::new(
             ChunkData::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("world")),
-            material_table,
+            material_registry.compile(accelerator)?,
             Arc::new(TemplateSceneGenerator { stone }),
             0,
         );
-        let camera_actor: Actor = scene.actor_registry_mutable()
-            .spawn((
-                ActorCameraComponent { width: 80, height: 45, zoom: 1.0 },
-                ActorKinematicsPositionComponent::default(),
-                ActorPersistenceComponent,
-            ))
-            .unwrap();
         // a one-tile white square with a matching circular body
-        let white_sprite_sheet: Arc<SpriteSheet> = Arc::new(
-            SpriteSheet::from_rgba(accelerator, &[255; 8 * 8 * 4], 8, 8, 1, 1)
-                .unwrap_or_else(|error| {
-                    panic!("failed to create template white sprite: {error:?}")
-                }),
-        );
-        scene.actor_registry_mutable()
-            .spawn((
-                ActorKinematicsPositionComponent {
-                    position: ScenePosition { tile_x: 0, tile_y: 4, offset_x: 0, offset_y: 0 },
+        let player: Actor = scene.actor_registry_mutable().spawn((
+            ActorKinematicsPositionComponent {
+                position: ScenePosition { tile_x: 0, tile_y: 4, offset_x: 0, offset_y: 0 },
+            },
+            ActorSpritesComponent {
+                sprites: vec![(
+                    Arc::new(SpriteSheet::from_rgba(accelerator, &[255; 8 * 8 * 4], 8, 8, 1, 1)?),
+                    0,
+                    0.0,
+                    0.0,
+                    1.0,
+                    1.0,
+                    0.0,
+                    [1.0; 4],
+                    0,
+                )],
+            },
+            ActorCollisionComponent {
+                body: SceneCollisionBody::Kinematic,
+                collider: SceneCollider {
+                    shape: SceneColliderShape::Circle { radius: 0.5 },
+                    offset_x: 0.0,
+                    offset_y: 0.0,
+                    rotation: 0.0,
                 },
-                ActorSpritesComponent {
-                    sprites: vec![(white_sprite_sheet, 0, 0.0, 0.0, 1.0, 1.0, 0.0, [1.0; 4], 0)],
-                },
-                ActorCollisionComponent {
-                    body: SceneCollisionBody::Dynamic,
-                    collider: SceneCollider {
-                        shape: SceneColliderShape::Circle { radius: 0.5 },
-                        offset_x: 0.0,
-                        offset_y: 0.0,
-                        rotation: 0.0,
-                    },
-                    memberships: u32::MAX,
-                    filter: u32::MAX,
-                },
-            ))
-            .unwrap();
-        Self { scene, camera_actor }
+                memberships: u32::MAX,
+                filter: u32::MAX,
+            },
+            ActorPawnMovementComponent::default(),
+            ActorPawnPossessionComponent,
+            ActorCameraComponent { width: 80, height: 45, zoom: 1.0 },
+            ActorPersistenceComponent,
+        ))?;
+        Ok(Self { scene, player })
     }
 
 }
@@ -117,7 +114,7 @@ impl TemplateGame {
 impl Game for TemplateGame {
 
     fn scene(&mut self) -> Option<(&mut Scene, Actor)> {
-        Some((&mut self.scene, self.camera_actor))
+        Some((&mut self.scene, self.player))
     }
 
 }
