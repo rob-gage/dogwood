@@ -7,6 +7,7 @@ use super::{
     CellularTileCoordinates,
     CellularTileIndex,
     CellularTileRegion,
+    CELLULAR_TILE_AWAKE,
     CELLULAR_TILE_SIZE,
 };
 use crate::{
@@ -36,8 +37,15 @@ use std::{
 /// Number of cells in one cellular tile
 const CELLULAR_TILE_CELL_COUNT: usize = (CELLULAR_TILE_SIZE * CELLULAR_TILE_SIZE) as usize;
 
-/// Bytes occupied by one cellular tile's cells in each cellular tile buffer
+/// Bytes occupied by one cellular tile's cells in the material identifier and color buffers
 const CELLULAR_TILE_BYTE_COUNT: u64 = CELLULAR_TILE_CELL_COUNT as u64 * 4;
+
+/// Bytes occupied by one cellular tile's cells in the kinematics buffer
+const CELLULAR_TILE_KINEMATICS_BYTE_COUNT: u64 = CELLULAR_TILE_CELL_COUNT as u64 * 8;
+
+/// Bytes of one tile in a streaming request: its material identifiers, colors, and kinematics
+const CELLULAR_TILE_STREAMING_BYTE_COUNT: u64 =
+    CELLULAR_TILE_BYTE_COUNT * 2 + CELLULAR_TILE_KINEMATICS_BYTE_COUNT;
 
 /// GPU-resident cellular tiles stored in a two-dimensional ring around the active region
 pub struct CellularTileStreamingState {
@@ -272,16 +280,20 @@ impl CellularTileStreamingState {
                 let mapped_bytes: wgpu::BufferView = streaming_request.buffer
                     .get_mapped_range(..)
                     .expect("mapped cellular tile streaming buffer should be readable");
-                // each staged tile holds its material identifiers followed by its colors
+                // each staged tile holds its material identifiers, colors, then kinematics
                 let mapped_tile_bytes: ChunksExact<u8> = mapped_bytes
-                    .chunks_exact(CELLULAR_TILE_BYTE_COUNT as usize * 2);
+                    .chunks_exact(CELLULAR_TILE_STREAMING_BYTE_COUNT as usize);
                 for (coordinates, tile_bytes) in
                     streaming_request.coordinates.iter().zip(mapped_tile_bytes)
                 {
                     let mut material_identifiers: [MaterialIdentifier; CELLULAR_TILE_CELL_COUNT] =
                         [MaterialIdentifier::EMPTY; CELLULAR_TILE_CELL_COUNT];
                     let mut colors: [u32; CELLULAR_TILE_CELL_COUNT] = [0; CELLULAR_TILE_CELL_COUNT];
-                    let (material_identifier_bytes, color_bytes): (&[u8], &[u8]) =
+                    let mut kinematics: [u64; CELLULAR_TILE_CELL_COUNT] =
+                        [0; CELLULAR_TILE_CELL_COUNT];
+                    let (material_identifier_bytes, tile_bytes): (&[u8], &[u8]) =
+                        tile_bytes.split_at(CELLULAR_TILE_BYTE_COUNT as usize);
+                    let (color_bytes, kinematics_bytes): (&[u8], &[u8]) =
                         tile_bytes.split_at(CELLULAR_TILE_BYTE_COUNT as usize);
                     for (material_identifier, cell_bytes) in material_identifiers.iter_mut()
                         .zip(material_identifier_bytes.chunks_exact(4))
@@ -301,10 +313,25 @@ impl CellularTileStreamingState {
                             cell_bytes[3],
                         ]);
                     }
+                    for (cell_kinematics, cell_bytes) in
+                        kinematics.iter_mut().zip(kinematics_bytes.chunks_exact(8))
+                    {
+                        *cell_kinematics = u64::from_le_bytes([
+                            cell_bytes[0],
+                            cell_bytes[1],
+                            cell_bytes[2],
+                            cell_bytes[3],
+                            cell_bytes[4],
+                            cell_bytes[5],
+                            cell_bytes[6],
+                            cell_bytes[7],
+                        ]);
+                    }
                     chunk_streaming_state.set_cellular_tile_cells(
                         *coordinates,
                         &material_identifiers,
                         &colors,
+                        &kinematics,
                     );
                 }
             }
@@ -382,13 +409,15 @@ impl CellularTileStreamingState {
         let mut incoming_cells: Vec<(
             [MaterialIdentifier; CELLULAR_TILE_CELL_COUNT],
             [u32; CELLULAR_TILE_CELL_COUNT],
+            [u64; CELLULAR_TILE_CELL_COUNT],
         )> = Vec::with_capacity(incoming_coordinates.len());
         for coordinates in &incoming_coordinates {
-            let (Some(material_identifiers), Some(colors)) = (
+            let (Some(material_identifiers), Some(colors), Some(kinematics)) = (
                 chunk_streaming_state.cellular_tile_material_identifiers(*coordinates),
                 chunk_streaming_state.cellular_tile_colors(*coordinates),
+                chunk_streaming_state.cellular_tile_kinematics(*coordinates),
             ) else { return Ok(()); };
-            incoming_cells.push((material_identifiers, colors));
+            incoming_cells.push((material_identifiers, colors, kinematics));
         }
         // capture departing tiles under the old ring mapping before their slots are reused
         if let Some(resident_region) = resident_region {
@@ -424,8 +453,9 @@ impl CellularTileStreamingState {
         }
         self.active_region = Some(self.active_region_requested);
         self.chunk_region_index = self.requested_chunk_region_index.take();
-        // queued writes execute after the submitted request copies of the same slots
-        for (coordinates, (material_identifiers, colors)) in
+        // queued writes execute after the submitted request copies of the same slots, waking each
+        // entering tile so its moving cells continue and its neighbors notice it
+        for (coordinates, (material_identifiers, colors, kinematics)) in
             incoming_coordinates.into_iter().zip(incoming_cells)
         {
             let Some(cellular_tile_index) = self.cellular_tile_index(coordinates)
@@ -434,13 +464,17 @@ impl CellularTileStreamingState {
                 [0; CELLULAR_TILE_BYTE_COUNT as usize];
             let mut color_bytes: [u8; CELLULAR_TILE_BYTE_COUNT as usize] =
                 [0; CELLULAR_TILE_BYTE_COUNT as usize];
-            for (cell_index, (material_identifier, color)) in
-                material_identifiers.iter().zip(colors.iter()).enumerate()
+            let mut kinematics_bytes: [u8; CELLULAR_TILE_KINEMATICS_BYTE_COUNT as usize] =
+                [0; CELLULAR_TILE_KINEMATICS_BYTE_COUNT as usize];
+            for (cell_index, ((material_identifier, color), cell_kinematics)) in
+                material_identifiers.iter().zip(colors.iter()).zip(kinematics.iter()).enumerate()
             {
                 material_identifier_bytes[cell_index * 4..cell_index * 4 + 4]
                     .copy_from_slice(&material_identifier.as_u32().to_le_bytes());
                 color_bytes[cell_index * 4..cell_index * 4 + 4]
                     .copy_from_slice(&color.to_le_bytes());
+                kinematics_bytes[cell_index * 8..cell_index * 8 + 8]
+                    .copy_from_slice(&cell_kinematics.to_le_bytes());
             }
             let physical_tile_index: u32 = cellular_tile_index.into();
             let tile_offset: u64 =
@@ -454,6 +488,16 @@ impl CellularTileStreamingState {
                 cellular_tile_buffers.color_buffer(),
                 tile_offset,
                 &color_bytes,
+            );
+            accelerator.queue().write_buffer(
+                cellular_tile_buffers.kinematics_buffer(),
+                tile_offset * 2,
+                &kinematics_bytes,
+            );
+            accelerator.queue().write_buffer(
+                cellular_tile_buffers.awake_buffer(),
+                u64::from(physical_tile_index) * 4,
+                &CELLULAR_TILE_AWAKE.to_le_bytes(),
             );
         }
         Ok(())
@@ -469,11 +513,11 @@ impl CellularTileStreamingState {
     ) -> u64 {
         let buffer: wgpu::Buffer = accelerator.device().create_buffer(&wgpu::BufferDescriptor {
             label: Some("Scene cellular tile streaming request"),
-            size: coordinates.len() as u64 * CELLULAR_TILE_BYTE_COUNT * 2,
+            size: coordinates.len() as u64 * CELLULAR_TILE_STREAMING_BYTE_COUNT,
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        // copy each tile's material identifiers then colors from its physical slot
+        // copy each tile's material identifiers, colors, then kinematics from its physical slot
         let mut command_encoder: wgpu::CommandEncoder = accelerator.device()
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Scene cellular tile streaming request"),
@@ -483,7 +527,7 @@ impl CellularTileStreamingState {
             else { continue; };
             let physical_tile_index: u32 = cellular_tile_index.into();
             let tile_offset: u64 = u64::from(physical_tile_index) * CELLULAR_TILE_BYTE_COUNT;
-            let staging_offset: u64 = staging_index as u64 * CELLULAR_TILE_BYTE_COUNT * 2;
+            let staging_offset: u64 = staging_index as u64 * CELLULAR_TILE_STREAMING_BYTE_COUNT;
             command_encoder.copy_buffer_to_buffer(
                 cellular_tile_buffers.material_identifier_buffer(),
                 tile_offset,
@@ -497,6 +541,13 @@ impl CellularTileStreamingState {
                 &buffer,
                 staging_offset + CELLULAR_TILE_BYTE_COUNT,
                 CELLULAR_TILE_BYTE_COUNT,
+            );
+            command_encoder.copy_buffer_to_buffer(
+                cellular_tile_buffers.kinematics_buffer(),
+                tile_offset * 2,
+                &buffer,
+                staging_offset + CELLULAR_TILE_BYTE_COUNT * 2,
+                CELLULAR_TILE_KINEMATICS_BYTE_COUNT,
             );
         }
         accelerator.queue().submit(Some(command_encoder.finish()));

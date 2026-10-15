@@ -17,7 +17,14 @@ var<storage, read_write> material_identifiers: array<u32>;
 @group(0) @binding(2)
 var<storage, read_write> colors: array<u32>;
 
-/// Writes one edited cell per invocation, inserting only into empty cells
+@group(0) @binding(3)
+var<storage, read_write> kinematics: array<vec2<u32>>;
+
+@group(0) @binding(4)
+var<storage, read_write> awake: array<atomic<u32>>;
+
+/// Writes one edited cell per invocation at rest, inserting only into empty cells, and wakes its
+/// tile so dynamic cells around the edit notice it
 @compute @workgroup_size(64)
 fn compute(
     @builtin(workgroup_id) workgroup: vec3<u32>,
@@ -36,5 +43,8 @@ fn compute(
         material_identifiers[cell_index] =
             edit_cellular_tiles[edit_cellular_tile_index].material_identifiers[cell];
         colors[cell_index] = edit_cellular_tiles[edit_cellular_tile_index].colors[cell];
+        kinematics[cell_index] = vec2<u32>(0u, 0u);
+        // awake and disturbed, matching `CELLULAR_TILE_AWAKE`
+        atomicOr(&awake[edit_cellular_tiles[edit_cellular_tile_index].cellular_tile_index], 3u);
     }
 }

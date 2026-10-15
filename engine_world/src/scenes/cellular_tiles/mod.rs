@@ -18,3 +18,6 @@ pub use cellular_tile_streaming_state::CellularTileStreamingState;
 
 /// Number of cells along each side of a cellular tile
 pub const CELLULAR_TILE_SIZE: i64 = 8;
+
+/// Awake buffer value of a tile whose dynamic cells, and those of its neighbors, must be simulated
+pub const CELLULAR_TILE_AWAKE: u32 = 0b11;
