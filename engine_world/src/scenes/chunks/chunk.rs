@@ -18,10 +18,10 @@ use std::io;
 const CHUNK_FILE_HEADER: [u8; 8] = *b"DOGWOOD\0";
 
 /// Current sparse chunk file format version
-const CHUNK_FILE_VERSION: u16 = 4;
+const CHUNK_FILE_VERSION: u16 = 5;
 
-/// Bytes in one sparse cell entry holding its index, material identifier, and color
-const CHUNK_FILE_CELL_BYTE_COUNT: usize = 12;
+/// Bytes in one sparse cell entry holding its index, material identifier, color, and kinematics
+const CHUNK_FILE_CELL_BYTE_COUNT: usize = 20;
 
 /// Number of cells addressable by one chunk
 const CHUNK_CELL_COUNT: usize = (CHUNK_SIZE * CHUNK_SIZE) as usize;
@@ -35,6 +35,8 @@ pub struct Chunk {
     material_identifiers: Vec<MaterialIdentifier>,
     /// Packed RGBA colors in row-major cell order
     colors: Vec<u32>,
+    /// Packed velocities and timing of dynamic cells in row-major cell order
+    kinematics: Vec<u64>,
 }
 
 impl Chunk {
@@ -45,13 +47,15 @@ impl Chunk {
             coordinates,
             material_identifiers: vec![MaterialIdentifier::EMPTY; CHUNK_CELL_COUNT],
             colors: vec![0; CHUNK_CELL_COUNT],
+            kinematics: vec![0; CHUNK_CELL_COUNT],
         }
     }
 
-    /// Fills every cell in this chunk with one material and packed color
+    /// Fills every cell in this chunk with one material and packed color, at rest
     pub fn fill(&mut self, material_identifier: MaterialIdentifier, color: u32) {
         self.material_identifiers.fill(material_identifier);
         self.colors.fill(color);
+        self.kinematics.fill(0);
     }
 
     /// Reads a versioned sparse chunk from a reader
@@ -112,6 +116,16 @@ impl Chunk {
                 encoded_cell[10],
                 encoded_cell[11],
             ]);
+            let kinematics: u64 = u64::from_le_bytes([
+                encoded_cell[12],
+                encoded_cell[13],
+                encoded_cell[14],
+                encoded_cell[15],
+                encoded_cell[16],
+                encoded_cell[17],
+                encoded_cell[18],
+                encoded_cell[19],
+            ]);
             if cell_index as usize >= CHUNK_CELL_COUNT {
                 return Err(ChunkError::CellIndexOutOfRange);
             }
@@ -125,6 +139,7 @@ impl Chunk {
             is_cell_stored[cell_index as usize] = true;
             chunk.material_identifiers[cell_index as usize] = identifier;
             chunk.colors[cell_index as usize] = color;
+            chunk.kinematics[cell_index as usize] = kinematics;
         }
         Ok(chunk)
     }
@@ -145,14 +160,17 @@ impl Chunk {
         w.write_all(&header).map_err(ChunkError::Io)?;
         let mut encoded_cells: Vec<u8> =
             Vec::with_capacity(stored_cell_count as usize * CHUNK_FILE_CELL_BYTE_COUNT);
-        for (cell_index, (material, color)) in
-            self.material_identifiers.iter().zip(self.colors.iter()).enumerate()
+        for (cell_index, ((material, color), kinematics)) in self.material_identifiers.iter()
+            .zip(self.colors.iter())
+            .zip(self.kinematics.iter())
+            .enumerate()
         {
             if *material == MaterialIdentifier::EMPTY && *color == 0 { continue; }
             let cell_index: u32 = cell_index as u32;
             encoded_cells.extend_from_slice(&cell_index.to_le_bytes());
             encoded_cells.extend_from_slice(&material.as_u32().to_le_bytes());
             encoded_cells.extend_from_slice(&color.to_le_bytes());
+            encoded_cells.extend_from_slice(&kinematics.to_le_bytes());
         }
         w.write_all(&encoded_cells).map_err(ChunkError::Io)
     }
@@ -189,6 +207,22 @@ impl Chunk {
         Ok(colors)
     }
 
+    /// Returns the packed kinematics of one cellular tile within this chunk
+    pub fn cellular_tile_kinematics(
+        &self,
+        coordinates: CellularTileCoordinates,
+    ) -> Result<[u64; 64], ChunkError> {
+        let mut kinematics: [u64; 64] = [0; 64];
+        for (tile_row, chunk_row_start) in self.cellular_tile_row_starts(coordinates)?
+            .into_iter()
+            .enumerate()
+        {
+            kinematics[tile_row * 8..tile_row * 8 + 8]
+                .copy_from_slice(&self.kinematics[chunk_row_start..chunk_row_start + 8]);
+        }
+        Ok(kinematics)
+    }
+
     /// Replaces the material identifiers of one cellular tile within this chunk
     pub fn set_cellular_tile_material_identifiers(
         &mut self,
@@ -217,6 +251,22 @@ impl Chunk {
         {
             self.colors[chunk_row_start..chunk_row_start + 8]
                 .copy_from_slice(&colors[tile_row * 8..tile_row * 8 + 8]);
+        }
+        Ok(())
+    }
+
+    /// Replaces the packed kinematics of one cellular tile within this chunk
+    pub fn set_cellular_tile_kinematics(
+        &mut self,
+        coordinates: CellularTileCoordinates,
+        kinematics: &[u64; 64],
+    ) -> Result<(), ChunkError> {
+        for (tile_row, chunk_row_start) in self.cellular_tile_row_starts(coordinates)?
+            .into_iter()
+            .enumerate()
+        {
+            self.kinematics[chunk_row_start..chunk_row_start + 8]
+                .copy_from_slice(&kinematics[tile_row * 8..tile_row * 8 + 8]);
         }
         Ok(())
     }

@@ -17,7 +17,7 @@ const EDIT_CELLULAR_TILE_BYTE_COUNT: u64 = (6 + 64 + 64) * 4;
 pub struct EditCellularTilePass {
     /// Pipeline writing one edited cell per invocation
     pipeline: wgpu::ComputePipeline,
-    /// Bind group of the edited tiles, material identifiers, and colors
+    /// Bind group of the edited tiles, material identifiers, colors, kinematics, and awake tiles
     bind_group: wgpu::BindGroup,
     /// Edited tiles uploaded for one stream
     edit_cellular_tile_buffer: wgpu::Buffer,
@@ -47,6 +47,8 @@ impl EditCellularTilePass {
                     storage_entry(0, true),
                     storage_entry(1, false),
                     storage_entry(2, false),
+                    storage_entry(3, false),
+                    storage_entry(4, false),
                 ],
             },
         );
@@ -97,6 +99,14 @@ impl EditCellularTilePass {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: cellular_tile_buffers.color_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: cellular_tile_buffers.kinematics_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: cellular_tile_buffers.awake_buffer().as_entire_binding(),
                 },
             ],
         });

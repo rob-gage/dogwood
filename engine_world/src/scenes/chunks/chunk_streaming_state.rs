@@ -233,12 +233,25 @@ impl ChunkStreamingState {
         }
     }
 
+    /// Returns one cellular tile's packed kinematics from its active chunk
+    pub fn cellular_tile_kinematics(
+        &self,
+        coordinates: CellularTileCoordinates,
+    ) -> Option<[u64; 64]> {
+        match self.chunks.get(&coordinates.chunk_coordinates()) {
+            Some(ChunkResident::Active { chunk, .. }) =>
+                chunk.cellular_tile_kinematics(coordinates).ok(),
+            _ => None,
+        }
+    }
+
     /// Writes one cellular tile's cells into its active chunk, marking the chunk dirty on change
     pub fn set_cellular_tile_cells(
         &mut self,
         coordinates: CellularTileCoordinates,
         material_identifiers: &[MaterialIdentifier; 64],
         colors: &[u32; 64],
+        kinematics: &[u64; 64],
     ) -> bool {
         let Some(ChunkResident::Active { chunk, is_dirty }) =
             self.chunks.get_mut(&coordinates.chunk_coordinates())
@@ -246,9 +259,11 @@ impl ChunkStreamingState {
         if chunk.cellular_tile_material_identifiers(coordinates).ok().as_ref()
             == Some(material_identifiers)
             && chunk.cellular_tile_colors(coordinates).ok().as_ref() == Some(colors)
+            && chunk.cellular_tile_kinematics(coordinates).ok().as_ref() == Some(kinematics)
         { return true; }
         if chunk.set_cellular_tile_material_identifiers(coordinates, material_identifiers).is_err()
             || chunk.set_cellular_tile_colors(coordinates, colors).is_err()
+            || chunk.set_cellular_tile_kinematics(coordinates, kinematics).is_err()
         { return false; }
         *is_dirty = true;
         true
