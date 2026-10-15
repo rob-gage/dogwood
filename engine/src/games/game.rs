@@ -6,6 +6,7 @@ use engine_host::system_events::{
     SystemWindowEvent,
 };
 use engine_host::windows::WindowConfiguration;
+use engine_user_interface::UserInterface;
 use engine_world::{
     actors::Actor,
     scenes::Scene,
@@ -23,6 +24,9 @@ pub trait Game {
 
     /// Returns the scene streamed and drawn by the engine with its camera actor, or `None`
     fn scene(&mut self) -> Option<(&mut Scene, Actor)> { None }
+
+    /// Composes the user interface drawn over the scene in every rendered frame
+    fn user_interface(&mut self, _user_interface: &mut UserInterface) {}
 
     /// Handles a host window event
     fn window_event(&mut self, _event: SystemWindowEvent) {}
