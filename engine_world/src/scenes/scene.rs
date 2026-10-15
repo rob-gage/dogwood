@@ -18,6 +18,7 @@ use super::{
         EditError,
         EditStreamingState,
     },
+    kinematics::Kinematics,
     scene_error::SceneError,
     scene_generator::SceneGenerator,
     scene_position::ScenePosition,
@@ -46,7 +47,10 @@ use engine_host::{
     acceleration::Accelerator,
     processors::Processor,
 };
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    sync::Arc,
+};
 
 /// A playable scene
 pub struct Scene {
@@ -60,6 +64,8 @@ pub struct Scene {
     cellular_tile_streaming_state: Option<CellularTileStreamingState>,
     /// Rapier simulation of actors against the active cellular tiles, absent until simulated
     collision: Option<Collision>,
+    /// GPU simulation of the active dynamic cells against actors, absent until simulated
+    kinematics: Option<Kinematics>,
     /// Requested edits awaiting their write into the GPU-resident cellular tiles
     edit_streaming_state: EditStreamingState,
     /// Downward acceleration of dynamic bodies and pawns in tiles per second squared
@@ -89,6 +95,7 @@ impl Scene {
             cellular_tile_buffers: None,
             cellular_tile_streaming_state: None,
             collision: None,
+            kinematics: None,
             edit_streaming_state: EditStreamingState::new(),
             gravity: SCENE_GRAVITY_DEFAULT,
             actor_registry: ActorRegistry::new(),
@@ -213,7 +220,8 @@ impl Scene {
         Ok(())
     }
 
-    /// Simulates actor collisions against the active cellular tiles, waiting for the GPU
+    /// Simulates the active dynamic cells against actors, then actor collisions against the
+    /// active cellular tiles, waiting for the GPU only when collisions read changed cells
     pub fn simulate(&mut self, accelerator: &Accelerator) -> Result<(), SceneError> {
         // nothing is simulated before the active region is resident
         let (Some(cellular_tile_streaming_state), Some(cellular_tile_buffers)) = (
@@ -223,6 +231,19 @@ impl Scene {
         let Some(active_region): Option<CellularTileRegion> =
             cellular_tile_streaming_state.active_cellular_tile_region()
         else { return Ok(()); };
+        // dynamic cells move against actors where the previous step left them, and push back on
+        // actors once their contacts are read
+        let cellular_contacts: HashMap<Actor, ([f32; 2], [f32; 2], f32)> = self.kinematics
+            .get_or_insert_with(|| {
+                Kinematics::new(accelerator, cellular_tile_buffers, &self.material_table)
+            })
+            .simulate_kinematics(
+                accelerator,
+                active_region,
+                cellular_tile_streaming_state.cellular_tile_ring_offset(),
+                self.gravity,
+                &self.actor_registry,
+            )?;
         self.collision
             .get_or_insert_with(|| Collision::new(accelerator, cellular_tile_buffers))
             .simulate_collisions(
@@ -231,6 +252,7 @@ impl Scene {
                 cellular_tile_streaming_state.cellular_tile_ring_offset(),
                 self.gravity,
                 &mut self.actor_registry,
+                &cellular_contacts,
             )
     }
 

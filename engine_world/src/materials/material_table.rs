@@ -26,8 +26,8 @@ pub struct MaterialTable {
     material_registry: MaterialRegistry,
     /// Absent until static cellular properties have meaningful GPU records
     cellular_static_properties_buffer: Option<wgpu::Buffer>,
-    /// Absent until dynamic cellular properties have meaningful GPU records
-    cellular_dynamic_properties_buffer: Option<wgpu::Buffer>,
+    /// Mass, friction, restitution, and padding as four `f32` per dynamic cellular index
+    cellular_dynamic_properties_buffer: wgpu::Buffer,
     /// Absent until fluid properties have meaningful GPU records
     fluid_properties_buffer: Option<wgpu::Buffer>,
     /// Absent until gas properties have meaningful GPU records
@@ -53,11 +53,25 @@ impl MaterialTable {
             }))
             .collect();
         let cellular_static_count: usize = albedo_frames.len();
+        let mut property_bytes: Vec<u8> = Vec::new();
         for index in 0.. {
             let Ok(identifier) = MaterialIdentifier::new(MaterialForm::CellularDynamic, index)
             else { break; };
             let Some(properties) = material_registry.cellular_dynamic_properties(identifier)
             else { break; };
+            if !properties.mass.is_finite() || properties.mass <= 0.0
+                || !properties.friction.is_finite() || properties.friction < 0.0
+                || !(0.0..=1.0).contains(&properties.restitution)
+            {
+                return Err(String::from(
+                    "dynamic cellular materials need a positive mass, a nonnegative friction, \
+                    and a restitution from zero to one",
+                ));
+            }
+            // WGSL vec4<f32> records with a 16-byte stride
+            for value in [properties.mass, properties.friction, properties.restitution, 0.0] {
+                property_bytes.extend_from_slice(&value.to_le_bytes());
+            }
             let graphics = &properties.graphics;
             albedo_frames.push(Some((
                 &*graphics.sprite_sheet,
@@ -66,6 +80,17 @@ impl MaterialTable {
                 graphics.height,
             )));
         }
+        // a zeroed record satisfies the storage binding when no dynamic material is registered
+        if property_bytes.is_empty() { property_bytes.resize(16, 0); }
+        let cellular_dynamic_properties_buffer: wgpu::Buffer = device.create_buffer(
+            &wgpu::BufferDescriptor {
+                label: Some("`MaterialTable.cellular_dynamic_properties_buffer`"),
+                size: property_bytes.len() as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
+        accelerator.queue().write_buffer(&cellular_dynamic_properties_buffer, 0, &property_bytes);
         // copy every frame into a readable buffer with rows padded to the copy alignment
         let mut command_encoder: wgpu::CommandEncoder = device.create_command_encoder(
             &wgpu::CommandEncoderDescriptor {
@@ -177,7 +202,7 @@ impl MaterialTable {
         Ok(Self {
             material_registry,
             cellular_static_properties_buffer: None,
-            cellular_dynamic_properties_buffer: None,
+            cellular_dynamic_properties_buffer,
             fluid_properties_buffer: None,
             gas_properties_buffer: None,
             cellular_static_albedos: albedos,
@@ -281,9 +306,9 @@ impl MaterialTable {
         self.cellular_static_properties_buffer.as_ref()
     }
 
-    /// Returns dynamic cellular GPU properties when defined
-    pub fn cellular_dynamic_properties_buffer(&self) -> Option<&wgpu::Buffer> {
-        self.cellular_dynamic_properties_buffer.as_ref()
+    /// Returns dynamic cellular GPU properties as mass, friction, restitution, and padding
+    pub fn cellular_dynamic_properties_buffer(&self) -> &wgpu::Buffer {
+        &self.cellular_dynamic_properties_buffer
     }
 
     /// Returns fluid GPU properties when defined

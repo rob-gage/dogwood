@@ -47,8 +47,16 @@ impl Accelerator {
             })
             .await
             .map_err(AcceleratorError::RequestAdapter)?;
+        // dynamic cell kinematics binds more storage buffers than the default eight, a limit
+        // every supported desktop and integrated GPU exceeds
         let (device, queue): (wgpu::Device, wgpu::Queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default())
+            .request_device(&wgpu::DeviceDescriptor {
+                required_limits: wgpu::Limits {
+                    max_storage_buffers_per_shader_stage: 16,
+                    ..wgpu::Limits::default()
+                },
+                ..wgpu::DeviceDescriptor::default()
+            })
             .await
             .map_err(AcceleratorError::RequestDevice)?;
         Ok((adapter, device, queue))

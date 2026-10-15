@@ -91,7 +91,14 @@ pub enum SceneError {
     },
     /// The accelerator could not be polled for collision cellular tiles
     CollisionCellularTilePoll,
-    /// An actor's collider has a nonpositive, nonfinite, or capsule-violating dimension
+    /// A kinematics contact readback staging buffer could not be mapped
+    KinematicsCellularTileResponse {
+        /// Mapping error returned by WGPU
+        error: wgpu::BufferAsyncError,
+    },
+    /// The accelerator could not be polled for kinematics contacts
+    KinematicsCellularTilePoll,
+    /// An actor's collider has a nonpositive, nonfinite, or capsule-violating dimension or mass
     InvalidCollider {
         /// Actor owning the invalid collider
         actor: Actor,
