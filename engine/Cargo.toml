@@ -11,4 +11,3 @@ engine_host = { path = "../engine_host" }
 engine_user_interface = { path = "../engine_user_interface" }
 engine_world = { path = "../engine_world" }
 wgpu = { version = "=30.0.0", default-features = false }
-winit = { version = "0.30.13", default-features = false }

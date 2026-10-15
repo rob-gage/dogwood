@@ -6,3 +6,5 @@ version = "0.0.0"
 edition = "2024"
 
 [dependencies]
+engine = { version = "0.0.0", path = "../engine" }
+engine_host = { version = "0.0.0", path = "../engine_host" }
