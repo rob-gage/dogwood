@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 /// Graphics properties for a cellular static material
 pub struct MaterialGraphicsCellularStatic {
-    /// Sprite sheet holding the albedo frame
+    /// Sprite sheet holding the albedo frame that colors each cell when it is created
     pub sprite_sheet: Arc<SpriteSheet>,
     /// Albedo frame repeated across the material
     pub frame: u32,
