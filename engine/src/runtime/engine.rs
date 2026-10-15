@@ -30,6 +30,11 @@ use engine_host::{
         WindowConfiguration,
     },
 };
+use engine_user_interface::{
+    egui,
+    UserInterfaceContext,
+    UserInterfaceRenderer,
+};
 use std::{
     cell::{
         Ref,
@@ -37,6 +42,7 @@ use std::{
         RefMut,
     },
     collections::HashSet,
+    mem,
     time::Duration,
 };
 
@@ -140,14 +146,64 @@ impl Engine {
                     .unwrap_or_else(|error| panic!("Scene simulation failed: {error:?}"));
             });
         let mut scene_renderer: SceneRenderer = SceneRenderer::new(engine.accelerator());
-        let mut render_handler: Box<dyn FnMut(&wgpu::TextureView)> =
-            Box::new(|texture_view: &wgpu::TextureView| {
-                let mut game: RefMut<'_, &mut G> = shared_game.borrow_mut();
-                let Some((scene, camera_actor)) = game.scene() else { return; };
-                let graphics: SceneGraphics<'_> = scene.graphics(camera_actor)
-                    .unwrap_or_else(|error| panic!("Scene graphics failed: {error:?}"));
-                scene_renderer.render(engine.accelerator(), texture_view, &graphics);
-            });
+        let user_interface_context: UserInterfaceContext = UserInterfaceContext::new();
+        let mut user_interface_renderer: Option<UserInterfaceRenderer> = None;
+        let mut render_handler: Box<
+            dyn FnMut(&wgpu::TextureView, egui::RawInput) -> egui::PlatformOutput,
+        > = Box::new(|texture_view: &wgpu::TextureView, input: egui::RawInput| {
+            let mut game: RefMut<'_, &mut G> = shared_game.borrow_mut();
+            let device: &wgpu::Device = engine.accelerator().device();
+            let mut command_encoder: wgpu::CommandEncoder = device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Engine user interface"),
+                });
+            // draw the scene, or clear the frame when the game shows none
+            match game.scene() {
+                Some((scene, camera_actor)) => {
+                    let graphics: SceneGraphics<'_> = scene.graphics(camera_actor)
+                        .unwrap_or_else(|error| panic!("Scene graphics failed: {error:?}"));
+                    scene_renderer.render(engine.accelerator(), texture_view, &graphics);
+                }
+                None => {
+                    command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("Engine frame clear"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: texture_view,
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                }
+            }
+            // compose the user interface and draw it over the scene
+            let mut output: egui::FullOutput = user_interface_context
+                .run(input, |user_interface| game.user_interface(user_interface));
+            let platform_output: egui::PlatformOutput = mem::take(&mut output.platform_output);
+            let texture: &wgpu::Texture = texture_view.texture();
+            let callback_command_buffers: Vec<wgpu::CommandBuffer> = user_interface_renderer
+                .get_or_insert_with(|| UserInterfaceRenderer::new(device, texture.format()))
+                .render(
+                    user_interface_context.egui_context(),
+                    device,
+                    engine.accelerator().queue(),
+                    &mut command_encoder,
+                    texture_view,
+                    output,
+                    [texture.width(), texture.height()],
+                );
+            engine.accelerator().queue().submit(
+                callback_command_buffers.into_iter().chain(Some(command_encoder.finish())),
+            );
+            platform_output
+        });
         let update_interval: Duration = Duration::from_nanos(
             1_000_000_000 / u64::from(UPDATES_PER_SECOND),
         );
@@ -159,6 +215,7 @@ impl Engine {
             &mut update_handler,
             &mut render_handler,
             engine.accelerator(),
+            &user_interface_context,
             window_configuration,
             update_interval,
             maximum_accumulated_time,

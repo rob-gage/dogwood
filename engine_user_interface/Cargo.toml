@@ -6,3 +6,20 @@ version = "0.0.0"
 edition = "2024"
 
 [dependencies]
+taffy = { version = "=0.14.0", default-features = false, features = ["std", "taffy_tree", "flexbox", "grid", "content_size"] }
+egui = "=0.36.2"
+egui-winit = { version = "=0.36.2", default-features = false, features = ["clipboard", "links", "wayland", "x11"] }
+egui-wgpu = { version = "=0.36.2", default-features = false }
+egui_extras = { version = "=0.36.2", default-features = false }
+egui_dock = { version = "=0.21.1", default-features = false }
+winit = { version = "=0.30.13", default-features = false, features = ["rwh_06", "wayland", "x11"] }
+wgpu = { version = "=30.0.0", default-features = false, features = ["std", "wgsl"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+wgpu = { version = "=30.0.0", default-features = false, features = ["dx12", "vulkan"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+wgpu = { version = "=30.0.0", default-features = false, features = ["vulkan"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+wgpu = { version = "=30.0.0", default-features = false, features = ["metal"] }

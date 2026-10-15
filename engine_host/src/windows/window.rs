@@ -12,6 +12,11 @@ use crate::{
         SystemWindowEvent,
     }
 };
+use engine_user_interface::{
+    egui,
+    UserInterfaceContext,
+    UserInterfaceWindowState,
+};
 use std::time::{
     Duration,
     Instant,
@@ -24,6 +29,10 @@ pub struct Window<'a> {
     window: Option<Arc<winit::window::Window>>,
     /// Shared GPU context used by this window
     accelerator: &'a Accelerator,
+    /// User interface composed over every frame drawn into this window
+    user_interface_context: &'a UserInterfaceContext,
+    /// User interface input translated from this window's events, absent without a window
+    user_interface_window_state: Option<UserInterfaceWindowState>,
     /// Presentation surface owned by this window
     surface: Option<wgpu::Surface<'static>>,
     /// Current presentation settings, absent while minimized
@@ -38,8 +47,9 @@ pub struct Window<'a> {
     mouse_event_handler: &'a mut dyn FnMut(SystemMouseEvent),
     /// Consumer of fixed-step game updates
     update_handler: &'a mut dyn FnMut(Duration),
-    /// Consumer of native redraw requests, drawing into the acquired surface texture
-    render_handler: &'a mut dyn FnMut(&wgpu::TextureView),
+    /// Consumer of native redraw requests, drawing into the acquired surface texture with the
+    /// user interface input received since the previous frame and returning its platform output
+    render_handler: &'a mut dyn FnMut(&wgpu::TextureView, egui::RawInput) -> egui::PlatformOutput,
     /// Runtime settings for the native game window
     window_configuration: WindowConfiguration,
     /// Duration between fixed-step updates
@@ -62,8 +72,12 @@ impl<'a> Window<'a> {
         keyboard_event_handler: &'a mut dyn FnMut(SystemKeyboardEvent),
         mouse_event_handler: &'a mut dyn FnMut(SystemMouseEvent),
         update_handler: &'a mut dyn FnMut(Duration),
-        render_handler: &'a mut dyn FnMut(&wgpu::TextureView),
+        render_handler: &'a mut dyn FnMut(
+            &wgpu::TextureView,
+            egui::RawInput,
+        ) -> egui::PlatformOutput,
         accelerator: &'a Accelerator,
+        user_interface_context: &'a UserInterfaceContext,
         window_configuration: WindowConfiguration,
         update_interval: Duration,
         maximum_accumulated_time: Duration,
@@ -73,6 +87,8 @@ impl<'a> Window<'a> {
         let mut window: Self = Self {
             window: None,
             accelerator,
+            user_interface_context,
+            user_interface_window_state: None,
             surface: None,
             surface_configuration: None,
             error: None,
@@ -181,10 +197,23 @@ impl<'a> Window<'a> {
         }
     }
 
-    /// Lets the render handler draw into the frame, then presents it
+    /// Lets the render handler draw into the frame with the user interface input, then presents it
     fn render_and_present(&mut self, frame: wgpu::SurfaceTexture) {
         let view: wgpu::TextureView = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        (self.render_handler)(&view);
+        let input: egui::RawInput = match (
+            self.user_interface_window_state.as_mut(),
+            self.window.as_ref(),
+        ) {
+            (Some(user_interface_window_state), Some(window)) =>
+                user_interface_window_state.take_input(window),
+            _ => egui::RawInput::default(),
+        };
+        let platform_output: egui::PlatformOutput = (self.render_handler)(&view, input);
+        // apply the clipboard, cursor, and text input requested by the composed user interface
+        if let (Some(user_interface_window_state), Some(window)) = (
+            self.user_interface_window_state.as_mut(),
+            self.window.as_ref(),
+        ) { user_interface_window_state.handle_platform_output(window, platform_output); }
         self.accelerator.queue().present(frame);
     }
 
@@ -237,6 +266,11 @@ impl<'a> winit::application::ApplicationHandler for Window<'a> {
                     };
                     self.surface = Some(surface);
                     self.surface_configuration = surface_configuration;
+                    self.user_interface_window_state = Some(UserInterfaceWindowState::new(
+                        self.user_interface_context,
+                        &window,
+                        Some(self.accelerator.device().limits().max_texture_dimension_2d as usize),
+                    ));
                     window.request_redraw();
                     self.window = Some(window);
                 }
@@ -262,6 +296,12 @@ impl<'a> winit::application::ApplicationHandler for Window<'a> {
         if !is_managed_window {
             return;
         }
+        // the user interface sees every event, and its consumption never stops game delivery;
+        // its repaint requests are ignored because frames are already redrawn continuously
+        if let (Some(user_interface_window_state), Some(window)) = (
+            self.user_interface_window_state.as_mut(),
+            self.window.as_ref(),
+        ) { let _ = user_interface_window_state.process_window_event(window, &event); }
         match event {
             winit::event::WindowEvent::CloseRequested => {
                 let host_event: SystemWindowEvent = SystemWindowEvent::CloseRequested;
@@ -348,6 +388,7 @@ impl<'a> winit::application::ApplicationHandler for Window<'a> {
     fn suspended(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
         self.surface = None;
         self.surface_configuration = None;
+        self.user_interface_window_state = None;
         self.window = None;
         self.update_accumulator = Duration::ZERO;
     }

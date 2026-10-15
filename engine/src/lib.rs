@@ -24,3 +24,4 @@ pub use engine_world::{
     materials,
     scenes,
 };
+pub use engine_user_interface as user_interface;
