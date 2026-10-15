@@ -66,8 +66,8 @@ pub struct Scene {
     gravity: f32,
     /// ECS world and fixed-tick systems of every live actor
     actor_registry: ActorRegistry,
-    /// Materials of every cell in this scene
-    material_table: MaterialTable,
+    /// Materials of every cell in this scene, shared with chunk generation to color new cells
+    material_table: Arc<MaterialTable>,
     /// Generates chunks that have no persisted file
     generator: Arc<dyn SceneGenerator>,
     /// Stable seed supplied to the generator
@@ -92,7 +92,7 @@ impl Scene {
             edit_streaming_state: EditStreamingState::new(),
             gravity: SCENE_GRAVITY_DEFAULT,
             actor_registry: ActorRegistry::new(),
-            material_table,
+            material_table: Arc::new(material_table),
             generator,
             world_seed,
         }
@@ -167,8 +167,11 @@ impl Scene {
             let thread_pool: Arc<rayon::ThreadPool> = processor
                 .thread_pool(SCENE_CHUNK_THREAD_POOL_NAME)
                 .ok_or(SceneError::ChunkThreadPoolUnavailable)?;
-            self.chunk_streaming_state =
-                Some(ChunkStreamingState::new(self.chunk_data.clone(), thread_pool));
+            self.chunk_streaming_state = Some(ChunkStreamingState::new(
+                self.chunk_data.clone(),
+                thread_pool,
+                self.material_table.clone(),
+            ));
         }
         let Some(chunk_streaming_state) = self.chunk_streaming_state.as_mut()
         else { return Ok(()); };
@@ -302,14 +305,6 @@ impl Scene {
         Some(SceneGraphicsCellular {
             material_identifier_buffer: cellular_tile_buffers.material_identifier_buffer(),
             color_buffer: cellular_tile_buffers.color_buffer(),
-            cellular_static_properties_buffer: self.material_table
-                .cellular_static_properties_buffer(),
-            cellular_static_albedo_atlas_texture_view: self.material_table
-                .cellular_static_albedo_atlas_texture_view(),
-            cellular_static_repetition_sizes: self.material_table
-                .cellular_static_repetition_sizes(),
-            region_tile_x: active_region.bottom_left.x,
-            region_tile_y: active_region.bottom_left.y,
             region_x: region_x as f32,
             region_y: region_y as f32,
             region_width: active_region.width() as u32,

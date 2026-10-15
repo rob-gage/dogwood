@@ -10,11 +10,19 @@ use super::{
     ChunkError,
     ChunkRegion,
     ChunkRegionIndex,
+    CHUNK_SIZE,
 };
 use crate::{
-    materials::MaterialIdentifier,
+    materials::{
+        MaterialIdentifier,
+        MaterialTable,
+    },
     scenes::{
-        cellular_tiles::CellularTileCoordinates,
+        cellular_tiles::{
+            CellCoordinates,
+            CellularTileCoordinates,
+            CELLULAR_TILE_SIZE,
+        },
         SceneError,
         SceneGenerator,
         SCENE_CHUNK_REGION_COUNT_MAXIMUM,
@@ -77,13 +85,19 @@ pub struct ChunkStreamingState {
     response_receiver: Receiver<ChunkStreamingResponse>,
     /// Shared Rayon pool supplied by the caller
     thread_pool: Arc<rayon::ThreadPool>,
+    /// Materials whose albedos color generated cells
+    material_table: Arc<MaterialTable>,
 }
 
 
 impl ChunkStreamingState {
 
-    /// Creates streaming state using the supplied storage and shared Rayon pool
-    pub fn new(chunk_data: ChunkData, thread_pool: Arc<rayon::ThreadPool>) -> Self {
+    /// Creates streaming state using the supplied storage, shared Rayon pool, and materials
+    pub fn new(
+        chunk_data: ChunkData,
+        thread_pool: Arc<rayon::ThreadPool>,
+        material_table: Arc<MaterialTable>,
+    ) -> Self {
         let (completion_sender, completion_receiver): (
             Sender<ChunkStreamingResponse>,
             Receiver<ChunkStreamingResponse>,
@@ -93,6 +107,7 @@ impl ChunkStreamingState {
             chunks: HashMap::new(),
             chunk_data,
             thread_pool,
+            material_table,
             response_sender: completion_sender,
             response_receiver: completion_receiver,
             retained_chunk_regions: BTreeMap::new(),
@@ -661,6 +676,7 @@ impl ChunkStreamingState {
             streaming_request_identifier,
             generator: generator.clone(),
             world_seed,
+            material_table: self.material_table.clone(),
         };
         let completion_sender: Sender<ChunkStreamingResponse> = self.response_sender.clone();
         self.chunks.insert(coordinates, ChunkResident::Generating { streaming_request_identifier });
@@ -935,15 +951,18 @@ impl ChunkStreamingState {
                     result,
                 }
             }
-            // generate chunks without persisted files, treating panics as generation errors
+            // generate chunks without persisted files, treating panics as generation errors, then
+            // give each generated cell its material's color once
             ChunkStreamingRequest::Generate {
                 coordinates,
                 streaming_request_identifier,
                 generator,
                 world_seed,
+                material_table,
             } => {
                 let result: Result<Chunk, SceneError> = match catch_unwind(AssertUnwindSafe(|| {
                     generator.generate_chunk(coordinates, world_seed)
+                        .map(|chunk| Self::stream_chunks_color_cells(chunk, &material_table))
                 })) {
                     Ok(Ok(chunk)) if chunk.coordinates == coordinates => Ok(chunk),
                     Ok(Ok(_)) => Err(SceneError::ChunkGeneration {
@@ -989,6 +1008,37 @@ impl ChunkStreamingState {
                 }
             }
         }
+    }
+
+    /// Replaces the color of every generated cell with its material's color at the cell
+    fn stream_chunks_color_cells(mut chunk: Chunk, material_table: &MaterialTable) -> Chunk {
+        let cellular_tiles_per_chunk_side: i64 = CHUNK_SIZE / CELLULAR_TILE_SIZE;
+        let first_tile_x: i64 = i64::from(chunk.coordinates.x) * cellular_tiles_per_chunk_side;
+        let first_tile_y: i64 = i64::from(chunk.coordinates.y) * cellular_tiles_per_chunk_side;
+        for tile_y in first_tile_y..first_tile_y + cellular_tiles_per_chunk_side {
+            for tile_x in first_tile_x..first_tile_x + cellular_tiles_per_chunk_side {
+                let coordinates: CellularTileCoordinates = CellularTileCoordinates {
+                    x: tile_x,
+                    y: tile_y,
+                };
+                let (Ok(material_identifiers), Ok(mut colors)) = (
+                    chunk.cellular_tile_material_identifiers(coordinates),
+                    chunk.cellular_tile_colors(coordinates),
+                ) else { continue; };
+                for (cell_index, (material_identifier, color)) in
+                    material_identifiers.iter().zip(colors.iter_mut()).enumerate()
+                {
+                    if *material_identifier == MaterialIdentifier::EMPTY { continue; }
+                    let cell: CellCoordinates = CellCoordinates {
+                        x: tile_x * CELLULAR_TILE_SIZE + cell_index as i64 % CELLULAR_TILE_SIZE,
+                        y: tile_y * CELLULAR_TILE_SIZE + cell_index as i64 / CELLULAR_TILE_SIZE,
+                    };
+                    *color = material_table.cellular_color(*material_identifier, cell, *color);
+                }
+                let _ = chunk.set_cellular_tile_colors(coordinates, &colors);
+            }
+        }
+        chunk
     }
 
     /// Unloads clean chunks outside every active region request

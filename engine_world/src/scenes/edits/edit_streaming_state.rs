@@ -16,11 +16,13 @@ use crate::{
     },
     scenes::{
         cellular_tiles::{
+            CellCoordinates,
             CellularTileBuffers,
             CellularTileCoordinates,
             CellularTileIndex,
             CellularTileRegion,
             CellularTileStreamingState,
+            CELLULAR_TILE_SIZE,
         },
         collisions::Collision,
         SceneError,
@@ -50,10 +52,11 @@ impl EditStreamingState {
         Self { edits: Vec::new(), cellular_tile_count: 0, edit_cellular_tile_pass: None }
     }
 
-    /// Requests an edit of resident cells, written before the next stream moves resident tiles
+    /// Requests an edit of resident cells, written before the next stream moves resident tiles,
+    /// giving each filled cell its material's color tinted by the edit's color
     pub fn request_edit(
         &mut self,
-        edit: Edit,
+        mut edit: Edit,
         material_table: &MaterialTable,
         active_region: Option<CellularTileRegion>,
     ) -> Result<(), EditError> {
@@ -79,6 +82,20 @@ impl EditStreamingState {
                         });
                     }
                 }
+            }
+        }
+        for (coordinates, (cells, material_identifiers, colors)) in &mut edit.cellular_tiles {
+            for (cell_index, (material_identifier, color)) in
+                material_identifiers.iter().zip(colors.iter_mut()).enumerate()
+            {
+                if *cells & 1 << cell_index == 0
+                    || *material_identifier == MaterialIdentifier::EMPTY
+                { continue; }
+                let cell: CellCoordinates = CellCoordinates {
+                    x: coordinates.x * CELLULAR_TILE_SIZE + cell_index as i64 % CELLULAR_TILE_SIZE,
+                    y: coordinates.y * CELLULAR_TILE_SIZE + cell_index as i64 / CELLULAR_TILE_SIZE,
+                };
+                *color = material_table.cellular_color(*material_identifier, cell, *color);
             }
         }
         self.cellular_tile_count += edit.cellular_tiles.len();

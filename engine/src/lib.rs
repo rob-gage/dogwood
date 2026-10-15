@@ -5,7 +5,10 @@ pub mod runtime;
 
 pub use engine_graphics::{
     sprites::SpriteSheet,
-    world::materials::MaterialGraphicsCellularStatic,
+    world::materials::{
+        MaterialGraphicsCellularDynamic,
+        MaterialGraphicsCellularStatic,
+    },
 };
 pub use engine_host::{
     system_events,

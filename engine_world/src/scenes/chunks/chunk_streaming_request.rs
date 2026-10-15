@@ -4,7 +4,10 @@ use super::{
     Chunk,
     ChunkCoordinates,
 };
-use crate::scenes::SceneGenerator;
+use crate::{
+    materials::MaterialTable,
+    scenes::SceneGenerator,
+};
 use std::sync::Arc;
 
 /// One chunk load or save submitted to the shared Rayon pool
@@ -26,6 +29,8 @@ pub enum ChunkStreamingRequest {
         generator: Arc<dyn SceneGenerator>,
         /// Stable seed supplied to the generator
         world_seed: u64,
+        /// Materials whose albedos color the generated cells
+        material_table: Arc<MaterialTable>,
     },
     /// Save one dirty chunk to persistent storage
     Save {
