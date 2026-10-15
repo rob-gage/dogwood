@@ -1,13 +1,10 @@
 // Copyright Rob Gage 2026
 
-mod template_game;
-mod template_scene_generator;
-
 use engine::runtime::{
     Engine,
     EngineError,
 };
-use template_game::TemplateGame;
+use {{crate_name}}::TemplateGame;
 
 fn main() -> Result<(), EngineError> {
     let engine: Engine = Engine::default();

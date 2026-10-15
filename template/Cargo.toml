@@ -4,6 +4,16 @@
 name = "{{project_name}}"
 version = "0.0.0"
 edition = "2024"
+default-run = "{{project_name}}"
+
+[[bin]]
+name = "editor"
+path = "src/bin/editor.rs"
+required-features = ["editor"]
+
+[features]
+editor = ["dep:editor"]
 
 [dependencies]
 engine = {{engine_dependency}}
+editor = {{editor_dependency}}

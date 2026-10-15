@@ -6,6 +6,7 @@ use crate::{
 };
 
 /// Owns persistent egui composition state for one user interface
+#[derive(Clone)]
 pub struct UserInterfaceContext {
     egui_context: egui::Context,
 }
