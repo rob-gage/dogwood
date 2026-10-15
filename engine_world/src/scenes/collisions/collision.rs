@@ -129,7 +129,9 @@ impl Collision {
         }
     }
 
-    /// Synchronizes the active cellular tiles and actors, then advances one fixed step
+    /// Synchronizes the active cellular tiles and actors, then advances one fixed step, moving
+    /// pawns by the velocity change, contact normal, and contact depth in tiles of the dynamic
+    /// cells touching them
     pub fn simulate_collisions(
         &mut self,
         accelerator: &Accelerator,
@@ -137,13 +139,21 @@ impl Collision {
         ring_offset: (u32, u32),
         gravity: f32,
         actor_registry: &mut ActorRegistry,
+        cellular_contacts: &HashMap<Actor, ([f32; 2], [f32; 2], f32)>,
     ) -> Result<(), SceneError> {
-        // GPU cells only change when streaming moves the ring or edits write them, so otherwise
-        // no readback is needed
+        // static GPU cells only change when streaming moves the ring or edits write them, so
+        // otherwise no readback is needed
         if self.cellular_tiles.as_ref().is_some_and(|(region, _)| *region == active_region)
             && self.ring_offset == ring_offset
             && !self.is_cellular_tile_read_requested
-        { return self.simulate_collisions_step_actors(active_region, gravity, actor_registry); }
+        {
+            return self.simulate_collisions_step_actors(
+                active_region,
+                gravity,
+                actor_registry,
+                cellular_contacts,
+            );
+        }
         self.is_cellular_tile_read_requested = false;
         // read this tick's GPU occupancy before simulating against it
         let cellular_tiles: Vec<CollisionCellularTile> = self.cellular_tile_pass
@@ -159,7 +169,12 @@ impl Collision {
         { self.simulate_collisions_move_origin(center); }
         self.simulate_collisions_apply_cellular_tiles(active_region, cellular_tiles);
         self.ring_offset = ring_offset;
-        self.simulate_collisions_step_actors(active_region, gravity, actor_registry)
+        self.simulate_collisions_step_actors(
+            active_region,
+            gravity,
+            actor_registry,
+            cellular_contacts,
+        )
     }
 
     /// Requests that the next simulation read the GPU cells after edits wrote them
@@ -378,6 +393,7 @@ impl Collision {
         active_region: CellularTileRegion,
         gravity: f32,
         actor_registry: &mut ActorRegistry,
+        cellular_contacts: &HashMap<Actor, ([f32; 2], [f32; 2], f32)>,
     ) -> Result<(), SceneError> {
         let region_minimum: rapier2d::math::Vector = rapier2d::math::Vector::new(
             (active_region.bottom_left.x - self.origin.x) as f32,
@@ -472,7 +488,7 @@ impl Collision {
             actor_registry.despawn(actor)
                 .map_err(|error: ActorError| SceneError::ActorDespawn { error })?;
         }
-        self.simulate_collisions_move_pawns(&pawns, gravity);
+        self.simulate_collisions_move_pawns(&pawns, gravity, cellular_contacts);
         self.physics_pipeline.step(
             rapier2d::math::Vector::new(0.0, -gravity),
             &self.integration_parameters,
@@ -508,19 +524,31 @@ impl Collision {
         Ok(())
     }
 
-    /// Moves every pawn by its controlled velocity and gravity with the character controller
+    /// Moves every pawn by its controlled velocity, gravity, and dynamic cell contacts with the
+    /// character controller
     fn simulate_collisions_move_pawns(
         &mut self,
         pawns: &[(Actor, ActorPawnMovementComponent, ActorPawnControlComponent)],
         gravity: f32,
+        cellular_contacts: &HashMap<Actor, ([f32; 2], [f32; 2], f32)>,
     ) {
         let time_step: f32 = self.integration_parameters.dt;
+        let maximum_slope_cosine: f32 = self.pawn_movement_controller.max_slope_climb_angle.cos();
         for (actor, pawn_movement, pawn_control) in pawns {
+            // dynamic cells push the pawn by the momentum of the cells it shoved, and hold it like
+            // ground where they could not get out of its way
+            let (velocity_change, cellular_normal, cellular_depth): ([f32; 2], [f32; 2], f32) =
+                cellular_contacts.get(actor).copied().unwrap_or(([0.0; 2], [0.0; 2], 0.0));
+            let cellular_normal: rapier2d::math::Vector =
+                rapier2d::math::Vector::new(cellular_normal[0], cellular_normal[1]);
+            let is_cellular_grounded: bool = cellular_normal.y >= maximum_slope_cosine;
             let Some((rigid_body_handle, Some((collider_handle, _)), _, _, _, Some(pawn))) =
                 self.actors.get_mut(actor)
             else { continue; };
             let (velocity, is_grounded, is_jump_held): &mut (rapier2d::math::Vector, bool, bool) =
                 pawn;
+            *velocity += rapier2d::math::Vector::new(velocity_change[0], velocity_change[1]);
+            let is_standing: bool = *is_grounded || is_cellular_grounded;
             let (Some(rigid_body), Some(collider)) = (
                 self.rigid_bodies.get(*rigid_body_handle),
                 self.colliders.get(*collider_handle),
@@ -534,20 +562,28 @@ impl Collision {
             let target_velocity_x: f32 = pawn_control.movement.clamp(-1.0, 1.0) * speed;
             let velocity_change: f32 = pawn_movement.acceleration * time_step;
             velocity.x += (target_velocity_x - velocity.x).clamp(-velocity_change, velocity_change);
-            if pawn_control.is_jumping && !*is_jump_held && *is_grounded {
+            if pawn_control.is_jumping && !*is_jump_held && is_standing {
                 velocity.y = pawn_movement.jump_speed;
             }
             *is_jump_held = pawn_control.is_jumping;
             // grounded pawns rest on the ground instead of pressing into it
-            if *is_grounded && velocity.y <= 0.0 {
+            if is_standing && velocity.y <= 0.0 {
                 velocity.y = 0.0;
             } else {
                 velocity.y -= gravity * time_step;
             }
+            let cellular_approach_speed: f32 = velocity.dot(cellular_normal);
+            if cellular_approach_speed < 0.0 {
+                *velocity -= cellular_normal * cellular_approach_speed;
+            }
             // cast from the body's next pose so gameplay placement this tick is respected
             let collider_pose: rapier2d::math::Pose = *rigid_body.next_position()
                 * collider.position_wrt_parent().copied().unwrap_or_default();
-            let desired_translation: rapier2d::math::Vector = *velocity * time_step;
+            // pawns sink one cell into dynamic cells and are pushed out of anything deeper
+            let cellular_correction: f32 =
+                (cellular_depth - 1.0 / CELLULAR_TILE_SIZE as f32).max(0.0) / 2.0;
+            let desired_translation: rapier2d::math::Vector =
+                *velocity * time_step + cellular_normal * cellular_correction;
             let mut resolved_velocity: rapier2d::math::Vector = *velocity;
             let movement: rapier2d::control::EffectiveCharacterMovement =
                 self.pawn_movement_controller.move_shape(
@@ -574,7 +610,7 @@ impl Collision {
             // snapping to the ground stops a fall without reporting a hit
             if movement.grounded && resolved_velocity.y < 0.0 { resolved_velocity.y = 0.0; }
             *velocity = resolved_velocity;
-            *is_grounded = movement.grounded;
+            *is_grounded = movement.grounded || is_cellular_grounded;
             let next_translation: rapier2d::math::Vector =
                 rigid_body.next_position().translation + movement.translation;
             if let Some(rigid_body) = self.rigid_bodies.get_mut(*rigid_body_handle) {

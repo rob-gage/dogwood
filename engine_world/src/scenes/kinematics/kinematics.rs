@@ -1,0 +1,138 @@
+// Copyright Rob Gage 2026
+
+use super::{
+    kinematics_cellular_tile_pass::KinematicsCellularTilePass,
+    KINEMATICS_FIXED_MASS,
+};
+use crate::{
+    actors::{
+        components::{
+            ActorCollisionComponent,
+            ActorIdentityComponent,
+            ActorKinematicsPositionComponent,
+        },
+        Actor,
+        ActorRegistry,
+    },
+    materials::MaterialTable,
+    scenes::{
+        cellular_tiles::{
+            CellularTileBuffers,
+            CellularTileRegion,
+        },
+        collisions::{
+            ColliderShape,
+            CollisionBody,
+            COLLISION_GROUP_CELLULAR_TILE,
+        },
+        SceneError,
+        ScenePosition,
+    },
+};
+use engine_host::acceleration::Accelerator;
+use std::collections::HashMap;
+
+/// Distance in tiles beyond the active region within which actors still reach its cells
+const KINEMATICS_ACTOR_REGION_MARGIN: f64 = 4.0;
+
+/// GPU simulation of the dynamic cells of a scene's active cellular tiles and the actors in them
+pub struct Kinematics {
+    /// Position of every simulated actor in the previous tick, giving the velocity it pushes with
+    actor_positions: HashMap<Actor, ScenePosition>,
+    /// Newest contact normals and depths of every actor, kept while readbacks are in flight
+    cellular_contacts: HashMap<Actor, ([f32; 2], [f32; 2], f32)>,
+    /// GPU simulation of the dynamic cells of every active tile
+    cellular_tile_pass: KinematicsCellularTilePass,
+}
+
+impl Kinematics {
+
+    /// Creates a simulation of the dynamic cells in the cellular tile buffers
+    pub fn new(
+        accelerator: &Accelerator,
+        cellular_tile_buffers: &CellularTileBuffers,
+        material_table: &MaterialTable,
+    ) -> Self {
+        Self {
+            actor_positions: HashMap::new(),
+            cellular_contacts: HashMap::new(),
+            cellular_tile_pass: KinematicsCellularTilePass::new(
+                accelerator,
+                cellular_tile_buffers,
+                material_table,
+            ),
+        }
+    }
+
+    /// Simulates one tick of the active dynamic cells against every actor colliding with cellular
+    /// tiles, returning each actor's velocity change in tiles per second from the cells it pushed,
+    /// and the normal and depth in tiles of the cells holding it back, read from an earlier tick
+    pub fn simulate_kinematics(
+        &mut self,
+        accelerator: &Accelerator,
+        active_region: CellularTileRegion,
+        ring_offset: (u32, u32),
+        gravity: f32,
+        actor_registry: &ActorRegistry,
+    ) -> Result<HashMap<Actor, ([f32; 2], [f32; 2], f32)>, SceneError> {
+        let region_position: ScenePosition = ScenePosition {
+            tile_x: active_region.bottom_left.x,
+            tile_y: active_region.bottom_left.y,
+            offset_x: 0,
+            offset_y: 0,
+        };
+        let region_width: f64 = active_region.width() as f64;
+        let region_height: f64 = active_region.height() as f64;
+        // place every nearby actor colliding with cellular tiles relative to the region, moving
+        // by its change in position since the previous tick
+        let mut actors: Vec<(Actor, ColliderShape, [f32; 2], f32, [f32; 2], f32)> = Vec::new();
+        let mut actor_positions: HashMap<Actor, ScenePosition> = HashMap::new();
+        for (actor_identity, position) in actor_registry
+            .components::<ActorIdentityComponent, ActorKinematicsPositionComponent>()
+        {
+            let actor: Actor = actor_identity.actor();
+            let Ok(collision) = actor_registry.component::<ActorCollisionComponent>(actor)
+            else { continue; };
+            if collision.filter & COLLISION_GROUP_CELLULAR_TILE == 0 { continue; }
+            let position: ScenePosition = position.position;
+            let (x, y): (f64, f64) = position.relative_position(region_position);
+            if x < -KINEMATICS_ACTOR_REGION_MARGIN || y < -KINEMATICS_ACTOR_REGION_MARGIN
+                || x > region_width + KINEMATICS_ACTOR_REGION_MARGIN
+                || y > region_height + KINEMATICS_ACTOR_REGION_MARGIN
+            { continue; }
+            let (velocity_x, velocity_y): (f64, f64) = self.actor_positions.get(&actor)
+                .map_or((0.0, 0.0), |previous| position.relative_position(*previous));
+            actor_positions.insert(actor, position);
+            let mass: f32 = match collision.body {
+                CollisionBody::Fixed => KINEMATICS_FIXED_MASS,
+                CollisionBody::Kinematic | CollisionBody::Dynamic => collision.mass,
+            };
+            if !mass.is_finite() || mass <= 0.0 {
+                return Err(SceneError::InvalidCollider { actor });
+            }
+            actors.push((
+                actor,
+                collision.collider.shape,
+                [x as f32 + collision.collider.offset_x, y as f32 + collision.collider.offset_y],
+                collision.collider.rotation,
+                [velocity_x as f32, velocity_y as f32],
+                mass,
+            ));
+        }
+        self.actor_positions = actor_positions;
+        let contacts: Option<HashMap<Actor, ([f32; 2], [f32; 2], f32)>> = self.cellular_tile_pass
+            .simulate_cellular_tiles(accelerator, active_region, ring_offset, gravity, &actors)?;
+        // velocity changes apply once, while normals and depths last until the next readback
+        if let Some(contacts) = contacts {
+            self.cellular_contacts = contacts;
+            let contacts: HashMap<Actor, ([f32; 2], [f32; 2], f32)> =
+                self.cellular_contacts.clone();
+            for (velocity_change, _, _) in self.cellular_contacts.values_mut() {
+                *velocity_change = [0.0; 2];
+            }
+            return Ok(contacts);
+        }
+        Ok(self.cellular_contacts.clone())
+    }
+
+}

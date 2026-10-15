@@ -18,6 +18,7 @@ use engine::{
     materials::{
         Material,
         MaterialIdentifier,
+        MaterialPropertiesCellularDynamic,
         MaterialPropertiesCellularStatic,
         MaterialRegistry,
     },
@@ -38,6 +39,7 @@ use engine::{
         SystemKeyboardEvent,
     },
     Accelerator,
+    MaterialGraphicsCellularDynamic,
     MaterialGraphicsCellularStatic,
     SpriteSheet,
 };
@@ -46,7 +48,7 @@ use std::{
     sync::Arc,
 };
 
-/// Flat stone world explored by a white square player
+/// Flat stone world with gravel to place, explored by a white square player
 pub struct TemplateGame {
     /// Scene holding the world and player
     scene: Scene,
@@ -56,7 +58,7 @@ pub struct TemplateGame {
 
 impl TemplateGame {
 
-    /// Creates the stone world and a player falling onto it from above
+    /// Creates the stone world, its gravel, and a player falling onto it from above
     pub fn new(accelerator: &Accelerator) -> Result<Self, EngineError> {
         let mut material_registry: MaterialRegistry = MaterialRegistry::new();
         let stone: MaterialIdentifier = material_registry.register(Material::CellularStatic {
@@ -73,6 +75,26 @@ impl TemplateGame {
                     width: 1.0,
                     height: 1.0,
                 },
+            },
+        })?;
+        // cellular dynamic debris that piles at its angle of repose and that players wade through
+        material_registry.register(Material::CellularDynamic {
+            name: String::from("gravel"),
+            properties: MaterialPropertiesCellularDynamic {
+                graphics: MaterialGraphicsCellularDynamic {
+                    sprite_sheet: Arc::new(SpriteSheet::from_png(
+                        accelerator,
+                        include_bytes!("../assets/sprites/gravel.png"),
+                        1,
+                        1,
+                    )?),
+                    frame: 0,
+                    width: 1.0,
+                    height: 1.0,
+                },
+                mass: 1.0,
+                friction: 0.8,
+                restitution: 0.1,
             },
         })?;
         let mut scene: Scene = Scene::new(
@@ -109,6 +131,7 @@ impl TemplateGame {
                 },
                 memberships: u32::MAX,
                 filter: u32::MAX,
+                mass: 40.0,
             },
             ActorPawnMovementComponent::default(),
             ActorPawnPossessionComponent,
