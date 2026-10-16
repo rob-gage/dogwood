@@ -54,6 +54,30 @@ impl MaterialTable {
             .collect();
         let cellular_static_count: usize = albedo_frames.len();
         let mut property_bytes: Vec<u8> = Vec::new();
+        for index in 1.. {
+            let Ok(identifier) = MaterialIdentifier::new(MaterialForm::CellularStatic, index)
+            else { break; };
+            let Some(properties) = material_registry.cellular_static_properties(identifier)
+            else { break; };
+            if !properties.mass.is_finite() || properties.mass <= 0.0
+                || !properties.friction.is_finite() || properties.friction < 0.0
+                || !(0.0..=1.0).contains(&properties.restitution)
+            {
+                return Err(String::from(
+                    "static cellular materials need a positive mass, a nonnegative friction, \
+                    and a restitution from zero to one",
+                ));
+            }
+            if let Some(debris) = properties.debris
+                && (debris.form() != MaterialForm::CellularDynamic
+                    || material_registry.cellular_dynamic_properties(debris).is_none())
+            {
+                return Err(String::from(
+                    "static cellular material debris must be a registered dynamic cellular \
+                    material",
+                ));
+            }
+        }
         for index in 0.. {
             let Ok(identifier) = MaterialIdentifier::new(MaterialForm::CellularDynamic, index)
             else { break; };
