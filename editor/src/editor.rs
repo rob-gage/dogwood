@@ -651,10 +651,6 @@ impl<G: Game> Editor<G> {
             )
         });
         self.cursor_cell = cursor_position.map(ScenePosition::cell_coordinates);
-        if self.is_game_input() {
-            self.stroke_cell = None;
-            return;
-        }
         // outline the cells the brush covers around the hovered cell
         if let Some(cell) = self.cursor_cell {
             let stroke: egui::Stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);

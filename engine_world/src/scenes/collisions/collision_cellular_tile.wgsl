@@ -16,7 +16,11 @@ var<storage, read> material_identifiers: array<u32>;
 @group(0) @binding(2)
 var<storage, read_write> cellular_tiles: array<vec2<u32>>;
 
-/// Packs the solid static cells of one active tile into bit `y * 8 + x` in active region order
+@group(0) @binding(3)
+var<storage, read> rigid_body_cells: array<u32>;
+
+/// Packs the solid static cells outside rigid bodies of one active tile into bit `y * 8 + x` in
+/// active region order
 @compute @workgroup_size(64)
 fn compute(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let tile_count: u32 = uniforms.region_width * uniforms.region_height;
@@ -30,8 +34,11 @@ fn compute(@builtin(global_invocation_id) invocation: vec3<u32>) {
     var occupancy: vec2<u32> = vec2<u32>(0u, 0u);
     for (var cell: u32 = 0u; cell < 64u; cell++) {
         let material_identifier: u32 = material_identifiers[cell_start + cell];
-        // empty shares the static tag, so only nonzero static identifiers are solid
-        if material_identifier != 0u && (material_identifier >> 30u) == 0u {
+        // empty shares the static tag, so only nonzero static identifiers are solid, and rigid
+        // body cells collide through their own bodies
+        if material_identifier != 0u && (material_identifier >> 30u) == 0u
+            && rigid_body_cells[cell_start + cell] == 0u
+        {
             occupancy[cell / 32u] |= 1u << (cell % 32u);
         }
     }

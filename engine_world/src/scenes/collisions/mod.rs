@@ -6,6 +6,8 @@ mod collision;
 mod collision_body;
 mod collision_cellular_tile;
 mod collision_cellular_tile_pass;
+mod collision_rigid_body;
+mod collision_rigid_body_pass;
 
 pub use collider::Collider;
 pub use collider_shape::ColliderShape;
@@ -15,6 +17,22 @@ pub use collision_cellular_tile::CollisionCellularTile;
 
 /// Maximum distance in tiles between the active region's center and the Rapier origin
 const COLLISION_ORIGIN_DISTANCE_MAXIMUM: u64 = 1024;
+
+/// Fewest cells of a rigid body, below which its cells become debris
+const COLLISION_RIGID_BODY_CELL_COUNT_MINIMUM: usize = 8;
+
+/// Most cells of floating static cells that form a rigid body, above which they stay in place
+const COLLISION_RIGID_BODY_CELL_COUNT_MAXIMUM: usize = 4096;
+
+/// Distance in tiles ahead of a moving rigid body within which contacts are predicted, since
+/// voxel contacts cannot push a body out once it moves a cell or more into other voxels
+const COLLISION_RIGID_BODY_CCD_PREDICTION: f32 = 1.0;
+
+/// Maximum number of rigid bodies simulated at once
+const COLLISION_RIGID_BODY_COUNT_MAXIMUM: usize = 1024;
+
+/// Maximum number of tiles of cells held by every simulated rigid body
+const COLLISION_RIGID_BODY_CELLULAR_TILE_COUNT_MAXIMUM: usize = 16384;
 
 /// Collision group of actor colliders, reserved by the engine
 pub const COLLISION_GROUP_ACTOR: u32 = 1 << 28;

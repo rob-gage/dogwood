@@ -210,6 +210,19 @@ impl Scene {
         }
         // advance chunk streaming before moving resident tiles
         chunk_streaming_state.stream_chunks(&self.generator, self.world_seed)?;
+        // rigid bodies leaving the requested region stay behind as static cells before their
+        // tiles can move
+        if let (Some(collision), Some(cellular_tile_streaming_state)) =
+            (self.collision.as_mut(), self.cellular_tile_streaming_state.as_ref())
+            && let Some(active_region) = cellular_tile_streaming_state.active_cellular_tile_region()
+        {
+            collision.release_rigid_bodies(
+                accelerator,
+                active_region,
+                cellular_tile_streaming_state.cellular_tile_ring_offset(),
+                region,
+            );
+        }
         if let Some(cellular_tile_streaming_state) = self.cellular_tile_streaming_state.as_mut() {
             cellular_tile_streaming_state.stream_cellular_tiles(
                 accelerator,
@@ -220,8 +233,9 @@ impl Scene {
         Ok(())
     }
 
-    /// Simulates the active dynamic cells against actors, then actor collisions against the
-    /// active cellular tiles, waiting for the GPU only when collisions read changed cells
+    /// Simulates the active dynamic cells against actors, then actor and rigid body collisions
+    /// against the active cellular tiles, waiting for the GPU only when collisions read changed
+    /// cells
     pub fn simulate(&mut self, accelerator: &Accelerator) -> Result<(), SceneError> {
         // nothing is simulated before the active region is resident
         let (Some(cellular_tile_streaming_state), Some(cellular_tile_buffers)) = (
@@ -253,6 +267,7 @@ impl Scene {
                 self.gravity,
                 &mut self.actor_registry,
                 &cellular_contacts,
+                &self.material_table,
             )
     }
 
