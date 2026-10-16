@@ -30,7 +30,8 @@ pub fn run(
         verbose,
     );
     let mut command: Command = Command::new(cargo_path);
-    command.arg("run").arg("--quiet").current_dir(path);
+    command.arg("run").current_dir(path);
+    if !verbose { command.arg("--quiet"); }
     if !debug { command.arg("--release"); }
     command.arg("--target-dir").arg(build_directory);
     if verbose {

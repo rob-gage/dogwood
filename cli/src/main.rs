@@ -36,7 +36,7 @@ enum Subcommand {
         /// Builds the project in debug mode if set
         #[arg(long)]
         debug: bool,
-        /// Prints the commands and build output
+        /// Prints commands and streams Cargo output as it runs
         #[arg(long)]
         verbose: bool,
         /// Path to the project to build
@@ -51,7 +51,7 @@ enum Subcommand {
         /// Runs the project in debug mode if set
         #[arg(long)]
         debug: bool,
-        /// Prints the commands and build output
+        /// Prints commands and streams Cargo output as it runs
         #[arg(long)]
         verbose: bool,
         /// Path to the project to run
@@ -60,7 +60,7 @@ enum Subcommand {
     },
     /// Runs a project that uses the engine in the engine editor
     Edit {
-        /// Prints the commands and build output
+        /// Prints commands and streams Cargo output as it runs
         #[arg(long)]
         verbose: bool,
         /// Path to the project to edit
@@ -72,13 +72,13 @@ enum Subcommand {
         /// Runs the project in debug mode if set
         #[arg(long)]
         debug: bool,
-        /// Prints the commands and build output
+        /// Prints commands and streams Cargo output as it runs
         #[arg(long)]
         verbose: bool,
     },
     /// Opens the canonical Dogwood template project in the Dogwood editor
     EditTemplate {
-        /// Prints the commands and build output
+        /// Prints commands and streams Cargo output as it runs
         #[arg(long)]
         verbose: bool,
     },
