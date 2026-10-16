@@ -86,6 +86,16 @@ impl CollisionCellularTilePass {
                         },
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             },
         );
@@ -148,6 +158,10 @@ impl CollisionCellularTilePass {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: cellular_tile_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: cellular_tile_buffers.rigid_body_cell_buffer().as_entire_binding(),
                 },
             ],
         });

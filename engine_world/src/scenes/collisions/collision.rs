@@ -6,9 +6,17 @@ use super::{
     collision_body::CollisionBody,
     collision_cellular_tile::CollisionCellularTile,
     collision_cellular_tile_pass::CollisionCellularTilePass,
+    collision_rigid_body::CollisionRigidBody,
+    collision_rigid_body_pass::CollisionRigidBodyPass,
     COLLISION_GROUP_CELLULAR_TILE,
     COLLISION_GROUP_EDIT,
+    COLLISION_GROUP_RIGID_BODY,
     COLLISION_ORIGIN_DISTANCE_MAXIMUM,
+    COLLISION_RIGID_BODY_CELL_COUNT_MAXIMUM,
+    COLLISION_RIGID_BODY_CELL_COUNT_MINIMUM,
+    COLLISION_RIGID_BODY_CCD_PREDICTION,
+    COLLISION_RIGID_BODY_CELLULAR_TILE_COUNT_MAXIMUM,
+    COLLISION_RIGID_BODY_COUNT_MAXIMUM,
 };
 use crate::{
     actors::{
@@ -25,6 +33,10 @@ use crate::{
         ActorError,
         ActorRegistry,
     },
+    materials::{
+        MaterialIdentifier,
+        MaterialTable,
+    },
     scenes::{
         cellular_tiles::{
             CellularTileBuffers,
@@ -39,11 +51,13 @@ use crate::{
 use engine_host::acceleration::Accelerator;
 use std::collections::{
     hash_map::Entry,
+    BTreeMap,
     HashMap,
     HashSet,
 };
 
-/// Rapier simulation of a scene's actors against the solid cells of its active cellular tiles
+/// Rapier simulation of a scene's actors and rigid bodies against the solid cells of its active
+/// cellular tiles
 pub struct Collision {
     /// Cellular tile whose bottom-left corner is the origin of every Rapier position
     origin: CellularTileCoordinates,
@@ -70,6 +84,29 @@ pub struct Collision {
     pawn_movement_controller: rapier2d::control::KinematicCharacterController,
     /// GPU extraction of active cellular tile occupancies
     cellular_tile_pass: CollisionCellularTilePass,
+    /// Rigid bodies of static cells by identifier
+    collision_rigid_bodies: HashMap<u64, CollisionRigidBody>,
+    /// Identifier given to the next rigid body, never reused
+    next_rigid_body_identifier: u64,
+    /// Rigid body record indices held by no rigid body
+    free_rigid_body_indices: Vec<u32>,
+    /// Rigid body tiles held by no rigid body
+    free_cellular_tile_indices: Vec<u32>,
+    /// Rigid body and coordinates in it of every held rigid body tile
+    cellular_tile_rigid_bodies: HashMap<u32, (u64, (i32, i32))>,
+    /// Cells written before the next rasterization, with their new and expected materials
+    rigid_body_cell_writes: Vec<[u32; 4]>,
+    /// Rigid bodies whose cells changed since their last rasterization
+    changed_rigid_bodies: HashSet<u64>,
+    /// Rigid body tiles cleared by the next rasterization regardless of their body's motion
+    cleared_cellular_tiles: Vec<u32>,
+    /// Records of removed rigid bodies whose cells the next rasterization clears, and the record
+    /// indices and tiles freed after it
+    removed_rigid_bodies: Vec<(u32, [f32; 14])>,
+    /// Rigid body tiles freed after the next rasterization
+    removed_cellular_tiles: Vec<u32>,
+    /// GPU rasterization of rigid body cells into the active cellular tiles
+    rigid_body_pass: CollisionRigidBodyPass,
     /// Rigid bodies of every simulated actor
     rigid_bodies: rapier2d::dynamics::RigidBodySet,
     /// Cellular tile collider and every simulated actor collider
@@ -116,6 +153,19 @@ impl Collision {
                 accelerator,
                 cellular_tile_buffers,
             ),
+            collision_rigid_bodies: HashMap::new(),
+            next_rigid_body_identifier: 1,
+            free_rigid_body_indices: (0..COLLISION_RIGID_BODY_COUNT_MAXIMUM as u32).rev().collect(),
+            free_cellular_tile_indices: (0..COLLISION_RIGID_BODY_CELLULAR_TILE_COUNT_MAXIMUM as u32)
+                .rev()
+                .collect(),
+            cellular_tile_rigid_bodies: HashMap::new(),
+            rigid_body_cell_writes: Vec::new(),
+            changed_rigid_bodies: HashSet::new(),
+            cleared_cellular_tiles: Vec::new(),
+            removed_rigid_bodies: Vec::new(),
+            removed_cellular_tiles: Vec::new(),
+            rigid_body_pass: CollisionRigidBodyPass::new(accelerator, cellular_tile_buffers),
             rigid_bodies: rapier2d::dynamics::RigidBodySet::new(),
             colliders: rapier2d::geometry::ColliderSet::new(),
             integration_parameters: rapier2d::dynamics::IntegrationParameters::default(),
@@ -129,9 +179,9 @@ impl Collision {
         }
     }
 
-    /// Synchronizes the active cellular tiles and actors, then advances one fixed step, moving
-    /// pawns by the velocity change, contact normal, and contact depth in tiles of the dynamic
-    /// cells touching them
+    /// Synchronizes the active cellular tiles, rigid bodies, and actors, then advances one fixed
+    /// step, moving pawns by the velocity change, contact normal, and contact depth in tiles of the
+    /// dynamic cells touching them, and rasterizing the rigid bodies where they moved
     pub fn simulate_collisions(
         &mut self,
         accelerator: &Accelerator,
@@ -140,41 +190,58 @@ impl Collision {
         gravity: f32,
         actor_registry: &mut ActorRegistry,
         cellular_contacts: &HashMap<Actor, ([f32; 2], [f32; 2], f32)>,
+        material_table: &MaterialTable,
     ) -> Result<(), SceneError> {
         // static GPU cells only change when streaming moves the ring or edits write them, so
         // otherwise no readback is needed
-        if self.cellular_tiles.as_ref().is_some_and(|(region, _)| *region == active_region)
-            && self.ring_offset == ring_offset
-            && !self.is_cellular_tile_read_requested
+        if !self.cellular_tiles.as_ref().is_some_and(|(region, _)| *region == active_region)
+            || self.ring_offset != ring_offset
+            || self.is_cellular_tile_read_requested
         {
-            return self.simulate_collisions_step_actors(
+            // edits may replace rigid body cells, which leave their bodies before static cells
+            // are read so that replaced cells read as static cells
+            if self.is_cellular_tile_read_requested {
+                self.is_cellular_tile_read_requested = false;
+                self.simulate_collisions_read_changed_cells(
+                    accelerator,
+                    active_region,
+                    ring_offset,
+                    material_table,
+                )?;
+            }
+            // read this tick's GPU occupancy before simulating against it
+            let cellular_tiles: Vec<CollisionCellularTile> = self.cellular_tile_pass
+                .read_cellular_tiles(accelerator, active_region, ring_offset)?;
+            // keep the origin near the active region so f32 positions keep sub-cell precision
+            let center: CellularTileCoordinates = CellularTileCoordinates {
+                x: active_region.bottom_left.x + active_region.width() as i64 / 2,
+                y: active_region.bottom_left.y + active_region.height() as i64 / 2,
+            };
+            if self.cellular_tiles.is_none()
+                || center.x.abs_diff(self.origin.x) > COLLISION_ORIGIN_DISTANCE_MAXIMUM
+                || center.y.abs_diff(self.origin.y) > COLLISION_ORIGIN_DISTANCE_MAXIMUM
+            { self.simulate_collisions_move_origin(center); }
+            let changed_cells: Vec<rapier2d::parry::math::IVector> =
+                self.simulate_collisions_apply_cellular_tiles(active_region, cellular_tiles);
+            self.ring_offset = ring_offset;
+            self.simulate_collisions_detach_rigid_bodies(
+                accelerator,
                 active_region,
-                gravity,
-                actor_registry,
-                cellular_contacts,
-            );
+                ring_offset,
+                &changed_cells,
+                material_table,
+            )?;
         }
-        self.is_cellular_tile_read_requested = false;
-        // read this tick's GPU occupancy before simulating against it
-        let cellular_tiles: Vec<CollisionCellularTile> = self.cellular_tile_pass
-            .read_cellular_tiles(accelerator, active_region, ring_offset)?;
-        // keep the origin near the active region so f32 positions keep sub-cell precision
-        let center: CellularTileCoordinates = CellularTileCoordinates {
-            x: active_region.bottom_left.x + active_region.width() as i64 / 2,
-            y: active_region.bottom_left.y + active_region.height() as i64 / 2,
-        };
-        if self.cellular_tiles.is_none()
-            || center.x.abs_diff(self.origin.x) > COLLISION_ORIGIN_DISTANCE_MAXIMUM
-            || center.y.abs_diff(self.origin.y) > COLLISION_ORIGIN_DISTANCE_MAXIMUM
-        { self.simulate_collisions_move_origin(center); }
-        self.simulate_collisions_apply_cellular_tiles(active_region, cellular_tiles);
-        self.ring_offset = ring_offset;
+        // rigid bodies that left the active region stay behind as static cells
+        self.release_rigid_bodies(accelerator, active_region, ring_offset, active_region);
         self.simulate_collisions_step_actors(
             active_region,
             gravity,
             actor_registry,
             cellular_contacts,
-        )
+        )?;
+        self.simulate_collisions_rasterize_rigid_bodies(accelerator, active_region, ring_offset);
+        Ok(())
     }
 
     /// Requests that the next simulation read the GPU cells after edits wrote them
@@ -245,6 +312,22 @@ impl Collision {
 
     /// Moves the origin, removing the cellular tile collider and re-placing every body
     fn simulate_collisions_move_origin(&mut self, origin: CellularTileCoordinates) {
+        // rigid bodies keep their place relative to the cells, shifted by the whole tiles moved
+        let shift: rapier2d::math::Vector = rapier2d::math::Vector::new(
+            (self.origin.x - origin.x) as f32,
+            (self.origin.y - origin.y) as f32,
+        );
+        for collision_rigid_body in self.collision_rigid_bodies.values_mut() {
+            if let Some(rigid_body) =
+                self.rigid_bodies.get_mut(collision_rigid_body.rigid_body_handle)
+            {
+                rigid_body.set_translation(rigid_body.translation() + shift, false);
+            }
+            if let Some((position, ..)) = collision_rigid_body.rasterization.as_mut() {
+                position[0] += shift.x * CELLULAR_TILE_SIZE as f32;
+                position[1] += shift.y * CELLULAR_TILE_SIZE as f32;
+            }
+        }
         self.origin = origin;
         if let Some(cellular_tile_collider) = self.cellular_tile_collider.take() {
             self.colliders.remove(
@@ -268,12 +351,13 @@ impl Collision {
         }
     }
 
-    /// Applies cells that changed, entered, or left the active region to the voxel collider
+    /// Applies cells that changed, entered, or left the active region to the voxel collider,
+    /// returning the voxel keys of the cells that changed or left rather than entered
     fn simulate_collisions_apply_cellular_tiles(
         &mut self,
         active_region: CellularTileRegion,
         cellular_tiles: Vec<CollisionCellularTile>,
-    ) {
+    ) -> Vec<rapier2d::parry::math::IVector> {
         let mut cell_changes: Vec<(rapier2d::parry::math::IVector, bool)> = Vec::new();
         let previous_cellular_tiles: Option<(
             CellularTileRegion,
@@ -297,6 +381,7 @@ impl Collision {
                 );
             }
         }
+        let changed_cell_count: usize = cell_changes.len();
         // fill the solid cells of tiles entering the active region
         for (coordinates, cellular_tile) in
             active_region.cellular_tile_coordinates().zip(&cellular_tiles)
@@ -312,7 +397,12 @@ impl Collision {
             );
         }
         self.cellular_tiles = Some((active_region, cellular_tiles));
-        if cell_changes.is_empty() { return; }
+        // tiles that were already active are compared before entering tiles are filled
+        let changed_cells: Vec<rapier2d::parry::math::IVector> = cell_changes.iter()
+            .take(changed_cell_count)
+            .map(|(key, _)| *key)
+            .collect();
+        if cell_changes.is_empty() { return changed_cells; }
         for (_, is_filled) in &cell_changes {
             if *is_filled { self.solid_cell_count += 1; } else { self.solid_cell_count -= 1; }
         }
@@ -364,6 +454,7 @@ impl Collision {
                 false,
             );
         }
+        changed_cells
     }
 
     /// Records the voxel key and fill of every changed cell in one cellular tile
@@ -617,6 +708,674 @@ impl Collision {
                 rigid_body.set_next_kinematic_translation(next_translation);
             }
         }
+    }
+
+    /// Leaves every rigid body not entirely inside a region behind as static cells at rest in the
+    /// active cellular tiles, without waiting for the GPU
+    pub fn release_rigid_bodies(
+        &mut self,
+        accelerator: &Accelerator,
+        active_region: CellularTileRegion,
+        ring_offset: (u32, u32),
+        region: CellularTileRegion,
+    ) {
+        let (region_x, region_y): (i32, i32) = self.rigid_body_region_origin(region);
+        let region_width: f32 = (region.width() as i64 * CELLULAR_TILE_SIZE) as f32;
+        let region_height: f32 = (region.height() as i64 * CELLULAR_TILE_SIZE) as f32;
+        // a body is inside while every corner of its tiles is
+        let released_rigid_bodies: Vec<u64> = self.collision_rigid_bodies.iter()
+            .filter(|(_, collision_rigid_body)| {
+                let Some((position, rotation, ..)) = collision_rigid_body.rasterization
+                else { return false; };
+                collision_rigid_body.cellular_tiles.keys().any(|(tile_x, tile_y)| {
+                    [(0, 0), (8, 0), (0, 8), (8, 8)].into_iter().any(|(corner_x, corner_y)| {
+                        let local_x: f32 = (tile_x * 8 + corner_x) as f32;
+                        let local_y: f32 = (tile_y * 8 + corner_y) as f32;
+                        let x: f32 = position[0] + rotation[0] * local_x - rotation[1] * local_y
+                            - region_x as f32;
+                        let y: f32 = position[1] + rotation[1] * local_x + rotation[0] * local_y
+                            - region_y as f32;
+                        x < 0.0 || y < 0.0 || x > region_width || y > region_height
+                    })
+                })
+            })
+            .map(|(rigid_body, _)| *rigid_body)
+            .collect();
+        if released_rigid_bodies.is_empty() { return; }
+        let mut records: Vec<(u32, [f32; 14])> = Vec::new();
+        let mut returned_cellular_tiles: Vec<u32> = Vec::new();
+        let mut released_indices: Vec<u32> = Vec::new();
+        for rigid_body in released_rigid_bodies {
+            let Some(collision_rigid_body) = self.collision_rigid_bodies.remove(&rigid_body)
+            else { continue; };
+            if let Some(record) = self.rigid_body_record(&collision_rigid_body) {
+                records.push((collision_rigid_body.index, record));
+            }
+            returned_cellular_tiles.extend(
+                collision_rigid_body.cellular_tiles.values().map(|(_, _, _, index, _)| *index),
+            );
+            released_indices.push(collision_rigid_body.index);
+            self.rigid_bodies.remove(
+                collision_rigid_body.rigid_body_handle,
+                &mut self.island_manager,
+                &mut self.colliders,
+                &mut self.impulse_joints,
+                &mut self.multibody_joints,
+                true,
+            );
+        }
+        let region_origin: (i32, i32) = self.rigid_body_region_origin(active_region);
+        self.rigid_body_pass.write_rigid_bodies(accelerator, &records);
+        self.rigid_body_pass.rasterize_rigid_bodies(
+            accelerator,
+            active_region,
+            ring_offset,
+            region_origin,
+            &[],
+            &returned_cellular_tiles,
+            &[],
+            &[],
+        );
+        // freed only after the queued release, so later writes never reach it
+        for cellular_tile in returned_cellular_tiles {
+            self.cellular_tile_rigid_bodies.remove(&cellular_tile);
+            self.free_cellular_tile_indices.push(cellular_tile);
+        }
+        self.free_rigid_body_indices.extend(released_indices);
+        // the cells left behind are static cells of the active tiles
+        self.is_cellular_tile_read_requested = true;
+    }
+
+    /// Detaches every rigid body cell an edit replaced from its body, waiting for the GPU, then
+    /// splits the bodies it divides
+    fn simulate_collisions_read_changed_cells(
+        &mut self,
+        accelerator: &Accelerator,
+        active_region: CellularTileRegion,
+        ring_offset: (u32, u32),
+        material_table: &MaterialTable,
+    ) -> Result<(), SceneError> {
+        let mut records: Vec<(u32, [f32; 14])> = Vec::new();
+        let mut cellular_tiles: Vec<u32> = Vec::new();
+        for collision_rigid_body in self.collision_rigid_bodies.values() {
+            let Some(record) = self.rigid_body_record(collision_rigid_body) else { continue; };
+            records.push((collision_rigid_body.index, record));
+            cellular_tiles.extend(
+                collision_rigid_body.cellular_tiles.values().map(|(_, _, _, index, _)| *index),
+            );
+        }
+        if cellular_tiles.is_empty() { return Ok(()); }
+        self.rigid_body_pass.write_rigid_bodies(accelerator, &records);
+        let region_origin: (i32, i32) = self.rigid_body_region_origin(active_region);
+        let (changed_cells, is_incomplete): (Vec<u32>, bool) = self.rigid_body_pass
+            .read_changed_cells(
+                accelerator,
+                active_region,
+                ring_offset,
+                region_origin,
+                &cellular_tiles,
+            )?;
+        // cells beyond a full report stay attached until the next read finds them
+        if is_incomplete { self.is_cellular_tile_read_requested = true; }
+        let mut removed_cells: HashMap<u64, Vec<(i32, i32)>> = HashMap::new();
+        for changed_cell in changed_cells {
+            let Some((rigid_body, (tile_x, tile_y))) =
+                self.cellular_tile_rigid_bodies.get(&(changed_cell / 64)).copied()
+            else { continue; };
+            let Some((cells, ..)) = self.collision_rigid_bodies.get_mut(&rigid_body)
+                .and_then(|collision_rigid_body| {
+                    collision_rigid_body.cellular_tiles.get_mut(&(tile_x, tile_y))
+                })
+            else { continue; };
+            let cell: i32 = (changed_cell % 64) as i32;
+            *cells &= !(1 << cell);
+            removed_cells.entry(rigid_body).or_default()
+                .push((tile_x * 8 + cell % 8, tile_y * 8 + cell / 8));
+        }
+        for (rigid_body, removed_cells) in removed_cells {
+            self.simulate_collisions_split_rigid_body(
+                accelerator,
+                rigid_body,
+                &removed_cells,
+                material_table,
+            );
+        }
+        Ok(())
+    }
+
+    /// Turns every group of static cells disconnected from the rest that changed cells reach into
+    /// a rigid body, or into debris when too small, unless it touches the active region's edge or
+    /// is too large, waiting for the GPU to read their materials
+    fn simulate_collisions_detach_rigid_bodies(
+        &mut self,
+        accelerator: &Accelerator,
+        active_region: CellularTileRegion,
+        ring_offset: (u32, u32),
+        changed_cells: &[rapier2d::parry::math::IVector],
+        material_table: &MaterialTable,
+    ) -> Result<(), SceneError> {
+        let Some((region, cellular_tiles)) = self.cellular_tiles.as_ref() else { return Ok(()); };
+        let region_tile_width: i64 = region.width() as i64;
+        let region_width: i64 = region_tile_width * CELLULAR_TILE_SIZE;
+        let region_height: i64 = region.height() as i64 * CELLULAR_TILE_SIZE;
+        let (region_x, region_y): (i32, i32) = self.rigid_body_region_origin(*region);
+        let is_static = |x: i64, y: i64| -> bool {
+            x >= 0 && y >= 0 && x < region_width && y < region_height
+                && cellular_tiles[((y / 8) * region_tile_width + x / 8) as usize].as_u64()
+                    >> ((y % 8) * 8 + x % 8) & 1 == 1
+        };
+        // flood each group once, and a group reaching an earlier one is attached through it
+        let mut floods: HashMap<(i64, i64), usize> = HashMap::new();
+        let mut groups: Vec<Vec<(i64, i64)>> = Vec::new();
+        for changed_cell in changed_cells {
+            let x: i64 = i64::from(changed_cell.x) - i64::from(region_x);
+            let y: i64 = i64::from(changed_cell.y) - i64::from(region_y);
+            for start in [(x, y), (x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)] {
+                if !is_static(start.0, start.1) || floods.contains_key(&start) { continue; }
+                let flood: usize = floods.len();
+                floods.insert(start, flood);
+                let mut group: Vec<(i64, i64)> = Vec::new();
+                let mut pending_cells: Vec<(i64, i64)> = vec![start];
+                let mut is_attached: bool = false;
+                'flood: while let Some((cell_x, cell_y)) = pending_cells.pop() {
+                    group.push((cell_x, cell_y));
+                    // cells beyond the region may hold the group in place
+                    if cell_x == 0 || cell_y == 0
+                        || cell_x == region_width - 1 || cell_y == region_height - 1
+                        || group.len() > COLLISION_RIGID_BODY_CELL_COUNT_MAXIMUM
+                    {
+                        is_attached = true;
+                        break;
+                    }
+                    for neighbor in [
+                        (cell_x + 1, cell_y),
+                        (cell_x - 1, cell_y),
+                        (cell_x, cell_y + 1),
+                        (cell_x, cell_y - 1),
+                    ] {
+                        if !is_static(neighbor.0, neighbor.1) { continue; }
+                        match floods.get(&neighbor) {
+                            Some(neighbor_flood) if *neighbor_flood != flood => {
+                                is_attached = true;
+                                break 'flood;
+                            }
+                            Some(_) => {}
+                            None => {
+                                floods.insert(neighbor, flood);
+                                pending_cells.push(neighbor);
+                            }
+                        }
+                    }
+                }
+                if !is_attached { groups.push(group); }
+            }
+        }
+        if groups.is_empty() { return Ok(()); }
+        let cells: Vec<(u32, u32)> = groups.iter()
+            .flatten()
+            .map(|(x, y)| (*x as u32, *y as u32))
+            .collect();
+        let mut cell_reads: std::vec::IntoIter<(MaterialIdentifier, u32)> = self.rigid_body_pass
+            .read_cells(accelerator, active_region, ring_offset, &cells)?
+            .into_iter();
+        for group in groups {
+            let group_cells: Vec<((i64, i64), (MaterialIdentifier, u32))> =
+                group.into_iter().zip(cell_reads.by_ref()).collect();
+            let anchor_x: i64 = group_cells.iter().map(|((x, _), _)| *x).min().unwrap_or(0);
+            let anchor_y: i64 = group_cells.iter().map(|((_, y), _)| *y).min().unwrap_or(0);
+            let is_debris: bool = group_cells.len() < COLLISION_RIGID_BODY_CELL_COUNT_MINIMUM;
+            if !is_debris {
+                let mut body_cellular_tiles: BTreeMap<
+                    (i32, i32),
+                    (u64, [MaterialIdentifier; 64], [u32; 64], u32, u64),
+                > = BTreeMap::new();
+                for ((x, y), (material_identifier, color)) in &group_cells {
+                    let local_x: i32 = (x - anchor_x) as i32;
+                    let local_y: i32 = (y - anchor_y) as i32;
+                    let (cells, material_identifiers, colors, _, _) = body_cellular_tiles
+                        .entry((local_x.div_euclid(8), local_y.div_euclid(8)))
+                        .or_insert((0, [MaterialIdentifier::EMPTY; 64], [0; 64], 0, 0));
+                    let cell: usize = (local_y.rem_euclid(8) * 8 + local_x.rem_euclid(8)) as usize;
+                    *cells |= 1 << cell;
+                    material_identifiers[cell] = *material_identifier;
+                    colors[cell] = *color;
+                }
+                let translation: rapier2d::math::Vector = rapier2d::math::Vector::new(
+                    (i64::from(region_x) + anchor_x) as f32 / CELLULAR_TILE_SIZE as f32,
+                    (i64::from(region_y) + anchor_y) as f32 / CELLULAR_TILE_SIZE as f32,
+                );
+                // groups beyond the rigid body capacity stay where they are
+                if self.simulate_collisions_insert_rigid_body(
+                    accelerator,
+                    body_cellular_tiles,
+                    translation,
+                    0.0,
+                    (rapier2d::math::Vector::ZERO, 0.0, translation),
+                    material_table,
+                ).is_none() { continue; }
+            }
+            // the cells leave the static voxels now so the new body never starts inside them
+            for ((x, y), (material_identifier, _)) in group_cells {
+                let material: u32 = if is_debris {
+                    material_table.cellular_static_properties(material_identifier)
+                        .and_then(|properties| properties.debris)
+                        .unwrap_or(MaterialIdentifier::EMPTY)
+                        .as_u32()
+                } else { 0 };
+                self.rigid_body_cell_writes
+                    .push([x as u32, y as u32, material, material_identifier.as_u32()]);
+                if let Some((_, cellular_tiles)) = self.cellular_tiles.as_mut() {
+                    cellular_tiles[((y / 8) * region_tile_width + x / 8) as usize] =
+                        CollisionCellularTile::from_u64(
+                            cellular_tiles[((y / 8) * region_tile_width + x / 8) as usize].as_u64()
+                                & !(1 << ((y % 8) * 8 + x % 8)),
+                        );
+                }
+                if let Some(voxels) = self.cellular_tile_collider
+                    .and_then(|cellular_tile_collider| {
+                        self.colliders.get_mut(cellular_tile_collider)
+                    })
+                    .and_then(|collider| collider.shape_mut().as_voxels_mut())
+                {
+                    voxels.set_voxel(
+                        rapier2d::parry::math::IVector::new(
+                            (i64::from(region_x) + x) as i32,
+                            (i64::from(region_y) + y) as i32,
+                        ),
+                        false,
+                    );
+                    self.solid_cell_count -= 1;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Creates a rigid body of cells placed at a translation in tiles and rotation, moving with
+    /// the velocity in tiles per second and angular velocity of a body around a center in tiles,
+    /// and returns its identifier, or `None` beyond the rigid body capacity
+    fn simulate_collisions_insert_rigid_body(
+        &mut self,
+        accelerator: &Accelerator,
+        mut cellular_tiles: BTreeMap<
+            (i32, i32),
+            (u64, [MaterialIdentifier; 64], [u32; 64], u32, u64),
+        >,
+        translation: rapier2d::math::Vector,
+        rotation: f32,
+        (velocity, angular_velocity, velocity_center): (
+            rapier2d::math::Vector,
+            f32,
+            rapier2d::math::Vector,
+        ),
+        material_table: &MaterialTable,
+    ) -> Option<u64> {
+        if self.free_cellular_tile_indices.len() < cellular_tiles.len() { return None; }
+        let index: u32 = self.free_rigid_body_indices.pop()?;
+        for (_, _, _, cellular_tile, rasterized_cells) in cellular_tiles.values_mut() {
+            *cellular_tile = self.free_cellular_tile_indices.pop()?;
+            *rasterized_cells = 0;
+        }
+        let mut collision_rigid_body: CollisionRigidBody = CollisionRigidBody {
+            index,
+            cellular_tiles,
+            rigid_body_handle: rapier2d::dynamics::RigidBodyHandle::invalid(),
+            collider_handle: rapier2d::geometry::ColliderHandle::invalid(),
+            rasterization: None,
+        };
+        let (mass, center, inertia, friction, restitution): (f32, [f32; 2], f32, f32, f32) =
+            collision_rigid_body.mass_properties(material_table);
+        if mass <= 0.0 {
+            self.free_rigid_body_indices.push(index);
+            self.free_cellular_tile_indices.extend(
+                collision_rigid_body.cellular_tiles.values().map(|(_, _, _, index, _)| *index),
+            );
+            return None;
+        }
+        // the body's center moves with the velocity of the body it came from at that center
+        let center_offset: rapier2d::math::Vector = rapier2d::math::Vector::new(
+            rotation.cos() * center[0] - rotation.sin() * center[1],
+            rotation.sin() * center[0] + rotation.cos() * center[1],
+        );
+        let arm: rapier2d::math::Vector = translation + center_offset - velocity_center;
+        let rigid_body: rapier2d::dynamics::RigidBody =
+            rapier2d::dynamics::RigidBodyBuilder::dynamic()
+                .translation(translation)
+                .rotation(rotation)
+                .linvel(velocity + rapier2d::math::Vector::new(-arm.y, arm.x) * angular_velocity)
+                .angvel(angular_velocity)
+                .soft_ccd_prediction(COLLISION_RIGID_BODY_CCD_PREDICTION)
+                .build();
+        collision_rigid_body.rigid_body_handle = self.rigid_bodies.insert(rigid_body);
+        // filled one voxel at a time because Parry 0.30's bulk-built chunk hierarchy can panic
+        // when a chunk is later emptied
+        let mut voxels: rapier2d::parry::shape::Voxels = rapier2d::parry::shape::Voxels::new(
+            rapier2d::math::Vector::splat(1.0 / CELLULAR_TILE_SIZE as f32),
+            &[],
+        );
+        for ((tile_x, tile_y), (cells, ..)) in &collision_rigid_body.cellular_tiles {
+            let mut remaining_cells: u64 = *cells;
+            while remaining_cells != 0 {
+                let cell: i32 = remaining_cells.trailing_zeros() as i32;
+                remaining_cells &= remaining_cells - 1;
+                let key: rapier2d::parry::math::IVector = rapier2d::parry::math::IVector::new(
+                    tile_x * 8 + cell % 8,
+                    tile_y * 8 + cell / 8,
+                );
+                voxels.set_voxel(key, true);
+            }
+        }
+        let collider: rapier2d::geometry::Collider = rapier2d::geometry::ColliderBuilder::new(
+            rapier2d::geometry::SharedShape::new(voxels),
+        )
+            .mass_properties(rapier2d::parry::mass_properties::MassProperties::new(
+                rapier2d::math::Vector::new(center[0], center[1]),
+                mass,
+                inertia,
+            ))
+            .friction(friction)
+            .restitution(restitution)
+            .collision_groups(rapier2d::geometry::InteractionGroups::new(
+                rapier2d::geometry::Group::from_bits_retain(COLLISION_GROUP_RIGID_BODY),
+                rapier2d::geometry::Group::ALL,
+                rapier2d::geometry::InteractionTestMode::And,
+            ))
+            .build();
+        collision_rigid_body.collider_handle = self.colliders.insert_with_parent(
+            collider,
+            collision_rigid_body.rigid_body_handle,
+            &mut self.rigid_bodies,
+        );
+        let rigid_body: u64 = self.next_rigid_body_identifier;
+        self.next_rigid_body_identifier += 1;
+        for ((tile_x, tile_y), (cells, material_identifiers, colors, cellular_tile, _)) in
+            &collision_rigid_body.cellular_tiles
+        {
+            self.rigid_body_pass.write_cellular_tile(
+                accelerator,
+                *cellular_tile,
+                index,
+                (*tile_x, *tile_y),
+                *cells,
+                0,
+                material_identifiers,
+                colors,
+            );
+            self.cellular_tile_rigid_bodies
+                .insert(*cellular_tile, (rigid_body, (*tile_x, *tile_y)));
+        }
+        self.collision_rigid_bodies.insert(rigid_body, collision_rigid_body);
+        Some(rigid_body)
+    }
+
+    /// Splits a rigid body that lost cells into its groups of side-connected cells: the largest
+    /// keeps the body, other large enough groups become rigid bodies moving as they did, and the
+    /// rest become debris moving as they did, all changing where the body was last rasterized
+    fn simulate_collisions_split_rigid_body(
+        &mut self,
+        accelerator: &Accelerator,
+        rigid_body: u64,
+        removed_cells: &[(i32, i32)],
+        material_table: &MaterialTable,
+    ) {
+        let Some(mut collision_rigid_body) = self.collision_rigid_bodies.remove(&rigid_body)
+        else { return; };
+        let Some((translation, rotation, velocity, angular_velocity, center)) = self.rigid_bodies
+            .get(collision_rigid_body.rigid_body_handle)
+            .map(|rigid_body| (
+                rigid_body.translation(),
+                rigid_body.rotation().angle(),
+                rigid_body.linvel(),
+                rigid_body.angvel(),
+                rigid_body.center_of_mass(),
+            ))
+        else { return; };
+        // every tile clears where the body was, turning debris cells into debris there
+        self.cleared_cellular_tiles.extend(
+            collision_rigid_body.cellular_tiles.values().map(|(_, _, _, index, _)| *index),
+        );
+        let mut detached_cells: Vec<(i32, i32)> = removed_cells.to_vec();
+        let mut kept_cells: BTreeMap<(i32, i32), u64> = BTreeMap::new();
+        for (group_index, group) in collision_rigid_body.connected_cells().into_iter().enumerate() {
+            let cell_count: usize = group.values().map(|cells| cells.count_ones() as usize).sum();
+            let is_large: bool = cell_count >= COLLISION_RIGID_BODY_CELL_COUNT_MINIMUM;
+            if group_index == 0 && is_large {
+                kept_cells = group;
+                continue;
+            }
+            for ((tile_x, tile_y), cells) in &group {
+                let mut remaining_cells: u64 = *cells;
+                while remaining_cells != 0 {
+                    let cell: i32 = remaining_cells.trailing_zeros() as i32;
+                    remaining_cells &= remaining_cells - 1;
+                    detached_cells.push((tile_x * 8 + cell % 8, tile_y * 8 + cell / 8));
+                }
+            }
+            let group_cellular_tiles: BTreeMap<
+                (i32, i32),
+                (u64, [MaterialIdentifier; 64], [u32; 64], u32, u64),
+            > = group.iter()
+                .filter_map(|(coordinates, cells)| {
+                    let (_, material_identifiers, colors, _, _) =
+                        collision_rigid_body.cellular_tiles.get(coordinates)?;
+                    Some((*coordinates, (*cells, *material_identifiers, *colors, 0, 0)))
+                })
+                .collect();
+            let is_inserted: bool = is_large && self.simulate_collisions_insert_rigid_body(
+                accelerator,
+                group_cellular_tiles,
+                translation,
+                rotation,
+                (velocity, angular_velocity, center),
+                material_table,
+            ).is_some();
+            if is_inserted { continue; }
+            // too small or beyond capacity, so the group's cells become their debris
+            for (coordinates, cells) in group {
+                let Some((_, material_identifiers, ..)) =
+                    collision_rigid_body.cellular_tiles.get_mut(&coordinates)
+                else { continue; };
+                let mut remaining_cells: u64 = cells;
+                while remaining_cells != 0 {
+                    let cell: usize = remaining_cells.trailing_zeros() as usize;
+                    remaining_cells &= remaining_cells - 1;
+                    material_identifiers[cell] = material_table
+                        .cellular_static_properties(material_identifiers[cell])
+                        .and_then(|properties| properties.debris)
+                        .unwrap_or(MaterialIdentifier::EMPTY);
+                }
+            }
+        }
+        // the body keeps only the largest group's cells, writing the debris its tiles hold
+        let mut emptied_tiles: Vec<(i32, i32)> = Vec::new();
+        for (coordinates, (cells, material_identifiers, colors, cellular_tile, rasterized_cells)) in
+            collision_rigid_body.cellular_tiles.iter_mut()
+        {
+            *cells = kept_cells.get(coordinates).copied().unwrap_or(0);
+            self.rigid_body_pass.write_cellular_tile(
+                accelerator,
+                *cellular_tile,
+                collision_rigid_body.index,
+                *coordinates,
+                *cells,
+                *rasterized_cells,
+                material_identifiers,
+                colors,
+            );
+            if *cells == 0 { emptied_tiles.push(*coordinates); }
+        }
+        for coordinates in emptied_tiles {
+            if let Some((_, _, _, cellular_tile, _)) =
+                collision_rigid_body.cellular_tiles.remove(&coordinates)
+            {
+                self.removed_cellular_tiles.push(cellular_tile);
+            }
+        }
+        let mass_properties: (f32, [f32; 2], f32, f32, f32) =
+            collision_rigid_body.mass_properties(material_table);
+        if collision_rigid_body.cellular_tiles.is_empty() || mass_properties.0 <= 0.0 {
+            // the body is gone once this rasterization clears where it was
+            if let Some(record) = self.rigid_body_record(&collision_rigid_body) {
+                self.removed_rigid_bodies.push((collision_rigid_body.index, record));
+            } else {
+                self.free_rigid_body_indices.push(collision_rigid_body.index);
+            }
+            self.removed_cellular_tiles.extend(
+                collision_rigid_body.cellular_tiles.values().map(|(_, _, _, index, _)| *index),
+            );
+            self.rigid_bodies.remove(
+                collision_rigid_body.rigid_body_handle,
+                &mut self.island_manager,
+                &mut self.colliders,
+                &mut self.impulse_joints,
+                &mut self.multibody_joints,
+                true,
+            );
+            return;
+        }
+        let (mass, center, inertia, friction, restitution): (f32, [f32; 2], f32, f32, f32) =
+            mass_properties;
+        if let Some(collider) = self.colliders.get_mut(collision_rigid_body.collider_handle) {
+            if let Some(voxels) = collider.shape_mut().as_voxels_mut() {
+                for (x, y) in detached_cells {
+                    voxels.set_voxel(rapier2d::parry::math::IVector::new(x, y), false);
+                }
+            }
+            collider.set_mass_properties(rapier2d::parry::mass_properties::MassProperties::new(
+                rapier2d::math::Vector::new(center[0], center[1]),
+                mass,
+                inertia,
+            ));
+            collider.set_friction(friction);
+            collider.set_restitution(restitution);
+        }
+        self.changed_rigid_bodies.insert(rigid_body);
+        self.collision_rigid_bodies.insert(rigid_body, collision_rigid_body);
+    }
+
+    /// Rasterizes every rigid body that moved or changed where it is now, clearing where it was,
+    /// after writing pending cells, without waiting for the GPU
+    fn simulate_collisions_rasterize_rigid_bodies(
+        &mut self,
+        accelerator: &Accelerator,
+        active_region: CellularTileRegion,
+        ring_offset: (u32, u32),
+    ) {
+        let cell_size: f32 = CELLULAR_TILE_SIZE as f32;
+        let time_step: f32 = self.integration_parameters.dt;
+        let removed_rigid_bodies: Vec<(u32, [f32; 14])> =
+            std::mem::take(&mut self.removed_rigid_bodies);
+        let mut records: Vec<(u32, [f32; 14])> = removed_rigid_bodies.clone();
+        let mut cleared_cellular_tiles: Vec<u32> = std::mem::take(&mut self.cleared_cellular_tiles);
+        let mut rasterized_cellular_tiles: Vec<u32> = Vec::new();
+        for (rigid_body, collision_rigid_body) in &mut self.collision_rigid_bodies {
+            let Some(rapier_rigid_body) =
+                self.rigid_bodies.get(collision_rigid_body.rigid_body_handle)
+            else { continue; };
+            let translation: rapier2d::math::Vector = rapier_rigid_body.translation() * cell_size;
+            let rotation: &rapier2d::math::Rotation = rapier_rigid_body.rotation();
+            let velocity: rapier2d::math::Vector =
+                rapier_rigid_body.linvel() * cell_size * time_step;
+            let rasterization: ([f32; 2], [f32; 2], [f32; 2], f32) = (
+                [translation.x, translation.y],
+                [rotation.cos(), rotation.sin()],
+                [velocity.x, velocity.y],
+                rapier_rigid_body.angvel() * time_step,
+            );
+            // resting bodies keep their cells, while moving ones clear their old cells first
+            let is_changed: bool = self.changed_rigid_bodies.contains(rigid_body);
+            if !is_changed && collision_rigid_body.rasterization == Some(rasterization) {
+                continue;
+            }
+            if !is_changed && collision_rigid_body.rasterization.is_some() {
+                cleared_cellular_tiles.extend(
+                    collision_rigid_body.cellular_tiles.values().map(|(_, _, _, index, _)| *index),
+                );
+            }
+            for (cells, _, _, cellular_tile, rasterized_cells) in
+                collision_rigid_body.cellular_tiles.values_mut()
+            {
+                rasterized_cellular_tiles.push(*cellular_tile);
+                *rasterized_cells = *cells;
+            }
+            let (previous_position, previous_rotation, ..) =
+                collision_rigid_body.rasterization.unwrap_or(rasterization);
+            let center: rapier2d::math::Vector = rapier_rigid_body.center_of_mass() * cell_size;
+            records.push((collision_rigid_body.index, [
+                rasterization.0[0],
+                rasterization.0[1],
+                rasterization.1[0],
+                rasterization.1[1],
+                previous_position[0],
+                previous_position[1],
+                previous_rotation[0],
+                previous_rotation[1],
+                rasterization.2[0],
+                rasterization.2[1],
+                center.x,
+                center.y,
+                rasterization.3,
+                rapier_rigid_body.mass(),
+            ]));
+            collision_rigid_body.rasterization = Some(rasterization);
+        }
+        self.changed_rigid_bodies.clear();
+        let cell_writes: Vec<[u32; 4]> = std::mem::take(&mut self.rigid_body_cell_writes);
+        if !records.is_empty() || !cell_writes.is_empty() || !cleared_cellular_tiles.is_empty() {
+            let region_origin: (i32, i32) = self.rigid_body_region_origin(active_region);
+            self.rigid_body_pass.write_rigid_bodies(accelerator, &records);
+            self.rigid_body_pass.rasterize_rigid_bodies(
+                accelerator,
+                active_region,
+                ring_offset,
+                region_origin,
+                &cell_writes,
+                &[],
+                &cleared_cellular_tiles,
+                &rasterized_cellular_tiles,
+            );
+        }
+        // removed bodies and tiles are reused only after the queued rasterization read them
+        for cellular_tile in std::mem::take(&mut self.removed_cellular_tiles) {
+            self.cellular_tile_rigid_bodies.remove(&cellular_tile);
+            self.free_cellular_tile_indices.push(cellular_tile);
+        }
+        self.free_rigid_body_indices
+            .extend(removed_rigid_bodies.into_iter().map(|(index, _)| index));
+    }
+
+    /// Returns the record of a rigid body rasterized where it was last rasterized, or `None`
+    /// before its first rasterization
+    fn rigid_body_record(&self, collision_rigid_body: &CollisionRigidBody) -> Option<[f32; 14]> {
+        let (position, rotation, velocity, angular_velocity) = collision_rigid_body.rasterization?;
+        let rigid_body: &rapier2d::dynamics::RigidBody =
+            self.rigid_bodies.get(collision_rigid_body.rigid_body_handle)?;
+        let center: rapier2d::math::Vector =
+            rigid_body.center_of_mass() * CELLULAR_TILE_SIZE as f32;
+        Some([
+            position[0],
+            position[1],
+            rotation[0],
+            rotation[1],
+            position[0],
+            position[1],
+            rotation[0],
+            rotation[1],
+            velocity[0],
+            velocity[1],
+            center.x,
+            center.y,
+            angular_velocity,
+            rigid_body.mass(),
+        ])
+    }
+
+    /// Returns a region's bottom-left cell relative to the origin
+    fn rigid_body_region_origin(&self, region: CellularTileRegion) -> (i32, i32) {
+        (
+            ((region.bottom_left.x - self.origin.x) * CELLULAR_TILE_SIZE) as i32,
+            ((region.bottom_left.y - self.origin.y) * CELLULAR_TILE_SIZE) as i32,
+        )
     }
 
     /// Creates or updates an actor's body and replaces colliders whose components changed

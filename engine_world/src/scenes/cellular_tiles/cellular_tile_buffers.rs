@@ -15,6 +15,8 @@ pub struct CellularTileBuffers {
     kinematics_buffer: wgpu::Buffer,
     /// Whether each tile's dynamic cells must be simulated, with one `u32` per tile
     awake_buffer: wgpu::Buffer,
+    /// Tile-major rigid body cell rasterized into each row-major cell plus one, zero for none
+    rigid_body_cell_buffer: wgpu::Buffer,
 }
 
 impl CellularTileBuffers {
@@ -54,12 +56,20 @@ impl CellularTileBuffers {
                 usage,
                 mapped_at_creation: false,
             });
+        let rigid_body_cells: wgpu::Buffer = accelerator.device()
+            .create_buffer(&wgpu::BufferDescriptor {
+                label: Some("`CellularTileBuffers.rigid_body_cell_buffer`"),
+                size,
+                usage,
+                mapped_at_creation: false,
+            });
         Self {
             accelerator: accelerator.clone(),
             material_identifier_buffer: material_identifiers,
             color_buffer: colors,
             kinematics_buffer: kinematics,
             awake_buffer: awake,
+            rigid_body_cell_buffer: rigid_body_cells,
         }
     }
 
@@ -77,5 +87,8 @@ impl CellularTileBuffers {
 
     /// Returns the tile awake buffer
     pub fn awake_buffer(&self) -> &wgpu::Buffer { &self.awake_buffer }
+
+    /// Returns the rigid body cell buffer
+    pub fn rigid_body_cell_buffer(&self) -> &wgpu::Buffer { &self.rigid_body_cell_buffer }
 
 }

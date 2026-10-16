@@ -499,6 +499,12 @@ impl CellularTileStreamingState {
                 u64::from(physical_tile_index) * 4,
                 &CELLULAR_TILE_AWAKE.to_le_bytes(),
             );
+            // entering tiles hold no rigid body cells until rigid bodies rasterize into them
+            accelerator.queue().write_buffer(
+                cellular_tile_buffers.rigid_body_cell_buffer(),
+                tile_offset,
+                &[0; CELLULAR_TILE_BYTE_COUNT as usize],
+            );
         }
         Ok(())
     }
