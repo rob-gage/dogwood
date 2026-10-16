@@ -27,7 +27,6 @@ pub fn edit(cargo_path: PathBuf, path: PathBuf, verbose: bool) -> Result<(), Box
     let mut command: Command = Command::new(cargo_path);
     command
         .arg("run")
-        .arg("--quiet")
         .arg("--release")
         .arg("--bin")
         .arg("editor")
@@ -36,6 +35,7 @@ pub fn edit(cargo_path: PathBuf, path: PathBuf, verbose: bool) -> Result<(), Box
         .arg("--target-dir")
         .arg(build_directory)
         .current_dir(path);
+    if !verbose { command.arg("--quiet"); }
     if verbose {
         println!("Running command: {command:?}");
         let _ = io::stdout().flush();
