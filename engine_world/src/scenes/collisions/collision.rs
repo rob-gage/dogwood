@@ -8,6 +8,7 @@ use super::{
     collision_cellular_tile_pass::CollisionCellularTilePass,
     collision_rigid_body::CollisionRigidBody,
     collision_rigid_body_pass::CollisionRigidBodyPass,
+    COLLISION_GROUP_CELLULAR_DYNAMIC,
     COLLISION_GROUP_CELLULAR_TILE,
     COLLISION_GROUP_EDIT,
     COLLISION_GROUP_RIGID_BODY,
@@ -72,6 +73,12 @@ pub struct Collision {
     solid_cell_count: u64,
     /// Fixed voxel collider of every solid cell in the active region, absent while none are solid
     cellular_tile_collider: Option<rapier2d::geometry::ColliderHandle>,
+    /// Active region and settled dynamic occupancies held by their collider
+    dynamic_cellular_tiles: Option<(CellularTileRegion, Vec<CollisionCellularTile>)>,
+    /// Number of settled dynamic cells held by their collider
+    dynamic_cell_count: u64,
+    /// Fixed voxel collider of settled dynamic cells, interacting only with cellular rigid bodies
+    dynamic_cellular_tile_collider: Option<rapier2d::geometry::ColliderHandle>,
     /// Body, colliders, position, translation, and pawn velocity, grounding, and held jump
     actors: HashMap<Actor, (
         rapier2d::dynamics::RigidBodyHandle,
@@ -141,6 +148,9 @@ impl Collision {
             is_cellular_tile_read_requested: false,
             solid_cell_count: 0,
             cellular_tile_collider: None,
+            dynamic_cellular_tiles: None,
+            dynamic_cell_count: 0,
+            dynamic_cellular_tile_collider: None,
             actors: HashMap::new(),
             // round pawns roll over steps lower than their radius, so taller ledges are walls
             pawn_movement_controller: rapier2d::control::KinematicCharacterController {
@@ -195,8 +205,7 @@ impl Collision {
         rigid_body_contacts: &HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2])>,
         material_table: &MaterialTable,
     ) -> Result<(), SceneError> {
-        // static GPU cells only change when streaming moves the ring or edits write them, so
-        // otherwise no readback is needed
+        // static occupancies only need a readback when streaming moves the ring or edits write cells
         if !self.cellular_tiles.as_ref().is_some_and(|(region, _)| *region == active_region)
             || self.ring_offset != ring_offset
             || self.is_cellular_tile_read_requested
@@ -214,7 +223,7 @@ impl Collision {
             }
             // read this tick's GPU occupancy before simulating against it
             let cellular_tiles: Vec<CollisionCellularTile> = self.cellular_tile_pass
-                .read_cellular_tiles(accelerator, active_region, ring_offset)?;
+                .read_cellular_tiles(accelerator, active_region, ring_offset, false)?;
             // keep the origin near the active region so f32 positions keep sub-cell precision
             let center: CellularTileCoordinates = CellularTileCoordinates {
                 x: active_region.bottom_left.x + active_region.width() as i64 / 2,
@@ -225,7 +234,7 @@ impl Collision {
                 || center.y.abs_diff(self.origin.y) > COLLISION_ORIGIN_DISTANCE_MAXIMUM
             { self.simulate_collisions_move_origin(center); }
             let changed_cells: Vec<rapier2d::parry::math::IVector> =
-                self.simulate_collisions_apply_cellular_tiles(active_region, cellular_tiles);
+                self.simulate_collisions_apply_cellular_tiles(active_region, cellular_tiles, false);
             self.ring_offset = ring_offset;
             self.simulate_collisions_detach_rigid_bodies(
                 accelerator,
@@ -234,6 +243,12 @@ impl Collision {
                 &changed_cells,
                 material_table,
             )?;
+        }
+        // read settled cells before every rigid body step so moving grains leave no stale geometry
+        if !self.collision_rigid_bodies.is_empty() {
+            let cellular_tiles: Vec<CollisionCellularTile> = self.cellular_tile_pass
+                .read_cellular_tiles(accelerator, active_region, ring_offset, true)?;
+            self.simulate_collisions_apply_cellular_tiles(active_region, cellular_tiles, true);
         }
         // rigid bodies that left the active region stay behind as static cells
         self.release_rigid_bodies(accelerator, active_region, ring_offset, active_region);
@@ -356,6 +371,16 @@ impl Collision {
                 false,
             );
         }
+        if let Some(collider) = self.dynamic_cellular_tile_collider.take() {
+            self.colliders.remove(
+                collider,
+                &mut self.island_manager,
+                &mut self.rigid_bodies,
+                false,
+            );
+        }
+        self.dynamic_cellular_tiles = None;
+        self.dynamic_cell_count = 0;
         self.cellular_tiles = None;
         self.solid_cell_count = 0;
         // derive each translation from its exact position so moving the origin never drifts
@@ -376,12 +401,18 @@ impl Collision {
         &mut self,
         active_region: CellularTileRegion,
         cellular_tiles: Vec<CollisionCellularTile>,
+        dynamic: bool,
     ) -> Vec<rapier2d::parry::math::IVector> {
-        let mut cell_changes: Vec<(rapier2d::parry::math::IVector, bool)> = Vec::new();
         let previous_cellular_tiles: Option<(
             CellularTileRegion,
             Vec<CollisionCellularTile>,
-        )> = self.cellular_tiles.take();
+        )> = if dynamic { self.dynamic_cellular_tiles.take() } else { self.cellular_tiles.take() };
+        let mut solid_cell_count: u64 = if dynamic { self.dynamic_cell_count } else {
+            self.solid_cell_count
+        };
+        let mut cellular_tile_collider: Option<rapier2d::geometry::ColliderHandle> =
+            if dynamic { self.dynamic_cellular_tile_collider } else { self.cellular_tile_collider };
+        let mut cell_changes: Vec<(rapier2d::parry::math::IVector, bool)> = Vec::new();
         // compare every previous tile with its current occupancy, which is empty once it leaves
         if let Some((previous_region, previous_tiles)) = &previous_cellular_tiles {
             for (coordinates, previous_tile) in
@@ -415,7 +446,9 @@ impl Collision {
                 cellular_tile.as_u64(),
             );
         }
-        self.cellular_tiles = Some((active_region, cellular_tiles));
+        if dynamic { self.dynamic_cellular_tiles = Some((active_region, cellular_tiles)); } else {
+            self.cellular_tiles = Some((active_region, cellular_tiles));
+        }
         // tiles that were already active are compared before entering tiles are filled
         let changed_cells: Vec<rapier2d::parry::math::IVector> = cell_changes.iter()
             .take(changed_cell_count)
@@ -423,10 +456,10 @@ impl Collision {
             .collect();
         if cell_changes.is_empty() { return changed_cells; }
         for (_, is_filled) in &cell_changes {
-            if *is_filled { self.solid_cell_count += 1; } else { self.solid_cell_count -= 1; }
+            if *is_filled { solid_cell_count += 1; } else { solid_cell_count -= 1; }
         }
         // edit the existing voxels in place, creating the collider once a cell becomes solid
-        match self.cellular_tile_collider
+        match cellular_tile_collider
             .and_then(|cellular_tile_collider| self.colliders.get_mut(cellular_tile_collider))
         {
             Some(collider) => {
@@ -454,17 +487,21 @@ impl Collision {
                     )
                         .collision_groups(rapier2d::geometry::InteractionGroups::new(
                             rapier2d::geometry::Group::from_bits_retain(
-                                COLLISION_GROUP_CELLULAR_TILE,
+                                if dynamic { COLLISION_GROUP_CELLULAR_DYNAMIC } else {
+                                    COLLISION_GROUP_CELLULAR_TILE
+                                },
                             ),
-                            rapier2d::geometry::Group::ALL,
+                            if dynamic {
+                                rapier2d::geometry::Group::from_bits_retain(COLLISION_GROUP_RIGID_BODY)
+                            } else { rapier2d::geometry::Group::ALL },
                             rapier2d::geometry::InteractionTestMode::And,
                         ))
                         .build();
-                self.cellular_tile_collider = Some(self.colliders.insert(collider));
+                cellular_tile_collider = Some(self.colliders.insert(collider));
             }
         }
-        if self.solid_cell_count == 0 && let Some(cellular_tile_collider) =
-            self.cellular_tile_collider.take()
+        if solid_cell_count == 0 && let Some(cellular_tile_collider) =
+            cellular_tile_collider.take()
         {
             self.colliders.remove(
                 cellular_tile_collider,
@@ -472,6 +509,13 @@ impl Collision {
                 &mut self.rigid_bodies,
                 false,
             );
+        }
+        if dynamic {
+            self.dynamic_cell_count = solid_cell_count;
+            self.dynamic_cellular_tile_collider = cellular_tile_collider;
+        } else {
+            self.solid_cell_count = solid_cell_count;
+            self.cellular_tile_collider = cellular_tile_collider;
         }
         changed_cells
     }
@@ -1579,7 +1623,9 @@ impl Collision {
                 ))
                 .collision_groups(rapier2d::geometry::InteractionGroups::new(
                     rapier2d::geometry::Group::from_bits_retain(memberships),
-                    rapier2d::geometry::Group::from_bits_retain(filter),
+                    rapier2d::geometry::Group::from_bits_retain(
+                        filter & !COLLISION_GROUP_CELLULAR_DYNAMIC,
+                    ),
                     rapier2d::geometry::InteractionTestMode::And,
                 ))
                 .sensor(is_sensor)

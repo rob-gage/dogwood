@@ -234,8 +234,8 @@ impl Scene {
     }
 
     /// Simulates the active dynamic cells against actors and rigid bodies, then actor and rigid
-    /// body collisions against the active cellular tiles, waiting for the GPU only when
-    /// collisions read changed cells
+    /// body collisions against the active cellular tiles, waiting for the GPU when
+    /// collisions read settled occupancies or changed cells
     pub fn simulate(&mut self, accelerator: &Accelerator) -> Result<(), SceneError> {
         // nothing is simulated before the active region is resident
         let (Some(cellular_tile_streaming_state), Some(cellular_tile_buffers)) = (

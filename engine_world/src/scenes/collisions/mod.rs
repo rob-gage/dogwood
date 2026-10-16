@@ -38,6 +38,9 @@ pub const COLLISION_RIGID_BODY_COUNT_MAXIMUM: usize = 1024;
 /// Maximum number of tiles of cells held by every simulated rigid body
 const COLLISION_RIGID_BODY_CELLULAR_TILE_COUNT_MAXIMUM: usize = 16384;
 
+/// Collision group of settled dynamic cells, reserved by the engine
+pub const COLLISION_GROUP_CELLULAR_DYNAMIC: u32 = 1 << 27;
+
 /// Collision group of actor colliders, reserved by the engine
 pub const COLLISION_GROUP_ACTOR: u32 = 1 << 28;
 
