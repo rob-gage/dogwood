@@ -210,7 +210,8 @@ impl KinematicsCellularTilePass {
             UNIFORM_STRIDE * (SUBSTEP_COUNT * KINEMATICS_RESOLVE_COUNT) as u64,
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         );
-        // each cell's requested move, pick, and two resolution statuses
+        // each cell's requested move, pick, and two resolution statuses, the second reused for the
+        // velocity its collisions leave it
         let motion_buffer: wgpu::Buffer = create_buffer(
             "`KinematicsCellularTilePass.motion_buffer`",
             cell_count * 16,
@@ -488,6 +489,8 @@ impl KinematicsCellularTilePass {
                         if resolve % 2 == 0 { "resolve_even" } else { "resolve_odd" },
                     );
                 }
+                // staging collides cells that stay using the second status, free once the even
+                // count of resolve passes leaves the result in the first
                 set_slot(&mut compute_pass, slot);
                 for entry_point in ["stage", "commit"] {
                     dispatch(&mut compute_pass, entry_point);

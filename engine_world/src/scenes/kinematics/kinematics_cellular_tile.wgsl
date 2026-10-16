@@ -126,6 +126,10 @@ const PROGRESS_MAXIMUM: f32 = 8.99;
 /// Speed in cells per tick below which a supported cell comes to rest
 const RESTING_SPEED: f32 = 0.02;
 
+/// Fraction of the rebound two dynamic cells keep when they collide, so that colliding cells lose
+/// energy beyond their restitution and settle
+const COLLISION_DAMPING: f32 = 0.5;
+
 /// Fixed-point units per cell of accumulated contacts
 const CONTACT_SCALE: f32 = 1024.0;
 
@@ -666,7 +670,86 @@ fn resolve_odd(
     { atomicOr(&control.pending_resolves, pending_bit); }
 }
 
-/// Copies each cell entering a cell this substep beside it, so no cell is overwritten while read
+/// Returns whether a cell holds a cell pressed against it in place: the region's edge, an actor,
+/// or matter that is not moving away this substep
+fn is_cell_backing(cell: vec2<i32>) -> bool {
+    if !is_cell_inside(cell) { return true; }
+    let index: u32 = cell_index(cell);
+    if !is_cell_active(cell) { return material_identifiers[index] != 0u; }
+    if (motions[index].x & MOTION_COVERED) != 0u { return true; }
+    let material_identifier: u32 = material_identifiers[index];
+    if material_identifier == 0u { return false; }
+    return !is_dynamic(material_identifier)
+        || (motions[index].z & STATUS_MASK) != STATUS_SUCCEEDED;
+}
+
+/// Exchanges momentum between a dynamic cell that stays this substep and each staying neighbor it
+/// moves into or that moves into it, writing the velocity it is left with beside its motion; both
+/// cells of a pair decide from the same velocities and cells, so free pairs keep their momentum
+fn collide(cell: vec2<i32>, index: u32, motion: vec4<u32>) {
+    let material_identifier: u32 = material_identifiers[index];
+    if !is_dynamic(material_identifier) || (motion.z & STATUS_MASK) == STATUS_SUCCEEDED { return; }
+    let packed: vec2<u32> = kinematics[index];
+    let direction: u32 = motion.x & MOTION_DIRECTION;
+    let tile: vec2<i32> = cell >> vec2<u32>(3u);
+    var material: vec4<f32>;
+    var velocity: vec2<f32>;
+    var velocity_change: vec2<f32> = vec2<f32>(0.0);
+    var is_collided: bool = false;
+    for (var neighbor_direction: u32 = 1u; neighbor_direction <= 8u; neighbor_direction++) {
+        // check the cheapest conditions first, and only read the awake flags of other tiles
+        let neighbor: vec2<i32> = cell + direction_offset(neighbor_direction);
+        if any(neighbor >> vec2<u32>(3u) != tile) && !is_cell_active(neighbor) { continue; }
+        let neighbor_index: u32 = cell_index(neighbor);
+        // read only the components no other cell writes while staging
+        if direction != neighbor_direction
+            && (motions[neighbor_index].x & MOTION_DIRECTION)
+                != opposite_direction(neighbor_direction)
+        { continue; }
+        if (motions[neighbor_index].z & STATUS_MASK) == STATUS_SUCCEEDED { continue; }
+        let neighbor_material_identifier: u32 = material_identifiers[neighbor_index];
+        if !is_dynamic(neighbor_material_identifier) { continue; }
+        if !is_collided {
+            is_collided = true;
+            material = materials[material_identifier & 0x3fffffffu];
+            velocity = unpack_kinematics(packed).velocity;
+        }
+        // only cells closing along the line between them collide
+        let offset: vec2<i32> = direction_offset(neighbor_direction);
+        let normal: vec2<f32> = normalize(vec2<f32>(offset));
+        let neighbor_velocity: vec2<f32> = unpack_kinematics(kinematics[neighbor_index]).velocity;
+        if dot(velocity - neighbor_velocity, normal) <= 0.0 { continue; }
+        let neighbor_material: vec4<f32> = materials[neighbor_material_identifier & 0x3fffffffu];
+        // cells closing slower than resting speed stop against each other without rebounding,
+        // and faster ones rebound by only part of their restitution, which loses energy
+        let restitution: f32 = (material.z + neighbor_material.z) * 0.5 * COLLISION_DAMPING;
+        // cells pressed against something behind either of them cannot give way, so each bounces
+        // off the other like a fixed cell, sending the impact into whatever backs them
+        if is_cell_backing(neighbor + offset) || is_cell_backing(cell - offset) {
+            let approach_speed: f32 = dot(velocity, normal);
+            if approach_speed <= 0.0 { continue; }
+            let rebound_speed: f32 = restitution * max(approach_speed - RESTING_SPEED, 0.0);
+            velocity_change -= (approach_speed + rebound_speed) * normal;
+            continue;
+        }
+        // otherwise both cells take equal and opposite impulses, keeping their momentum
+        let approach_speed: f32 = dot(velocity - neighbor_velocity, normal);
+        let rebound_speed: f32 = restitution * max(approach_speed - RESTING_SPEED, 0.0);
+        let impulse: f32 = (approach_speed + rebound_speed) * material.x * neighbor_material.x
+            / (material.x + neighbor_material.x);
+        velocity_change -= impulse / material.x * normal;
+    }
+    if all(velocity_change == vec2<f32>(0.0)) {
+        motions[index].w = packed.x;
+    } else {
+        motions[index].w = pack_kinematics(
+            CellKinematics(velocity + velocity_change, vec2<f32>(0.0), 0u),
+        ).x;
+    }
+}
+
+/// Copies each cell entering a cell this substep beside it, so no cell is overwritten while read,
+/// and collides the dynamic cells that stay
 @compute @workgroup_size(64)
 fn stage(
     @builtin(workgroup_id) workgroup: vec3<u32>,
@@ -674,7 +757,9 @@ fn stage(
 ) {
     let cell: vec2<i32> = workgroup_cell(workgroup.x, local_cell);
     let index: u32 = cell_index(cell);
-    let picked: u32 = motions[index].y;
+    let motion: vec4<u32> = motions[index];
+    collide(cell, index, motion);
+    let picked: u32 = motion.y;
     var payload: vec4<u32> = vec4<u32>(0u);
     if picked != 0u {
         let claimant_index: u32 = cell_index(cell + direction_offset(picked));
@@ -694,8 +779,9 @@ fn stage(
     staged[index] = payload;
 }
 
-/// Moves staged cells into place, empties the cells they left, and bounces the cells that could
-/// not move off whatever blocked them
+/// Moves staged cells into place, empties the cells they left, gives the dynamic cells that stay
+/// the velocity their collisions with each other left them, and bounces the cells that could not
+/// move off whatever else blocked them
 @compute @workgroup_size(64)
 fn commit(
     @builtin(workgroup_id) workgroup: vec3<u32>,
@@ -714,36 +800,74 @@ fn commit(
         return;
     }
     let direction: u32 = motion.x & MOTION_DIRECTION;
-    if direction == 0u { return; }
-    if (motion.z & STATUS_MASK) == STATUS_SUCCEEDED {
+    if direction != 0u && (motion.z & STATUS_MASK) == STATUS_SUCCEEDED {
         material_identifiers[index] = 0u;
         colors[index] = 0u;
         kinematics[index] = vec2<u32>(0u);
         atomicOr(&awake[tile], TILE_AWAKE | TILE_DISTURBED);
         return;
     }
-    // find the axes that are blocked, treating a blocked diagonal alone as a floor or ceiling
+    let material_identifier: u32 = material_identifiers[index];
+    if !is_dynamic(material_identifier) { return; }
+    var cell_kinematics: CellKinematics = unpack_kinematics(kinematics[index]);
+    let collided_velocity: vec2<f32> = unpack_kinematics(vec2<u32>(motion.w, 0u)).velocity;
+    let velocity_change: vec2<f32> = collided_velocity - cell_kinematics.velocity;
+    cell_kinematics.velocity = collided_velocity;
+    if direction == 0u {
+        if all(velocity_change == vec2<f32>(0.0)) { return; }
+        // a resting cell hit hard enough starts moving again
+        if length(velocity_change) >= RESTING_SPEED {
+            cell_kinematics.flags &= ~CELL_RESTING;
+            atomicOr(&awake[tile], TILE_AWAKE);
+        }
+        kinematics[index] = pack_kinematics(cell_kinematics);
+        return;
+    }
+    // find the axes that are blocked, treating a blocked diagonal alone as a floor or ceiling, and
+    // which of them are blocked by the target cell alone
     let offset: vec2<i32> = direction_offset(direction);
     var is_blocked: vec2<bool> = vec2<bool>(
         offset.x != 0 && is_cell_blocking(cell + vec2<i32>(offset.x, 0)),
         offset.y != 0 && is_cell_blocking(cell + vec2<i32>(0, offset.y)),
     );
+    var is_target_blocking: vec2<bool> = vec2<bool>(offset.y == 0, offset.x == 0);
     if !any(is_blocked) && is_cell_blocking(cell + offset) {
         is_blocked = vec2<bool>(offset.y == 0, offset.y != 0);
+        is_target_blocking = is_blocked;
     }
     // a cell that only lost its target or waits behind another keeps its motion and retries
-    if !any(is_blocked) { return; }
-    let material: vec4<f32> = materials[material_identifiers[index] & 0x3fffffffu];
-    var cell_kinematics: CellKinematics = unpack_kinematics(kinematics[index]);
+    if !any(is_blocked) {
+        kinematics[index] = pack_kinematics(cell_kinematics);
+        return;
+    }
+    // a dynamic target that stays already collided with this cell, so only other blockers bounce
+    // it; a target that stays and receives no cell keeps its material while others commit
+    let target_cell: vec2<i32> = cell + offset;
+    var is_target_collided: bool = false;
+    if is_cell_active(target_cell) {
+        let target_index: u32 = cell_index(target_cell);
+        is_target_collided = staged[target_index].x == 0u
+            && (motions[target_index].z & STATUS_MASK) != STATUS_SUCCEEDED
+            && is_dynamic(material_identifiers[target_index]);
+    }
+    let material: vec4<f32> = materials[material_identifier & 0x3fffffffu];
     var stopped_speed: f32 = 0.0;
     if is_blocked.x {
-        stopped_speed += abs(cell_kinematics.velocity.x);
-        cell_kinematics.velocity.x *= -material.z;
+        if is_target_collided && is_target_blocking.x {
+            stopped_speed += abs(velocity_change.x);
+        } else {
+            stopped_speed += abs(cell_kinematics.velocity.x);
+            cell_kinematics.velocity.x *= -material.z;
+        }
         cell_kinematics.progress.x = 0.0;
     }
     if is_blocked.y {
-        stopped_speed += abs(cell_kinematics.velocity.y);
-        cell_kinematics.velocity.y *= -material.z;
+        if is_target_collided && is_target_blocking.y {
+            stopped_speed += abs(velocity_change.y);
+        } else {
+            stopped_speed += abs(cell_kinematics.velocity.y);
+            cell_kinematics.velocity.y *= -material.z;
+        }
         cell_kinematics.progress.y = 0.0;
     }
     // friction removes sliding speed in proportion to the speed stopped by the impact
