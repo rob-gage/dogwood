@@ -61,24 +61,8 @@ impl TemplateGame {
     /// Creates the stone world, its gravel, and a player falling onto it from above
     pub fn new(accelerator: &Accelerator) -> Result<Self, EngineError> {
         let mut material_registry: MaterialRegistry = MaterialRegistry::new();
-        let stone: MaterialIdentifier = material_registry.register(Material::CellularStatic {
-            name: String::from("stone"),
-            properties: MaterialPropertiesCellularStatic {
-                graphics: MaterialGraphicsCellularStatic {
-                    sprite_sheet: Arc::new(SpriteSheet::from_png(
-                        accelerator,
-                        include_bytes!("../assets/sprites/stone.png"),
-                        1,
-                        1,
-                    )?),
-                    frame: 0,
-                    width: 1.0,
-                    height: 1.0,
-                },
-            },
-        })?;
         // cellular dynamic debris that piles at its angle of repose and that players wade through
-        material_registry.register(Material::CellularDynamic {
+        let gravel: MaterialIdentifier = material_registry.register(Material::CellularDynamic {
             name: String::from("gravel"),
             properties: MaterialPropertiesCellularDynamic {
                 graphics: MaterialGraphicsCellularDynamic {
@@ -97,8 +81,31 @@ impl TemplateGame {
                 restitution: 0.1,
             },
         })?;
+        let stone: MaterialIdentifier = material_registry.register(Material::CellularStatic {
+            name: String::from("stone"),
+            properties: MaterialPropertiesCellularStatic {
+                graphics: MaterialGraphicsCellularStatic {
+                    sprite_sheet: Arc::new(SpriteSheet::from_png(
+                        accelerator,
+                        include_bytes!("../assets/sprites/stone.png"),
+                        1,
+                        1,
+                    )?),
+                    frame: 0,
+                    width: 1.0,
+                    height: 1.0,
+                },
+                mass: 2.0,
+                friction: 0.6,
+                restitution: 0.1,
+                debris: Some(gravel),
+            },
+        })?;
+        // the template starts from its generated world on every launch
+        let world_path: PathBuf = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("world");
+        let _ = std::fs::remove_dir_all(&world_path);
         let mut scene: Scene = Scene::new(
-            ChunkData::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("world")),
+            ChunkData::new(world_path),
             material_registry.compile(accelerator)?,
             Arc::new(TemplateSceneGenerator { stone }),
             0,
