@@ -15,7 +15,8 @@ pub struct ActorCollisionComponent {
     pub collider: Collider,
     /// Bitmask of the groups this actor belongs to
     pub memberships: u32,
-    /// Bitmask of the groups this actor collides with, colliding only when both actors accept
+    /// Bitmask of the groups this actor collides with, colliding only when both actors accept;
+    /// settled dynamic cellular collisions are reserved for cellular rigid bodies
     pub filter: u32,
     /// Mass of the body, in the units of dynamic cellular material masses, deciding how far it
     /// pushes dynamic cells and how much they slow it

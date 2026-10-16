@@ -5,13 +5,13 @@ use crate::materials::{
     MaterialIdentifier,
 };
 
-/// Cells of one cellular tile holding solid `CellularStatic` materials, as bit `y * 8 + x` per cell
+/// Solid static or settled dynamic cells of one cellular tile, as bit `y * 8 + x` per cell
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 pub struct CollisionCellularTile(u64);
 
 impl CollisionCellularTile {
 
-    /// Creates the occupancy of one cellular tile from its row-major material identifiers
+    /// Creates static occupancy of one cellular tile from its row-major material identifiers
     pub fn new(material_identifiers: &[MaterialIdentifier; 64]) -> Self {
         let mut occupancy: u64 = 0;
         for (cell_index, material_identifier) in material_identifiers.iter().enumerate() {

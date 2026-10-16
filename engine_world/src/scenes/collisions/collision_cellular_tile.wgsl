@@ -5,6 +5,10 @@ struct CellularTileUniforms {
     region_height: u32,
     ring_offset_x: u32,
     ring_offset_y: u32,
+    dynamic: u32,
+    padding_0: u32,
+    padding_1: u32,
+    padding_2: u32,
 };
 
 @group(0) @binding(0)
@@ -19,7 +23,13 @@ var<storage, read_write> cellular_tiles: array<vec2<u32>>;
 @group(0) @binding(3)
 var<storage, read> rigid_body_cells: array<u32>;
 
-/// Packs the solid static cells outside rigid bodies of one active tile into bit `y * 8 + x` in
+@group(0) @binding(4)
+var<storage, read> kinematics: array<vec2<u32>>;
+
+/// Flag of a dynamic cell at rest, shared with cellular tile kinematics
+const CELL_RESTING: u32 = 1u << 28u;
+
+/// Packs static or settled dynamic cells outside rigid bodies into bit `y * 8 + x` in
 /// active region order
 @compute @workgroup_size(64)
 fn compute(@builtin(global_invocation_id) invocation: vec3<u32>) {
@@ -36,7 +46,10 @@ fn compute(@builtin(global_invocation_id) invocation: vec3<u32>) {
         let material_identifier: u32 = material_identifiers[cell_start + cell];
         // empty shares the static tag, so only nonzero static identifiers are solid, and rigid
         // body cells collide through their own bodies
-        if material_identifier != 0u && (material_identifier >> 30u) == 0u
+        let is_static: bool = material_identifier != 0u && (material_identifier >> 30u) == 0u;
+        let is_settled: bool = (material_identifier >> 30u) == 1u
+            && (kinematics[cell_start + cell].y & CELL_RESTING) != 0u;
+        if select(is_static, is_settled, uniforms.dynamic != 0u)
             && rigid_body_cells[cell_start + cell] == 0u
         {
             occupancy[cell / 32u] |= 1u << (cell % 32u);

@@ -27,11 +27,11 @@ const CELLULAR_TILE_OCCUPANCY_BYTE_COUNT: u64 = 8;
 /// Number of invocations in one compute workgroup
 const WORKGROUP_SIZE: u32 = 64;
 
-/// GPU extraction of the static occupancy of every active cellular tile
+/// GPU extraction of static or settled dynamic occupancy of every active cellular tile
 pub struct CollisionCellularTilePass {
     /// Pipeline packing one active tile's occupancy per invocation
     pipeline: wgpu::ComputePipeline,
-    /// Bind group of the uniforms, material identifiers, and occupancies
+    /// Bind group of the uniforms, materials, occupancies, rigid body cells, and kinematics
     bind_group: wgpu::BindGroup,
     /// Active region dimensions and ring offset
     uniform_buffer: wgpu::Buffer,
@@ -96,6 +96,16 @@ impl CollisionCellularTilePass {
                         },
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             },
         );
@@ -126,7 +136,7 @@ impl CollisionCellularTilePass {
         );
         let uniform_buffer: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("`CollisionCellularTilePass.uniform_buffer`"),
-            size: 16,
+            size: 32,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -163,6 +173,10 @@ impl CollisionCellularTilePass {
                     binding: 3,
                     resource: cellular_tile_buffers.rigid_body_cell_buffer().as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: cellular_tile_buffers.kinematics_buffer().as_entire_binding(),
+                },
             ],
         });
         let (response_sender, response_receiver): (
@@ -180,12 +194,13 @@ impl CollisionCellularTilePass {
         }
     }
 
-    /// Returns the occupancy of every active tile in row-major order, waiting for the GPU
+    /// Returns static or settled dynamic occupancy in row-major order, waiting for the GPU
     pub fn read_cellular_tiles(
         &mut self,
         accelerator: &Accelerator,
         active_region: CellularTileRegion,
         ring_offset: (u32, u32),
+        dynamic: bool,
     ) -> Result<Vec<CollisionCellularTile>, SceneError> {
         let width: u32 = active_region.width() as u32;
         let height: u32 = active_region.height() as u32;
@@ -194,11 +209,12 @@ impl CollisionCellularTilePass {
         if byte_count > self.cellular_tile_buffer.size() {
             return Err(SceneError::InvalidCellularTileRegion);
         }
-        let mut uniform_bytes: [u8; 16] = [0; 16];
+        let mut uniform_bytes: [u8; 32] = [0; 32];
         uniform_bytes[0..4].copy_from_slice(&width.to_le_bytes());
         uniform_bytes[4..8].copy_from_slice(&height.to_le_bytes());
         uniform_bytes[8..12].copy_from_slice(&ring_offset.0.to_le_bytes());
         uniform_bytes[12..16].copy_from_slice(&ring_offset.1.to_le_bytes());
+        uniform_bytes[16..20].copy_from_slice(&u32::from(dynamic).to_le_bytes());
         accelerator.queue().write_buffer(&self.uniform_buffer, 0, &uniform_bytes);
         // pack after every queued tile write, then copy the packed occupancies for the CPU
         let mut command_encoder: wgpu::CommandEncoder = accelerator.device()
