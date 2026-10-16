@@ -23,6 +23,7 @@ use crate::{
         collisions::{
             ColliderShape,
             CollisionBody,
+            CollisionRigidBodyPass,
             COLLISION_GROUP_CELLULAR_TILE,
         },
         SceneError,
@@ -47,11 +48,13 @@ pub struct Kinematics {
 
 impl Kinematics {
 
-    /// Creates a simulation of the dynamic cells in the cellular tile buffers
+    /// Creates a simulation of the dynamic cells in the cellular tile buffers against the rigid
+    /// bodies rasterized into them
     pub fn new(
         accelerator: &Accelerator,
         cellular_tile_buffers: &CellularTileBuffers,
         material_table: &MaterialTable,
+        collision_rigid_body_pass: &CollisionRigidBodyPass,
     ) -> Self {
         Self {
             actor_positions: HashMap::new(),
@@ -60,21 +63,30 @@ impl Kinematics {
                 accelerator,
                 cellular_tile_buffers,
                 material_table,
+                collision_rigid_body_pass,
             ),
         }
     }
 
     /// Simulates one tick of the active dynamic cells against every actor colliding with cellular
-    /// tiles, returning each actor's velocity change in tiles per second from the cells it pushed,
-    /// and the normal and depth in tiles of the cells holding it back, read from an earlier tick
+    /// tiles and every rigid body at its record index, returning each actor's velocity change in
+    /// tiles per second from the cells it pushed, and the normal and depth in tiles of the cells
+    /// holding it back, read from an earlier tick, then each rigid body's impulse, angular impulse,
+    /// and holding cells read since the last tick, with the region's bottom-left corner placed in
+    /// cells from the rigid bodies' origin
     pub fn simulate_kinematics(
         &mut self,
         accelerator: &Accelerator,
         active_region: CellularTileRegion,
         ring_offset: (u32, u32),
+        region_origin: (i32, i32),
         gravity: f32,
         actor_registry: &ActorRegistry,
-    ) -> Result<HashMap<Actor, ([f32; 2], [f32; 2], f32)>, SceneError> {
+        rigid_bodies: &[(u32, u64)],
+    ) -> Result<(
+        HashMap<Actor, ([f32; 2], [f32; 2], f32)>,
+        HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2])>,
+    ), SceneError> {
         let region_position: ScenePosition = ScenePosition {
             tile_x: active_region.bottom_left.x,
             tile_y: active_region.bottom_left.y,
@@ -120,8 +132,20 @@ impl Kinematics {
             ));
         }
         self.actor_positions = actor_positions;
-        let contacts: Option<HashMap<Actor, ([f32; 2], [f32; 2], f32)>> = self.cellular_tile_pass
-            .simulate_cellular_tiles(accelerator, active_region, ring_offset, gravity, &actors)?;
+        let (contacts, rigid_body_contacts): (
+            Option<HashMap<Actor, ([f32; 2], [f32; 2], f32)>>,
+            Option<HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2])>>,
+        ) = self.cellular_tile_pass.simulate_cellular_tiles(
+            accelerator,
+            active_region,
+            ring_offset,
+            region_origin,
+            gravity,
+            &actors,
+            rigid_bodies,
+        )?;
+        let rigid_body_contacts: HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2])> =
+            rigid_body_contacts.unwrap_or_default();
         // velocity changes apply once, while normals and depths last until the next readback
         if let Some(contacts) = contacts {
             self.cellular_contacts = contacts;
@@ -130,9 +154,9 @@ impl Kinematics {
             for (velocity_change, _, _) in self.cellular_contacts.values_mut() {
                 *velocity_change = [0.0; 2];
             }
-            return Ok(contacts);
+            return Ok((contacts, rigid_body_contacts));
         }
-        Ok(self.cellular_contacts.clone())
+        Ok((self.cellular_contacts.clone(), rigid_body_contacts))
     }
 
 }

@@ -10,9 +10,8 @@ struct KinematicsUniforms {
     actor_count: u32,
     gravity: f32,
     resolve: u32,
-    padding_0: u32,
-    padding_1: u32,
-    padding_2: u32,
+    padding: u32,
+    region_origin: vec2<i32>,
 };
 
 struct KinematicsActor {
@@ -22,6 +21,26 @@ struct KinematicsActor {
     size: vec2<f32>,
     bounds: vec4<f32>,
     shape: u32,
+    mass: f32,
+    padding: vec2<u32>,
+};
+
+struct KinematicsRigidBodyCellularTile {
+    rigid_body: u32,
+    padding_0: u32,
+    tile: vec2<i32>,
+    cells: vec2<u32>,
+    previous_cells: vec2<u32>,
+};
+
+struct KinematicsRigidBody {
+    position: vec2<f32>,
+    rotation: vec2<f32>,
+    previous_position: vec2<f32>,
+    previous_rotation: vec2<f32>,
+    velocity: vec2<f32>,
+    center: vec2<f32>,
+    angular_velocity: f32,
     mass: f32,
     padding: vec2<u32>,
 };
@@ -71,6 +90,21 @@ var<storage, read> actors: array<KinematicsActor>;
 
 @group(0) @binding(10)
 var<storage, read_write> contacts: array<atomic<i32>>;
+
+@group(0) @binding(11)
+var<storage, read> rigid_body_cells: array<u32>;
+
+@group(0) @binding(12)
+var<storage, read> rigid_body_cellular_tile_cells: array<vec2<u32>>;
+
+@group(0) @binding(13)
+var<storage, read> rigid_body_cellular_tiles: array<KinematicsRigidBodyCellularTile>;
+
+@group(0) @binding(14)
+var<storage, read> rigid_bodies: array<KinematicsRigidBody>;
+
+@group(0) @binding(15)
+var<storage, read_write> rigid_body_contacts: array<atomic<u32>>;
 
 @group(1) @binding(0)
 var<storage, read_write> dispatches: array<u32>;
@@ -135,6 +169,14 @@ const CONTACT_SCALE: f32 = 1024.0;
 
 /// Number of `i32` accumulated per actor: impulse, normal, contact count, depth, and padding
 const CONTACT_STRIDE: u32 = 8u;
+
+/// Number of `f32` accumulated per rigid body: impulse, angular impulse, then for each side of
+/// its center of mass along its own x axis, the count, summed normals, and summed arms of the
+/// dynamic cells holding it back, and padding
+const RIGID_BODY_CONTACT_STRIDE: u32 = 16u;
+
+/// Speed in cells per tick below which a rigid body pushes covered cells away from its center
+const RIGID_BODY_RESTING_SPEED: f32 = 0.01;
 
 /// Returns the physical index of a tile from its position in the active region
 fn tile_index(tile: vec2<u32>) -> u32 {
@@ -254,6 +296,69 @@ fn pack_kinematics(cell_kinematics: CellKinematics) -> vec2<u32> {
     );
 }
 
+/// Returns the rigid body whose cell is rasterized at a buffer index plus one, or zero for none
+fn cell_rigid_body(index: u32) -> u32 {
+    let rigid_body_cell: u32 = rigid_body_cells[index];
+    if rigid_body_cell == 0u { return 0u; }
+    return rigid_body_cellular_tiles[(rigid_body_cell - 1u) / 64u].rigid_body + 1u;
+}
+
+/// Returns the arm in cells from a rigid body's center of mass to a cell position's center
+fn rigid_body_arm(rigid_body: u32, cell: vec2<i32>) -> vec2<f32> {
+    return vec2<f32>(uniforms.region_origin + cell) + 0.5 - rigid_bodies[rigid_body].center;
+}
+
+/// Returns the velocity in cells per tick of a rigid body at a cell position
+fn rigid_body_velocity(rigid_body: u32, cell: vec2<i32>) -> vec2<f32> {
+    let arm: vec2<f32> = rigid_body_arm(rigid_body, cell);
+    return rigid_bodies[rigid_body].velocity
+        + rigid_bodies[rigid_body].angular_velocity * vec2<f32>(-arm.y, arm.x);
+}
+
+/// Adds a value to one accumulated rigid body contact
+fn add_rigid_body_contact(index: u32, value: f32) {
+    var accumulated: u32 = atomicLoad(&rigid_body_contacts[index]);
+    loop {
+        let exchange = atomicCompareExchangeWeak(
+            &rigid_body_contacts[index],
+            accumulated,
+            bitcast<u32>(bitcast<f32>(accumulated) + value),
+        );
+        if exchange.exchanged { break; }
+        accumulated = exchange.old_value;
+    }
+}
+
+/// Accumulates an impulse in mass cells per tick on a rigid body at a cell position, and the
+/// angular impulse it applies around the body's center of mass
+fn push_rigid_body(rigid_body: u32, cell: vec2<i32>, impulse: vec2<f32>) {
+    let arm: vec2<f32> = rigid_body_arm(rigid_body, cell);
+    let contact_index: u32 = rigid_body * RIGID_BODY_CONTACT_STRIDE;
+    add_rigid_body_contact(contact_index, impulse.x);
+    add_rigid_body_contact(contact_index + 1u, impulse.y);
+    add_rigid_body_contact(contact_index + 2u, arm.x * impulse.y - arm.y * impulse.x);
+}
+
+/// Returns the velocity in cells per tick of the rigid body cell at a cell position, or zero when
+/// the position holds other matter
+fn wall_velocity(cell: vec2<i32>) -> vec2<f32> {
+    if !is_cell_inside(cell) { return vec2<f32>(0.0); }
+    let index: u32 = cell_index(cell);
+    if rigid_body_cells[index] == 0u || !is_static(material_identifiers[index]) {
+        return vec2<f32>(0.0);
+    }
+    return unpack_kinematics(kinematics[index]).velocity;
+}
+
+/// Accumulates the impulse a dynamic cell applies to the rigid body cell it hits, if any
+fn push_wall(cell: vec2<i32>, impulse: vec2<f32>) {
+    if !is_cell_inside(cell) { return; }
+    let index: u32 = cell_index(cell);
+    if !is_static(material_identifiers[index]) { return; }
+    let rigid_body: u32 = cell_rigid_body(index);
+    if rigid_body != 0u { push_rigid_body(rigid_body - 1u, cell, impulse); }
+}
+
 /// Returns the signed distance in cells from an actor's surface to a point, negative inside,
 /// followed by the surface normal pointing out of the actor
 fn actor_distance(actor: KinematicsActor, point: vec2<f32>) -> vec3<f32> {
@@ -324,6 +429,7 @@ fn is_cell_supporting(cell: vec2<i32>) -> bool {
     if is_dynamic(material_identifier)
         && (kinematics[index].y & (CELL_RESTING | CELL_SUPPORTED)) != 0u
     { return true; }
+    if rigid_body_cells[index] != 0u { return true; }
     return covering_actor(vec2<f32>(cell) + 0.5) < uniforms.actor_count;
 }
 
@@ -410,14 +516,16 @@ fn integrate(
     let index: u32 = cell_index(cell);
     let center: vec2<f32> = vec2<f32>(cell) + 0.5;
     let covering: u32 = covering_actor(center);
-    let is_covered: bool = covering < uniforms.actor_count;
+    let material_identifier: u32 = material_identifiers[index];
+    // a dynamic cell under a rigid body is covered by it until it escapes
+    let rigid_body: u32 = select(0u, cell_rigid_body(index), is_dynamic(material_identifier));
+    let is_covered: bool = covering < uniforms.actor_count || rigid_body != 0u;
     motions[index] = vec4<u32>(
         select(0u, MOTION_COVERED, is_covered),
         0u,
         STATUS_NONE,
         STATUS_NONE,
     );
-    let material_identifier: u32 = material_identifiers[index];
     if !is_dynamic(material_identifier) { return; }
     let material: vec4<f32> = materials[material_identifier & 0x3fffffffu];
     let mass: f32 = material.x;
@@ -426,9 +534,25 @@ fn integrate(
     var cell_kinematics: CellKinematics = unpack_kinematics(kinematics[index]);
     cell_kinematics.flags = 0u;
     if is_covered {
-        // leave the actor through the free cell nearest its outward normal
-        let actor: KinematicsActor = actors[covering];
-        let normal: vec2<f32> = actor_distance(actor, center).yz;
+        // leave an actor through the free cell nearest its outward normal, and a rigid body the
+        // way it moves through the cell, or away from its center while it rests
+        var normal: vec2<f32>;
+        var pushing_velocity: vec2<f32>;
+        var pushing_mass: f32;
+        if covering < uniforms.actor_count {
+            let actor: KinematicsActor = actors[covering];
+            normal = actor_distance(actor, center).yz;
+            pushing_velocity = actor.velocity;
+            pushing_mass = actor.mass;
+        } else {
+            pushing_velocity = rigid_body_velocity(rigid_body - 1u, cell);
+            normal = select(
+                rigid_body_arm(rigid_body - 1u, cell),
+                pushing_velocity,
+                length(pushing_velocity) >= RIGID_BODY_RESTING_SPEED,
+            );
+            pushing_mass = rigid_bodies[rigid_body - 1u].mass;
+        }
         let turns: i32 = i32(round(atan2(normal.y, normal.x) / 0.7853982));
         let outward: u32 = u32((turns + 8) % 8) + 1u;
         var escape: u32 = 0u;
@@ -439,6 +563,7 @@ fn integrate(
             let target_cell: vec2<i32> = cell + direction_offset(direction);
             if is_cell_active(target_cell)
                 && material_identifiers[cell_index(target_cell)] == 0u
+                && rigid_body_cells[cell_index(target_cell)] == 0u
                 && covering_actor(vec2<f32>(target_cell) + 0.5) == uniforms.actor_count
             {
                 escape = direction;
@@ -446,23 +571,42 @@ fn integrate(
             }
         }
         if escape == 0u {
-            // a cell with nowhere to go holds the actor back instead
+            // a cell with nowhere to go holds the actor or rigid body back instead
             cell_kinematics.velocity = vec2<f32>(0.0);
             cell_kinematics.progress = vec2<f32>(0.0);
+            if rigid_body != 0u {
+                // each side holds separately, so holding cells can resist the body turning
+                let arm: vec2<f32> = rigid_body_arm(rigid_body - 1u, cell);
+                let axis: vec2<f32> = rigid_bodies[rigid_body - 1u].rotation;
+                let side: u32 = select(0u, 5u, dot(arm, axis) >= 0.0);
+                let contact_index: u32 = (rigid_body - 1u) * RIGID_BODY_CONTACT_STRIDE + side;
+                let held_normal: vec2<f32> = -normalize(normal);
+                add_rigid_body_contact(contact_index + 3u, 1.0);
+                add_rigid_body_contact(contact_index + 4u, held_normal.x);
+                add_rigid_body_contact(contact_index + 5u, held_normal.y);
+                add_rigid_body_contact(contact_index + 6u, arm.x);
+                add_rigid_body_contact(contact_index + 7u, arm.y);
+            }
         } else {
-            // collide inelastically with the actor along the escape, so heavier actors shove cells
-            // harder and lose less speed doing it
+            // collide inelastically with the pusher along the escape, so heavier pushers shove
+            // cells harder and lose less speed doing it
             let escape_offset: vec2<f32> = vec2<f32>(direction_offset(escape));
             let along: vec2<f32> = normalize(escape_offset);
             let cell_speed: f32 = dot(cell_kinematics.velocity, along);
-            let shared_speed: f32 = (actor.mass * dot(actor.velocity, along) + mass * cell_speed)
-                / (actor.mass + mass);
+            let shared_speed: f32 =
+                (pushing_mass * dot(pushing_velocity, along) + mass * cell_speed)
+                    / (pushing_mass + mass);
             if shared_speed > cell_speed {
                 let velocity_change: vec2<f32> = (shared_speed - cell_speed) * along;
                 cell_kinematics.velocity += velocity_change;
-                let impulse: vec2<i32> = vec2<i32>(round(-mass * velocity_change * CONTACT_SCALE));
-                atomicAdd(&contacts[covering * CONTACT_STRIDE], impulse.x);
-                atomicAdd(&contacts[covering * CONTACT_STRIDE + 1u], impulse.y);
+                if rigid_body != 0u {
+                    push_rigid_body(rigid_body - 1u, cell, -mass * velocity_change);
+                } else {
+                    let impulse: vec2<i32> =
+                        vec2<i32>(round(-mass * velocity_change * CONTACT_SCALE));
+                    atomicAdd(&contacts[covering * CONTACT_STRIDE], impulse.x);
+                    atomicAdd(&contacts[covering * CONTACT_STRIDE + 1u], impulse.y);
+                }
             }
             // step out this tick however slowly it moves
             cell_kinematics.progress = escape_offset;
@@ -487,6 +631,8 @@ fn integrate(
         // removes up to its share of speed, so cells only start sliding where the slope is
         // steeper than their friction holds
         cell_kinematics.velocity.y = max(cell_kinematics.velocity.y - gravity, 0.0);
+        // a rigid body holding the cell up carries its weight
+        push_wall(cell + vec2<i32>(0, -1), vec2<f32>(0.0, -mass * gravity));
         cell_kinematics.progress.y = max(cell_kinematics.progress.y, 0.0);
         let downhill: i32 = i32(sign(normal.x));
         let side: vec2<i32> = cell + vec2<i32>(downhill, 0);
@@ -801,9 +947,22 @@ fn commit(
     }
     let direction: u32 = motion.x & MOTION_DIRECTION;
     if direction != 0u && (motion.z & STATUS_MASK) == STATUS_SUCCEEDED {
-        material_identifiers[index] = 0u;
-        colors[index] = 0u;
-        kinematics[index] = vec2<u32>(0u);
+        // a cell escaping a rigid body leaves the body's cell behind it
+        let rigid_body_cell: u32 = rigid_body_cells[index];
+        if rigid_body_cell != 0u {
+            let rigid_cell: vec2<u32> = rigid_body_cellular_tile_cells[rigid_body_cell - 1u];
+            material_identifiers[index] = rigid_cell.x;
+            colors[index] = rigid_cell.y;
+            kinematics[index] = pack_kinematics(CellKinematics(
+                rigid_body_velocity(cell_rigid_body(index) - 1u, cell),
+                vec2<f32>(0.0),
+                0u,
+            ));
+        } else {
+            material_identifiers[index] = 0u;
+            colors[index] = 0u;
+            kinematics[index] = vec2<u32>(0u);
+        }
         atomicOr(&awake[tile], TILE_AWAKE | TILE_DISTURBED);
         return;
     }
@@ -851,13 +1010,26 @@ fn commit(
             && is_dynamic(material_identifiers[target_index]);
     }
     let material: vec4<f32> = materials[material_identifier & 0x3fffffffu];
+    // rigid body cells are walls moving at their body's velocity, so cells bounce off them
+    // relative to that velocity and push the body by the momentum they lose
+    let blockers: array<vec2<i32>, 2> = array<vec2<i32>, 2>(
+        select(cell + vec2<i32>(offset.x, 0), target_cell, is_target_blocking.x),
+        select(cell + vec2<i32>(0, offset.y), target_cell, is_target_blocking.y),
+    );
+    let initial_velocity: vec2<f32> = cell_kinematics.velocity;
     var stopped_speed: f32 = 0.0;
+    var wall: vec2<f32> = vec2<f32>(0.0);
     if is_blocked.x {
         if is_target_collided && is_target_blocking.x {
             stopped_speed += abs(velocity_change.x);
         } else {
-            stopped_speed += abs(cell_kinematics.velocity.x);
-            cell_kinematics.velocity.x *= -material.z;
+            wall = wall_velocity(blockers[0]);
+            let approach: f32 = cell_kinematics.velocity.x - wall.x;
+            // static cells stay put, so only moving walls can outrun the cell
+            if approach * f32(offset.x) > 0.0 || all(wall == vec2<f32>(0.0)) {
+                stopped_speed += abs(approach);
+                cell_kinematics.velocity.x = wall.x - approach * material.z;
+            }
         }
         cell_kinematics.progress.x = 0.0;
     }
@@ -865,20 +1037,33 @@ fn commit(
         if is_target_collided && is_target_blocking.y {
             stopped_speed += abs(velocity_change.y);
         } else {
-            stopped_speed += abs(cell_kinematics.velocity.y);
-            cell_kinematics.velocity.y *= -material.z;
+            wall = wall_velocity(blockers[1]);
+            let approach: f32 = cell_kinematics.velocity.y - wall.y;
+            // static cells stay put, so only moving walls can outrun the cell
+            if approach * f32(offset.y) > 0.0 || all(wall == vec2<f32>(0.0)) {
+                stopped_speed += abs(approach);
+                cell_kinematics.velocity.y = wall.y - approach * material.z;
+            }
         }
         cell_kinematics.progress.y = 0.0;
     }
-    // friction removes sliding speed in proportion to the speed stopped by the impact
+    // friction removes sliding speed relative to the wall in proportion to the speed stopped by
+    // the impact
     let friction_speed: f32 = material.y * stopped_speed;
     if is_blocked.x && !is_blocked.y {
-        cell_kinematics.velocity.y -= sign(cell_kinematics.velocity.y)
-            * min(abs(cell_kinematics.velocity.y), friction_speed);
+        let sliding: f32 = cell_kinematics.velocity.y - wall.y;
+        cell_kinematics.velocity.y -= sign(sliding) * min(abs(sliding), friction_speed);
     }
     if is_blocked.y && !is_blocked.x {
-        cell_kinematics.velocity.x -= sign(cell_kinematics.velocity.x)
-            * min(abs(cell_kinematics.velocity.x), friction_speed);
+        let sliding: f32 = cell_kinematics.velocity.x - wall.x;
+        cell_kinematics.velocity.x -= sign(sliding) * min(abs(sliding), friction_speed);
+    }
+    let impulse: vec2<f32> = material.x * (initial_velocity - cell_kinematics.velocity);
+    if is_blocked.x && !(is_target_collided && is_target_blocking.x) {
+        push_wall(blockers[0], vec2<f32>(impulse.x, select(0.0, impulse.y, !is_blocked.y)));
+    }
+    if is_blocked.y && !(is_target_collided && is_target_blocking.y) {
+        push_wall(blockers[1], vec2<f32>(select(0.0, impulse.x, !is_blocked.x), impulse.y));
     }
     kinematics[index] = pack_kinematics(cell_kinematics);
 }
