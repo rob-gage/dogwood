@@ -14,6 +14,7 @@ pub use collider_shape::ColliderShape;
 pub use collision::Collision;
 pub use collision_body::CollisionBody;
 pub use collision_cellular_tile::CollisionCellularTile;
+pub use collision_rigid_body_pass::CollisionRigidBodyPass;
 
 /// Maximum distance in tiles between the active region's center and the Rapier origin
 const COLLISION_ORIGIN_DISTANCE_MAXIMUM: u64 = 1024;
@@ -28,8 +29,11 @@ const COLLISION_RIGID_BODY_CELL_COUNT_MAXIMUM: usize = 4096;
 /// voxel contacts cannot push a body out once it moves a cell or more into other voxels
 const COLLISION_RIGID_BODY_CCD_PREDICTION: f32 = 1.0;
 
+/// Passes stopping a rigid body against the dynamic cells holding it on both sides
+const COLLISION_RIGID_BODY_HOLDING_ITERATION_COUNT: usize = 4;
+
 /// Maximum number of rigid bodies simulated at once
-const COLLISION_RIGID_BODY_COUNT_MAXIMUM: usize = 1024;
+pub const COLLISION_RIGID_BODY_COUNT_MAXIMUM: usize = 1024;
 
 /// Maximum number of tiles of cells held by every simulated rigid body
 const COLLISION_RIGID_BODY_CELLULAR_TILE_COUNT_MAXIMUM: usize = 16384;

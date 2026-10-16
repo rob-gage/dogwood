@@ -308,6 +308,15 @@ impl CollisionRigidBodyPass {
         }
     }
 
+    /// Returns the material identifier and packed color of every rigid body tile cell
+    pub fn cellular_tile_cell_buffer(&self) -> &wgpu::Buffer { &self.cellular_tile_cell_buffer }
+
+    /// Returns the record of every rigid body tile
+    pub fn cellular_tile_buffer(&self) -> &wgpu::Buffer { &self.cellular_tile_buffer }
+
+    /// Returns the record of every rigid body
+    pub fn rigid_body_buffer(&self) -> &wgpu::Buffer { &self.rigid_body_buffer }
+
     /// Writes one rigid body tile's rigid body, coordinates in its body, cells, cells last
     /// rasterized, and the material identifiers and colors of its cells
     pub fn write_cellular_tile(

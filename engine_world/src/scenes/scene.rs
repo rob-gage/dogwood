@@ -233,9 +233,9 @@ impl Scene {
         Ok(())
     }
 
-    /// Simulates the active dynamic cells against actors, then actor and rigid body collisions
-    /// against the active cellular tiles, waiting for the GPU only when collisions read changed
-    /// cells
+    /// Simulates the active dynamic cells against actors and rigid bodies, then actor and rigid
+    /// body collisions against the active cellular tiles, waiting for the GPU only when
+    /// collisions read changed cells
     pub fn simulate(&mut self, accelerator: &Accelerator) -> Result<(), SceneError> {
         // nothing is simulated before the active region is resident
         let (Some(cellular_tile_streaming_state), Some(cellular_tile_buffers)) = (
@@ -245,30 +245,43 @@ impl Scene {
         let Some(active_region): Option<CellularTileRegion> =
             cellular_tile_streaming_state.active_cellular_tile_region()
         else { return Ok(()); };
-        // dynamic cells move against actors where the previous step left them, and push back on
-        // actors once their contacts are read
-        let cellular_contacts: HashMap<Actor, ([f32; 2], [f32; 2], f32)> = self.kinematics
-            .get_or_insert_with(|| {
-                Kinematics::new(accelerator, cellular_tile_buffers, &self.material_table)
-            })
+        // dynamic cells move against actors and rigid bodies where the previous step left them,
+        // and push back on them once their contacts are read
+        let collision: &mut Collision = self.collision
+            .get_or_insert_with(|| Collision::new(accelerator, cellular_tile_buffers));
+        let origin: CellularTileCoordinates = collision.origin();
+        let (cellular_contacts, rigid_body_contacts): (
+            HashMap<Actor, ([f32; 2], [f32; 2], f32)>,
+            HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2])>,
+        ) = self.kinematics
+            .get_or_insert_with(|| Kinematics::new(
+                accelerator,
+                cellular_tile_buffers,
+                &self.material_table,
+                collision.rigid_body_pass(),
+            ))
             .simulate_kinematics(
                 accelerator,
                 active_region,
                 cellular_tile_streaming_state.cellular_tile_ring_offset(),
+                (
+                    ((active_region.bottom_left.x - origin.x) * CELLULAR_TILE_SIZE) as i32,
+                    ((active_region.bottom_left.y - origin.y) * CELLULAR_TILE_SIZE) as i32,
+                ),
                 self.gravity,
                 &self.actor_registry,
+                &collision.rigid_bodies(),
             )?;
-        self.collision
-            .get_or_insert_with(|| Collision::new(accelerator, cellular_tile_buffers))
-            .simulate_collisions(
-                accelerator,
-                active_region,
-                cellular_tile_streaming_state.cellular_tile_ring_offset(),
-                self.gravity,
-                &mut self.actor_registry,
-                &cellular_contacts,
-                &self.material_table,
-            )
+        collision.simulate_collisions(
+            accelerator,
+            active_region,
+            cellular_tile_streaming_state.cellular_tile_ring_offset(),
+            self.gravity,
+            &mut self.actor_registry,
+            &cellular_contacts,
+            &rigid_body_contacts,
+            &self.material_table,
+        )
     }
 
     /// Returns the graphical representation of this scene seen through an actor's camera

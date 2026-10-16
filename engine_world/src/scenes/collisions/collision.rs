@@ -17,6 +17,7 @@ use super::{
     COLLISION_RIGID_BODY_CCD_PREDICTION,
     COLLISION_RIGID_BODY_CELLULAR_TILE_COUNT_MAXIMUM,
     COLLISION_RIGID_BODY_COUNT_MAXIMUM,
+    COLLISION_RIGID_BODY_HOLDING_ITERATION_COUNT,
 };
 use crate::{
     actors::{
@@ -181,6 +182,7 @@ impl Collision {
 
     /// Synchronizes the active cellular tiles, rigid bodies, and actors, then advances one fixed
     /// step, moving pawns by the velocity change, contact normal, and contact depth in tiles of the
+    /// dynamic cells touching them, pushing rigid bodies by the impulses and holding cells of the
     /// dynamic cells touching them, and rasterizing the rigid bodies where they moved
     pub fn simulate_collisions(
         &mut self,
@@ -190,6 +192,7 @@ impl Collision {
         gravity: f32,
         actor_registry: &mut ActorRegistry,
         cellular_contacts: &HashMap<Actor, ([f32; 2], [f32; 2], f32)>,
+        rigid_body_contacts: &HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2])>,
         material_table: &MaterialTable,
     ) -> Result<(), SceneError> {
         // static GPU cells only change when streaming moves the ring or edits write them, so
@@ -234,6 +237,22 @@ impl Collision {
         }
         // rigid bodies that left the active region stay behind as static cells
         self.release_rigid_bodies(accelerator, active_region, ring_offset, active_region);
+        // impulses apply once, while holding cells last until newer contacts arrive
+        for (rigid_body, (impulse, angular_impulse, holding)) in rigid_body_contacts {
+            let Some(collision_rigid_body) = self.collision_rigid_bodies.get_mut(rigid_body)
+            else { continue; };
+            collision_rigid_body.holding = holding.map(|holding| (holding[0] > 0.0).then(|| {
+                let normal: rapier2d::math::Vector =
+                    rapier2d::math::Vector::new(holding[1], holding[2]).normalize_or_zero();
+                ([normal.x, normal.y], [holding[3] / holding[0], holding[4] / holding[0]])
+            }));
+            let Some(rigid_body) = self.rigid_bodies.get_mut(collision_rigid_body.rigid_body_handle)
+            else { continue; };
+            if *impulse != [0.0; 2] || *angular_impulse != 0.0 {
+                rigid_body.apply_impulse(rapier2d::math::Vector::new(impulse[0], impulse[1]), true);
+                rigid_body.apply_torque_impulse(*angular_impulse, true);
+            }
+        }
         self.simulate_collisions_step_actors(
             active_region,
             gravity,
@@ -580,6 +599,7 @@ impl Collision {
                 .map_err(|error: ActorError| SceneError::ActorDespawn { error })?;
         }
         self.simulate_collisions_move_pawns(&pawns, gravity, cellular_contacts);
+        self.simulate_collisions_hold_rigid_bodies(gravity);
         self.physics_pipeline.step(
             rapier2d::math::Vector::new(0.0, -gravity),
             &self.integration_parameters,
@@ -785,6 +805,19 @@ impl Collision {
         // the cells left behind are static cells of the active tiles
         self.is_cellular_tile_read_requested = true;
     }
+
+    /// Returns the record index and identifier of every rigid body
+    pub fn rigid_bodies(&self) -> Vec<(u32, u64)> {
+        self.collision_rigid_bodies.iter()
+            .map(|(rigid_body, collision_rigid_body)| (collision_rigid_body.index, *rigid_body))
+            .collect()
+    }
+
+    /// Returns the cellular tile whose bottom-left corner is the origin of every Rapier position
+    pub fn origin(&self) -> CellularTileCoordinates { self.origin }
+
+    /// Returns the GPU rasterization of rigid body cells
+    pub fn rigid_body_pass(&self) -> &CollisionRigidBodyPass { &self.rigid_body_pass }
 
     /// Detaches every rigid body cell an edit replaced from its body, waiting for the GPU, then
     /// splits the bodies it divides
@@ -1022,6 +1055,7 @@ impl Collision {
             rigid_body_handle: rapier2d::dynamics::RigidBodyHandle::invalid(),
             collider_handle: rapier2d::geometry::ColliderHandle::invalid(),
             rasterization: None,
+            holding: [None; 2],
         };
         let (mass, center, inertia, friction, restitution): (f32, [f32; 2], f32, f32, f32) =
             collision_rigid_body.mass_properties(material_table);
@@ -1251,6 +1285,40 @@ impl Collision {
         }
         self.changed_rigid_bodies.insert(rigid_body);
         self.collision_rigid_bodies.insert(rigid_body, collision_rigid_body);
+    }
+
+    /// Stops every rigid body moving into the dynamic cells holding it back on either side,
+    /// including the speed gravity adds this step, so held bodies rest on them
+    fn simulate_collisions_hold_rigid_bodies(&mut self, gravity: f32) {
+        let time_step: f32 = self.integration_parameters.dt;
+        for collision_rigid_body in self.collision_rigid_bodies.values() {
+            let Some(rigid_body) = self.rigid_bodies.get_mut(collision_rigid_body.rigid_body_handle)
+            else { continue; };
+            if rigid_body.is_sleeping() { continue; }
+            // both sides settle together over a few passes, like a contact solver
+            for _ in 0..COLLISION_RIGID_BODY_HOLDING_ITERATION_COUNT {
+                for (normal, arm) in collision_rigid_body.holding.iter().flatten() {
+                    let normal: rapier2d::math::Vector =
+                        rapier2d::math::Vector::new(normal[0], normal[1]);
+                    let arm: rapier2d::math::Vector = rapier2d::math::Vector::new(arm[0], arm[1]);
+                    let point: rapier2d::math::Vector = rigid_body.center_of_mass() + arm;
+                    let approach_speed: f32 = (rigid_body.velocity_at_point(point)
+                        + rapier2d::math::Vector::new(0.0, -gravity * time_step))
+                        .dot(normal);
+                    if approach_speed >= 0.0 { continue; }
+                    let arm_cross: f32 = arm.x * normal.y - arm.y * normal.x;
+                    let inverse_mass: f32 = rigid_body.mass_properties().effective_inv_mass.x
+                        + arm_cross * arm_cross
+                            * rigid_body.mass_properties().effective_world_inv_inertia;
+                    if inverse_mass <= 0.0 { continue; }
+                    rigid_body.apply_impulse_at_point(
+                        normal * (-approach_speed / inverse_mass),
+                        point,
+                        true,
+                    );
+                }
+            }
+        }
     }
 
     /// Rasterizes every rigid body that moved or changed where it is now, clearing where it was,
