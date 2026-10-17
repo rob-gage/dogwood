@@ -8,6 +8,7 @@ use super::{
     collision_cellular_tile_pass::CollisionCellularTilePass,
     collision_rigid_body::CollisionRigidBody,
     collision_rigid_body_pass::CollisionRigidBodyPass,
+    COLLISION_CONTACT_ITERATION_COUNT,
     COLLISION_GROUP_CELLULAR_DYNAMIC,
     COLLISION_GROUP_CELLULAR_TILE,
     COLLISION_GROUP_EDIT,
@@ -19,6 +20,8 @@ use super::{
     COLLISION_RIGID_BODY_CELLULAR_TILE_COUNT_MAXIMUM,
     COLLISION_RIGID_BODY_COUNT_MAXIMUM,
     COLLISION_RIGID_BODY_HOLDING_ITERATION_COUNT,
+    COLLISION_RIGID_BODY_SOLVER_ITERATION_COUNT,
+    COLLISION_STATIC_CONTACT_FREQUENCY,
 };
 use crate::{
     actors::{
@@ -179,7 +182,15 @@ impl Collision {
             rigid_body_pass: CollisionRigidBodyPass::new(accelerator, cellular_tile_buffers),
             rigid_bodies: rapier2d::dynamics::RigidBodySet::new(),
             colliders: rapier2d::geometry::ColliderSet::new(),
-            integration_parameters: rapier2d::dynamics::IntegrationParameters::default(),
+            // resolve stack loads before a body penetrates beyond the voxel surface contacts
+            integration_parameters: rapier2d::dynamics::IntegrationParameters {
+                num_internal_pgs_iterations: COLLISION_CONTACT_ITERATION_COUNT,
+                static_contact_softness: rapier2d::dynamics::SpringCoefficients {
+                    natural_frequency: COLLISION_STATIC_CONTACT_FREQUENCY,
+                    ..rapier2d::dynamics::SpringCoefficients::contact_static_defaults()
+                },
+                ..rapier2d::dynamics::IntegrationParameters::default()
+            },
             physics_pipeline: rapier2d::pipeline::PhysicsPipeline::new(),
             island_manager: rapier2d::dynamics::IslandManager::new(),
             broad_phase: rapier2d::geometry::BroadPhaseBvh::new(),
@@ -1123,6 +1134,7 @@ impl Collision {
                 .linvel(velocity + rapier2d::math::Vector::new(-arm.y, arm.x) * angular_velocity)
                 .angvel(angular_velocity)
                 .soft_ccd_prediction(COLLISION_RIGID_BODY_CCD_PREDICTION)
+                .additional_solver_iterations(COLLISION_RIGID_BODY_SOLVER_ITERATION_COUNT)
                 .build();
         collision_rigid_body.rigid_body_handle = self.rigid_bodies.insert(rigid_body);
         // filled one voxel at a time because Parry 0.30's bulk-built chunk hierarchy can panic

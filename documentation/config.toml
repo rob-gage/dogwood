@@ -1,0 +1,6 @@
+base_url = "https://rob-gage.github.io/dogwood/"
+title = "Dogwood"
+description = "Dogwood engine documentation"
+default_language = "en"
+compile_sass = false
+build_search_index = false

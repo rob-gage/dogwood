@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}{{ page.title }} | {{ config.title }}{% endblock title %}
+{% block content %}
+{% if page.ancestors %}{% set parent = get_section(path=page.ancestors | last) %}<a href="{{ parent.permalink }}">{{ parent.title }}</a>{% endif %}
+<h1>{{ page.title }}</h1>
+{{ page.content | safe }}
+{% endblock content %}

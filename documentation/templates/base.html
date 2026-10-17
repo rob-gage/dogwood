@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ config.title }}{% endblock title %}</title>
+  <link rel="stylesheet" href="{{ get_url(path='style.css') }}">
+</head>
+<body>
+  <a class="skip" href="#content">Skip to content</a>
+  <header><a href="{{ get_url(path='@/_index.md') }}">Dogwood documentation</a></header>
+  <div class="layout">
+    <nav aria-label="Documentation">
+      {% set home = get_section(path='_index.md') %}
+      <ul>{% for item in home.subsections %}{% set entry = get_section(path=item) %}
+        <li><a href="{{ entry.permalink }}">{{ entry.title }}</a></li>
+      {% endfor %}</ul>
+    </nav>
+    <main id="content">{% block content %}{% endblock content %}</main>
+  </div>
+</body>
+</html>
