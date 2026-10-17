@@ -19,6 +19,12 @@ pub use collision_rigid_body_pass::CollisionRigidBodyPass;
 /// Maximum distance in tiles between the active region's center and the Rapier origin
 const COLLISION_ORIGIN_DISTANCE_MAXIMUM: u64 = 1024;
 
+/// Constraint passes per solver substep, keeping stacked bodies from outrunning floor contacts
+const COLLISION_CONTACT_ITERATION_COUNT: usize = 4;
+
+/// Natural frequency in hertz of fixed contacts, resisting concentrated loads on voxel surfaces
+const COLLISION_STATIC_CONTACT_FREQUENCY: f32 = 600.0;
+
 /// Fewest cells of a rigid body, below which its cells become debris
 const COLLISION_RIGID_BODY_CELL_COUNT_MINIMUM: usize = 8;
 
@@ -28,6 +34,9 @@ const COLLISION_RIGID_BODY_CELL_COUNT_MAXIMUM: usize = 4096;
 /// Distance in tiles ahead of a moving rigid body within which contacts are predicted, since
 /// voxel contacts cannot push a body out once it moves a cell or more into other voxels
 const COLLISION_RIGID_BODY_CCD_PREDICTION: f32 = 1.0;
+
+/// Additional solver substeps for contact islands containing cellular rigid bodies
+const COLLISION_RIGID_BODY_SOLVER_ITERATION_COUNT: usize = 8;
 
 /// Passes stopping a rigid body against the dynamic cells holding it on both sides
 const COLLISION_RIGID_BODY_HOLDING_ITERATION_COUNT: usize = 4;
