@@ -1,7 +1,30 @@
 {% extends "base.html" %}
 {% block title %}{{ page.title }} | {{ config.title }}{% endblock title %}
+{% block description %}<meta name="description" content="{{ page.description | default(value=config.description) }}">{% endblock description %}
 {% block content %}
-{% if page.ancestors %}{% set parent = get_section(path=page.ancestors | last) %}<a href="{{ parent.permalink }}">{{ parent.title }}</a>{% endif %}
+{% if page.ancestors | length > 1 %}
+<nav aria-label="Breadcrumb"><ol class="breadcrumbs">
+{% for ancestor in page.ancestors %}{% if not loop.first %}{% set parent = get_section(path=ancestor) %}
+<li><a href="{{ parent.permalink }}">{{ parent.title }}</a></li>
+{% endif %}{% endfor %}
+</ol></nav>
+{% endif %}
 <h1>{{ page.title }}</h1>
+{% if page.toc | length > 2 %}
+<nav class="toc" aria-label="On this page"><p>On this page</p><ul>
+{% for heading in page.toc %}<li><a href="#{{ heading.id }}">{{ heading.title }}</a></li>{% endfor %}
+</ul></nav>
+{% endif %}
 {{ page.content | safe }}
+{% if page.extra.sources %}
+<aside class="sources" aria-label="Documented source files"><p>Documented source</p><ul>
+{% for source in page.extra.sources %}<li><a href="{{ config.extra.repository }}/tree/{{ config.extra.branch }}/{{ source }}"><code>{{ source }}</code></a></li>{% endfor %}
+</ul></aside>
+{% endif %}
+{% if page.lower or page.higher %}
+<nav class="pager" aria-label="Section pages">
+  {% if page.lower %}<a class="previous" href="{{ page.lower.permalink }}">← {{ page.lower.title }}</a>{% endif %}
+  {% if page.higher %}<a class="next" href="{{ page.higher.permalink }}">{{ page.higher.title }} →</a>{% endif %}
+</nav>
+{% endif %}
 {% endblock content %}

@@ -1,0 +1,54 @@
++++
+title = "Edit shader"
+description = "Documents the edit compute record, bindings, per-tile dispatch, masks, and cell writes."
+weight = 50
+[extra]
+sources = ["engine_world/src/scenes/edits/edit_cellular_tile.wgsl", "engine_world/src/scenes/edits/edit_cellular_tile_pass.rs", "engine_world/src/scenes/edits/mod.rs"]
++++
+
+This page is the reference for `edit_cellular_tile.wgsl`, which applies already-validated edit data to the active cellular buffers, for engine contributors. Request validation, edit merging, and Insert collision masks belong to the [edit pipeline](@/internals/simulation/edit-pipeline.md).
+
+## Entry point and dispatch
+
+The single compute entry point, `compute`, runs with 64 threads per workgroup. One workgroup handles one edited cellular tile (8x8 cells), and each local invocation handles one cell.
+
+`EditCellularTilePass::write_cellular_tiles` uploads the records, dispatches one workgroup per record in `edit_cellular_tiles` along X, and submits the compute command. An empty slice returns immediately. The pass allocates room for `EDIT_CELLULAR_TILE_COUNT_MAXIMUM` records.
+
+## Bindings and record layout
+
+Group 0 bindings:
+
+| Binding | Resource | Access |
+|---:|---|---|
+| 0 | `EditCellularTile` records | read-only |
+| 1-2 | Material identifiers, colors | read/write |
+| 3 | Packed kinematics (`array<vec2<u32>>`) | read/write |
+| 4 | Awake flags (atomic) | read/write |
+
+Each tile record occupies 536 bytes, serialized little-endian by Rust:
+
+| Offset | Field | Size |
+|---:|---|---:|
+| 0 | `cellular_tile_index: u32` | 4 B |
+| 4 | Rust padding, aligning the next WGSL `vec2<u32>` | 4 B |
+| 8 | `inserted_cells: vec2<u32>` | 8 B |
+| 16 | `replaced_cells: vec2<u32>` | 8 B |
+| 24 | `material_identifiers: array<u32, 64>` | 256 B |
+| 280 | `colors: array<u32, 64>` | 256 B |
+
+### Masks and addressing
+
+- The two-word masks cover the tile's 64 cells in row-major order. The shader selects word `cell / 32` and bit `cell % 32`.
+- Cell buffers are addressed at `cellular_tile_index * 64 + cell`.
+- The awake buffer is addressed at `cellular_tile_index`.
+
+## Cell write behavior
+
+Each invocation reads its cell's inserted and replaced mask bits:
+
+- A replacement always writes.
+- An insertion writes only when the current material identifier is zero.
+
+On a write, the shader copies the supplied material identifier and packed color, zeros the cell's kinematics, then atomically ORs `3` into the tile's awake value (awake and disturbed flags).
+
+The shader does not evaluate actor colliders or material registration; those decisions are made before the pass receives the records.

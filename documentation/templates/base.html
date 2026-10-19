@@ -4,16 +4,37 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}{{ config.title }}{% endblock title %}</title>
+  {% block description %}<meta name="description" content="{{ config.description }}">{% endblock description %}
   <link rel="stylesheet" href="{{ get_url(path='style.css') }}">
 </head>
 <body>
   <a class="skip" href="#content">Skip to content</a>
-  <header><a href="{{ get_url(path='@/_index.md') }}">Dogwood documentation</a></header>
+  <header>
+    <a class="home" href="{{ get_url(path='@/_index.md') }}">Dogwood documentation</a>
+    <span class="api-links">Rust API:
+      <a href="{{ get_url(path='rustdoc/public/engine/index.html', trailing_slash=false) }}">public</a> ·
+      <a href="{{ get_url(path='rustdoc/private/engine/index.html', trailing_slash=false) }}">private</a></span>
+  </header>
   <div class="layout">
-    <nav aria-label="Documentation">
+    <nav class="site-nav" aria-label="Documentation">
       {% set home = get_section(path='_index.md') %}
+      {% set here = current_path | default(value='/') %}
       <ul>{% for item in home.subsections %}{% set entry = get_section(path=item) %}
-        <li><a href="{{ entry.permalink }}">{{ entry.title }}</a></li>
+        {% set open = entry.path in here %}
+        <li{% if open %} class="open"{% endif %}><a href="{{ entry.permalink }}"{% if here == entry.path %} aria-current="page"{% endif %}>{{ entry.title }}</a>
+        {% if open %}<ul>
+          {% for sub_path in entry.subsections %}{% set sub = get_section(path=sub_path) %}
+          <li{% if sub.path in here %} class="open"{% endif %}><a href="{{ sub.permalink }}"{% if here == sub.path %} aria-current="page"{% endif %}>{{ sub.title }}</a>
+            {% if sub.path in here %}<ul>{% for p in sub.pages %}
+              <li><a href="{{ p.permalink }}"{% if here == p.path %} aria-current="page"{% endif %}>{{ p.title }}</a></li>
+            {% endfor %}</ul>{% endif %}
+          </li>
+          {% endfor %}
+          {% for p in entry.pages %}
+          <li><a href="{{ p.permalink }}"{% if here == p.path %} aria-current="page"{% endif %}>{{ p.title }}</a></li>
+          {% endfor %}
+        </ul>{% endif %}
+        </li>
       {% endfor %}</ul>
     </nav>
     <main id="content">{% block content %}{% endblock content %}</main>

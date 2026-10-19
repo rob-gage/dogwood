@@ -1,22 +1,31 @@
 {% extends "base.html" %}
 {% block title %}{{ section.title }} | {{ config.title }}{% endblock title %}
+{% block description %}<meta name="description" content="{{ section.description | default(value=config.description) }}">{% endblock description %}
 {% block content %}
-{% if section.ancestors | length > 0 %}
+{% if section.ancestors | length > 1 %}
 <nav aria-label="Breadcrumb"><ol class="breadcrumbs">
-{% for ancestor in section.ancestors %}{% set parent = get_section(path=ancestor) %}
+{% for ancestor in section.ancestors %}{% if not loop.first %}{% set parent = get_section(path=ancestor) %}
 <li><a href="{{ parent.permalink }}">{{ parent.title }}</a></li>
-{% endfor %}
+{% endif %}{% endfor %}
 </ol></nav>
 {% endif %}
 <h1>{{ section.title }}</h1>
 {{ section.content | safe }}
-{% if section.extra.outline %}
-<h2>Outline</h2><ul>{% for topic in section.extra.outline %}<li>{{ topic }}</li>{% endfor %}</ul>
-{% endif %}
 {% if section.subsections %}
-<ul class="sections">{% for item in section.subsections %}{% set entry = get_section(path=item) %}
-<li><a href="{{ entry.permalink }}">{{ entry.title }}</a></li>
-{% endfor %}</ul>
+<h2 id="subsections">Topics</h2>
+<dl class="listing">{% for item in section.subsections %}{% set entry = get_section(path=item) %}
+<dt><a href="{{ entry.permalink }}">{{ entry.title }}</a></dt>{% if entry.description %}<dd>{{ entry.description }}</dd>{% endif %}
+{% endfor %}</dl>
 {% endif %}
-{% if section.pages %}<ul>{% for page in section.pages %}<li><a href="{{ page.permalink }}">{{ page.title }}</a></li>{% endfor %}</ul>{% endif %}
+{% if section.pages %}
+<h2 id="pages">Pages</h2>
+<dl class="listing">{% for page in section.pages %}
+<dt><a href="{{ page.permalink }}">{{ page.title }}</a></dt>{% if page.description %}<dd>{{ page.description }}</dd>{% endif %}
+{% endfor %}</dl>
+{% endif %}
+{% if section.extra.sources %}
+<aside class="sources" aria-label="Documented source files"><p>Documented source</p><ul>
+{% for source in section.extra.sources %}<li><a href="{{ config.extra.repository }}/tree/{{ config.extra.branch }}/{{ source }}"><code>{{ source }}</code></a></li>{% endfor %}
+</ul></aside>
+{% endif %}
 {% endblock content %}

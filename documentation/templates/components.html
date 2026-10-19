@@ -1,0 +1,6 @@
+{# Links a Rust item in the generated public or private API reference. #}
+{% component rustdoc(path, text, private=false) %}
+{%- if private %}{% set variant = "private" %}{% else %}{% set variant = "public" %}{% endif -%}
+<a class="rustdoc" href="{{ get_url(path='rustdoc/' ~ variant ~ '/' ~ path, trailing_slash=false) }}"><code>{{ text }}</code></a>
+{%- if private %}<sup class="rustdoc-private" title="Private API reference">private</sup>{% endif -%}
+{% endcomponent rustdoc %}

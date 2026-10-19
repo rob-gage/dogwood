@@ -4,3 +4,12 @@ description = "Dogwood engine documentation"
 default_language = "en"
 compile_sass = false
 build_search_index = false
+
+[markdown]
+# Headings get stable ids for the per-page table of contents and anchor links.
+render_emoji = false
+
+[extra]
+# Source-file links on each page point at this repository and branch.
+repository = "https://github.com/rob-gage/dogwood"
+branch = "main"
