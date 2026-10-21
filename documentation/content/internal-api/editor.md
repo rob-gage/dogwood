@@ -30,7 +30,7 @@ Defaults at launch:
 
 - the editor is paused, in Insert mode;
 - the brush is a circle of 8 cells, white;
-- the selected material is the first in the picker (cellular static first, then cellular dynamic), or the eraser if the picker is empty;
+- the selected material is the first in the picker (cellular static first, then cellular dynamic, then fluid), or the eraser if the picker is empty;
 - tile and chunk grid overlays are hidden;
 - the update interval is 60 Hz, with a maximum accumulated interval of six updates.
 
@@ -67,7 +67,7 @@ Game input is active when the editor is playing and the free camera is off.
 
 ### Brush strokes
 
-The tools tab lists registered cellular static and dynamic materials from the scene's `MaterialTable`, followed by the eraser. Brush size ranges from 1 to 64 cells.
+The tools tab lists registered cellular static, cellular dynamic, and fluid materials from the scene's `MaterialTable`, followed by the eraser. Brush size ranges from 1 to 64 cells.
 
 - Circle uses `Edit::fill_segment` between cell centers with a radius of half the brush size.
 - Square stamps a brush-sized square along interpolated stroke samples; strokes continue from the previous sample to avoid gaps.
@@ -89,6 +89,6 @@ When the game has a scene, enabling the free camera creates a persistent scene a
 
 When the game has a scene, the save button and `COMMAND+S` call `Scene::save`, clear the edited indicator, and set a pending flag. The editor clears that flag and posts a three-second "Scene saved" notification once `Scene::is_saved()` becomes true.
 
-> **Limitation:** The editor's material picker lists cellular static, cellular dynamic, and fluid materials. Gas materials are not paint tools.
+> **Not implemented:** Gas painting. Fluid paint uses queued particles; [fluid edits](@/internals/world-streaming/fluid-streaming.md#editing-fluid) describe why particle changes need simulation even though streaming continues while paused.
 
 See [editor usage](@/examples/using-the-editor.md) for the user-facing controls, and [collision and edit API](@/external-api/collisions-and-edits.md) for edit semantics.

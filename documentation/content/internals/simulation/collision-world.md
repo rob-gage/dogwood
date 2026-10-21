@@ -39,4 +39,4 @@ A release during this step requests a static occupancy reread; its newly rasteri
 
 `Collision` creates actor Rapier bodies with rotations locked. `ActorKinematicsRotationComponent` is currently a marker with no rotation value. An actor with only `ActorContactComponent` gets a position-based kinematic body, and its contact collider is a sensor. The collision and occupancy phases, including collider delta updates, are detailed on [static cell colliders](@/internals/simulation/static-cell-colliders.md); the kinematics-to-collision contact formats are on [contact exchange](@/internals/simulation/contact-exchange.md).
 
-Collision also consumes asynchronous fluid actor samples for impulses and swimming, and rigid-body fluid samples for buoyancy and drag. See [fluid simulation](@/internals/simulation/fluids.md).
+Collision also consumes asynchronous fluid actor samples for impulses and swimming, and rigid-body fluid samples for buoyancy and drag. See [fluid coupling](@/internals/simulation/fluid-coupling.md).

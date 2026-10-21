@@ -58,3 +58,14 @@ The host translates keyboard events and `GameInstance` tracks held key codes. Wh
 `Scene::graphics` collects actor sprites relative to the camera, and `Scene::cellular_graphics` exposes the active tile buffers and ring metadata. `GameInstance` passes that scene representation to the renderer, then composes the UI over the scene before the host presents the frame.
 
 Rendered pixels therefore reflect scene state at redraw time, and redraw scheduling is independent of fixed updates. See the [scene renderer](@/internals/rendering/scene-renderer.md) for render-pass details.
+
+## A fluid particle through the world
+
+```text
+fluid edit / chunk record -> particle pool (GPU)
+  particle solver -> mass/momentum raster -> fluid shading -> pixels
+  raster <-> cellular contacts -> collision / body response
+  pool -> outgoing export or resident snapshot -> Chunk (CPU) -> chunk file
+```
+
+Particle admission and saved copies have separate ownership rules from cellular tile arrays. See [fluid persistence](@/internals/world-streaming/fluid-streaming.md) and [system interactions](@/internals/simulation/fluid-coupling.md).

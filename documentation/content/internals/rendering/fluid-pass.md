@@ -10,7 +10,7 @@ sources = ["engine_graphics/src/renders/scene_renderer_fluid_pass.rs", "engine_g
 
 ## Preparation and resources
 
-Preparation caches render pipelines by target format and uploads an 80-byte uniform record. It bounds shading to the viewport's intersection with the active region, grows classification and shaded-color buffers when needed, and rebuilds bindings when inputs or scratch buffers change.
+Preparation caches render pipelines by target format and uploads an 80-byte uniform record. It bounds shading to a cell rectangle around the viewport, including a one-cell margin clipped to one cell beyond the region, grows classification and shaded-color buffers when needed, and rebuilds bindings when inputs or scratch buffers change.
 
 | Group 0 binding | Resource |
 | --- | --- |
@@ -24,10 +24,12 @@ Uniform offsets are viewport origin 0, viewport size 8, zoom 16, camera-relative
 
 ## Classification and shading
 
-Before the render pass, `classify` and `shade` dispatch in 8×8 workgroups. Classification includes eight rows above the shaded rectangle for depth lookup. It smooths raster mass over a 3×3 neighborhood with weights 4 at the center, 2 along axes, and 1 at corners, then divides by sixteen and material density. Occupancy must exceed `0.5` to draw.
+Before the render pass, `classify` and `shade` dispatch in 8×8 workgroups. Classification includes eight rows above the shaded rectangle for depth lookup. It smooths raster mass over a 3×3 neighborhood with weights 4 at the center, 2 along axes, and 1 at corners, then divides by sixteen and the selected material density. Occupancy must exceed `0.5` to draw.
 
 > **Limitation:** When multiple materials occupy a sampled neighborhood, classification selects the highest nonempty material identifier, rather than the material contributing the most mass.
 
-Shading reads packed RGBA from word 7 of each 32-byte material record. RGB converts from sRGB to linear light. Up to eight occupied cells above darken the color by `0.035` per cell; a cell without water directly above receives a `1.08` surface multiplier. Material alpha is retained. Premultiplied color is packed into four half-floats (eight bytes per cell).
+Shading reads packed RGBA from word 7 of each 32-byte material record. RGB converts from sRGB to linear light. Up to eight occupied cells above darken the color by `0.035` per cell; a cell without water directly above receives a `1.08` surface multiplier. Material alpha is retained; it does not increase with depth or occupancy above the threshold. Premultiplied color is packed into four half-floats (eight bytes per cell).
 
 The fullscreen triangle's fragment stage maps pixels to logical cells and fetches their shaded colors. Empty colors are discarded. The draw uses premultiplied-alpha blending, between negative-depth sprites and cellular matter.
+
+Rendering shades the cell raster, not individual particle sprites or a continuous reconstructed surface. Ring lookup reads physical cells; samples outside the region contribute no mass. The eight-row depth search stops at any empty classified cell, regardless of material changes. Scratch buffers grow but do not shrink, and pipelines are retained per target format. See [fluid coupling](@/internals/simulation/fluid-coupling.md#raster-bridge) for how raster mass and material selection are produced.

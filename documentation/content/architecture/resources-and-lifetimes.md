@@ -3,7 +3,7 @@ title = "Resources and lifetimes"
 description = "How a scene creates, shares, saves, and releases its world resources."
 weight = 50
 [extra]
-sources = ["engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/kinematics/kinematics_cellular_tile.wgsl", "engine_host/src/acceleration/accelerator.rs"]
+sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/kinematics/kinematics_cellular_tile.wgsl", "engine_host/src/acceleration/accelerator.rs"]
 +++
 
 This page describes what a `Scene` owns, when its GPU and streaming state is created, the fixed capacity constants, and what happens on save and drop. It is for engine contributors.
@@ -36,14 +36,15 @@ Collision and kinematics are created on the first `simulate` call with an active
 
 ### Saving
 
-`Scene::save` requests persistence. If tile streaming exists, it first requests return of resident tiles to their chunks; otherwise it asks existing chunk streaming to save. `Scene::is_saved` reports whether the tile and chunk save requests have cleared. These requests progress during later streaming calls rather than blocking.
+`Scene::save` requests persistence. If tile streaming exists, it first requests return of resident tiles to their chunks; otherwise it asks existing chunk streaming to save. `Scene::is_saved` reports whether tile, particle snapshot, and chunk save requests have cleared. These requests progress during later streaming calls rather than blocking.
 
 ### Drop
 
-Dropping a `Scene` blocks in two steps:
+Dropping a streamed `Scene` blocks in these stages:
 
 1. If the scene has chunk streaming, tile buffers, and tile streaming state, `Scene::drop` applies queued edits and returns resident tiles to chunks. Failure in either step panics with `Scene cellular tiles could not be returned`.
-2. `ChunkStreamingState::drop` waits for outstanding normal and copy saves, then synchronously saves the dirty chunks it still owns. It makes up to three attempts per dirty chunk, including the first, and panics with `Scene chunks could not be saved` if any still fail.
+2. `Scene::drop` waits for particle import results, restores unspawned particles, and reads live particles into resident chunk snapshots. Failure panics with `Scene fluid particles could not be returned`; see [fluid teardown](@/internals/world-streaming/fluid-streaming.md#teardown).
+3. `ChunkStreamingState::drop` waits for outstanding normal and copy saves, then synchronously saves the dirty chunks it still owns. It makes up to three attempts per dirty chunk, including the first, and panics with `Scene chunks could not be saved` if any still fail.
 
 Drop does not wait for load or generation jobs. See [panics at runtime boundaries](@/architecture/errors.md#panics-at-runtime-boundaries) for the failure policy.
 
@@ -91,8 +92,27 @@ These constants are fixed implementation values rather than runtime settings.
 | `COLLISION_GROUP_RIGID_BODY` | `1 << 30` | Cellular rigid body collision group |
 | `COLLISION_GROUP_EDIT` | `1 << 31` | Colliders skipped by edit insertion |
 
-Only `COLLISION_RIGID_BODY_COUNT_MAXIMUM` and the five `COLLISION_GROUP_*` constants are public; see [collision setup](@/examples/collision-setup.md). The other constants are private.
+Among the collision constants above, only `COLLISION_RIGID_BODY_COUNT_MAXIMUM` and the five `COLLISION_GROUP_*` constants are public; see [collision setup](@/examples/collision-setup.md). The other constants are private.
 
 ## Fluid resources
 
-The first stream creates a fixed particle pool alongside the tile buffers. `SCENE_FLUID_CAPACITY_FACTOR_DEFAULT` is `0.25`; `SCENE_FLUID_IMPORT_COUNT_MAXIMUM_PER_TICK` is `4096` particles, with whole-tile imports allowed to exceed that bound for a single tile. Save snapshots retain their destination chunks. Drop returns unspawned imports and live particles to chunk storage before chunk teardown; failure panics with `Scene fluid particles could not be returned`. See [fluid simulation](@/internals/simulation/fluids.md) for solver constants.
+The first stream allocates the fixed pool and region-sized scratch maps even if no fluid material has been registered. Pool capacity cannot change afterward. `SCENE_FLUID_CAPACITY_FACTOR_DEFAULT` is `0.25`; `SCENE_FLUID_IMPORT_COUNT_MAXIMUM_PER_TICK` targets `4096` imported particles, allowing a larger first whole-tile group. [Fluid streaming](@/internals/world-streaming/fluid-streaming.md) describes save retention, import reservations, and teardown.
+
+Public solver constants in `engine_world/src/scenes/fluids/mod.rs`:
+
+| Constant | Value |
+| --- | --- |
+| `FLUID_SUBSTEP_COUNT` | 4 |
+| `FLUID_ITERATION_COUNT` | 2 |
+| `FLUID_KERNEL_RADIUS` | 2.5 cells |
+| `FLUID_BIN_SIZE` | 3 cells |
+| `FLUID_RELAXATION` | 0.01 |
+| `FLUID_COHESION_SCALE` | 0.5 |
+| `FLUID_COHESION_NORMALIZATION_2D` | 54.584815 |
+| `FLUID_VELOCITY_MAXIMUM` | 4 cells/tick (vector-length cap in the particle solver) |
+| `FLUID_RASTER_SCALE` | 4096 |
+| `FLUID_WORKGROUP_SIZE` | 128 |
+| `FLUID_SCAN_WORKGROUP_SIZE` | 256 |
+| `FLUID_TIME_STEP` | 1/60 second |
+
+The private `FLUID_ACTOR_CONTACT_SCALE` is `1024`. Count, actor, and import readbacks each have three staging slots; the resident save has one separate snapshot slot. [GPU layouts](@/internals/shaders/fluid-shader.md) document record sizes and region/pool scaling. The collision-side `RIGID_BODY_FLUID_CURRENT_COUPLING` is `1.0`.

@@ -109,4 +109,4 @@ In `Replace` mode, filling with `MaterialIdentifier::EMPTY` clears a cell; `Inse
 
 ## Fluid edits
 
-Edits accept registered fluid materials and queue particle spawns for the next simulation. Fluid `Insert` spawns skip solid cells. Replacing or erasing cells also erases fluid particles in those cells. `CapacityReached` additionally covers reserved fluid-particle capacity. See [fluid simulation](@/internals/simulation/fluids.md).
+Edits accept registered fluid materials and queue particle spawns for the next simulation. Fluid `Insert` spawns skip occupied cellular/particle cells. Replacing or erasing cells queues particle erasure; `CapacityReached` additionally covers reserved fluid-particle capacity. Particle actions and cellular Insert masks are queued separately; see [fluid edit behavior and limitations](@/internals/world-streaming/fluid-streaming.md#editing-fluid).

@@ -3,7 +3,7 @@ title = "Cell and body contact exchange"
 description = "How the GPU cellular simulation reports actor and rigid-body contacts to collision resolution."
 weight = 80
 [extra]
-sources = ["engine_world/src/scenes/kinematics/kinematics.rs", "engine_world/src/scenes/kinematics/kinematics_pass.rs", "engine_world/src/scenes/kinematics/kinematics_cellular_tile.wgsl", "engine_world/src/scenes/kinematics/mod.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/scene.rs"]
+sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/kinematics/kinematics.rs", "engine_world/src/scenes/kinematics/kinematics_pass.rs", "engine_world/src/scenes/kinematics/kinematics_cellular_tile.wgsl", "engine_world/src/scenes/kinematics/mod.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/scene.rs"]
 +++
 This page documents the records kinematics sends to and receives from collision. It is for engine contributors working on actor and rigid-body contact response.
 
@@ -20,7 +20,7 @@ The result maps have these tuple shapes:
 | Map | Tuple fields |
 | --- | --- |
 | `cellular_contacts: HashMap<Actor, ([f32; 2], [f32; 2], f32)>` | `(velocity change in tiles/second, contact normal, penetration depth in tiles)` |
-| `rigid_body_contacts: HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2])>` | `(linear impulse in mass·tiles/second, angular impulse in mass·tiles²/second, two holding-contact records)` |
+| `rigid_body_contacts: HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2], [f32; 7])>` | `(linear impulse in mass·tiles/second, angular impulse in mass·tiles²/second, two holding-contact records, seven wet-face fluid moments)` |
 
 ### Actor contacts
 
@@ -54,4 +54,8 @@ In the following collision update, collision applies each rigid body's reported 
 
 Before the Rapier step, the holding solver runs four iterations for each awake rigid body; sleeping bodies are skipped. It applies impulses that cancel motion into the dynamic cells holding the body back, including the velocity gravity adds during the step. See [cellular kinematics](@/internals/simulation/cellular-kinematics.md) for the GPU cell interactions and [Rapier collision world](@/internals/simulation/collision-world.md) for collision ordering.
 
-Fluid actor feedback uses separate asynchronous 32-byte records carrying impulse and fluid samples. Rigid-body kinematics contacts additionally carry seven fluid sample values. See [fluid simulation](@/internals/simulation/fluids.md).
+Fluid actor feedback uses separate asynchronous 32-byte records; [fluid interactions](@/internals/simulation/fluid-coupling.md#actors) describes its cache and response. The [fluid shader reference](@/internals/shaders/fluid-shader.md#packed-records) owns the GPU layout.
+
+### Rigid-body fluid moments
+
+The final seven values are wet-face mass, x/y momentum, angular current moment, squared-arm mass moment, and x/y mass-weighted arm. Rust converts momentum from cells/tick to tiles/second, angular current by an additional cell-to-tile factor, and arm moments to tiles or tiles². Impulses accumulate over completed readbacks, but holding records are replaced and the seven fluid moments are summed. Collision uses them only when a result map entry arrives; it does not maintain a separate persistent fluid-moment cache. See [rigid-body coupling](@/internals/simulation/fluid-coupling.md#cellular-rigid-bodies).

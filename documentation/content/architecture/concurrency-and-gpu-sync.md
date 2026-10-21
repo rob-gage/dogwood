@@ -63,4 +63,6 @@ A failed map is re-requested, but the mapping error also propagates from `Scene:
 
 ## Fluid readbacks
 
-Fluid live counts, actor feedback, import status, and resident save snapshots use asynchronous maps. Streaming retains chunks until particle exports or snapshots are applied. Scene teardown waits for outstanding imports and reads live particles synchronously. See [fluid simulation](@/internals/simulation/fluids.md).
+Fluid count, actor, and import status each have three asynchronous staging slots. A full count/actor ring skips that copy; a full import ring defers import submission. One independent resident-save snapshot is allowed at a time. Streaming retains chunks until particle exports or snapshots are applied; teardown waits for imports and reads the live pool synchronously. See [GPU readback policy](@/internals/shaders/fluid-shader.md#readback-policy).
+
+Queue order makes the previous fluid raster available to cellular kinematics and the current cellular/rigid-body writes available to the following particle solver. CPU body responses still use asynchronous older samples; [fluid coupling](@/internals/simulation/fluid-coupling.md) describes the resulting cache behavior.

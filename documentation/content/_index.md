@@ -38,7 +38,9 @@ Dogwood is a Rust engine for 2D cellular worlds. Its current implementation comb
 | `cli` | Creates template projects and launches builds, games, and the editor. |
 | `engine_audio` | Empty crate. |
 
-> **Limitation:** Fluids have [GPU particle simulation](@/internals/simulation/fluids.md) and [raster-based rendering](@/internals/rendering/fluid-pass.md). Gas has no simulation rules. The cellular renderer draws nonempty cells from their stored colors.
+Fluids use [GPU particle simulation](@/internals/simulation/fluids.md) and [raster-based rendering](@/internals/rendering/fluid-pass.md).
+
+> **Not implemented:** Gas simulation and form-specific rendering.
 
 ## How these docs are organized
 

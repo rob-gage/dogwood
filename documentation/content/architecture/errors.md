@@ -67,7 +67,7 @@ Several runtime paths choose to turn errors into panics:
 
 - `Engine::default` constructs the default accelerator and processor; their `Default` implementations panic if initialization fails. `Engine::new` accepts already-created resources.
 - `GameInstance::update` panics if pawn possession insertion, scene streaming, or scene simulation fails. Its `stream` method panics on streaming failure. Rendering panics if scene graphics lookup fails.
-- `Scene::drop` panics if applying queued edits or synchronously returning GPU-resident tiles fails.
+- `Scene::drop` panics if applying queued cellular edits, returning GPU-resident tiles, or returning fluid imports/live particles fails.
 - `ChunkStreamingState::drop` waits for outstanding saves, retries each owned dirty chunk up to three attempts, and panics if saving still fails.
 
 An error may therefore be recoverable at a direct API boundary while the engine runtime chooses a fatal policy when it drives that API. The drop sequence is described in [saving and drop behavior](@/architecture/resources-and-lifetimes.md#saving-and-drop-behavior).

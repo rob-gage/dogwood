@@ -30,7 +30,7 @@ tile buffers + materials + actors + rigid bodies
 
 ## Step order
 
-At each fixed simulation step, `Scene::simulate` runs kinematics first. Its actor contacts and rigid-body impulses and holding contacts feed `Collision::simulate_collisions`. Collision then synchronizes actors and voxel state, advances Rapier, and queues rigid-body rasterization.
+At each fixed simulation step, `Scene::simulate` runs kinematics first. Its actor contacts and rigid-body impulses and holding contacts feed `Collision::simulate_collisions`. Collision consumes fluid actor samples as well, synchronizes actors and voxel state, advances Rapier, and queues rigid-body rasterization. Fluid particles run afterward and rebuild the shared raster.
 
 GPU kinematics submits work without waiting for its contact readbacks, so collision consumes contacts returned from earlier GPU work. See [scene update ordering](@/architecture/scene-pipeline.md) and [contact exchange](@/internals/simulation/contact-exchange.md) for the exact handoff.
 
@@ -45,4 +45,7 @@ GPU kinematics submits work without waiting for its contact readbacks, so collis
 - [Edit pipeline](@/internals/simulation/edit-pipeline.md) — edit validation, coalescing, the GPU edit pass, and interaction with collision and streaming.
 - [Shaders and GPU data](@/internals/shaders/_index.md) documents the WGSL entry points and GPU record layouts.
 
-- [Fluid simulation](@/internals/simulation/fluids.md) — GPU particles, body coupling, edits, and persistence.
+- [Fluid simulation](@/internals/simulation/fluids.md) — PBF kernels, constraints, neighbor sorting, and viscosity.
+- [Fluid boundaries and sleeping](@/internals/simulation/fluid-boundaries.md) — solid samples, projection, and wake rules.
+- [Fluid interactions](@/internals/simulation/fluid-coupling.md) — raster contacts, buoyancy, body feedback, and swimming.
+- [Fluid streaming](@/internals/world-streaming/fluid-streaming.md) — capacity, edits, import/export ownership, and saving.

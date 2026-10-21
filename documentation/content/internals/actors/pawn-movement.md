@@ -43,7 +43,7 @@ AI or other game code can write the same control component directly.
 
 ## Per-step movement
 
-Each fixed collision step does the following:
+While walking, each fixed collision step does the following:
 
 1. Clamps horizontal intent to `[-1, 1]` and multiplies it by normal or crouching speed to get the target velocity.
 2. Moves horizontal velocity toward the target by at most `acceleration * dt`. Acceleration therefore also governs deceleration and direction changes.
@@ -76,4 +76,17 @@ The pawn first receives the velocity change, then loses any velocity directed in
 
 ## Swimming
 
-Completed fluid actor samples provide immersion, current velocity, density, drag, and impulse. Collision uses separate enter and exit immersion thresholds to switch swimming state. Horizontal input and jump/crouch supply swim thrust; speed is limited relative to the sampled current. Buoyancy and material-sensitive drag use pawn density and drag tuning. Field units and defaults are on [actor components](@/external-api/actor-components.md#swimming-fields).
+Collision retains a swimming flag per eligible pawn. It enters when sampled immersion reaches `swimming_enter_immersion` and stays swimming until immersion drops below `swimming_exit_immersion`. Both thresholds are clamped to `[0, 1]`, and exit is clamped no higher than enter. Field units/defaults are on [actor components](@/external-api/actor-components.md#swimming-fields).
+
+The swimming branch applies, in order:
+
+1. Add cellular-contact velocity changes, as with walking.
+2. Apply effective gravity: `velocity.y -= gravity * (1 - immersion * fluid_density / pawn_density) * dt`, with density floored at `0.000001`.
+3. Express velocity relative to sampled current and multiply by `exp(-material_drag * swimming_drag * immersion * dt)`.
+4. Add thrust from horizontal intent and jump/up or crouch/down. Jump takes precedence if both vertical controls are held. Normalize diagonal thrust before applying swimming acceleration.
+5. Cap relative speed to `swimming_maximum_speed`, then cap world speed to the larger of that speed and current magnitude.
+6. Resolve the resulting movement with the same Rapier character controller and solid collision filters as walking.
+
+Swimming does not require a new jump press or grounding. Crouch supplies downward thrust rather than selecting walking speed. Walking rules resume below the immersion thresholds, with remembered jump-held state still updated. A gameplay position change resets swimming along with velocity and grounding.
+
+The controller reads immersion, current, density, and drag rather than directly applying fluid projection impulses to kinematic pawns. Only idle swimmers set the GPU current-coupling flag; see [pawn/current feedback](@/internals/simulation/fluid-coupling.md#pawns-and-currents). Samples come from earlier GPU submissions, so transitions can lag the visible fluid raster.

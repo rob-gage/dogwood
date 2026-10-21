@@ -3,82 +3,62 @@ title = "Scene update pipeline"
 description = "The ordered streaming and simulation stages performed by a scene update."
 weight = 20
 [extra]
-sources = ["engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/kinematics/kinematics.rs", "engine_world/src/scenes/kinematics/kinematics_pass.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/collision_cellular_tile_pass.rs", "engine_world/src/scenes/collisions/collision_rigid_body.wgsl"]
+sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/kinematics/kinematics.rs", "engine_world/src/scenes/kinematics/kinematics_pass.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/collision_cellular_tile_pass.rs", "engine_world/src/scenes/collisions/collision_rigid_body.wgsl"]
 +++
 
-This page lists the ordered work inside `Scene::stream` and `Scene::simulate`, and why the order matters. It is for contributors changing scene, streaming, or collision code.
-
-`Scene::stream` requests a region around the camera and moves the [active region](@/architecture/glossary.md#world-terms) when the entering chunks are ready. `Scene::simulate` runs one fixed simulation step against whichever region is active. Streaming does not wait for missing chunks, so the active region may lag the requested region while data arrives. The [frame lifecycle](@/architecture/frame-lifecycle.md) calls both in sequence after `Game::update`.
+This page defines the ordered work inside `Scene::stream` and `Scene::simulate`. The [frame lifecycle](@/architecture/frame-lifecycle.md) calls both after `Game::update`; rendering is a separate redraw operation.
 
 ```text
-scene.stream(accelerator, processor, camera_actor)
-  derive requested region; initialize chunk/cellular tile storage if needed
-  apply queued edits to resident GPU tiles
-  advance CPU chunk I/O state from completed responses
-  release rigid bodies leaving the region into static tile cells
-  try to advance the tile ring when incoming chunks are active and no pending request blocks the shift
+Scene::stream
+  request camera region; initialize chunk, tile, and particle storage
+  return rejected imports; apply completed resident particle snapshot
+  start requested particle snapshot when imports permit
+  write queued cellular edits
+  advance chunk I/O; release outgoing rigid bodies
+  apply tile/export responses; advance save / ring / dormant imports
 
-scene.simulate(accelerator)
-  if an active region exists:
-    GPU cellular kinematics + read available prior contacts
-    CPU/Rapier collision and actor/cell updates (may read GPU occupancy)
-    GPU fluid particle simulation and streaming exports
+Scene::simulate (when an active region exists)
+  cellular kinematics using prior body state and prior fluid raster
+  poll completed fluid actor feedback
+  collision / pawn movement / Rapier step / rigid-body rasterization
+  fluid particles using current tile geometry and shared actor records
+  mark outgoing particle export submitted
+
+Scene::graphics -> renderer compute shading -> scene draw -> UI -> present
 ```
 
 ## Streaming order
 
-### Requested region
+The camera requests a region twice its unzoomed dimensions. The first stream creates chunk state, the GPU tile ring, the fixed fluid pool, and tile streaming. Later requests must keep the same dimensions. Missing incoming chunks leave the previous active region in place.
 
-The requested region uses the camera actor's unzoomed dimensions; see [the tile-ring page](@/internals/world-streaming/tile-ring.md) for its size and bounds.
+Completed rejected imports return to their source chunks before a resident snapshot can replace saved copies. A snapshot request retains the pool's region and waits for pending imports. [Fluid streaming](@/internals/world-streaming/fluid-streaming.md) defines ownership, capacity reservations, and save gating.
 
-On first streaming, `Scene` obtains the `chunk_io` pool, creates chunk streaming state, allocates cellular tile buffers, and initializes the [tile ring](@/architecture/glossary.md#world-terms). Later calls update the requested region but keep the ring dimensions; a request with a different width or height returns `SceneError::InvalidCellularTileRegion`.
+Queued cellular edits are written before slot reuse; fluid effects remain queued for particle simulation. If edits write tiles, existing collision state requests a cell reread. Chunk streaming next applies completed I/O and schedules more work.
 
-### Edits and chunks
+Before tile movement, collision releases rigid bodies extending outside the requested region. Their rasterized cells remain in the departing tiles. Tile streaming applies completed cellular/particle responses, advances save phases, and attempts ring movement. A shift copies outgoing tile arrays before incoming writes reuse slots; overlapping tiles retain their physical slots. It then queues eligible dormant particle imports.
 
-Queued edits are applied before movement can reuse their tile slots. Edits are validated when requested, then merged on the CPU during streaming before GPU writes are queued. If the edits produce GPU writes and collision state exists, collision occupancy is marked for refresh.
-
-Next, `ChunkStreamingState::stream_chunks` incorporates completed worker responses and schedules more chunk work without blocking. The tile-ring shift then reads entering tile arrays from active chunks. If a required chunk is not active, the previous active region stays in place for now.
-
-### Moving the tile ring
-
-Before the ring moves, collision releases rasterized rigid bodies whose tile footprint extends beyond the requested region. Static rasterized cells remain static at rest; covered dynamic cells remain dynamic as their body-cell markers are cleared, so the cells stay behind when their tiles move.
-
-Tile streaming then runs these steps:
-
-1. Copy the outgoing tiles' material identifiers, colors, and kinematics to staging buffers.
-2. Update the toroidal ring offset so overlapping tiles keep their physical slots.
-3. Queue writes for incoming tiles.
-
-Queue ordering places the outgoing copies before the writes that reuse those slots.
-
-The staging buffers are mapped asynchronously. Once the mapping completes and the destination chunks are active, the returned data is applied to the chunks in request order. See [tile streaming](@/internals/world-streaming/tile-streaming.md) for the response flow, and [chunk residency](@/internals/world-streaming/chunk-residency.md) and [the tile ring](@/internals/world-streaming/tile-ring.md) for chunk residency and ring mapping.
+Ring movement can be deferred by chunk readiness, readback capacity, resident saving, pending imports, an unsubmitted particle export, or an earlier return intersecting incoming tiles. See [tile streaming](@/internals/world-streaming/tile-streaming.md) and [fluid handoffs](@/internals/world-streaming/fluid-streaming.md#region-movement-and-exports).
 
 ## Simulation order
 
 ### Kinematics
 
-Simulation returns immediately until tile buffers and an active region exist. The scene lazily creates collision state, then kinematics state. Kinematics receives:
+Before the first active region, simulation returns immediately. Otherwise collision and kinematics are created lazily. Kinematics receives tile buffers, ring placement, collision-relative region origin, gravity, eligible actor colliders, rigid-body records, and the shared fluid raster.
 
-- the active region and ring offset;
-- the region origin relative to collision space and gravity;
-- eligible nearby actor colliders whose filter includes `COLLISION_GROUP_CELLULAR_TILE`;
-- rigid-body records.
-
-Its GPU pass advances dynamic cells using the previous step's state and queues asynchronous contact and control readbacks. Completed contacts are returned to the scene.
+`KinematicsPass` advances cellular matter and computes fluid/cell and fluid/rigid-body contacts against the prior fluid submission's raster. It uploads actor records based on pre-collision positions and inferred displacement since the preceding tick. Completed earlier contact/control readbacks are consumed without waiting. See [cellular kinematics](@/internals/simulation/cellular-kinematics.md) and [fluid coupling](@/internals/simulation/fluid-coupling.md).
 
 ### Collision
 
-After kinematics, the scene passes the returned contacts to collision. Dynamic cells therefore move where the previous step left them, then push back on actors and rigid bodies once their contacts are read.
+The scene polls fluid actor feedback with the same actor identities/settings, then passes it and kinematics contacts to collision. Collision synchronizes actors, applies responses, controls walking/swimming pawns, steps Rapier, and rasterizes cellular rigid bodies.
 
-Collision uses Rapier for actor and rigid-body motion, applies cell changes, and may rasterize rigid bodies back into tiles. It reads cellular occupancy from the GPU:
+Static occupancy refreshes block when needed. Settled dynamic occupancy for rigid bodies uses completed asynchronous snapshots, falling back to a blocking read when no held snapshot matches the region/ring offset. See [collision ordering](@/internals/simulation/collision-world.md) and [occupancy readback](@/internals/simulation/static-cell-colliders.md#occupancy-readback).
 
-- Static occupancy is read with a GPU wait and refreshed when its snapshot is absent, the region or ring offset changes, or a reread is requested.
-- When rigid bodies exist, settled dynamic occupancy uses completed asynchronous snapshots, with a blocking fallback when no held snapshot matches the region and ring offset. See [occupancy readback](@/internals/simulation/static-cell-colliders.md#occupancy-readback).
+### Fluid step
 
-See [cellular kinematics](@/internals/simulation/cellular-kinematics.md), [collision world](@/internals/simulation/collision-world.md), [static cell colliders](@/internals/simulation/static-cell-colliders.md), and [contact exchange](@/internals/simulation/contact-exchange.md).
+The particle solver runs after the collision submission, so queue order exposes updated cellular and rasterized rigid-body geometry. Actor records are copied from kinematics rather than uploaded again after collision; moving actor projection extrapolates those records through substeps.
 
-The separate graphics call consumes the resulting active tile buffers, fluid raster, material properties, and actor sprites; rendering is not part of `Scene::simulate`. See [data flow](@/architecture/data-flow.md) and [scene renderer](@/internals/rendering/scene-renderer.md).
+Fluid simulation consumes queued edits/imports and raster contact deltas, rebases and exports when needed, solves particles, rebuilds the raster, and queues actor/count feedback. The scene marks an outgoing export submitted only on success. [Fluid simulation](@/internals/simulation/fluids.md) gives the solver stages; [GPU synchronization](@/architecture/concurrency-and-gpu-sync.md) describes readback waits.
 
-## Fluid step
+## Drawing
 
-After cellular kinematics, the scene polls earlier fluid actor feedback and runs collision. It then runs fluid simulation against the shared actor and rigid-body records, and marks any outgoing particle export submitted. See [fluid simulation](@/internals/simulation/fluids.md) for streaming and save handoffs.
+Graphics borrows cellular buffers, fluid raster/materials, and actor sprites. Fluid classification and shading run before the scene render pass; [scene rendering](@/internals/rendering/scene-renderer.md#pass-order) defines compositing order. Rendering does not advance particle simulation, and CPU body reactions can lag the raster shown on screen.

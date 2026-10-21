@@ -36,7 +36,7 @@ The signature is `Editor::launch(engine: Engine, game: G) -> Result<(), EngineEr
 
 - **Layout:** the editor opens with viewport and tools tabs.
 - **Simulation:** it starts paused. Streaming of the game continues while paused, and the Play control enables game updates and simulation.
-- **Initial tool:** the first cellular static material by identifier, else the first cellular dynamic material, else the eraser (also used when the game has no scene).
+- **Initial tool:** the first cellular static material by identifier, else the first cellular dynamic material, else the first fluid material, else the eraser (also used when the game has no scene).
 
 ## Template project wiring
 

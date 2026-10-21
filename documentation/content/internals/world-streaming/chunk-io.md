@@ -69,4 +69,4 @@ Drop then synchronously saves every remaining dirty chunk, trying each at most t
 
 Chunk bytes and atomic file replacement are documented in [chunk storage format](@/internals/world-streaming/chunk-format.md).
 
-Chunks also own dormant fluid particles. Imports remove selected whole-tile groups from CPU storage, and GPU-rejected imports are returned. Resident snapshots replace saved particle copies while avoiding dormant import duplicates. See [fluid simulation](@/internals/simulation/fluids.md).
+Chunks also own dormant fluid particles. Imports remove selected whole-tile groups from CPU storage, and GPU-rejected imports are returned. Resident snapshots replace saved particle copies while avoiding dormant import duplicates. See [fluid streaming](@/internals/world-streaming/fluid-streaming.md).

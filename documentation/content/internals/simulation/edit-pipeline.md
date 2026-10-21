@@ -51,4 +51,4 @@ If rigid-body tiles are present, the next collision update waits for GPU readbac
 
 Scene streaming writes queued edits before it moves the tile ring, so validated target tiles remain resident for the GPU write. Before a requested region change moves tiles, rigid bodies that leave that region are rasterized back into active cells. On scene drop, pending edits are streamed first, then active tiles are returned to chunk storage for saving; see [tile streaming](@/internals/world-streaming/tile-streaming.md).
 
-Fluid edits also queue particle erasures and spawns for the next fluid simulation. Capacity reservations can reject an edit with `CapacityReached`; see [fluid simulation](@/internals/simulation/fluids.md).
+Fluid edits use a separate particle-action queue in addition to cellular writes. See [fluid edits](@/internals/world-streaming/fluid-streaming.md#editing-fluid) for spawn order, independent Insert behavior, and conservative capacity reservations.

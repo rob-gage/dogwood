@@ -100,3 +100,36 @@ Compilation checks each cellular material:
 After registration, consume the registry with `registry.compile(accelerator)?` and pass the resulting `MaterialTable` to `Scene::new`. Compilation reads the cellular albedo frames once; `MaterialTable::cellular_color` uses them when the engine creates colored cells. Static index zero is reserved for empty cells. See [editing and saving cells](@/examples/editing-cells.md) for using registered identifiers in world edits and [the materials API](@/external-api/materials.md) for all material forms and errors.
 
 {{ <rustdoc path="engine/materials/struct.MaterialRegistry.html" text="MaterialRegistry" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialTable.html" text="MaterialTable" /> }} · {{ <rustdoc path="engine/struct.SpriteSheet.html" text="SpriteSheet" /> }}
+
+## Register fluid
+
+Fluid graphics use a packed material color rather than a sprite sheet:
+
+```rust
+use engine::{
+    materials::{Material, MaterialError, MaterialIdentifier, MaterialPropertiesFluid, MaterialRegistry},
+    MaterialGraphicsFluid,
+};
+
+fn register_water(registry: &mut MaterialRegistry) -> Result<MaterialIdentifier, MaterialError> {
+    registry.register(Material::Fluid {
+        name: String::from("water"),
+        properties: MaterialPropertiesFluid {
+            density: 0.6,
+            viscosity: 0.05,
+            cohesion: 0.2,
+            artificial_pressure: 0.001,
+            drag: 1.0,
+            friction: 0.0,
+            restitution: 0.0,
+            graphics: MaterialGraphicsFluid {
+                color: u32::from_le_bytes([40, 110, 200, 200]),
+            },
+        },
+    })
+}
+```
+
+Compile the registry as usual. Use this identifier in [world edits](@/examples/editing-cells.md) to spawn particles, or build validated `ChunkFluidParticle` records in a generator. A fluid identifier written directly into a cellular material array does not create particles. Increase the [scene capacity factor](@/external-api/scenes.md#fluid-capacity) before the first stream if the default pool is too small.
+
+For tuning, `viscosity` smooths neighboring velocities, `cohesion` adds surface attraction/short-range spline response, and `artificial_pressure` controls the PBF correction term. `drag` controls swimming/current coupling; friction/restitution apply to cellular wet-face contacts. Their [validation ranges](@/external-api/materials.md#validation-at-compile-time) are checked during compilation. See [fluid simulation](@/internals/simulation/fluids.md) for the implemented formulas.

@@ -16,7 +16,9 @@ This page is for contributors who need the exact in-memory layout and on-disk fo
 - a packed RGBA `u32` color
 - a packed `u64` kinematics value, the packed per-cell motion state (see [cellular kinematics](@/internals/simulation/cellular-kinematics.md))
 
-A newly created chunk fills these with `MaterialIdentifier::EMPTY`, zero color, and zero kinematics. `fill` replaces all three arrays, setting kinematics to zero.
+A chunk also owns a separate sparse list of `ChunkFluidParticle` records.
+
+A newly created chunk fills these with `MaterialIdentifier::EMPTY`, zero color, and zero kinematics. `fill` replaces all three arrays, sets kinematics to zero, and clears the separate particle list.
 
 For a cell at local coordinates `(x, y)`, the row-major cell index is `y * 512 + x`. Tile accessors copy or replace eight rows of eight entries at a time. They first check that the tile's chunk coordinates match the chunk. They then use Euclidean remainder to find the tile's local position within the chunk's 64 × 64 tiles. Sizes are summarized in [coordinates, tiles, and chunks](@/external-api/world-storage.md).
 
@@ -69,3 +71,5 @@ Version 6 appends a little-endian `u32` particle count after cell entries, then 
 `Chunk::fluid_particles` reads the list; `set_fluid_particles` validates and replaces it. `ChunkFluidParticle::new` validates the record and preserves supplied float bits; storage validates records again.
 
 > **Limitation:** The reader accepts only version 6; version 5 files return `InvalidVersion`.
+
+The format validates that a particle identifier is fluid-form, but does not check that it is registered in a particular scene material table. GPU admission checks registration later. Saved records do not include particle sleep state, actor samples, raster data, or material definitions; reconstructed simulation uses the scene's registered materials.

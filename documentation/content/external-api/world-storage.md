@@ -61,6 +61,7 @@ Tile access uses absolute `CellularTileCoordinates` and returns `Result`:
 | Group | Variants |
 | --- | --- |
 | Cell data | `CellCapacityExceeded`, `CellIndexOutOfRange`, `CellIndexIsDuplicate`, `CellIsEmpty` |
+| Fluid particles | `FluidParticleCapacityExceeded`, `FluidParticleMaterialInvalid`, `FluidParticlePositionInvalid`, `FluidParticleVelocityInvalid` |
 | Coordinates | `CoordinateMismatch` |
 | I/O and format | `Io`, `InvalidHeader`, `InvalidLength`, `InvalidVersion` |
 

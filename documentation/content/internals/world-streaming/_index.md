@@ -26,3 +26,5 @@ The pages in this subsection follow that path:
 - [Tile streaming](@/internals/world-streaming/tile-streaming.md) traces transfers as the active region moves.
 
 Terms such as active region, retained, and resident chunk are defined in the [glossary](@/architecture/glossary.md). Scene-level ordering is covered in the [scene update pipeline](@/architecture/scene-pipeline.md).
+
+- [Fluid streaming and persistence](@/internals/world-streaming/fluid-streaming.md) follows particle admission, outgoing exports, resident snapshots, and their chunk ownership.

@@ -3,7 +3,7 @@ title = "Who reads each component"
 description = "A map of actor components to the engine systems that currently read or write them."
 weight = 20
 [extra]
-sources = ["engine_world/src/actors/components", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/kinematics/kinematics.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine/src/games/game_instance.rs", "editor/src/editor.rs"]
+sources = ["engine_world/src/scenes/fluids", "engine_world/src/actors/components", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/kinematics/kinematics.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine/src/games/game_instance.rs", "editor/src/editor.rs"]
 +++
 
 This page is for engine contributors. The registry only stores components; scene, graphics, collision, and kinematics code give them behavior. The tables show which system reads or writes each component.
@@ -18,7 +18,7 @@ For component fields and defaults, see the [actor components API](@/external-api
 | `ActorKinematicsPositionComponent` | Read by scene streaming, graphics, collision, kinematics, and the editor (see below). Collision writes back positions changed by dynamic bodies or pawn movement. |
 | `ActorCameraComponent` | `Scene::stream` and `Scene::graphics` read it (see below). The editor copies it when creating its free camera. |
 | `ActorSpritesComponent` | `Scene::graphics` converts sprite records to renderer-ready sprites, skipping frames outside the sheet. See [scene rendering](@/internals/rendering/scene-renderer.md). |
-| `ActorCollisionComponent` | Collision creates and updates Rapier bodies and colliders and checks region exit. Kinematics packs eligible actors' collider shape, offsets, rotation, and body-dependent mass for dynamic-cell simulation, but the GPU pass includes at most 32 actors per tick. Edit collision queries also use actor colliders. |
+| `ActorCollisionComponent` | Collision creates and updates Rapier bodies and colliders and checks region exit. Kinematics packs eligible actors' collider shape, offsets, rotation, and body-dependent mass for dynamic-cell simulation and shared fluid actor projection/sampling; both use at most 32 actors per tick. Edit collision queries also use actor colliders. |
 | `ActorContactComponent` | Collision creates and updates a Rapier sensor collider and checks its bounds for region exit. Engine code does not query or expose the sensor's overlap pairs. |
 | `ActorPawnPossessionComponent` | `GameInstance` selects actors with this marker and writes keyboard-derived `ActorPawnControlComponent` values to them. |
 | `ActorPawnControlComponent` | `GameInstance` writes it to possessed actors. Collision reads movement, jump, and crouch intent. |
@@ -53,10 +53,10 @@ These components are empty markers that no system reads:
 
 ## Update order
 
-For the host-level fixed-update and rendering sequence, see [frame and update lifecycle](@/architecture/frame-lifecycle.md). Within scene simulation, `Scene::simulate` calls kinematics before collision. Kinematics returns asynchronous contact data; see [cell and body contact exchange](@/internals/simulation/contact-exchange.md) for readback timing and cached values.
+For the host-level fixed-update and rendering sequence, see [frame and update lifecycle](@/architecture/frame-lifecycle.md). Within scene simulation, `Scene::simulate` calls cellular kinematics, polls fluid actor samples, runs collision, then advances fluid particles. Kinematics returns asynchronous contact data; see [cell and body contact exchange](@/internals/simulation/contact-exchange.md) for readback timing and cached values.
 
 For the simulations themselves, see [cellular kinematics](@/internals/simulation/cellular-kinematics.md) and the [Rapier collision world](@/internals/simulation/collision-world.md).
 
 ## Fluid consumers
 
-Cellular kinematics uploads collider records for fluid projection and sampling. Collision consumes completed fluid actor samples and the swimming fields of `ActorPawnMovementComponent`; see [swimming](@/internals/actors/pawn-movement.md#swimming).
+Cellular kinematics uploads collider records for fluid projection and sampling; scene control intent also selects which idle swimmers set the shared current-coupling flag. Collision consumes completed fluid actor samples and the swimming fields of `ActorPawnMovementComponent`; see [swimming](@/internals/actors/pawn-movement.md#swimming).

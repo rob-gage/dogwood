@@ -16,14 +16,14 @@ A two-bit material tag distinguishes dynamic cells. The remaining 30 bits select
 
 ## Movement and settling
 
-The pass first collects tiles marked awake or disturbed, their neighboring tiles, and tiles near selected actors. It then integrates every dynamic cell in those tiles.
+The pass first collects tiles marked awake or disturbed, their neighboring tiles, tiles near selected actors, and tiles with nearby fluid/current. It then integrates every dynamic cell in those tiles.
 
 ### Integration
 
 - An unsupported cell accelerates downward.
 - A supported cell estimates its surface normal from nearby occupied cells. Gravity can accelerate it down a slope when there is space, while friction removes horizontal speed in proportion to gravity and the surface normal.
 - A supported cell starts sliding when the slope exceeds what its friction can hold (approximately, when the slope tangent exceeds the friction coefficient) and there is room downhill.
-- If both its horizontal and remaining vertical speed components fall below `RESTING_SPEED` (0.02 cells per tick), the cell stops and receives the resting and supported flags. This threshold also reduces rebound speed in cell-cell collisions. The cell then sleeps until a nearby change or actor makes its tile active again.
+- If both its horizontal and remaining vertical speed components fall below `RESTING_SPEED` (0.02 cells per tick), the cell stops and receives the resting and supported flags. This threshold also reduces rebound speed in cell-cell collisions. The cell then rests until a nearby change, actor, or fluid interaction makes its tile active again.
 - The active-region edge supports cells and blocks movement beyond the region.
 
 ### Claiming and resolving moves
@@ -65,4 +65,6 @@ The pass receives rigid-body records and rasterized cells from the collision rig
 
 The orchestration is in {{ <rustdoc path="engine/scenes/kinematics/struct.Kinematics.html" text="Kinematics" /> }}. Entry-point order, packed layouts, and dispatch details belong to the [kinematics shader reference](@/internals/shaders/kinematics-shader.md).
 
-Cellular kinematics also reads the fluid mass/momentum raster and material properties for fluid coupling and accumulates rigid-body immersion/current samples. The raster comes from an earlier fluid submission because the fluid step follows collision; see [fluid simulation](@/internals/simulation/fluids.md).
+## Fluid interaction
+
+Cellular integration reads the prior fluid raster, exchanges wet-face impulses, and adds buoyancy; separate kernels sample rigid-body fluid response even on inactive cellular tiles. [Fluid interactions](@/internals/simulation/fluid-coupling.md) owns those algorithms and their timing. Cellular rest flags and particle tile sleeping are independent.

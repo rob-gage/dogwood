@@ -3,7 +3,7 @@ title = "Actor components"
 description = "Fields, units, and current engine use of the public actor component types."
 weight = 60
 [extra]
-sources = ["engine_world/src/actors/components", "engine_world/src/actors/actor_registry.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/kinematics/kinematics.rs", "engine/src/games/game_instance.rs", "engine/src/lib.rs"]
+sources = ["engine_world/src/scenes/fluids", "engine_world/src/actors/components", "engine_world/src/actors/actor_registry.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/kinematics/kinematics.rs", "engine/src/games/game_instance.rs", "engine/src/lib.rs"]
 +++
 
 Components are Bevy data attached to an `Actor` through `ActorRegistry`. This page is the reference for every public component, for game programmers. All are re-exported from `engine::actors::components`.

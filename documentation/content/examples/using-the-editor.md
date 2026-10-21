@@ -6,6 +6,7 @@ weight = 80
 sources = [
     "editor/src",
     "template/src/bin/editor.rs",
+    "template/src/template_game.rs",
     "cli/src/commands/edit.rs",
     "cli/src/main.rs",
     "cli/src/commands/build.rs",
@@ -76,3 +77,9 @@ The status bar otherwise reports **Unsaved changes** after accepted editor strok
 > **Limitation:** The editor exposes material and eraser brushes, tile/chunk grid toggles, and play/free-camera controls. The current toolbar has no undo or redo control, and editor workspace/tool choices are initialized at launch.
 
 {{ <rustdoc path="editor/struct.Editor.html" text="Editor" /> }}
+
+## Paint water
+
+The template registers `water` in the material picker. Select it and paint into empty space, then enable Play: particle spawns and erasures are applied by simulation, so they do not appear while the editor is paused. Water uses its material color; the brush color does not tint individual particles. The player's jump/up and crouch/down controls swim vertically once sufficiently immersed.
+
+Large requests can report `CapacityReached`; see [fluid capacity](@/external-api/scenes.md#fluid-capacity). Enable Play to apply particle edits before requesting a save, and keep the lifecycle running while imports finish; see [fluid saving](@/internals/world-streaming/fluid-streaming.md#resident-saves). The template deletes its world on launch, as described in [the walkthrough](@/getting-started/template-walkthrough.md#world).

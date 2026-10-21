@@ -1,44 +1,74 @@
 +++
 title = "Fluid simulation"
-description = "GPU fluid particles, body feedback, edits, streaming, and persistence."
+description = "The particle solver, its numerical model, and where to find coupling and persistence details."
 weight = 75
 [extra]
-sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/cellular_tiles", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/kinematics", "engine_world/src/scenes/collisions/collision.rs"]
+sources = ["engine_world/src/scenes/fluids"]
 +++
 
-Fluids use a fixed-capacity GPU particle pool separate from cellular materials. The first stream allocates it using the scene's [capacity factor](@/external-api/scenes.md#fluid-capacity). `Fluids` owns queued edits and imports; `FluidParticlePass` encodes compute work.
+Fluids are GPU particles, separate from the cellular tile arrays. A particle represents one cell's fluid mass but can move continuously and share a cell with other particles. `Fluids` owns edits, imports, count reservations, and actor feedback; `FluidParticlePass` owns storage and compute submission.
 
-## Solver
+This page describes the implemented numerical model. See [boundaries and sleeping](@/internals/simulation/fluid-boundaries.md), [system interactions](@/internals/simulation/fluid-coupling.md), [streaming and persistence](@/internals/world-streaming/fluid-streaming.md), and [GPU records and dispatch](@/internals/shaders/fluid-shader.md) for the other parts.
 
-`fluid_particle.wgsl` compacts and rebases particles, applies erasures and spawns, prepares solid and moving boundaries, then runs position-based fluid (PBF) substeps. Dense bins use count, prefix-scan, and scatter passes for neighbor lookup. Each substep predicts motion, solves density constraints with Jacobi position corrections, commits velocity, and applies XSPH smoothing. Material cohesion and artificial pressure contribute to correction. Actor projection and solid boundaries constrain particle motion.
+## One fixed tick
 
-| Constant | Value |
-| --- | --- |
-| `FLUID_SUBSTEP_COUNT` | 4 |
-| `FLUID_ITERATION_COUNT` | 2 per substep |
-| `FLUID_KERNEL_RADIUS` | 2.5 cells |
-| `FLUID_BIN_SIZE` | 3 cells |
-| `FLUID_RELAXATION` | 0.01 |
-| `FLUID_COHESION_SCALE` | 0.5 |
-| `FLUID_COHESION_NORMALIZATION_2D` | 54.584815 |
-| `FLUID_VELOCITY_MAXIMUM` | 4 cells/tick per axis |
-| `FLUID_RASTER_SCALE` | 4096 |
-| `FLUID_WORKGROUP_SIZE` | 128 |
-| `FLUID_SCAN_WORKGROUP_SIZE` | 256 |
-| `FLUID_TIME_STEP` | 1/60 second |
+```text
+compact / rebase / erase -> spawn edits and imports -> prepare boundaries and sleeping
+  -> apply accumulated fluid contact velocities
+  -> four substeps:
+       predict -> project actors -> bin and scatter particles
+       -> two rounds of density lambda / position correction / actor projection
+       -> commit position and velocity -> restore actor-normal velocity
+  -> XSPH velocity smoothing -> velocity decay -> finish sleeping
+  -> rasterize mass and momentum -> sample actors -> queue readbacks / exports
+```
 
-## GPU records and feedback
+The tick is 1/60 second. Positions use cells relative to the active region; velocities use cells per tick, including during substeps. Gravity in tiles/s² converts to a substep velocity increment as `gravity * CELLULAR_TILE_SIZE * dt² / FLUID_SUBSTEP_COUNT`. Prediction divides velocity by the substep count to obtain displacement.
 
-Particle state and exact-position import commands each occupy 32 bytes; edit commands occupy 16 bytes. Export records occupy 40 bytes after a leading count. Dynamic uniforms use 152 bytes within a 256-byte stride. Actor records are shared with cellular kinematics at a 64-byte stride. Actor feedback records occupy 32 bytes and encode fixed-point impulse and immersion/current/material samples (`FLUID_ACTOR_CONTACT_SCALE = 1024`).
+## Neighbors
 
-The cellular-side coupling helpers and rigid-body fluid kernels live in `engine_world/src/scenes/kinematics/kinematics_fluids.wgsl`, composed into the same cellular shader module; see [source composition](@/internals/shaders/kinematics-shader.md#source-composition).
+The solver uses dense spatial bins, three cells wide. Each substep clears bin counts, counts particles, computes exclusive prefix sums, and scatters particle state and predicted positions into contiguous bin ranges. The hierarchical scan uses workgroup-local scans, scans of block totals, and a final prefix addition; it does not require GPU subgroup operations. Chunk totals are scanned in one 256-thread workgroup when they fit; larger chunk counts fall back to a serial loop in lane zero.
 
-A physical cell raster stores mass, momentum, and material identifiers, with sparse tile tracking and contact data. Cellular kinematics consumes it for cell/body interactions. Collision consumes completed fluid actor feedback and rigid-body fluid samples for buoyancy, drag, and [swimming](@/internals/actors/pawn-movement.md#swimming). Counts and actor samples use three asynchronous readback slots; feedback can lag the current GPU state.
+Neighbor queries scan contiguous spans of row-major bins intersecting a search circle. They then reject particles beyond the actual kernel radius. The search radius is `2.5 + 2 * 0.25 = 3` cells, allowing for two capped position corrections after sorting. The current two-iteration configuration sorts once per substep. Code for more iterations inserts another sort after the second correction.
 
-## Streaming and saving
+Scatter also caches each neighbor's old position, cohesion, artificial pressure, and sleeping flag. Position corrections use separate input/output arrays, so a Jacobi iteration reads a consistent previous result rather than partially updated neighbors. Particle ordering within a bin depends on atomic scatter order.
 
-Fluid edits queue erasures and spawns; conservative reservations prevent exceeding live capacity. Dormant chunk particles import at their exact positions and velocities. Imports are bounded in whole-tile groups, and rejected records return to their source chunks. Compaction exports particles leaving the active region into outgoing tile requests.
+## Density constraints
 
-`Scene::save` requests a resident particle snapshot alongside cellular saving. Chunks are retained until the mapped snapshot is applied; `is_saved` includes pending particle saves. Drop drains unspawned imports and synchronously reads live particles into chunk storage. See [chunk format](@/internals/world-streaming/chunk-format.md#fluid-particle-section).
+This is a two-dimensional position-based fluids (PBF) solver with poly6 density weights and spiky gradients. For support radius `h = 2.5`:
 
-The scene renderer also consumes the particle raster for [fluid rendering](@/internals/rendering/fluid-pass.md).
+```text
+W(r)       = 4 / (pi * h^8) * (h² - r²)^3                  for r < h
+ grad W(r) = -30 / (pi * h^5) * (h - r)^2 * direction(r)   for 0 < r < h
+```
+
+`reference_density()` sums the density kernel on a unit square lattice over offsets -2 through 2. This common `rho0` describes particle spacing. It is distinct from material `density`, which supplies physical mass for rasterization and body reactions. Different fluid materials participate in the same neighbor solve without mass-weighted density constraints or separation by material.
+
+For each awake particle, density includes its self kernel, neighboring particle kernels, and sampled boundary density. The constraint is `C = density / rho0 - 1`. Lambda is `-C / (|sum gradients|² + sum neighbor gradient norms² + relaxation)`, with `relaxation = 0.01`. Boundary gradients contribute to the summed gradient. Sleeping neighbors contribute density but no movable-neighbor gradient norm and have lambda zero.
+
+The implementation uses signed `C`: it does not clamp under-density to zero. The sleep reduction records only positive density error.
+
+## Pressure correction and cohesion
+
+Each correction combines:
+
+- pressure from the particle and its neighbors' lambdas;
+- artificial pressure `s_corr = -artificial_pressure_i * (W(r) / W(0.3h))^4`;
+- the boundary-gradient correction;
+- an area-normalized, signed two-dimensional Akinci cohesion spline.
+
+Artificial pressure uses the receiving particle's coefficient. Cohesion uses the average of the pair's coefficients, multiplied by `FLUID_COHESION_SCALE`. For `p = r³ * (h - r)³ / h^6`, the spline uses `2p - 1/64` through `h/2` and `p` above it, scaled by `FLUID_COHESION_NORMALIZATION_2D / h²`. It is zero at effectively coincident points and outside kernel support. These controls are distinct: one is the short-range artificial-pressure term, the other the cohesion term.
+
+Nonfinite corrections become zero. Each correction vector is capped to length `0.25` cell, then projected out of solid squares and actors. [Boundary handling](@/internals/simulation/fluid-boundaries.md) describes these projections.
+
+## Velocity and viscosity
+
+Commit reconstructs velocity as `(corrected_position - old_position) * substep_count`. It caps vector length to four cells/tick and replaces nonfinite values with a valid prior position or zero velocity. Actor-normal velocity can subsequently be restored to keep a moving actor from sweeping through particles after that cap.
+
+After all four substeps, XSPH smooths velocity once per tick. It adds `viscosity_i` times the kernel-weighted mean of neighboring velocity differences, normalized by the neighbor weight sum. A separate apply dispatch prevents readers seeing partially smoothed neighbors. It caps speed again and multiplies velocity by `0.998` before [sleep testing](@/internals/simulation/fluid-boundaries.md#sleeping-and-waking).
+
+`viscosity` is this smoothing fraction. Material `drag` is a separate swimming/current-coupling control; it is not the coefficient of the XSPH calculation.
+
+> **Limitation:** This solver uses fixed iteration counts, bounded corrections, velocity decay, approximate boundaries, and delayed body feedback. It does not enforce exact incompressibility or exact momentum conservation across all systems. There is no material-specific rest spacing or immiscible-fluid separation rule.
+
+Public solver constants are defined in `engine_world/src/scenes/fluids/mod.rs`; [resource limits](@/architecture/resources-and-lifetimes.md#fluid-resources) collect their current values.

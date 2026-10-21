@@ -15,11 +15,11 @@ Each tick runs these entry points in order:
 1. `collect`, `clear`, `prepare`, `integrate`.
 2. `prepare` again, to size the substep dispatches.
 3. For each substep: `request`, `pick`, `resolve_begin`, alternating `resolve_even` and `resolve_odd`, then `stage` and `commit`.
-4. `contact`, last.
+4. `contact`, then `rigid_fluid_faces` and `rigid_fluid` over the entire physical tile region.
 
 All entry points except `prepare` use 64-thread workgroups; `prepare` uses one invocation. A cell-processing workgroup covers one 8x8 cellular tile, and indirect counts limit work to active tiles. The pass uses a 256-byte uniform stride for dynamic offsets.
 
-`collect` marks a tile active when any tile in its 3x3 neighborhood is awake or disturbed, or when the tile's bounds expanded by one tile overlap an actor's bounds. It appends active tiles' logical indices to the indirect-dispatch list.
+`collect` marks a tile active when any tile in its 3x3 neighborhood is awake or disturbed, when the tile's bounds expanded by one tile overlap an actor's bounds, or when `tile_has_fluid_interaction` finds nearby fluid/current. It appends active tiles' logical indices to the indirect-dispatch list.
 
 There is no checkerboard or Margolus partition. Neighboring cells issue requests, a target picks one claimant, and the resolve stages propagate move status.
 
@@ -28,6 +28,7 @@ There is no checkerboard or Margolus partition. Neighboring cells issue requests
 - `collect` and `clear` dispatch over the tile count, 64 invocations per workgroup.
 - `prepare` dispatches one invocation, twice per tick.
 - `integrate` and later stages use generated indirect dispatches. The pass sets dynamic uniform offsets for each substep and resolve pass.
+- The two rigid-fluid kernels dispatch one 64-thread workgroup per physical tile, including tiles absent from the active-cell list.
 - The dispatch buffer holds nine 12-byte indirect records: one whole-tick dispatch and eight substep dispatches.
 
 ### Adaptive substeps and resolve passes
@@ -74,14 +75,14 @@ The pass serializes these records manually, little-endian; there is no Rust mirr
 
 ### Actors and rigid bodies
 
-`KinematicsActor` is 64 bytes: center (0), velocity (8), rotation (16), size (24), bounds (32), shape tag (48), mass (52), then two padding words (56).
+`KinematicsActor` is 64 bytes: center (0), velocity (8), rotation (16), size (24), bounds (32), shape tag (48), mass (52), then an idle-swimmer flag at 56 and one padding word at 60. WGSL cellular code treats those last words as padding; the shared fluid actor layout reads the flag.
 
 Rust converts units before writing:
 
 - Tiles become cells (multiplied by `CELLULAR_TILE_SIZE`), and velocity components are clamped to +-8 cells per tick.
 - Rotation is stored as cosine and sine.
 - `size` holds the circle radius in `size.x`, rectangle half extents, or the capsule half segment and radius.
-- `bounds` is a box of the farthest extent plus one cell.
+- `bounds` is a box of the farthest extent plus 2.5 cells.
 - Shape tags: 0 circle, 1 rectangle, 2 capsule.
 
 `KinematicsRigidBodyCellularTile` is 32 bytes:
@@ -113,7 +114,7 @@ The collision pass writes these records and kinematics shares them.
 ### Contacts and control
 
 - Actor contact records are 32 bytes (eight words). Words 0-1 are impulse, 2-3 summed normal, 4 contact count, and 5 penetration depth. All except the count are fixed-point with scale 1,024 (`CONTACT_SCALE`); words 6-7 are padding.
-- Rigid-body contact records are 84 bytes (21 32-bit words): words 0–2 hold x/y and angular impulse; words 3–7 and 8–12 hold each side's contact count, summed normal x/y, and summed arm x/y; word 13 is a fluid-face mask; words 14–20 hold seven fluid sample values.
+- Rigid-body contact records are 84 bytes (21 32-bit words): words 0–2 hold x/y and angular impulse; words 3–7 and 8–12 hold each side's contact count, summed normal x/y, and summed arm x/y; word 13 is a floating-point wet-face count; words 14–20 hold seven fluid sample values.
 - Control storage begins with three atomic `u32` counters (active tile count, step count, pending resolves), followed by an `active_tiles` list with capacity for one `u32` per tile. Each entry is the logical index (`y * region width + x`) of an active tile.
 
 ## Readback

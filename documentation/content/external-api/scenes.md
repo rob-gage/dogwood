@@ -16,7 +16,7 @@ This page covers the `Scene` type, the `SceneGenerator` trait, `ScenePosition`, 
 - `material_table()` returns the compiled material table.
 - `set_gravity(f32)` sets downward acceleration in tiles per second squared. The source default is `50.0`. The setter does not validate; negative values produce upward acceleration.
 - `edit(Edit)` queues an edit and returns `EditError` on failure. See [Collisions and edits](@/external-api/collisions-and-edits.md).
-- `save()` requests persistence; it is a no-op before streaming is initialized. Save requests are nonblocking and progress during later `stream()` calls.
+- `save()` requests persistence; it is a no-op before streaming is initialized. Save requests are nonblocking; drive the normal `stream`/`simulate` lifecycle until `is_saved()` is true. [Particle persistence](@/internals/world-streaming/fluid-streaming.md#resident-saves) describes the pending phases.
 - `is_saved()` reports whether requested saves have completed.
 - `active_cellular_tile_region()` returns the active region, or `None` before tiles become resident.
 
@@ -25,9 +25,10 @@ This page covers the `Scene` type, the `SceneGenerator` trait, `ScenePosition`, 
 Call `stream` and `simulate` each fixed update, and `graphics` when drawing. `GameInstance` already does this for games launched with `Engine::launch`; see [Frame and update lifecycle](@/architecture/frame-lifecycle.md) for the order and internal steps.
 
 - `stream(&Accelerator, &Processor, camera_actor) -> Result<(), SceneError>` moves the active region toward a region centered on the camera, twice its unzoomed width and height. It does not wait for I/O. The actor needs camera and kinematics-position components, and the processor needs a `chunk_io` pool ([Host types](@/external-api/host.md)).
-- `simulate(&Accelerator) -> Result<(), SceneError>` returns immediately before the active region exists. Otherwise it simulates dynamic cells against actors and rigid bodies, then performs actor and rigid-body collisions against active tiles. Collision processing may wait for GPU readbacks when it reads settled occupancies or changed cells.
+- `simulate(&Accelerator) -> Result<(), SceneError>` returns immediately before the active region exists. Otherwise it simulates dynamic cells against actors and rigid bodies, then performs actor and rigid-body collisions against active tiles, then advances fluid particles. Collision processing may wait for GPU readbacks when it reads settled occupancies or changed cells.
 - `graphics(camera_actor)` returns borrowed graphics data, or an `ActorError` if the actor data is missing. Its actor also needs camera and kinematics-position components.
 - `cellular_graphics(camera_position)` returns active cellular graphics if available.
+- `fluid_graphics(camera_position)` returns optional borrowed raster/material data for fluid rendering, included automatically by `graphics`.
 
 ### Edge cases
 
@@ -85,8 +86,9 @@ Tile and cell coordinate conversion, including negative coordinates, is covered 
 | Area | Variants |
 | --- | --- |
 | Chunk requests and storage | `ChunkRegionRequestLimitReached`, `InvalidChunkRegion`, `ChunkResidentLimitReached`, `ChunkRegionRequestNotFound`, `ChunkRetryUnavailable`, `ChunkStreamingCapacityReached`, `ChunkStreamingRequestAlreadyActive`, `ChunkStreamingResponseChannelClosed`, `ChunkLoad`, `ChunkSave`, `ChunkGeneration`, `ChunkThreadPoolUnavailable` |
-| Tile streaming | `InvalidCellularTileRegion`, `CellularTileStreamingResponse`, `CellularTileStreamingResponseChunkInactive`, `CellularTileStreamingPoll` |
+| Tile streaming | `CellularTileStreamingRequestNotFound`, `InvalidCellularTileRegion`, `CellularTileStreamingResponse`, `CellularTileStreamingResponseChunkInactive`, `CellularTileStreamingPoll` |
 | Collision and kinematics | `CollisionCellularTileResponse`, `CollisionCellularTilePoll`, `KinematicsCellularTileResponse`, `KinematicsCellularTilePoll` |
+| Fluid configuration and transfers | `InvalidFluidCapacityFactor`, `FluidCapacityFixed`, `FluidParticleStreamingRecordInvalid`, `FluidParticleStreamingResponseChunkInactive`, `FluidParticleResponse`, `FluidParticlePoll`, `FluidParticleExportBufferSizeInvalid`, `FluidParticleExportRecordInvalid`, `FluidParticleSnapshotResponseChannelClosed` |
 | Actors and colliders | `CameraActor`, `InvalidCollider`, `ActorDespawn` |
 
 See the linked rustdoc for variant payloads.
@@ -97,6 +99,4 @@ See the linked rustdoc for variant payloads.
 
 `fluid_capacity_factor()` returns the configured pool fraction. `set_fluid_capacity_factor(factor)` accepts finite values in `(0, 1]` before the first stream creates the pool; otherwise it returns `InvalidFluidCapacityFactor` or `FluidCapacityFixed`. The default is `0.25`, and capacity is `floor(factor * active-region cell count)`.
 
-Simulation runs cellular kinematics, collision, then fluid particles. Saving includes resident particle snapshots; see [fluid simulation](@/internals/simulation/fluids.md).
-
-`fluid_graphics(camera_position)` returns optional borrowed `SceneGraphicsFluid` with the raster, material buffer, and camera-relative ring placement. It is absent before an active region exists. `graphics(camera_actor)` includes it automatically.
+The pool is allocated even when no fluid material is registered. A very small positive factor can round to zero particles. The factor sets particle capacity, not all region-sized scratch memory. See [fluid streaming](@/internals/world-streaming/fluid-streaming.md) for capacity reservations and persistence.

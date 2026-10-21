@@ -12,7 +12,7 @@ This page is for engine contributors. It describes the private state a `Scene` o
 
 `Scene` coordinates actor data, material lookup, persistence, tile residency, and simulation. Its private state is split by lifecycle:
 
-- Chunk streaming, GPU tile buffers, tile streaming, collision, and kinematics start absent.
+- Chunk streaming, GPU tile buffers, tile streaming, fluids, collision, and kinematics start absent.
 - Edit streaming is initialized immediately with an empty queue.
 - The material table and generator are shared with chunk work through `Arc` handles.
 
@@ -25,6 +25,8 @@ Scene
 ├── Option<ChunkStreamingState>   first Scene::stream
 ├── Option<CellularTileBuffers>   first Scene::stream
 ├── Option<CellularTileStreamingState> first Scene::stream
+├── Option<Fluids>                first Scene::stream
+│   └── FluidParticlePass
 ├── EditStreamingState            created in Scene::new
 │   └── Option<EditCellularTilePass>
 │       created on first streamed edit with tiles to write
@@ -38,7 +40,8 @@ Scene
 The pass objects are owned by their parent systems:
 
 - `Collision` manages actor and rigid-body Rapier state plus cellular occupancy.
-- `Kinematics` manages GPU dynamic-cell simulation and contact readback.
+- `Kinematics` manages dynamic-cell motion and cellular/fluid coupling through `KinematicsPass`.
+- `Fluids` manages particle admission, simulation, and fluid actor feedback through `FluidParticlePass`.
 
 `Scene` passes shared tile buffers to both and, when creating kinematics, the collision system's rigid-body pass. For ordering and resource lifetime, see [Scene update pipeline](@/architecture/scene-pipeline.md) and [Resources and lifetimes](@/architecture/resources-and-lifetimes.md).
 
@@ -50,13 +53,13 @@ The pass objects are owned by their parent systems:
 
 ### Simulation
 
-`Scene::simulate` returns early until an active region exists, then lazily creates `Collision` and `Kinematics`. It first calls `Kinematics::simulate_kinematics`, which returns cellular and rigid-body contact maps. It passes those maps to `Collision::simulate_collisions`.
+`Scene::simulate` returns early until an active region exists, then lazily creates `Collision` and `Kinematics`. It first calls `Kinematics::simulate_kinematics`, which returns cellular and rigid-body contact maps. It polls fluid actor feedback, passes the contact maps to `Collision::simulate_collisions`, then runs the particle solver. See [scene ordering](@/architecture/scene-pipeline.md#simulation-order).
 
 [Collision world](@/internals/simulation/collision-world.md), [Cellular kinematics](@/internals/simulation/cellular-kinematics.md), and [Edit pipeline](@/internals/simulation/edit-pipeline.md) describe those systems in depth.
 
 ### Drop
 
-`Scene::drop` applies pending edits and returns active tiles to chunks when all three streaming resources exist. Errors in this path panic.
+`Scene::drop` applies pending edits and returns active tiles to chunks when all three streaming resources exist. It then returns unspawned imports and live particles before chunk-state teardown. Errors in either return path panic.
 
 ## Internal entry points
 
@@ -64,50 +67,13 @@ The generated private docs expose each type's API and fields. The `Scene` defini
 
 {{ <rustdoc path="engine_world/scenes/struct.Scene.html" text="Scene" private={true} /> }} · {{ <rustdoc path="engine_world/scenes/chunks/struct.ChunkStreamingState.html" text="ChunkStreamingState" private={true} /> }} · {{ <rustdoc path="engine_world/scenes/cellular_tiles/struct.CellularTileStreamingState.html" text="CellularTileStreamingState" private={true} /> }} · {{ <rustdoc path="engine_world/scenes/edits/edit_streaming_state/struct.EditStreamingState.html" text="EditStreamingState" private={true} /> }} · {{ <rustdoc path="engine_world/scenes/kinematics/kinematics/struct.Kinematics.html" text="Kinematics" private={true} /> }} · {{ <rustdoc path="engine_world/scenes/collisions/collision/struct.Collision.html" text="Collision" private={true} /> }}
 
-### Streaming signatures
+### Handoffs
 
-```text
-ChunkStreamingState::stream_chunks(
-    &mut self, generator: &Arc<dyn SceneGenerator>, world_seed: u64
-) -> Result<(), SceneError>
+| Boundary | Shared data | Reference |
+| --- | --- | --- |
+| Scene → tile streaming | Tile arrays, retained chunk regions, fluid import/export state | [Tile streaming](@/internals/world-streaming/tile-streaming.md) |
+| Kinematics → collision | Actor contacts, rigid-body impulses, holding contacts, fluid moments | [Contact exchange](@/internals/simulation/contact-exchange.md) |
+| Kinematics ↔ particles | Fluid raster/contact deltas, actor records, rigid-body motion | [Fluid interactions](@/internals/simulation/fluid-coupling.md) |
+| Particles ↔ chunks | Dormant imports, outgoing exports, resident-save snapshots | [Fluid persistence](@/internals/world-streaming/fluid-streaming.md) |
 
-CellularTileStreamingState::stream_cellular_tiles(
-    &mut self, accelerator: &Accelerator,
-    cellular_tile_buffers: &CellularTileBuffers,
-    chunk_streaming_state: &mut ChunkStreamingState
-) -> Result<(), SceneError>
-
-EditStreamingState::stream_edits(
-    &mut self, accelerator: &Accelerator,
-    cellular_tile_buffers: &CellularTileBuffers,
-    cellular_tile_streaming_state: &CellularTileStreamingState,
-    actor_registry: &ActorRegistry, collision: Option<&mut Collision>
-) -> Result<(), SceneError>
-```
-
-### Simulation signatures
-
-```text
-Kinematics::simulate_kinematics(
-    &mut self, accelerator: &Accelerator,
-    active_region: CellularTileRegion, ring_offset: (u32, u32),
-    region_origin: (i32, i32), gravity: f32,
-    actor_registry: &ActorRegistry, rigid_bodies: &[(u32, u64)]
-) -> Result<(
-    HashMap<Actor, ([f32; 2], [f32; 2], f32)>,
-    HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2])>
-), SceneError>
-
-Collision::simulate_collisions(
-    &mut self, accelerator: &Accelerator,
-    active_region: CellularTileRegion, ring_offset: (u32, u32),
-    gravity: f32, actor_registry: &mut ActorRegistry,
-    cellular_contacts: &HashMap<Actor, ([f32; 2], [f32; 2], f32)>,
-    rigid_body_contacts: &HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2])>,
-    material_table: &MaterialTable
-) -> Result<(), SceneError>
-```
-
-The first map is keyed by `Actor`; its values contain velocity change, contact normal, and contact depth. The second is keyed by rigid-body ID; its values contain impulse, angular impulse, and holding-cell data. See [Cell and body contact exchange](@/internals/simulation/contact-exchange.md) for tuple layouts, units, and timing.
-
-Each fallible call propagates its `SceneError`. See [Scenes](@/external-api/scenes.md) and [Collisions and edits](@/external-api/collisions-and-edits.md) for public contracts.
+The implementation signatures are available in rustdoc above; these pages explain the units, ownership, and timing that signatures alone do not express. Fallible handoffs propagate `SceneError` to the caller.

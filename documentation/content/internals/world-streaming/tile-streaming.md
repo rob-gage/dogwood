@@ -80,4 +80,4 @@ See the [edit pipeline](@/internals/simulation/edit-pipeline.md) for how queued 
 
 ## Fluid handoff
 
-Outgoing tile requests include a particle export buffer. Fluid compaction writes outgoing particles during simulation; streaming applies the mapped export to retained chunks before releasing the request. Pending imports or resident save snapshots can defer region movement. See [fluid simulation](@/internals/simulation/fluids.md).
+Outgoing tile requests include a particle export buffer. Fluid compaction writes outgoing particles during simulation; streaming applies the mapped export to retained chunks before releasing the request. Pending imports or resident save snapshots can defer region movement. See [fluid streaming](@/internals/world-streaming/fluid-streaming.md).
