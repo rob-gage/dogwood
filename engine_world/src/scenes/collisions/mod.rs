@@ -26,7 +26,7 @@ const COLLISION_CONTACT_ITERATION_COUNT: usize = 4;
 const COLLISION_STATIC_CONTACT_FREQUENCY: f32 = 600.0;
 
 /// Fewest cells of a rigid body, below which its cells become debris
-const COLLISION_RIGID_BODY_CELL_COUNT_MINIMUM: usize = 8;
+const COLLISION_RIGID_BODY_CELL_COUNT_MINIMUM: usize = 12;
 
 /// Most cells of floating static cells that form a rigid body, above which they stay in place
 const COLLISION_RIGID_BODY_CELL_COUNT_MAXIMUM: usize = 4096;

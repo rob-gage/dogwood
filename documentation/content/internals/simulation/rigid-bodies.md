@@ -12,7 +12,7 @@ A cellular rigid body is a group of static cells that is no longer connected to 
 | Limit | Value |
 | --- | --- |
 | Flood-fill bound for one group | 4096 cells |
-| Debris threshold (groups below this become debris) | 8 cells |
+| Debris threshold (groups below this become debris) | 12 cells |
 | Changed body cells processed per read | 65,536 |
 
 Other rigid-body capacities are listed in [resources and lifetimes](@/architecture/resources-and-lifetimes.md).
@@ -32,8 +32,8 @@ These checks avoid detaching groups that may continue beyond the available regio
 
 Detached groups are read from GPU cell storage to retain each cell's material identifier and color.
 
-- Groups with fewer than 8 cells become debris. Each cell is replaced by its static material's configured debris material (a registered cellular dynamic material), or by empty if none is configured. Cells converted to a debris material keep their color; cells replaced by empty have their color cleared.
-- Groups of 8 or more cells become candidate rigid bodies.
+- Groups with fewer than 12 cells become debris. Each cell is replaced by its static material's configured debris material (a registered cellular dynamic material), or by empty if none is configured. Cells converted to a debris material keep their color; cells replaced by empty have their color cleared.
+- Groups of 12 or more cells become candidate rigid bodies.
 - If body or tile capacity prevents insertion, the group remains static.
 
 Each body stores an 8x8-cell occupancy mask per cellular tile, plus per-cell material identifiers and colors. Rapier receives a dynamic body and a voxel collider. The GPU pass receives tile records and a body record used to rasterize the cells. The `CollisionRigidBody` state also tracks the last rasterized pose and the body's held-contact data. The [Rapier collision world](@/internals/simulation/collision-world.md) covers the broader collision step.
@@ -53,8 +53,8 @@ When an edit writes a different material into a rigid-body cell, the next collis
 
 `connected_cells` then groups the remaining occupied cells by shared sides, largest group first:
 
-- The largest group keeps the original body if it has at least 8 cells.
-- Other groups of at least 8 cells become new bodies at the parent's pose. They keep its angular velocity, and their linear velocity is adjusted so each new center of mass keeps the parent's velocity field.
+- The largest group keeps the original body if it has at least 12 cells.
+- Other groups of at least 12 cells become new bodies at the parent's pose. They keep its angular velocity, and their linear velocity is adjusted so each new center of mass keeps the parent's velocity field.
 - Smaller groups, and groups that cannot be inserted, become debris.
 - If no occupied cells remain, the body is removed.
 

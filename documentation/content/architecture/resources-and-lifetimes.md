@@ -71,7 +71,7 @@ These constants are fixed implementation values rather than runtime settings.
 | `COLLISION_ORIGIN_DISTANCE_MAXIMUM` | 1024 | Recenter when either axis differs from the active-region center by more than 1024 tiles |
 | `COLLISION_CONTACT_ITERATION_COUNT` | 4 | Constraint solver passes per substep |
 | `COLLISION_STATIC_CONTACT_FREQUENCY` | 600.0 Hz | Natural frequency for fixed contacts |
-| `COLLISION_RIGID_BODY_CELL_COUNT_MINIMUM` | 8 | Smaller detached groups become debris |
+| `COLLISION_RIGID_BODY_CELL_COUNT_MINIMUM` | 12 | Smaller detached groups become debris |
 | `COLLISION_RIGID_BODY_CELL_COUNT_MAXIMUM` | 4096 | Largest floating static-cell group formed into a rigid body |
 | `COLLISION_RIGID_BODY_CCD_PREDICTION` | 1.0 tile | Prediction distance for moving rigid bodies |
 | `COLLISION_RIGID_BODY_SOLVER_ITERATION_COUNT` | 8 | Extra solver iterations for rigid-body contact islands |
