@@ -9,6 +9,17 @@ pub enum AcceleratorError {
     RequestAdapter(wgpu::RequestAdapterError),
     /// The selected adapter could not create a device and queue
     RequestDevice(wgpu::RequestDeviceError),
+    /// The selected adapter cannot meet an engine device limit
+    UnsupportedLimit {
+        /// Adapter name and backend
+        adapter: String,
+        /// WGPU limit name
+        name: &'static str,
+        /// Engine requirement
+        required: u64,
+        /// Adapter capability
+        supported: u64,
+    },
     /// No WGPU backend is configured for the current operating system
     UnsupportedPlatform,
 }
@@ -19,6 +30,8 @@ impl fmt::Display for AcceleratorError {
         match self {
             Self::RequestAdapter(error) => write!(formatter, "No suitable WGPU adapter: {error}"),
             Self::RequestDevice(error) => write!(formatter, "WGPU device request failed: {error}"),
+            Self::UnsupportedLimit { adapter, name, required, supported } =>
+                write!(formatter, "GPU {adapter} does not meet {name}: engine requires {required}, adapter supports {supported}"),
             Self::UnsupportedPlatform =>
                 write!(formatter, "No graphics backend is configured for this operating system."),
         }
@@ -32,7 +45,7 @@ impl std::error::Error for AcceleratorError {
         match self {
             Self::RequestAdapter(error) => Some(error),
             Self::RequestDevice(error) => Some(error),
-            Self::UnsupportedPlatform => None,
+            Self::UnsupportedPlatform | Self::UnsupportedLimit { .. } => None,
         }
     }
 

@@ -46,7 +46,7 @@ The enums identify failures; they do not decide whether a caller can recover.
 | `ActorError` | Exhausted identifiers, unloaded or despawned actors, and missing components. |
 | `MaterialError` | Capacity, empty names, identifier range, and compilation. |
 | `SpriteSheetError` | Image decoding and invalid dimensions. |
-| `AcceleratorError` / `ProcessorError` | Graphics initialization and pool configuration or build failures. |
+| `AcceleratorError` / `ProcessorError` | Graphics initialization (including unsupported adapter limits) and pool configuration or build failures. |
 | `WindowError` | Event-loop, OS, surface creation, unsupported surface, and surface validation failures. |
 | `ChunkError` | I/O and serialized chunk validation. |
 | `SceneError` | Streaming, storage, tile readback, collision/kinematics, despawn, and collider failures; chunk load, save, and generation variants carry coordinates and a lower-level error. |
@@ -65,6 +65,7 @@ These remain ordinary results until a caller propagates, handles, or panics on t
 
 Several runtime paths choose to turn errors into panics:
 
+- `Accelerator::new` returns graphics initialization errors, including the adapter name and first unsupported limit when capability checks fail.
 - `Engine::default` constructs the default accelerator and processor; their `Default` implementations panic if initialization fails. `Engine::new` accepts already-created resources.
 - `GameInstance::update` panics if pawn possession insertion, scene streaming, or scene simulation fails. Its `stream` method panics on streaming failure. Rendering panics if scene graphics lookup fails.
 - `Scene::drop` panics if applying queued cellular edits, returning GPU-resident tiles, or returning fluid imports/live particles fails.

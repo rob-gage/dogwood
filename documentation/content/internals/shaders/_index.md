@@ -1,14 +1,14 @@
 +++
 title = "Shaders and GPU data"
-description = "Reference for Dogwood's six WGSL shaders, their owning passes, GPU bindings, and dispatch sites."
+description = "Reference for Dogwood's embedded WGSL shaders, their owning passes, GPU bindings, and dispatch sites."
 weight = 60
 sort_by = "weight"
 template = "section.html"
 [extra]
-sources = ["engine_world/src/scenes/kinematics/kinematics_fluids.wgsl", "engine_graphics/src/renders", "engine_world/src/scenes/kinematics", "engine_world/src/scenes/collisions", "engine_world/src/scenes/edits"]
+sources = ["engine_world/Cargo.toml", "engine_world/src/scenes/kinematics/kinematics_fluids.wgsl", "engine_graphics/src/renders", "engine_world/src/scenes/kinematics", "engine_world/src/scenes/collisions", "engine_world/src/scenes/edits"]
 +++
 
-This section is the reference for Dogwood's six embedded WGSL shaders, for engine contributors. Each shader's Rust pass creates the matching pipeline and bind groups, packs CPU-side data where needed, and submits work. Details live in the [render shader reference](@/internals/shaders/render-shaders.md), [kinematics shader reference](@/internals/shaders/kinematics-shader.md), [collision shader reference](@/internals/shaders/collision-shaders.md), and [edit shader reference](@/internals/shaders/edit-shader.md).
+This section is the reference for Dogwood's embedded WGSL shaders, for engine contributors. Each shader's Rust pass creates the matching pipeline and bind groups, packs CPU-side data where needed, and submits work. Details live in the [render shader reference](@/internals/shaders/render-shaders.md), [kinematics shader reference](@/internals/shaders/kinematics-shader.md), [collision shader reference](@/internals/shaders/collision-shaders.md), and [edit shader reference](@/internals/shaders/edit-shader.md).
 
 ## Shader table
 

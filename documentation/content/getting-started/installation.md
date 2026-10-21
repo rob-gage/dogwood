@@ -44,3 +44,19 @@ dogwood --help
 ```
 
 The commands are introduced in [your first project](@/getting-started/first-project.md); the [CLI reference](@/external-api/cli.md) has the complete flag list.
+
+## macOS testing
+
+On Apple Silicon, use a native ARM64 Rust toolchain and install Apple's Command Line Tools (`xcode-select --install`). Build from a local checkout with a recent stable Rust toolchain (at least Rust 1.95 for the current dependencies). The macOS build uses native Metal through wgpu; no Vulkan SDK, MoltenVK bundle, or separate shader conversion command is required. WGSL is translated to MSL at runtime.
+
+From the repository root:
+
+```sh
+cargo build --workspace --locked
+cargo run -p cli -- run-template --verbose
+cargo run -p cli -- edit-template --verbose
+```
+
+The template runs exercise the actual pass layouts, rendering, simulation, UI, and presentation. Check pawn movement, terrain rendering, resizing, minimizing/restoring, and closing both windows. In the editor, paint the registered water material to exercise fluid simulation and rendering; the initial template terrain contains no water. Compare startup/pipeline compilation time separately from steady frame performance. Set `RUST_BACKTRACE=1` when collecting a failure report.
+
+> **Limitation:** Successful Apple MSL compilation, presentation, simulation correctness, and M1 performance require testing on macOS.

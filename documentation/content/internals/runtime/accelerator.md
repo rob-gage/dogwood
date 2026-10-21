@@ -25,7 +25,7 @@ The instance enables these backends and is created without a display handle:
 | Windows | Vulkan and DX12 |
 | macOS | Metal |
 
-The initializer has an `UnsupportedPlatform` return branch for targets outside Linux, Windows, and macOS, but the current code does not compile on those targets because `backends` is undefined there.
+The host initializer returns `UnsupportedPlatform` outside Linux, Windows, and macOS; this does not imply that the remaining workspace dependencies support those targets.
 
 ### Adapter request
 
@@ -36,13 +36,14 @@ The initializer has an `UnsupportedPlatform` return branch for targets outside L
 
 ### Device request
 
-Device creation requests `max_storage_buffers_per_shader_stage = 20`. All other limits and device descriptor fields use WGPU defaults. The fluid particle bind group requires twenty storage buffers per compute stage.
+Device creation requests `max_storage_buffers_per_shader_stage = 20`. All other limits and device descriptor fields use WGPU defaults. The combined buffer budget remains 28; Metal exposes 29 usable slots shared by storage, uniform, and vertex buffers. Individual buffer maxima are not added together. Before requesting a device, the initializer checks all requested limits against the adapter and reports the first unsupported limit with the adapter name, backend, required value, and supported value. The fluid particle bind group requires twenty storage buffers per compute stage.
 
 ## Initialization and errors
 
-`Default` is the only public initializer: it creates the instance and blocks on async initialization with `pollster::block_on`. `Clone` duplicates an existing bundle.
+`Accelerator::new()` is the fallible initializer: it creates the instance and blocks on async initialization with `pollster::block_on`. `Default` calls `new()`. `Clone` duplicates an existing bundle.
 
+- Limit checks return `AcceleratorError::UnsupportedLimit`.
 - The async adapter and device requests map failures to `AcceleratorError::RequestAdapter` and `RequestDevice`.
-- Any failure makes `Accelerator::default()` panic with the error text; there is no public fallible constructor.
+- Any failure makes `Accelerator::default()` panic with the error text; `Accelerator::new()` returns the error instead.
 
 For surface format choice and recovery, see [windows and surfaces](@/internals/runtime/surfaces.md).

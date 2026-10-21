@@ -26,7 +26,8 @@ impl Accelerator {
         #[cfg(target_os = "macos")]
         let backends: wgpu::Backends = wgpu::Backends::METAL;
         #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
-        return Err(AcceleratorError::UnsupportedPlatform);
+        let backends: wgpu::Backends = wgpu::Backends::empty();
+        if backends.is_empty() { return Err(AcceleratorError::UnsupportedPlatform); }
 
         let mut instance_descriptor: wgpu::InstanceDescriptor =
             wgpu::InstanceDescriptor::new_without_display_handle();
@@ -47,18 +48,39 @@ impl Accelerator {
             })
             .await
             .map_err(AcceleratorError::RequestAdapter)?;
+        // Metal shares buffer slots between storage, uniforms, and vertex buffers.
+        // Keep the default combined budget (28), rather than summing the individual
+        // maxima: 20 storage + 12 uniform + 8 vertex would exceed Metal's 29 slots.
+        let required_limits = wgpu::Limits {
+            max_storage_buffers_per_shader_stage: 20,
+            ..wgpu::Limits::default()
+        };
+        let mut unsupported_limit = None;
+        required_limits.check_limits_with_fail_fn(&adapter.limits(), true, |name, required, supported| {
+            unsupported_limit = Some(AcceleratorError::UnsupportedLimit {
+                adapter: format!("{} ({:?})", adapter.get_info().name, adapter.get_info().backend),
+                name,
+                required,
+                supported,
+            });
+        });
+        if let Some(error) = unsupported_limit { return Err(error); }
         // the fluid particle bind group contains twenty storage buffers per compute stage
         let (device, queue): (wgpu::Device, wgpu::Queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
-                required_limits: wgpu::Limits {
-                    max_storage_buffers_per_shader_stage: 20,
-                    ..wgpu::Limits::default()
-                },
+                required_limits,
                 ..wgpu::DeviceDescriptor::default()
             })
             .await
             .map_err(AcceleratorError::RequestDevice)?;
         Ok((adapter, device, queue))
+    }
+
+    /// Creates a GPU context, returning backend, adapter, or device failures
+    pub fn new() -> Result<Self, AcceleratorError> {
+        let instance = Self::create_instance()?;
+        let (adapter, device, queue) = pollster::block_on(Self::initialize(&instance))?;
+        Ok(Self { instance, adapter, device, queue })
     }
 
     /// Returns the WGPU instance used by this context
@@ -79,12 +101,7 @@ impl Default for Accelerator {
 
     /// Creates a shared graphics and compute device context, panicking if no device is available
     fn default() -> Self {
-        let instance: wgpu::Instance = Self::create_instance()
-            .unwrap_or_else(|error: AcceleratorError| panic!("{error}"));
-        let (adapter, device, queue): (wgpu::Adapter, wgpu::Device, wgpu::Queue) =
-            pollster::block_on(Self::initialize(&instance))
-                .unwrap_or_else(|error: AcceleratorError| panic!("{error}"));
-        Self { instance, adapter, device, queue }
+        Self::new().unwrap_or_else(|error| panic!("{error}"))
     }
 
 }

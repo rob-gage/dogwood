@@ -12,12 +12,13 @@ Host types are the GPU, CPU, input, and window primitives under the engine. This
 
 `Accelerator` owns a WGPU instance, adapter, device, and queue. Its `instance()`, `adapter()`, `device()`, and `queue()` accessors return shared references.
 
-`Accelerator::default()` requests a high-performance adapter without a compatible surface and requests 20 storage buffers per shader stage. It panics if backend, adapter, or device initialization fails.
+`Accelerator::new()` returns `Result<Accelerator, AcceleratorError>`. It checks the requested limits against the selected adapter before requesting a device. `Accelerator::default()` uses the same initialization and panics on failure. Both request a high-performance adapter without a compatible surface and 20 storage buffers per shader stage. See [GPU accelerator](@/internals/runtime/accelerator.md) for backend and limit details.
 
 `AcceleratorError` variants:
 
 - `RequestAdapter(wgpu::RequestAdapterError)`
 - `RequestDevice(wgpu::RequestDeviceError)`
+- `UnsupportedLimit { adapter, name, required, supported }`
 - `UnsupportedPlatform`
 
 ## CPU pools

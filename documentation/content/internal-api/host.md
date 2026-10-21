@@ -66,8 +66,8 @@ On resume, the window creates the native window and a `'static` WGPU surface bac
 
 - The instance backend mask is Vulkan on Linux, Vulkan | DX12 on Windows, and Metal on macOS.
 - It requests a high-performance adapter without a compatible surface or fallback adapter.
-- It requests a device with `max_storage_buffers_per_shader_stage = 16` and other limits defaulted.
-- Initialization blocks through `pollster::block_on`; failure in `Default` panics.
+- Device requirements and the shared Metal buffer budget are described in [GPU accelerator](@/internals/runtime/accelerator.md).
+- `Accelerator::new` returns initialization errors; `Default` panics on failure. Initialization blocks through `pollster::block_on`.
  See [GPU accelerator](@/internals/runtime/accelerator.md) for backend and error details.
 
 ## Processor pools
