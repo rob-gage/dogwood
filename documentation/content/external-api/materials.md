@@ -16,7 +16,7 @@ A `Material` is one of four variants, one per `MaterialForm`: `CellularStatic`, 
 |---|---|---|
 | `MaterialPropertiesCellularStatic` | `graphics`; `mass`, `friction`, `restitution: f32`; `debris: Option<MaterialIdentifier>` | `mass` uses dynamic cellular material mass units. `friction` is the Coulomb coefficient for rigid bodies. `restitution` is the fraction of speed kept, reversed, on collision. `debris` selects the dynamic material used when cells break off, or `None` to vanish. |
 | `MaterialPropertiesCellularDynamic` | `graphics`; `mass`, `friction`, `restitution: f32` | `mass` uses dynamic cellular material mass units. `friction` is the tangent of the steepest slope a resting cell holds. `restitution` is the fraction of speed kept, reversed, when a cell hits something it cannot enter. |
-| `MaterialPropertiesFluid` | `graphics` | Properties for fluid registration. |
+| `MaterialPropertiesFluid` | `graphics`; `density`, `viscosity`, `cohesion`, `artificial_pressure`, `drag`, `friction`, `restitution: f32` | Density is mass per fluid cell; viscosity is XSPH velocity smoothing; cohesion and artificial pressure control surface cohesion and PBF artificial pressure. Drag configures body drag and swimming; friction and restitution configure direct fluid-cell contacts. Simulation consumers are not implemented yet. |
 | `MaterialPropertiesGas` | `graphics` | Properties for gas registration. |
 
 ### Validation at compile time
@@ -24,6 +24,7 @@ A `Material` is one of four variants, one per `MaterialForm`: `CellularStatic`, 
 - Cellular `mass` must be finite and positive.
 - `friction` must be finite and nonnegative.
 - `restitution` must be between 0 and 1 inclusive.
+- Fluid `density` must be finite and positive; `viscosity` must be in `[0, 1]`. Fluid `cohesion`, `artificial_pressure`, and `drag` must be finite and nonnegative.
 - Static `debris` must identify a registered cellular dynamic material.
 - Graphics `width` and `height` repetition scales must be finite and positive, and the sprite-sheet `frame` must be valid.
 
@@ -31,9 +32,9 @@ A `Material` is one of four variants, one per `MaterialForm`: `CellularStatic`, 
 
 `MaterialGraphicsCellularStatic` and `MaterialGraphicsCellularDynamic` share the fields `sprite_sheet: Arc<SpriteSheet>`, `frame` (frame index), and `width` and `height` (repetition scales in cells per pixel). The facade re-exports them as `engine::MaterialGraphicsCellularStatic` and `engine::MaterialGraphicsCellularDynamic`; they are defined in `engine_graphics::world::materials`.
 
-`MaterialGraphicsFluid` and `MaterialGraphicsGas` are empty structs in the same module and are not re-exported by the facade.
+`MaterialGraphicsFluid` has a `color: u32` field containing packed sRGB RGBA; alpha specifies the opacity of a full fluid cell. It is re-exported as `engine::MaterialGraphicsFluid`. `MaterialGraphicsGas` remains an empty struct in `engine_graphics::world::materials`.
 
-> **Limitation:** Fluid and gas materials can be registered and queried, but have no simulation rules, form-specific rendering, or GPU property buffers, and edits cannot place them. If a fluid or gas identifier appears in a chunk, the generic cellular renderer still draws it from its stored color. Static cellular GPU property buffers are also absent; dynamic cellular properties are uploaded.
+> **Limitation:** Fluid and gas materials can be registered and queried, but have no simulation rules or form-specific rendering, and edits cannot place them. Fluid properties are uploaded to a GPU buffer; gas properties are not. If a fluid or gas identifier appears in a chunk, the generic cellular renderer still draws it from its stored color. Static cellular GPU property buffers are also absent; dynamic cellular properties are uploaded.
 
 ## Identifiers
 
@@ -66,7 +67,7 @@ Registered static materials start at index 1. Dynamic, fluid, and gas indices st
 
 ### Advanced: GPU buffers
 
-The accessors `cellular_static_properties_buffer`, `cellular_dynamic_properties_buffer`, `fluid_properties_buffer`, and `gas_properties_buffer` expose GPU buffers; the dynamic accessor returns a buffer and the others return optional buffers. Only the dynamic buffer holds records. Compilation waits for cellular albedo-frame texture readback, so it completes synchronously from the caller's perspective. See [material table compilation](@/internals/simulation/material-table.md) for buffer layout and tint details.
+The accessors `cellular_static_properties_buffer`, `cellular_dynamic_properties_buffer`, `fluid_properties_buffer`, and `gas_properties_buffer` expose GPU buffers; the dynamic and fluid accessors return buffers containing records, while the static and gas accessors return optional buffers that are currently `None`. Compilation waits for cellular albedo-frame texture readback, so it completes synchronously from the caller's perspective. See [material table compilation](@/internals/simulation/material-table.md) for buffer layout and tint details.
 
 ## Rustdoc
 
@@ -74,4 +75,4 @@ Core: {{ <rustdoc path="engine/materials/enum.Material.html" text="Material" /> 
 
 Properties: {{ <rustdoc path="engine/materials/struct.MaterialPropertiesCellularStatic.html" text="MaterialPropertiesCellularStatic" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialPropertiesCellularDynamic.html" text="MaterialPropertiesCellularDynamic" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialPropertiesFluid.html" text="MaterialPropertiesFluid" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialPropertiesGas.html" text="MaterialPropertiesGas" /> }}
 
-Graphics: {{ <rustdoc path="engine/struct.MaterialGraphicsCellularStatic.html" text="MaterialGraphicsCellularStatic" /> }} · {{ <rustdoc path="engine/struct.MaterialGraphicsCellularDynamic.html" text="MaterialGraphicsCellularDynamic" /> }} · {{ <rustdoc path="engine_graphics/world/materials/struct.MaterialGraphicsFluid.html" text="MaterialGraphicsFluid" /> }} · {{ <rustdoc path="engine_graphics/world/materials/struct.MaterialGraphicsGas.html" text="MaterialGraphicsGas" /> }}
+Graphics: {{ <rustdoc path="engine/struct.MaterialGraphicsCellularStatic.html" text="MaterialGraphicsCellularStatic" /> }} · {{ <rustdoc path="engine/struct.MaterialGraphicsCellularDynamic.html" text="MaterialGraphicsCellularDynamic" /> }} · {{ <rustdoc path="engine/struct.MaterialGraphicsFluid.html" text="MaterialGraphicsFluid" /> }} · {{ <rustdoc path="engine_graphics/world/materials/struct.MaterialGraphicsGas.html" text="MaterialGraphicsGas" /> }}

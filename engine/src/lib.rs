@@ -8,6 +8,7 @@ pub use engine_graphics::{
     world::materials::{
         MaterialGraphicsCellularDynamic,
         MaterialGraphicsCellularStatic,
+        MaterialGraphicsFluid,
     },
 };
 pub use engine_host::{

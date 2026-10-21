@@ -28,8 +28,9 @@ pub struct MaterialTable {
     cellular_static_properties_buffer: Option<wgpu::Buffer>,
     /// Mass, friction, restitution, and padding as four `f32` per dynamic cellular index
     cellular_dynamic_properties_buffer: wgpu::Buffer,
-    /// Absent until fluid properties have meaningful GPU records
-    fluid_properties_buffer: Option<wgpu::Buffer>,
+    /// Density, XSPH viscosity, cohesion, artificial pressure, drag, friction, restitution, and
+    /// color as eight 32-bit words per fluid index
+    fluid_properties_buffer: wgpu::Buffer,
     /// Absent until gas properties have meaningful GPU records
     gas_properties_buffer: Option<wgpu::Buffer>,
     /// Packed sRGB albedo pixels, frame size, and repetition size in cells of each static
@@ -115,6 +116,48 @@ impl MaterialTable {
             },
         );
         accelerator.queue().write_buffer(&cellular_dynamic_properties_buffer, 0, &property_bytes);
+        // serialize fluid records as density, viscosity, cohesion, and artificial pressure, then
+        // drag, friction, restitution, and color bits
+        let mut fluid_property_bytes: Vec<u8> = Vec::new();
+        for index in 0.. {
+            let Ok(identifier) = MaterialIdentifier::new(MaterialForm::Fluid, index)
+            else { break; };
+            let Some(properties) = material_registry.fluid_properties(identifier) else { break; };
+            if !properties.density.is_finite() || properties.density <= 0.0
+                || !(0.0..=1.0).contains(&properties.viscosity)
+                || !properties.cohesion.is_finite() || properties.cohesion < 0.0
+                || !properties.artificial_pressure.is_finite()
+                || properties.artificial_pressure < 0.0
+                || !properties.drag.is_finite() || properties.drag < 0.0
+                || !properties.friction.is_finite() || properties.friction < 0.0
+                || !(0.0..=1.0).contains(&properties.restitution)
+            {
+                return Err(String::from(
+                    "fluid materials need a positive density, a viscosity from zero to one, \
+                    nonnegative cohesion, artificial pressure, drag, and friction, and a \
+                    restitution from zero to one",
+                ));
+            }
+            for value in [properties.density, properties.viscosity, properties.cohesion,
+                properties.artificial_pressure] {
+                fluid_property_bytes.extend_from_slice(&value.to_le_bytes());
+            }
+            fluid_property_bytes.extend_from_slice(&properties.drag.to_le_bytes());
+            fluid_property_bytes.extend_from_slice(&properties.friction.to_le_bytes());
+            fluid_property_bytes.extend_from_slice(&properties.restitution.to_le_bytes());
+            fluid_property_bytes.extend_from_slice(&properties.graphics.color.to_le_bytes());
+        }
+        // keep the storage binding valid when the registry has no fluid materials
+        if fluid_property_bytes.is_empty() { fluid_property_bytes.resize(32, 0); }
+        let fluid_properties_buffer: wgpu::Buffer = device.create_buffer(
+            &wgpu::BufferDescriptor {
+                label: Some("`MaterialTable.fluid_properties_buffer`"),
+                size: fluid_property_bytes.len() as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
+        accelerator.queue().write_buffer(&fluid_properties_buffer, 0, &fluid_property_bytes);
         // copy every frame into a readable buffer with rows padded to the copy alignment
         let mut command_encoder: wgpu::CommandEncoder = device.create_command_encoder(
             &wgpu::CommandEncoderDescriptor {
@@ -227,7 +270,7 @@ impl MaterialTable {
             material_registry,
             cellular_static_properties_buffer: None,
             cellular_dynamic_properties_buffer,
-            fluid_properties_buffer: None,
+            fluid_properties_buffer,
             gas_properties_buffer: None,
             cellular_static_albedos: albedos,
             cellular_dynamic_albedos,
@@ -335,9 +378,10 @@ impl MaterialTable {
         &self.cellular_dynamic_properties_buffer
     }
 
-    /// Returns fluid GPU properties when defined
-    pub fn fluid_properties_buffer(&self) -> Option<&wgpu::Buffer> {
-        self.fluid_properties_buffer.as_ref()
+    /// Returns fluid GPU properties as density, viscosity, cohesion, artificial pressure, drag,
+    /// friction, restitution, and packed color bits
+    pub fn fluid_properties_buffer(&self) -> &wgpu::Buffer {
+        &self.fluid_properties_buffer
     }
 
     /// Returns gas GPU properties when defined

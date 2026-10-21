@@ -40,7 +40,7 @@ The facade re-exports selected types from the host, graphics, world, and user-in
 | `engine::Accelerator`, `engine::AcceleratorError` | GPU context and initialization error | [Host types](@/external-api/host.md) |
 | `engine::Processor`, `engine::ProcessorConfiguration`, `engine::ProcessorError` | Named CPU pools and configuration | [Host types](@/external-api/host.md) |
 | `engine::SpriteSheet` | Sprite sheet type | [Graphics](@/external-api/graphics.md) |
-| `engine::MaterialGraphicsCellularDynamic`, `engine::MaterialGraphicsCellularStatic` | Graphics properties for cellular materials | [Materials](@/external-api/materials.md) |
+| `engine::MaterialGraphicsCellularDynamic`, `engine::MaterialGraphicsCellularStatic`, `engine::MaterialGraphicsFluid` | Graphics properties for cellular and fluid materials | [Materials](@/external-api/materials.md) |
 | `engine::user_interface` | Re-export of the `engine_user_interface` crate | [User interface](@/external-api/user-interface.md) |
 
 ### Not in the facade

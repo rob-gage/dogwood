@@ -1,9 +1,9 @@
 +++
 title = "Material table compilation"
-description = "How MaterialRegistry::compile builds dynamic-cell properties and cellular albedo frames from registered materials."
+description = "How MaterialRegistry::compile builds dynamic-cell and fluid properties and cellular albedo frames from registered materials."
 weight = 20
 [extra]
-sources = ["engine_world/src/materials", "engine_graphics/src/sprites", "engine_graphics/src/world/materials/material_graphics_cellular_static.rs", "engine_graphics/src/world/materials/material_graphics_cellular_dynamic.rs", "engine_world/src/scenes/kinematics/kinematics_cellular_tile.wgsl", "engine_world/src/scenes/collisions/collision_rigid_body.rs"]
+sources = ["engine_world/src/materials", "engine_graphics/src/sprites", "engine_graphics/src/world/materials/material_graphics_fluid.rs", "engine_graphics/src/world/materials/material_graphics_cellular_static.rs", "engine_graphics/src/world/materials/material_graphics_cellular_dynamic.rs", "engine_world/src/scenes/kinematics/kinematics_cellular_tile.wgsl", "engine_world/src/scenes/collisions/collision_rigid_body.rs"]
 +++
 
 This page is for engine contributors. It explains how `MaterialRegistry::compile` turns registered materials into the GPU property buffer and CPU albedo lookup data that the simulation uses.
@@ -11,7 +11,7 @@ This page is for engine contributors. It explains how `MaterialRegistry::compile
 `MaterialRegistry::register` assigns each material identifier. `MaterialRegistry::compile` consumes the populated registry and builds an immutable `MaterialTable` holding:
 
 - the material definitions, for CPU lookups;
-- a GPU buffer of dynamic-cell physics properties;
+- GPU buffers of dynamic-cell and fluid properties;
 - CPU pixel arrays that assign colors to generated or edited cells.
 
 Static and dynamic cellular materials use separate identifier-indexed albedo arrays. Fluid and gas definitions remain available through table lookups but do not participate in this cellular path. See the [materials API](@/external-api/materials.md) for registration and property types.
@@ -37,6 +37,12 @@ Static and dynamic materials are validated against the same physical ranges:
 
 Each dynamic record is serialized as four little-endian `f32` values: mass, friction, restitution, and zero padding. The records form a `STORAGE | COPY_DST` buffer with a 16-byte stride. If no dynamic material exists, a zeroed 16-byte record keeps the binding nonempty.
 
+### Fluid property buffer
+
+Each fluid record contains seven little-endian `f32` values (density, viscosity, cohesion, artificial pressure, drag, friction, restitution), followed by a packed RGBA `u32` color. The `STORAGE | COPY_DST` buffer has a 32-byte stride. With no fluid materials, a zeroed 32-byte record keeps the binding nonempty.
+
+Compilation validates positive finite density, viscosity and restitution in `[0, 1]`, and finite nonnegative cohesion, artificial pressure, drag, and friction.
+
 ### Albedo readback
 
 For every cellular material frame, compilation validates that the repetition scales (cells per pixel) are finite and positive and that the sprite frame exists. It then:
@@ -59,6 +65,6 @@ Packed colors are little-endian RGBA. White returns the sampled albedo unchanged
 
 The kinematics pass binds the dynamic property buffer as `array<vec4<f32>>` and indexes it with the dynamic identifier's low 30 bits. It uses mass, friction, and restitution in cell movement and collisions; see [cellular kinematics](@/internals/simulation/cellular-kinematics.md) and the [kinematics shader](@/internals/shaders/kinematics-shader.md). Static-cell mass, friction, and restitution are instead looked up on the CPU when calculating a detached [cellular rigid body's properties](@/internals/simulation/rigid-bodies.md).
 
-> **Limitation:** `MaterialTable` currently creates only the dynamic cellular property buffer. Static, fluid, and gas property-buffer accessors return `None`; fluid and gas are not compiled into simulation records.
+> **Limitation:** `MaterialTable` creates dynamic cellular and fluid property buffers. Static and gas property-buffer accessors return `None`. The fluid buffer has no simulation or rendering consumer yet.
 
 The albedo readback and dynamic buffer setup are implemented in {{ <rustdoc path="engine/materials/struct.MaterialTable.html" text="MaterialTable" /> }}.
