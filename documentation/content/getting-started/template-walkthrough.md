@@ -18,12 +18,13 @@ To try it without creating a project in the current directory, run `dogwood run-
 
 ## Game setup
 
-`TemplateGame::new` registers two materials, compiles them into a material table, then creates the scene and the player.
+`TemplateGame::new` registers three materials, compiles them into a material table, then creates the scene and the player.
 
 ### Materials
 
 - `gravel` is cellular dynamic, with mass, friction, and restitution properties.
 - `stone` is cellular static and uses `gravel` as its debris material.
+- `water` is fluid, with density `0.6`, viscosity `0.05`, cohesion `0.2`, artificial pressure `0.001`, drag `1.0`, and zero friction and restitution. Its packed RGBA color is `[40, 110, 200, 200]`. It is available for editor painting; the generator does not place water.
 - Their sprite sheets come from `assets/sprites/gravel.png` and `assets/sprites/stone.png`, each loaded as a one-frame sheet.
 
 See [defining materials](@/examples/materials-and-sprites.md) for details.

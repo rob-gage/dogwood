@@ -20,6 +20,7 @@ use engine::{
         MaterialIdentifier,
         MaterialPropertiesCellularDynamic,
         MaterialPropertiesCellularStatic,
+        MaterialPropertiesFluid,
         MaterialRegistry,
     },
     scenes::{
@@ -44,6 +45,7 @@ use engine::{
     Accelerator,
     MaterialGraphicsCellularDynamic,
     MaterialGraphicsCellularStatic,
+    MaterialGraphicsFluid,
     SpriteSheet,
 };
 use std::{
@@ -102,6 +104,21 @@ impl TemplateGame {
                 friction: 0.6,
                 restitution: 0.1,
                 debris: Some(gravel),
+            },
+        })?;
+        let _water: MaterialIdentifier = material_registry.register(Material::Fluid {
+            name: String::from("water"),
+            properties: MaterialPropertiesFluid {
+                density: 0.6,
+                viscosity: 0.05,
+                cohesion: 0.2,
+                artificial_pressure: 0.001,
+                drag: 1.0,
+                friction: 0.0,
+                restitution: 0.0,
+                graphics: MaterialGraphicsFluid {
+                    color: u32::from_le_bytes([40, 110, 200, 200]),
+                },
             },
         })?;
         // the template starts from its generated world on every launch
