@@ -3,7 +3,7 @@ title = "Cell and body contact exchange"
 description = "How the GPU cellular simulation reports actor and rigid-body contacts to collision resolution."
 weight = 80
 [extra]
-sources = ["engine_world/src/scenes/kinematics/kinematics.rs", "engine_world/src/scenes/kinematics/kinematics_cellular_tile_pass.rs", "engine_world/src/scenes/kinematics/kinematics_cellular_tile.wgsl", "engine_world/src/scenes/kinematics/mod.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/scene.rs"]
+sources = ["engine_world/src/scenes/kinematics/kinematics.rs", "engine_world/src/scenes/kinematics/kinematics_pass.rs", "engine_world/src/scenes/kinematics/kinematics_cellular_tile.wgsl", "engine_world/src/scenes/kinematics/mod.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/scene.rs"]
 +++
 This page documents the records kinematics sends to and receives from collision. It is for engine contributors working on actor and rigid-body contact response.
 
@@ -53,3 +53,5 @@ Contact buffers are copied to one of three staging slots per contact type and ma
 In the following collision update, collision applies each rigid body's reported linear and angular impulses, updates its holding contacts, and runs the Rapier step.
 
 Before the Rapier step, the holding solver runs four iterations for each awake rigid body; sleeping bodies are skipped. It applies impulses that cancel motion into the dynamic cells holding the body back, including the velocity gravity adds during the step. See [cellular kinematics](@/internals/simulation/cellular-kinematics.md) for the GPU cell interactions and [Rapier collision world](@/internals/simulation/collision-world.md) for collision ordering.
+
+Fluid actor feedback uses separate asynchronous 32-byte records carrying impulse and fluid samples. Rigid-body kinematics contacts additionally carry seven fluid sample values. See [fluid simulation](@/internals/simulation/fluids.md).

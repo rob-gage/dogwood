@@ -89,6 +89,6 @@ When the game has a scene, enabling the free camera creates a persistent scene a
 
 When the game has a scene, the save button and `COMMAND+S` call `Scene::save`, clear the edited indicator, and set a pending flag. The editor clears that flag and posts a three-second "Scene saved" notification once `Scene::is_saved()` becomes true.
 
-> **Limitation:** The editor's material picker enumerates cellular static and dynamic forms only. Fluid and gas materials are not listed as paint tools by this implementation.
+> **Limitation:** The editor's material picker lists cellular static, cellular dynamic, and fluid materials. Gas materials are not paint tools.
 
 See [editor usage](@/examples/using-the-editor.md) for the user-facing controls, and [collision and edit API](@/external-api/collisions-and-edits.md) for edit semantics.

@@ -92,3 +92,7 @@ These constants are fixed implementation values rather than runtime settings.
 | `COLLISION_GROUP_EDIT` | `1 << 31` | Colliders skipped by edit insertion |
 
 Only `COLLISION_RIGID_BODY_COUNT_MAXIMUM` and the five `COLLISION_GROUP_*` constants are public; see [collision setup](@/examples/collision-setup.md). The other constants are private.
+
+## Fluid resources
+
+The first stream creates a fixed particle pool alongside the tile buffers. `SCENE_FLUID_CAPACITY_FACTOR_DEFAULT` is `0.25`; `SCENE_FLUID_IMPORT_COUNT_MAXIMUM_PER_TICK` is `4096` particles, with whole-tile imports allowed to exceed that bound for a single tile. Save snapshots retain their destination chunks. Drop returns unspawned imports and live particles to chunk storage before chunk teardown; failure panics with `Scene fluid particles could not be returned`. See [fluid simulation](@/internals/simulation/fluids.md) for solver constants.

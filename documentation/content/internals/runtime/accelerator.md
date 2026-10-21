@@ -36,7 +36,7 @@ The initializer has an `UnsupportedPlatform` return branch for targets outside L
 
 ### Device request
 
-Device creation requests `max_storage_buffers_per_shader_stage = 16`. All other limits and device descriptor fields use WGPU defaults. A source comment says dynamic cell kinematics needs more storage buffers than WGPU's default of eight.
+Device creation requests `max_storage_buffers_per_shader_stage = 20`. All other limits and device descriptor fields use WGPU defaults. The fluid particle bind group requires twenty storage buffers per compute stage.
 
 ## Initialization and errors
 

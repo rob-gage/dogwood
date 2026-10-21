@@ -3,10 +3,10 @@ title = "Kinematics shader"
 description = "Reference for the cellular kinematics WGSL entry points, bindings, packed records, and asynchronous readbacks."
 weight = 30
 [extra]
-sources = ["engine_world/src/scenes/kinematics/kinematics_cellular_tile.wgsl", "engine_world/src/scenes/kinematics/kinematics_cellular_tile_pass.rs"]
+sources = ["engine_world/src/scenes/kinematics/kinematics_fluids.wgsl", "engine_world/src/scenes/kinematics/kinematics_cellular_tile.wgsl", "engine_world/src/scenes/kinematics/kinematics_pass.rs"]
 +++
 
-This page is the reference for `kinematics_cellular_tile.wgsl`, the GPU stages driven by `KinematicsCellularTilePass`, for engine contributors. It covers entry points, bindings, packed records, dispatch, and readbacks. The movement algorithm is in [cellular kinematics](@/internals/simulation/cellular-kinematics.md).
+This page is the reference for `kinematics_cellular_tile.wgsl` and `kinematics_fluids.wgsl`, the GPU stages driven by `KinematicsPass`, for engine contributors. It covers entry points, bindings, packed records, dispatch, and readbacks. The movement algorithm is in [cellular kinematics](@/internals/simulation/cellular-kinematics.md).
 
 ## Entry points and dispatch order
 
@@ -53,9 +53,15 @@ Group 0 bindings are declared in WGSL and matched by the Rust layout:
 | 9 | `actors: array<KinematicsActor>` | Read-only actor records |
 | 10 | `contacts: array<atomic<i32>>` | Actor contact and impulse accumulators |
 | 11-14 | `rigid_body_cells`, `rigid_body_cellular_tile_cells`, `rigid_body_cellular_tiles`, `rigid_bodies` | Read-only rigid-body raster and motion data |
-| 15 | `rigid_body_contacts: array<atomic<u32>>` | Rigid-body impulse and holding-cell accumulators |
+| 15 | `rigid_body_contacts: array<atomic<u32>>` | Rigid-body impulse, holding-cell, and fluid sample accumulators |
+| 16 | `fluid_raster` | Fluid mass, momentum, material, and contact data |
+| 17 | `fluid_materials` | Fluid property records |
 
 Group 1 binding 0 is the writable indirect dispatch array. Only the `prepare` pipeline receives this second bind group.
+
+## Source composition
+
+`KinematicsPass` concatenates both WGSL files at Rust compile time into one shader source. `kinematics_fluids.wgsl` owns fluid bindings, constants, sampling/contact helpers, tile wake detection, and the `rigid_fluid_faces` and `rigid_fluid` kernels. Cellular movement retains its fluid contact call sites. Both fragments share one module and the existing pipelines, bindings, and dispatch order.
 
 ## CPU/GPU records
 
@@ -107,7 +113,7 @@ The collision pass writes these records and kinematics shares them.
 ### Contacts and control
 
 - Actor contact records are 32 bytes (eight words). Words 0-1 are impulse, 2-3 summed normal, 4 contact count, and 5 penetration depth. All except the count are fixed-point with scale 1,024 (`CONTACT_SCALE`); words 6-7 are padding.
-- Rigid-body contact records are 64 bytes (16 `f32` words): words 0–2 hold x/y and angular impulse; words 3–7 and 8–12 hold each side's contact count, summed normal x/y, and summed arm x/y; words 13–15 are padding.
+- Rigid-body contact records are 84 bytes (21 32-bit words): words 0–2 hold x/y and angular impulse; words 3–7 and 8–12 hold each side's contact count, summed normal x/y, and summed arm x/y; word 13 is a fluid-face mask; words 14–20 hold seven fluid sample values.
 - Control storage begins with three atomic `u32` counters (active tile count, step count, pending resolves), followed by an `active_tiles` list with capacity for one `u32` per tile. Each entry is the logical index (`y * region width + x`) of an active tile.
 
 ## Readback

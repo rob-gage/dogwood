@@ -64,3 +64,5 @@ If the pusher would increase the cell's speed along the escape direction, the sh
 The pass receives rigid-body records and rasterized cells from the collision rigid-body pass. A body moving at or above `RIGID_BODY_RESTING_SPEED` (0.01 cells per tick) pushes covered cells according to its velocity; a slower body pushes them away from its center. Cells leaving a rigid-body cell position restore the body's stored material identifier and color there. See the [rigid-body lifecycle](@/internals/simulation/rigid-bodies.md) for ownership and rasterization.
 
 The orchestration is in {{ <rustdoc path="engine/scenes/kinematics/struct.Kinematics.html" text="Kinematics" /> }}. Entry-point order, packed layouts, and dispatch details belong to the [kinematics shader reference](@/internals/shaders/kinematics-shader.md).
+
+Cellular kinematics also reads the fluid mass/momentum raster and material properties for fluid coupling and accumulates rigid-body immersion/current samples. The raster comes from an earlier fluid submission because the fluid step follows collision; see [fluid simulation](@/internals/simulation/fluids.md).

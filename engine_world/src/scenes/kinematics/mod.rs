@@ -1,7 +1,7 @@
 // Copyright Rob Gage 2026
 
 mod kinematics;
-mod kinematics_cellular_tile_pass;
+mod kinematics_pass;
 
 pub use kinematics::Kinematics;
 
@@ -9,7 +9,7 @@ pub use kinematics::Kinematics;
 const KINEMATICS_TIME_STEP: f32 = 1.0 / 60.0;
 
 /// Maximum number of actors pushing and resting on dynamic cells in one tick
-const KINEMATICS_ACTOR_COUNT_MAXIMUM: usize = 32;
+pub(super) const KINEMATICS_ACTOR_COUNT_MAXIMUM: usize = 32;
 
 /// Largest number of passes resolving cells that move together, each doubling the longest chain
 const KINEMATICS_RESOLVE_COUNT: usize = 8;

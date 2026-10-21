@@ -4,6 +4,7 @@ pub mod cellular_tiles;
 pub mod chunks;
 pub mod collisions;
 pub mod edits;
+pub mod fluids;
 pub mod kinematics;
 mod scene;
 mod scene_error;
@@ -30,8 +31,15 @@ const SCENE_CHUNK_SAVE_ATTEMPT_COUNT_MAXIMUM: usize = 3;
 /// Maximum cellular tile streaming requests awaiting application to chunks
 const SCENE_CELLULAR_TILE_STREAMING_REQUEST_COUNT_MAXIMUM: usize = 4;
 
+/// Dormant fluid particles moved from chunks into the live pool per scene tick, in whole tiles
+/// unless a single tile holds more
+const SCENE_FLUID_IMPORT_COUNT_MAXIMUM_PER_TICK: usize = 4096;
+
 /// Downward acceleration of dynamic bodies and pawns in tiles per second squared
 const SCENE_GRAVITY_DEFAULT: f32 = 50.0;
+
+/// Default fraction of active-region cells available to fluid particles
+const SCENE_FLUID_CAPACITY_FACTOR_DEFAULT: f32 = 0.25;
 
 /// Name of the processor thread pool running chunk loads, generation, and saves
 const SCENE_CHUNK_THREAD_POOL_NAME: &str = "chunk_io";

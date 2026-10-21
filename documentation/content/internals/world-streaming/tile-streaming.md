@@ -77,3 +77,7 @@ The chunk region for departing tiles stays retained while their readback is in f
 `return_cellular_tiles` requests a readback of all resident tiles, then polls with `wait_indefinitely` while requests remain and applies ready responses; on success, the latest GPU tile data has reached chunks. For `Scene::drop` sequencing and failure behavior, see [resources and lifetimes](@/architecture/resources-and-lifetimes.md).
 
 See the [edit pipeline](@/internals/simulation/edit-pipeline.md) for how queued edits enter this lifecycle, and [chunk I/O scheduling](@/internals/world-streaming/chunk-io.md) for saving dirty chunks.
+
+## Fluid handoff
+
+Outgoing tile requests include a particle export buffer. Fluid compaction writes outgoing particles during simulation; streaming applies the mapped export to retained chunks before releasing the request. Pending imports or resident save snapshots can defer region movement. See [fluid simulation](@/internals/simulation/fluids.md).

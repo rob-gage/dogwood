@@ -1,7 +1,7 @@
 // Copyright Rob Gage 2026
 
 use super::{
-    kinematics_cellular_tile_pass::KinematicsCellularTilePass,
+    kinematics_pass::KinematicsPass,
     KINEMATICS_FIXED_MASS,
 };
 use crate::{
@@ -32,6 +32,7 @@ use crate::{
 };
 use engine_host::acceleration::Accelerator;
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 /// Distance in tiles beyond the active region within which actors still reach its cells
 const KINEMATICS_ACTOR_REGION_MARGIN: f64 = 4.0;
@@ -42,8 +43,10 @@ pub struct Kinematics {
     actor_positions: HashMap<Actor, ScenePosition>,
     /// Newest contact normals and depths of every actor, kept while readbacks are in flight
     cellular_contacts: HashMap<Actor, ([f32; 2], [f32; 2], f32)>,
-    /// GPU simulation of the dynamic cells of every active tile
-    cellular_tile_pass: KinematicsCellularTilePass,
+    /// Actor identities and collision settings aligned with the uploaded actor records
+    fluid_actors: Vec<(Actor, ActorCollisionComponent)>,
+    /// GPU simulation of dynamic cells and their fluid and body interactions
+    pass: KinematicsPass,
 }
 
 impl Kinematics {
@@ -55,18 +58,27 @@ impl Kinematics {
         cellular_tile_buffers: &CellularTileBuffers,
         material_table: &MaterialTable,
         collision_rigid_body_pass: &CollisionRigidBodyPass,
+        fluid_raster_buffer: &wgpu::Buffer,
     ) -> Self {
         Self {
             actor_positions: HashMap::new(),
             cellular_contacts: HashMap::new(),
-            cellular_tile_pass: KinematicsCellularTilePass::new(
+            fluid_actors: Vec::new(),
+            pass: KinematicsPass::new(
                 accelerator,
                 cellular_tile_buffers,
                 material_table,
                 collision_rigid_body_pass,
+                fluid_raster_buffer,
             ),
         }
     }
+
+    /// Returns the actor records shared with the fluid pass
+    pub(crate) fn actor_buffer(&self) -> &wgpu::Buffer { self.pass.actor_buffer() }
+
+    /// Returns actor identities and collision settings aligned with the shared GPU records
+    pub(crate) fn fluid_actors(&self) -> &[(Actor, ActorCollisionComponent)] { &self.fluid_actors }
 
     /// Simulates one tick of the active dynamic cells against every actor colliding with cellular
     /// tiles and every rigid body at its record index, returning each actor's velocity change in
@@ -82,10 +94,11 @@ impl Kinematics {
         region_origin: (i32, i32),
         gravity: f32,
         actor_registry: &ActorRegistry,
+        swimming_actors: &HashSet<Actor>,
         rigid_bodies: &[(u32, u64)],
     ) -> Result<(
         HashMap<Actor, ([f32; 2], [f32; 2], f32)>,
-        HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2])>,
+        HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2], [f32; 7])>,
     ), SceneError> {
         let region_position: ScenePosition = ScenePosition {
             tile_x: active_region.bottom_left.x,
@@ -97,7 +110,9 @@ impl Kinematics {
         let region_height: f64 = active_region.height() as f64;
         // place every nearby actor colliding with cellular tiles relative to the region, moving
         // by its change in position since the previous tick
-        let mut actors: Vec<(Actor, ColliderShape, [f32; 2], f32, [f32; 2], f32)> = Vec::new();
+        let mut actors: Vec<(Actor, ColliderShape, [f32; 2], f32, [f32; 2], f32, bool)> =
+            Vec::new();
+        let mut fluid_actors: Vec<(Actor, ActorCollisionComponent)> = Vec::new();
         let mut actor_positions: HashMap<Actor, ScenePosition> = HashMap::new();
         for (actor_identity, position) in actor_registry
             .components::<ActorIdentityComponent, ActorKinematicsPositionComponent>()
@@ -129,13 +144,17 @@ impl Kinematics {
                 collision.collider.rotation,
                 [velocity_x as f32, velocity_y as f32],
                 mass,
+                swimming_actors.contains(&actor),
             ));
+            fluid_actors.push((actor, collision.clone()));
         }
+        fluid_actors.truncate(super::KINEMATICS_ACTOR_COUNT_MAXIMUM);
+        self.fluid_actors = fluid_actors;
         self.actor_positions = actor_positions;
         let (contacts, rigid_body_contacts): (
             Option<HashMap<Actor, ([f32; 2], [f32; 2], f32)>>,
-            Option<HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2])>>,
-        ) = self.cellular_tile_pass.simulate_cellular_tiles(
+            Option<HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2], [f32; 7])>>,
+        ) = self.pass.simulate_cellular_tiles(
             accelerator,
             active_region,
             ring_offset,
@@ -144,7 +163,7 @@ impl Kinematics {
             &actors,
             rigid_bodies,
         )?;
-        let rigid_body_contacts: HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2])> =
+        let rigid_body_contacts: HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2], [f32; 7])> =
             rigid_body_contacts.unwrap_or_default();
         // velocity changes apply once, while normals and depths last until the next readback
         if let Some(contacts) = contacts {

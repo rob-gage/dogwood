@@ -5,7 +5,7 @@ weight = 40
 sort_by = "weight"
 template = "section.html"
 [extra]
-sources = ["engine_world/src/scenes/scene.rs", "engine_world/src/scenes/kinematics/kinematics.rs", "engine_world/src/scenes/kinematics/kinematics_cellular_tile_pass.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/collision_rigid_body_pass.rs"]
+sources = ["engine_world/src/scenes/scene.rs", "engine_world/src/scenes/kinematics/kinematics.rs", "engine_world/src/scenes/kinematics/kinematics_pass.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/collision_rigid_body_pass.rs"]
 +++
 
 This section is for engine contributors. It describes the two connected simulation systems that run over a scene's active region and the pages that cover each part.
@@ -44,3 +44,5 @@ GPU kinematics submits work without waiting for its contact readbacks, so collis
 - [Cell and body contact exchange](@/internals/simulation/contact-exchange.md) — contact record formats, readback timing, and how collision applies them.
 - [Edit pipeline](@/internals/simulation/edit-pipeline.md) — edit validation, coalescing, the GPU edit pass, and interaction with collision and streaming.
 - [Shaders and GPU data](@/internals/shaders/_index.md) documents the WGSL entry points and GPU record layouts.
+
+- [Fluid simulation](@/internals/simulation/fluids.md) — GPU particles, body coupling, edits, and persistence.

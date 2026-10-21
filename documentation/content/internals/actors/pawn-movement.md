@@ -3,7 +3,7 @@ title = "Pawn movement"
 description = "How pawn input, acceleration, jumping, gravity, and dynamic-cell contacts move kinematic actors."
 weight = 30
 [extra]
-sources = ["engine_world/src/scenes/collisions/collision.rs", "engine_world/src/actors/components/actor_pawn_movement.rs", "engine_world/src/actors/components/actor_pawn_control.rs", "engine/src/games/game_instance.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/kinematics/kinematics.rs", "engine_world/src/scenes/kinematics/kinematics_cellular_tile_pass.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/actors/components/actor_collision.rs", "engine_world/src/actors/components/actor_identity.rs", "engine_world/src/actors/components/actor_kinematics_position.rs"]
+sources = ["engine_world/src/scenes/collisions/collision.rs", "engine_world/src/actors/components/actor_pawn_movement.rs", "engine_world/src/actors/components/actor_pawn_control.rs", "engine/src/games/game_instance.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/kinematics/kinematics.rs", "engine_world/src/scenes/kinematics/kinematics_pass.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/actors/components/actor_collision.rs", "engine_world/src/actors/components/actor_identity.rs", "engine_world/src/actors/components/actor_kinematics_position.rs"]
 +++
 
 This page is for engine contributors. It describes the character controller that collision runs each fixed step for pawns: an actor with `ActorPawnMovementComponent` that moves under keyboard or game-written control.
@@ -73,3 +73,7 @@ The pawn first receives the velocity change, then loses any velocity directed in
 
 - Pawns start at zero velocity and ungrounded.
 - If gameplay changes an actor's position between steps, collision resets its stored velocity and grounded state.
+
+## Swimming
+
+Completed fluid actor samples provide immersion, current velocity, density, drag, and impulse. Collision uses separate enter and exit immersion thresholds to switch swimming state. Horizontal input and jump/crouch supply swim thrust; speed is limited relative to the sampled current. Buoyancy and material-sensitive drag use pawn density and drag tuning. Field units and defaults are on [actor components](@/external-api/actor-components.md#swimming-fields).

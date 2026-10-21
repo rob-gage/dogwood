@@ -13,13 +13,36 @@ pub struct ActorPawnMovementComponent {
     pub acceleration: f32,
     /// Upward speed at the start of a jump in tiles per second
     pub jump_speed: f32,
+    /// Maximum speed relative to the sampled fluid current, in tiles per second
+    pub swimming_maximum_speed: f32,
+    /// Swim thrust acceleration in tiles per second squared
+    pub swimming_acceleration: f32,
+    /// Pawn density in fluid mass per cell area; water defaults to 0.6
+    pub swimming_density: f32,
+    /// Pawn drag multiplier for material-sensitive fluid drag
+    pub swimming_drag: f32,
+    /// Immersion fraction at which walking changes to swimming
+    pub swimming_enter_immersion: f32,
+    /// Immersion fraction below which swimming changes to walking
+    pub swimming_exit_immersion: f32,
 }
 
 impl Default for ActorPawnMovementComponent {
 
     /// Creates platformer movement that jumps about three tiles under default gravity
     fn default() -> Self {
-        Self { speed: 10.0, crouching_speed: 4.0, acceleration: 80.0, jump_speed: 18.0 }
+        Self {
+            speed: 10.0,
+            crouching_speed: 4.0,
+            acceleration: 80.0,
+            jump_speed: 18.0,
+            swimming_maximum_speed: 3.5,
+            swimming_acceleration: 30.0,
+            swimming_density: 0.57,
+            swimming_drag: 4.0,
+            swimming_enter_immersion: 0.55,
+            swimming_exit_immersion: 0.35,
+        }
     }
 
 }

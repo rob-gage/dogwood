@@ -15,12 +15,18 @@ use crate::{
     scenes::{
         chunks::{
             ChunkCoordinates,
+            ChunkFluidParticle,
             ChunkRegion,
             ChunkRegionIndex,
             ChunkStreamingState,
         },
+        fluids::{
+            decode_exported_particle_records,
+            Fluids,
+        },
         SceneError,
         SCENE_CELLULAR_TILE_STREAMING_REQUEST_COUNT_MAXIMUM,
+        SCENE_FLUID_IMPORT_COUNT_MAXIMUM_PER_TICK,
     },
 };
 use engine_host::acceleration::Accelerator;
@@ -65,10 +71,14 @@ pub struct CellularTileStreamingState {
     streaming_requests: BTreeMap<u64, CellularTileStreamingRequest>,
     /// Next identifier assigned to a streaming request
     next_streaming_request_identifier: u64,
+    /// Bytes reserved for one fluid export readback associated with a tile request
+    fluid_particle_export_buffer_size: u64,
     /// Whether every active tile must be returned to its chunk before the chunks are saved
     is_save_requested: bool,
     /// Streaming request returning every active tile for a requested save
     save_streaming_request_identifier: Option<u64>,
+    /// Whether tile return completed while the resident particle snapshot is still pending
+    is_save_waiting_for_particles: bool,
     /// Sender for staging buffer mapping responses
     response_sender: Sender<CellularTileStreamingResponse>,
     /// Mapping responses incorporated during tile streaming
@@ -82,6 +92,7 @@ impl CellularTileStreamingState {
         cellular_tile_buffers: &CellularTileBuffers,
         chunk_streaming_state: &mut ChunkStreamingState,
         region: CellularTileRegion,
+        fluid_particle_export_buffer_size: u64,
     ) -> Result<Self, SceneError> {
         if region.width() == 0 || region.height() == 0 {
             return Err(SceneError::InvalidCellularTileRegion);
@@ -106,8 +117,10 @@ impl CellularTileStreamingState {
             requested_chunk_region_index: None,
             streaming_requests: BTreeMap::new(),
             next_streaming_request_identifier: 1,
+            fluid_particle_export_buffer_size,
             is_save_requested: false,
             save_streaming_request_identifier: None,
+            is_save_waiting_for_particles: false,
             response_sender,
             response_receiver,
         };
@@ -143,7 +156,9 @@ impl CellularTileStreamingState {
 
     /// Returns whether a requested save has not yet returned every active tile to its chunk
     pub fn is_cellular_tile_save_requested(&self) -> bool {
-        self.is_save_requested || self.save_streaming_request_identifier.is_some()
+        self.is_save_requested
+            || self.save_streaming_request_identifier.is_some()
+            || self.is_save_waiting_for_particles
     }
 
     /// Returns the resident active region, or `None` before the first request is resident
@@ -152,6 +167,31 @@ impl CellularTileStreamingState {
     /// Returns the physical ring column and row holding the active region's bottom-left tile
     pub fn cellular_tile_ring_offset(&self) -> (u32, u32)
     { (self.ring_offset_x, self.ring_offset_y) }
+
+    /// Returns the oldest unsent particle export target and its streaming request identifier
+    pub fn pending_fluid_particle_export_target(&self) -> Option<(u64, &wgpu::Buffer)> {
+        self.streaming_requests.iter().find_map(|(identifier, request)| {
+            (request.fluid_particle_buffer.is_some()
+                && !request.is_fluid_particle_export_submitted)
+                .then(|| (*identifier, request.fluid_particle_buffer.as_ref().unwrap()))
+        })
+    }
+
+    /// Marks the matching GPU export as submitted and requests its asynchronous mapping
+    pub fn mark_fluid_particle_export_submitted(
+        &mut self,
+        streaming_request_identifier: u64,
+    ) -> Result<(), SceneError> {
+        let Some(request) = self.streaming_requests.get_mut(&streaming_request_identifier)
+        else { return Err(SceneError::CellularTileStreamingRequestNotFound); };
+        request.is_fluid_particle_export_submitted = true;
+        Self::map_fluid_particle_streaming_request(
+            streaming_request_identifier,
+            request,
+            &self.response_sender,
+        );
+        Ok(())
+    }
 
     /// Returns the cellular tile buffer index of a resident active cellular tile
     pub fn cellular_tile_index(
@@ -185,10 +225,12 @@ impl CellularTileStreamingState {
                 cellular_tile_buffers,
                 coordinates,
                 None,
+                false,
             );
         }
         // wait until every response has been applied to its chunk
         while !self.streaming_requests.is_empty() {
+            self.complete_unsubmitted_fluid_particle_exports(accelerator);
             accelerator.device().poll(wgpu::PollType::wait_indefinitely())
                 .map_err(|_| SceneError::CellularTileStreamingPoll)?;
             self.stream_cellular_tiles_apply_responses(chunk_streaming_state)?;
@@ -210,6 +252,8 @@ impl CellularTileStreamingState {
         accelerator: &Accelerator,
         cellular_tile_buffers: &CellularTileBuffers,
         chunk_streaming_state: &mut ChunkStreamingState,
+        fluids: &mut Fluids,
+        is_particle_snapshot_pending: bool,
     ) -> Result<(), SceneError> {
         // incorporate mapped responses and return their chunks to normal streaming
         accelerator.device().poll(wgpu::PollType::Poll)
@@ -221,6 +265,14 @@ impl CellularTileStreamingState {
             && !self.streaming_requests.contains_key(&streaming_request_identifier)
         {
             self.save_streaming_request_identifier = None;
+            if is_particle_snapshot_pending {
+                self.is_save_waiting_for_particles = true;
+            } else {
+                chunk_streaming_state.save_chunks();
+            }
+        }
+        if self.is_save_waiting_for_particles && !is_particle_snapshot_pending {
+            self.is_save_waiting_for_particles = false;
             chunk_streaming_state.save_chunks();
         }
         // return every active tile for a requested save while keeping its chunks retained
@@ -234,6 +286,7 @@ impl CellularTileStreamingState {
                             cellular_tile_buffers,
                             active_region.cellular_tile_coordinates().collect(),
                             None,
+                            false,
                         ));
                 }
                 None => chunk_streaming_state.save_chunks(),
@@ -244,7 +297,25 @@ impl CellularTileStreamingState {
             accelerator,
             cellular_tile_buffers,
             chunk_streaming_state,
+            fluids,
         )?;
+        // retry dormant records in resident tiles after each region advance
+        if !is_particle_snapshot_pending && !self.is_cellular_tile_save_requested()
+            && let Some(active_region) = self.active_region
+        {
+            let import_count: usize = fluids.available_import_capacity()
+                .min(SCENE_FLUID_IMPORT_COUNT_MAXIMUM_PER_TICK);
+            if import_count > 0 {
+                let coordinates: Vec<CellularTileCoordinates> =
+                    active_region.cellular_tile_coordinates().collect();
+                let particles: Vec<(ChunkCoordinates, ChunkFluidParticle)> =
+                    chunk_streaming_state.take_fluid_particles_in_tiles(
+                        &coordinates,
+                        import_count,
+                    );
+                fluids.queue_chunk_particles(active_region, particles)?;
+            }
+        }
         response_result
     }
 
@@ -259,11 +330,23 @@ impl CellularTileStreamingState {
             let Some(streaming_request) =
                 self.streaming_requests.get_mut(&response.streaming_request_identifier)
             else { continue; };
-            streaming_request.is_response_requested = false;
-            match response.result {
-                Ok(()) => streaming_request.is_response_ready = true,
-                Err(error) => {
-                    first_error.get_or_insert(SceneError::CellularTileStreamingResponse { error });
+            if response.is_fluid_particle_response {
+                streaming_request.is_fluid_particle_response_requested = false;
+                match response.result {
+                    Ok(()) => streaming_request.is_fluid_particle_response_ready = true,
+                    Err(error) => {
+                        first_error.get_or_insert(SceneError::FluidParticleResponse { error });
+                    }
+                }
+            } else {
+                streaming_request.is_response_requested = false;
+                match response.result {
+                    Ok(()) => streaming_request.is_response_ready = true,
+                    Err(error) => {
+                        first_error.get_or_insert(SceneError::CellularTileStreamingResponse {
+                            error,
+                        });
+                    }
                 }
             }
         }
@@ -272,11 +355,21 @@ impl CellularTileStreamingState {
         let mut applied_streaming_request_identifiers: Vec<u64> = Vec::new();
         for (streaming_request_identifier, streaming_request) in &self.streaming_requests {
             if !streaming_request.is_response_ready
+                || (streaming_request.fluid_particle_buffer.is_some()
+                    && !streaming_request.is_fluid_particle_response_ready)
                 || !streaming_request.coordinates.iter().all(|coordinates| {
                     chunk_streaming_state.is_chunk_active(coordinates.chunk_coordinates())
                 })
             { break; }
             {
+                let fluid_particles: Vec<(
+                    ChunkCoordinates,
+                    ChunkFluidParticle,
+                )> = if let Some(buffer) = &streaming_request.fluid_particle_buffer {
+                    let mapped_bytes: wgpu::BufferView = buffer.get_mapped_range(..)
+                        .expect("mapped fluid particle streaming buffer should be readable");
+                    decode_exported_particle_records(&mapped_bytes)?
+                } else { Vec::new() };
                 let mapped_bytes: wgpu::BufferView = streaming_request.buffer
                     .get_mapped_range(..)
                     .expect("mapped cellular tile streaming buffer should be readable");
@@ -334,8 +427,12 @@ impl CellularTileStreamingState {
                         &kinematics,
                     );
                 }
+                if !fluid_particles.is_empty() {
+                    chunk_streaming_state.append_fluid_particles(fluid_particles)?;
+                }
             }
             streaming_request.buffer.unmap();
+            if let Some(buffer) = &streaming_request.fluid_particle_buffer { buffer.unmap(); }
             applied_streaming_request_identifiers.push(*streaming_request_identifier);
         }
         // release chunks that no longer receive outgoing GPU data
@@ -349,13 +446,23 @@ impl CellularTileStreamingState {
         }
         // request another mapping for staging buffers whose previous mapping failed
         for (streaming_request_identifier, streaming_request) in &mut self.streaming_requests {
-            if streaming_request.is_response_requested || streaming_request.is_response_ready
-            { continue; }
-            Self::map_cellular_tile_streaming_request(
-                *streaming_request_identifier,
-                streaming_request,
-                &self.response_sender,
-            );
+            if !streaming_request.is_response_requested && !streaming_request.is_response_ready {
+                Self::map_cellular_tile_streaming_request(
+                    *streaming_request_identifier,
+                    streaming_request,
+                    &self.response_sender,
+                );
+            }
+            if streaming_request.is_fluid_particle_export_submitted
+                && !streaming_request.is_fluid_particle_response_requested
+                && !streaming_request.is_fluid_particle_response_ready
+            {
+                Self::map_fluid_particle_streaming_request(
+                    *streaming_request_identifier,
+                    streaming_request,
+                    &self.response_sender,
+                );
+            }
         }
         match first_error {
             Some(error) => Err(error),
@@ -369,7 +476,15 @@ impl CellularTileStreamingState {
         accelerator: &Accelerator,
         cellular_tile_buffers: &CellularTileBuffers,
         chunk_streaming_state: &mut ChunkStreamingState,
+        fluids: &Fluids,
     ) -> Result<(), SceneError> {
+        // keep the requested ring stable while a full resident save is being returned
+        if self.is_save_requested
+            || self.save_streaming_request_identifier.is_some()
+            || self.is_save_waiting_for_particles
+        { return Ok(()); }
+        // queued local positions remain valid until every import is accepted or returned
+        if fluids.has_pending_particle_imports() { return Ok(()); }
         // release a pending incoming retention when the request returns to the resident region
         if self.active_region == Some(self.active_region_requested) {
             if let Some(chunk_region_index) = self.requested_chunk_region_index.take() {
@@ -390,6 +505,11 @@ impl CellularTileStreamingState {
         if self.active_region.is_some()
             && self.streaming_requests.len() >= SCENE_CELLULAR_TILE_STREAMING_REQUEST_COUNT_MAXIMUM
         { return Ok(()); }
+        // each shift must have one compaction pass before another request can own exports
+        if self.streaming_requests.values().any(|request| {
+            request.fluid_particle_buffer.is_some()
+                && !request.is_fluid_particle_export_submitted
+        }) { return Ok(()); }
         // re-entering tiles must wait until their earlier response reaches the chunk
         let is_streaming_request_pending_in_requested_region: bool = self.streaming_requests
             .values()
@@ -437,6 +557,7 @@ impl CellularTileStreamingState {
                     cellular_tile_buffers,
                     outgoing_coordinates,
                     chunk_region_index,
+                    true,
                 );
             }
             // shift the ring so overlapping tiles keep their physical slots
@@ -516,6 +637,7 @@ impl CellularTileStreamingState {
         cellular_tile_buffers: &CellularTileBuffers,
         coordinates: Vec<CellularTileCoordinates>,
         chunk_region_index: Option<ChunkRegionIndex>,
+        is_fluid_particle_export_required: bool,
     ) -> u64 {
         let buffer: wgpu::Buffer = accelerator.device().create_buffer(&wgpu::BufferDescriptor {
             label: Some("Scene cellular tile streaming request"),
@@ -523,6 +645,15 @@ impl CellularTileStreamingState {
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let fluid_particle_buffer: Option<wgpu::Buffer> =
+            is_fluid_particle_export_required.then(|| {
+                accelerator.device().create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("Scene fluid particle streaming request"),
+                    size: self.fluid_particle_export_buffer_size,
+                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                })
+            });
         // copy each tile's material identifiers, colors, then kinematics from its physical slot
         let mut command_encoder: wgpu::CommandEncoder = accelerator.device()
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -564,6 +695,10 @@ impl CellularTileStreamingState {
             CellularTileStreamingRequest {
                 coordinates,
                 buffer,
+                fluid_particle_buffer,
+                is_fluid_particle_export_submitted: false,
+                is_fluid_particle_response_requested: false,
+                is_fluid_particle_response_ready: false,
                 chunk_region_index,
                 is_response_requested: false,
                 is_response_ready: false,
@@ -591,10 +726,51 @@ impl CellularTileStreamingState {
             move |result: Result<(), wgpu::BufferAsyncError>| {
                 let _ = response_sender.send(CellularTileStreamingResponse {
                     streaming_request_identifier,
+                    is_fluid_particle_response: false,
                     result,
                 });
             },
         );
+    }
+
+    /// Maps one particle export after its compaction copy has been submitted
+    fn map_fluid_particle_streaming_request(
+        streaming_request_identifier: u64,
+        streaming_request: &mut CellularTileStreamingRequest,
+        response_sender: &Sender<CellularTileStreamingResponse>,
+    ) {
+        let Some(buffer) = streaming_request.fluid_particle_buffer.as_ref() else { return; };
+        let response_sender: Sender<CellularTileStreamingResponse> = response_sender.clone();
+        streaming_request.is_fluid_particle_response_requested = true;
+        buffer.map_async(
+            wgpu::MapMode::Read,
+            ..,
+            move |result: Result<(), wgpu::BufferAsyncError>| {
+                let _ = response_sender.send(CellularTileStreamingResponse {
+                    streaming_request_identifier,
+                    is_fluid_particle_response: true,
+                    result,
+                });
+            },
+        );
+    }
+
+    /// Completes unsent exports with an empty response before synchronous teardown
+    fn complete_unsubmitted_fluid_particle_exports(&mut self, accelerator: &Accelerator) {
+        for (streaming_request_identifier, streaming_request) in &mut self.streaming_requests {
+            if streaming_request.fluid_particle_buffer.is_none()
+                || streaming_request.is_fluid_particle_export_submitted
+                || streaming_request.is_fluid_particle_response_ready
+            { continue; }
+            let Some(buffer) = streaming_request.fluid_particle_buffer.as_ref() else { continue; };
+            accelerator.queue().write_buffer(buffer, 0, &[0; 4]);
+            streaming_request.is_fluid_particle_export_submitted = true;
+            Self::map_fluid_particle_streaming_request(
+                *streaming_request_identifier,
+                streaming_request,
+                &self.response_sender,
+            );
+        }
     }
 
 }

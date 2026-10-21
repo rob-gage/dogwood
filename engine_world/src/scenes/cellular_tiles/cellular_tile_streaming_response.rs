@@ -4,6 +4,8 @@
 pub struct CellularTileStreamingResponse {
     /// Identifier of the matching streaming request
     pub streaming_request_identifier: u64,
+    /// Whether this mapping is for exported fluid particles
+    pub is_fluid_particle_response: bool,
     /// Staging buffer mapping result
     pub result: Result<(), wgpu::BufferAsyncError>,
 }

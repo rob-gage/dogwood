@@ -72,3 +72,6 @@ Several runtime paths choose to turn errors into panics:
 
 An error may therefore be recoverable at a direct API boundary while the engine runtime chooses a fatal policy when it drives that API. The drop sequence is described in [saving and drop behavior](@/architecture/resources-and-lifetimes.md#saving-and-drop-behavior).
 
+## Fluid failures
+
+`SceneError` includes invalid or fixed fluid capacity, particle mapping/poll failures, invalid export sizes or records, inactive particle destination chunks, closed snapshot channels, and missing tile streaming request identifiers. Chunk particle validation reports capacity, material, position, and velocity errors. See [chunk format](@/internals/world-streaming/chunk-format.md). Scene drop panics if fluid particles cannot be returned to chunk storage.

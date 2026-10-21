@@ -3,7 +3,7 @@ title = "Core concepts"
 description = "Understand how games, scenes, cells, actors, and updates fit together in Dogwood."
 weight = 30
 [extra]
-sources = ["engine_world/src/scenes/mod.rs", "engine_world/src/scenes/scene_position.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/cellular_tiles/mod.rs", "engine_world/src/scenes/chunks/mod.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine_world/src/materials/material_table.rs", "engine_graphics/src/renders/scene_renderer_cellular.wgsl", "engine/src/games/game.rs", "engine/src/games/game_instance.rs", "engine_world/src/actors/actor.rs", "engine_world/src/actors/actor_registry.rs", "engine_world/src/actors/components", "engine_world/src/materials/material.rs", "engine_world/src/materials/material_registry.rs", "engine_world/src/scenes/kinematics/kinematics_cellular_tile_pass.rs", "engine/src/lib.rs", "engine_world/src/scenes/kinematics/kinematics_cellular_tile.wgsl", "engine/src/runtime/engine.rs"]
+sources = ["engine_world/src/scenes/mod.rs", "engine_world/src/scenes/scene_position.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/cellular_tiles/mod.rs", "engine_world/src/scenes/chunks/mod.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine_world/src/materials/material_table.rs", "engine_graphics/src/renders/scene_renderer_cellular.wgsl", "engine/src/games/game.rs", "engine/src/games/game_instance.rs", "engine_world/src/actors/actor.rs", "engine_world/src/actors/actor_registry.rs", "engine_world/src/actors/components", "engine_world/src/materials/material.rs", "engine_world/src/materials/material_registry.rs", "engine_world/src/scenes/kinematics/kinematics_pass.rs", "engine/src/lib.rs", "engine_world/src/scenes/kinematics/kinematics_cellular_tile.wgsl", "engine/src/runtime/engine.rs"]
 +++
 
 This page gives game programmers the short mental model of Dogwood: games, scenes, the cell grid, materials, actors, and the update loop. Each section links to the page that covers it in depth.
@@ -40,7 +40,7 @@ A **material** defines how a kind of cell behaves and looks. A game registers ma
 
 See [Defining materials](@/examples/materials-and-sprites.md) for setup.
 
-> **Limitation:** Fluid and gas forms can be registered, but the simulation has no update rules for them.
+> **Limitation:** Fluid materials use [GPU particle simulation](@/internals/simulation/fluids.md). Gas has no simulation rules; fluid particle rendering is not implemented.
 
 ### Actors and pawns
 

@@ -10,18 +10,30 @@ use crate::{
         CellularTileCoordinates,
         CELLULAR_TILE_SIZE,
     },
-    materials::MaterialIdentifier,
+    materials::{
+        MaterialForm,
+        MaterialIdentifier,
+    },
 };
-use std::io;
+use std::{
+    collections::{
+        BTreeMap,
+        BTreeSet,
+    },
+    io,
+};
 
 /// Magic bytes identifying persisted world chunks
 const CHUNK_FILE_HEADER: [u8; 8] = *b"DOGWOOD\0";
 
 /// Current sparse chunk file format version
-const CHUNK_FILE_VERSION: u16 = 5;
+const CHUNK_FILE_VERSION: u16 = 6;
 
 /// Bytes in one sparse cell entry holding its index, material identifier, color, and kinematics
 const CHUNK_FILE_CELL_BYTE_COUNT: usize = 20;
+
+/// Bytes in one persisted fluid particle record
+const CHUNK_FILE_FLUID_PARTICLE_BYTE_COUNT: usize = 20;
 
 /// Number of cells addressable by one chunk
 const CHUNK_CELL_COUNT: usize = (CHUNK_SIZE * CHUNK_SIZE) as usize;
@@ -37,6 +49,67 @@ pub struct Chunk {
     colors: Vec<u32>,
     /// Packed velocities and timing of dynamic cells in row-major cell order
     kinematics: Vec<u64>,
+    /// Sparse fluid particles stored relative to this chunk's origin
+    fluid_particles: Vec<ChunkFluidParticle>,
+}
+
+/// Exact bit representation of one persisted fluid particle
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct ChunkFluidParticle {
+    /// IEEE-754 position bits relative to the chunk origin, in cells
+    position_bits: [u32; 2],
+    /// IEEE-754 velocity bits, in cells per tick
+    velocity_bits: [u32; 2],
+    /// Fluid material identifier
+    material_identifier: MaterialIdentifier,
+}
+
+impl ChunkFluidParticle {
+
+    /// Creates a particle record while preserving the exact floating-point bits
+    pub fn new(
+        position: [f32; 2],
+        velocity: [f32; 2],
+        material_identifier: MaterialIdentifier,
+    ) -> Result<Self, ChunkError> {
+        let particle: Self = Self {
+            position_bits: [position[0].to_bits(), position[1].to_bits()],
+            velocity_bits: [velocity[0].to_bits(), velocity[1].to_bits()],
+            material_identifier,
+        };
+        particle.validate()?;
+        Ok(particle)
+    }
+
+    /// Returns the particle position relative to the chunk origin, in cells
+    pub fn position(self) -> [f32; 2] {
+        [f32::from_bits(self.position_bits[0]), f32::from_bits(self.position_bits[1])]
+    }
+
+    /// Returns the particle velocity, in cells per tick
+    pub fn velocity(self) -> [f32; 2] {
+        [f32::from_bits(self.velocity_bits[0]), f32::from_bits(self.velocity_bits[1])]
+    }
+
+    /// Returns the fluid material identifier
+    pub fn material_identifier(self) -> MaterialIdentifier { self.material_identifier }
+
+    /// Checks that a persisted particle fits its chunk and uses a fluid material
+    fn validate(self) -> Result<(), ChunkError> {
+        let position: [f32; 2] = self.position();
+        let velocity: [f32; 2] = self.velocity();
+        if position.iter().any(|value| {
+            !value.is_finite() || *value < 0.0 || *value >= CHUNK_SIZE as f32
+        }) { return Err(ChunkError::FluidParticlePositionInvalid); }
+        if velocity.iter().any(|value| !value.is_finite()) {
+            return Err(ChunkError::FluidParticleVelocityInvalid);
+        }
+        if self.material_identifier == MaterialIdentifier::EMPTY
+            || self.material_identifier.form() != MaterialForm::Fluid
+        { return Err(ChunkError::FluidParticleMaterialInvalid); }
+        Ok(())
+    }
+
 }
 
 impl Chunk {
@@ -48,6 +121,7 @@ impl Chunk {
             material_identifiers: vec![MaterialIdentifier::EMPTY; CHUNK_CELL_COUNT],
             colors: vec![0; CHUNK_CELL_COUNT],
             kinematics: vec![0; CHUNK_CELL_COUNT],
+            fluid_particles: Vec::new(),
         }
     }
 
@@ -56,6 +130,7 @@ impl Chunk {
         self.material_identifiers.fill(material_identifier);
         self.colors.fill(color);
         self.kinematics.fill(0);
+        self.fluid_particles.clear();
     }
 
     /// Reads a versioned sparse chunk from a reader
@@ -84,6 +159,29 @@ impl Chunk {
         if stored_cell_count > CHUNK_CELL_COUNT { return Err(ChunkError::CellCapacityExceeded); }
         let mut encoded_cells: Vec<u8> = vec![0; stored_cell_count * CHUNK_FILE_CELL_BYTE_COUNT];
         r.read_exact(&mut encoded_cells).map_err(|error| {
+            if error.kind() == io::ErrorKind::UnexpectedEof {
+                ChunkError::InvalidLength
+            } else {
+                ChunkError::Io(error)
+            }
+        })?;
+        let mut particle_count_bytes: [u8; 4] = [0; 4];
+        r.read_exact(&mut particle_count_bytes).map_err(|error| {
+            if error.kind() == io::ErrorKind::UnexpectedEof {
+                ChunkError::InvalidLength
+            } else {
+                ChunkError::Io(error)
+            }
+        })?;
+        let particle_count: usize = u32::from_le_bytes(particle_count_bytes) as usize;
+        if particle_count > CHUNK_CELL_COUNT {
+            return Err(ChunkError::FluidParticleCapacityExceeded);
+        }
+        let mut encoded_particles: Vec<u8> = vec![
+            0;
+            particle_count * CHUNK_FILE_FLUID_PARTICLE_BYTE_COUNT
+        ];
+        r.read_exact(&mut encoded_particles).map_err(|error| {
             if error.kind() == io::ErrorKind::UnexpectedEof {
                 ChunkError::InvalidLength
             } else {
@@ -141,6 +239,25 @@ impl Chunk {
             chunk.colors[cell_index as usize] = color;
             chunk.kinematics[cell_index as usize] = kinematics;
         }
+        for encoded_particle in encoded_particles.chunks_exact(
+            CHUNK_FILE_FLUID_PARTICLE_BYTE_COUNT,
+        ) {
+            let read_u32 = |offset: usize| -> u32 {
+                u32::from_le_bytes([
+                    encoded_particle[offset],
+                    encoded_particle[offset + 1],
+                    encoded_particle[offset + 2],
+                    encoded_particle[offset + 3],
+                ])
+            };
+            let particle: ChunkFluidParticle = ChunkFluidParticle {
+                position_bits: [read_u32(0), read_u32(4)],
+                velocity_bits: [read_u32(8), read_u32(12)],
+                material_identifier: MaterialIdentifier::from_u32(read_u32(16)),
+            };
+            particle.validate()?;
+            chunk.fluid_particles.push(particle);
+        }
         Ok(chunk)
     }
 
@@ -172,7 +289,104 @@ impl Chunk {
             encoded_cells.extend_from_slice(&color.to_le_bytes());
             encoded_cells.extend_from_slice(&kinematics.to_le_bytes());
         }
-        w.write_all(&encoded_cells).map_err(ChunkError::Io)
+        w.write_all(&encoded_cells).map_err(ChunkError::Io)?;
+        let particle_count: u32 = self.fluid_particles.len().try_into()
+            .map_err(|_| ChunkError::FluidParticleCapacityExceeded)?;
+        if self.fluid_particles.len() > CHUNK_CELL_COUNT {
+            return Err(ChunkError::FluidParticleCapacityExceeded);
+        }
+        w.write_all(&particle_count.to_le_bytes()).map_err(ChunkError::Io)?;
+        let mut encoded_particles: Vec<u8> = Vec::with_capacity(
+            self.fluid_particles.len() * CHUNK_FILE_FLUID_PARTICLE_BYTE_COUNT,
+        );
+        for particle in &self.fluid_particles {
+            particle.validate()?;
+            for value in particle.position_bits
+                .into_iter()
+                .chain(particle.velocity_bits)
+                .chain([particle.material_identifier.as_u32()])
+            {
+                encoded_particles.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        w.write_all(&encoded_particles).map_err(ChunkError::Io)
+    }
+
+    /// Returns the sparse fluid particles stored in this chunk
+    pub fn fluid_particles(&self) -> &[ChunkFluidParticle] { &self.fluid_particles }
+
+    /// Replaces the sparse fluid particle list after validating its records
+    pub fn set_fluid_particles(
+        &mut self,
+        fluid_particles: Vec<ChunkFluidParticle>,
+    ) -> Result<(), ChunkError> {
+        if fluid_particles.len() > CHUNK_CELL_COUNT {
+            return Err(ChunkError::FluidParticleCapacityExceeded);
+        }
+        for particle in &fluid_particles { particle.validate()?; }
+        self.fluid_particles = fluid_particles;
+        Ok(())
+    }
+
+    /// Removes one matching copy of each supplied particle record
+    pub(crate) fn remove_fluid_particle_records(
+        &mut self,
+        fluid_particles: &[ChunkFluidParticle],
+    ) {
+        for fluid_particle in fluid_particles {
+            if let Some(index) = self.fluid_particles.iter().position(|stored| {
+                stored == fluid_particle
+            }) {
+                self.fluid_particles.remove(index);
+            }
+        }
+    }
+
+    /// Removes particles whose cells lie in selected tiles, taking whole tiles up to a bounded
+    /// count unless one tile alone exceeds it
+    pub(crate) fn take_fluid_particles_in_tiles(
+        &mut self,
+        coordinates: &[CellularTileCoordinates],
+        maximum: usize,
+    ) -> Vec<ChunkFluidParticle> {
+        let chunk_tile_origin_x: i64 = i64::from(self.coordinates.x)
+            * (CHUNK_SIZE / CELLULAR_TILE_SIZE);
+        let chunk_tile_origin_y: i64 = i64::from(self.coordinates.y)
+            * (CHUNK_SIZE / CELLULAR_TILE_SIZE);
+        let tile = |particle: &ChunkFluidParticle| -> (i64, i64) {
+            let position: [f32; 2] = particle.position();
+            (
+                chunk_tile_origin_x + (position[0].floor() as i64).div_euclid(CELLULAR_TILE_SIZE),
+                chunk_tile_origin_y + (position[1].floor() as i64).div_euclid(CELLULAR_TILE_SIZE),
+            )
+        };
+        let mut tile_counts: BTreeMap<(i64, i64), usize> = BTreeMap::new();
+        for particle in &self.fluid_particles {
+            let (tile_x, tile_y): (i64, i64) = tile(particle);
+            if coordinates.iter().any(|tile| tile.x == tile_x && tile.y == tile_y) {
+                *tile_counts.entry((tile_x, tile_y)).or_default() += 1;
+            }
+        }
+        // take whole tiles, so records sharing a cell enter in one batch and never reject each
+        // other
+        let mut selected_tiles: BTreeSet<(i64, i64)> = BTreeSet::new();
+        let mut selected_count: usize = 0;
+        for (tile_coordinates, count) in tile_counts {
+            if selected_count > 0 && selected_count + count > maximum { break; }
+            selected_tiles.insert(tile_coordinates);
+            selected_count += count;
+        }
+        let mut selected: Vec<ChunkFluidParticle> = Vec::with_capacity(selected_count);
+        let mut retained: Vec<ChunkFluidParticle> = Vec::with_capacity(self.fluid_particles.len());
+        for particle in self.fluid_particles.drain(..) {
+            if selected_tiles.contains(&tile(&particle)) {
+                selected.push(particle);
+            } else {
+                retained.push(particle);
+            }
+        }
+        self.fluid_particles = retained;
+        selected
     }
 
     /// Returns the material identifiers of one cellular tile within this chunk

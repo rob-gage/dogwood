@@ -92,3 +92,9 @@ Tile and cell coordinate conversion, including negative coordinates, is covered 
 See the linked rustdoc for variant payloads.
 
 {{ <rustdoc path="engine/scenes/struct.Scene.html" text="Scene" /> }} · {{ <rustdoc path="engine/scenes/enum.SceneError.html" text="SceneError" /> }} · {{ <rustdoc path="engine/scenes/trait.SceneGenerator.html" text="SceneGenerator" /> }} · {{ <rustdoc path="engine/scenes/struct.ScenePosition.html" text="ScenePosition" /> }}
+
+## Fluid capacity
+
+`fluid_capacity_factor()` returns the configured pool fraction. `set_fluid_capacity_factor(factor)` accepts finite values in `(0, 1]` before the first stream creates the pool; otherwise it returns `InvalidFluidCapacityFactor` or `FluidCapacityFixed`. The default is `0.25`, and capacity is `floor(factor * active-region cell count)`.
+
+Simulation runs cellular kinematics, collision, then fluid particles. Saving includes resident particle snapshots; see [fluid simulation](@/internals/simulation/fluids.md).

@@ -89,3 +89,5 @@ clip = 2 * camera_relative_position * pixels_per_tile / vec2(viewport_width, vie
 ```
 
 The `clip` expression is the sprite vertex shader's mapping.
+
+- **Fluid particle:** a separately stored fluid sample with floating-point position and velocity; it is not a cellular material slot. See [fluid simulation](@/internals/simulation/fluids.md).

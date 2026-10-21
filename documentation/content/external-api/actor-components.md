@@ -28,7 +28,7 @@ See [actors](@/external-api/actors.md) for registry operations and [collisions a
 | `ActorCollisionComponent` | `body: CollisionBody`; `collider: Collider`; `memberships`, `filter: u32`; `mass: f32` | None | Read by collision and dynamic-cell kinematics. `mass` uses dynamic cellular material mass units; it decides how far dynamic cells push the actor and how much they slow it. |
 | `ActorContactComponent` | `collider: Collider`; `memberships`, `filter: u32` | None | Sensor collider configuration; see [collision setup](@/examples/collision-setup.md). |
 | `ActorPawnControlComponent` | `movement: f32`; `is_jumping`, `is_crouching: bool` | `0.0`, `false`, `false` | Control intent for pawn movement. `movement` runs from -1 (left) to 1 (right). |
-| `ActorPawnMovementComponent` | `speed`, `crouching_speed`, `acceleration`, `jump_speed: f32` | `10.0`, `4.0`, `80.0`, `18.0` | Pawn tuning in tiles per second (speeds) and tiles per second squared (`acceleration`). Acceleration must be nonnegative. The engine does not validate it; a negative value causes the pawn update to panic. |
+| `ActorPawnMovementComponent` | `speed`, `crouching_speed`, `acceleration`, `jump_speed: f32`; swimming fields below | `10.0`, `4.0`, `80.0`, `18.0` | Pawn tuning in tiles per second (speeds) and tiles per second squared (`acceleration`). Acceleration must be nonnegative. The engine does not validate it; a negative value causes the pawn update to panic. |
 | `ActorPawnPossessionComponent` | Empty marker | Empty | Marks the pawn that receives keyboard intent. |
 | `ActorPersistenceComponent` | Empty marker | Empty | Keeps the actor from being despawned on region exit. |
 | `ActorSpritesComponent` | `sprites`: vector of sprite tuples | Empty vector | Read by scene graphics; see the tuple key below. |
@@ -40,7 +40,7 @@ See [actors](@/external-api/actors.md) for registry operations and [collisions a
 
 ### Control and possession
 
-- `is_jumping` triggers one jump per press while the pawn is grounded.
+- While walking, `is_jumping` triggers one jump per press while the pawn is grounded. While swimming, jump and crouch control upward and downward thrust.
 - `is_crouching` selects `crouching_speed` instead of `speed`.
 - Before each `Game::update`, the game instance writes the same keyboard intent to every actor with `ActorPawnPossessionComponent`; game code can override it during the update.
 - See [pawn movement mechanics](@/internals/actors/pawn-movement.md) for the full movement rules.
@@ -75,3 +75,7 @@ Each `sprites` entry is `(Arc<SpriteSheet>, u32, f32, f32, f32, f32, f32, [f32; 
 {{ <rustdoc path="engine/actors/components/struct.ActorCameraComponent.html" text="ActorCameraComponent" /> }} ·
 {{ <rustdoc path="engine/actors/components/struct.ActorCollisionComponent.html" text="ActorCollisionComponent" /> }} ·
 {{ <rustdoc path="engine/actors/components/struct.ActorSpritesComponent.html" text="ActorSpritesComponent" /> }}
+
+## Swimming fields
+
+`ActorPawnMovementComponent` also defines `swimming_maximum_speed` (default `3.5` tiles/s), `swimming_acceleration` (`30.0` tiles/s²), `swimming_density` (`0.57` mass/cell area), `swimming_drag` (`4.0`), `swimming_enter_immersion` (`0.55`), and `swimming_exit_immersion` (`0.35`). See [pawn movement](@/internals/actors/pawn-movement.md#swimming).

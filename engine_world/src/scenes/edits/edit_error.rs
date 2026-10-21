@@ -23,6 +23,6 @@ pub enum EditError {
         /// Identifier of the unsupported material
         material_identifier: MaterialIdentifier,
     },
-    /// The edit would exceed the cellular tiles requested before the next stream
+    /// The edit would exceed a segment, queued tile, or fluid-particle capacity
     CapacityReached,
 }

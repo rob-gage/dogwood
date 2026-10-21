@@ -62,3 +62,5 @@ On `RedrawRequested`, `GameInstance::render` draws the scene (or clears to black
 Timeouts and occluded surfaces skip a frame. Outdated or lost surfaces are reconfigured before retrying presentation. See [window surfaces](@/internals/runtime/surfaces.md) and [scene rendering](@/internals/rendering/scene-renderer.md).
 
 For the scene-internal order of edit application, streaming, and simulation, see [scene update pipeline](@/architecture/scene-pipeline.md). The public lifecycle hooks are {{ <rustdoc path="engine/games/trait.Game.html" text="Game" /> }} and {{ <rustdoc path="engine/runtime/struct.Engine.html" text="Engine" /> }}.
+
+Within each scene simulation, cellular kinematics precedes collision, and fluid particles run afterward. See [scene pipeline](@/architecture/scene-pipeline.md#fluid-step).

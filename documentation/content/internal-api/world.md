@@ -32,7 +32,7 @@ Scene
 │   ├── CollisionCellularTilePass
 │   └── CollisionRigidBodyPass
 └── Option<Kinematics>            first Scene::simulate with active region
-    └── KinematicsCellularTilePass
+    └── KinematicsPass
 ```
 
 The pass objects are owned by their parent systems:

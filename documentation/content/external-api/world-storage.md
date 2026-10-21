@@ -71,3 +71,5 @@ Tile access uses absolute `CellularTileCoordinates` and returns `Result`:
 {{ <rustdoc path="engine/scenes/cellular_tiles/constant.CELLULAR_TILE_AWAKE.html" text="CELLULAR_TILE_AWAKE" /> }} (`0b11`) is the awake buffer value for a tile whose dynamic cells and neighbors must be simulated. It belongs to the streaming implementation; see the [glossary](@/architecture/glossary.md).
 
 {{ <rustdoc path="engine/scenes/chunks/struct.Chunk.html" text="Chunk" /> }} · {{ <rustdoc path="engine/scenes/chunks/struct.ChunkData.html" text="ChunkData" /> }} · {{ <rustdoc path="engine/scenes/chunks/enum.ChunkError.html" text="ChunkError" /> }}
+
+`ChunkFluidParticle` stores a fluid identifier and exact position/velocity bits. `Chunk::fluid_particles` and `set_fluid_particles` expose dormant particles; see [chunk format](@/internals/world-streaming/chunk-format.md#fluid-particle-section).

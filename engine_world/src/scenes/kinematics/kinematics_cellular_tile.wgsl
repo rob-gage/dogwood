@@ -172,8 +172,9 @@ const CONTACT_STRIDE: u32 = 8u;
 
 /// Number of `f32` accumulated per rigid body: impulse, angular impulse, then for each side of
 /// its center of mass along its own x axis, the count, summed normals, and summed arms of the
-/// dynamic cells holding it back, and padding
-const RIGID_BODY_CONTACT_STRIDE: u32 = 16u;
+/// dynamic cells holding it back, then the count of its fluid contact faces, then its wet faces'
+/// fluid mass, momentum, and moments
+const RIGID_BODY_CONTACT_STRIDE: u32 = 21u;
 
 /// Speed in cells per tick below which a rigid body pushes covered cells away from its center
 const RIGID_BODY_RESTING_SPEED: f32 = 0.01;
@@ -473,6 +474,7 @@ fn collect(@builtin(global_invocation_id) invocation: vec3<u32>) {
         let bounds: vec4<f32> = actors[actor_index].bounds;
         if all(bounds.xy <= maximum) && all(bounds.zw >= minimum) { is_active = true; }
     }
+    if !is_active && tile_has_fluid_interaction(tile) { is_active = true; }
     // neighbors only read the awake and disturbed flags, which this store keeps
     let index: u32 = tile_index(vec2<u32>(tile));
     let flags: u32 = atomicLoad(&awake[index]) & (TILE_AWAKE | TILE_DISTURBED);
@@ -563,7 +565,6 @@ fn integrate(
             let target_cell: vec2<i32> = cell + direction_offset(direction);
             if is_cell_active(target_cell)
                 && material_identifiers[cell_index(target_cell)] == 0u
-                && rigid_body_cells[cell_index(target_cell)] == 0u
                 && covering_actor(vec2<f32>(target_cell) + 0.5) == uniforms.actor_count
             {
                 escape = direction;
@@ -655,6 +656,50 @@ fn integrate(
         }
     } else {
         cell_kinematics.velocity.y -= gravity;
+    }
+    if !is_covered {
+        let fluid: vec4<f32> = sample_neighboring_fluid(cell);
+        if fluid.x > 0.0 {
+            let buoyancy: f32 = gravity * fluid.x * fluid.y / mass;
+            cell_kinematics.velocity.y += buoyancy;
+            // each wet face exchanges a contact impulse with the fluid cell across it
+            let offsets: array<vec2<i32>, 4> = array<vec2<i32>, 4>(
+                vec2<i32>(-1, 0),
+                vec2<i32>(1, 0),
+                vec2<i32>(0, -1),
+                vec2<i32>(0, 1),
+            );
+            let restitution: f32 = material.z;
+            for (var neighbor_index: u32 = 0u; neighbor_index < 4u; neighbor_index++) {
+                let neighbor: vec2<i32> = cell + offsets[neighbor_index];
+                if !is_cell_inside(neighbor) { continue; }
+                let fluid_index: u32 = cell_index(neighbor);
+                if material_identifiers[fluid_index] != 0u
+                    || rigid_body_cells[fluid_index] != 0u
+                { continue; }
+                let neighbor_fluid: vec3<f32> = fluid_raster_cell(fluid_index);
+                if neighbor_fluid.x <= 0.0 { continue; }
+                let fluid_inverse_mass: f32 =
+                    fluid_contact_face_count(neighbor) / neighbor_fluid.x;
+                let contact_material: vec2<f32> = fluid_raster_contact_material(fluid_index);
+                let face_impulse: vec2<f32> = fluid_face_impulse(
+                    neighbor_fluid.yz,
+                    cell_kinematics.velocity,
+                    -vec2<f32>(offsets[neighbor_index]),
+                    fluid_inverse_mass,
+                    1.0 / mass,
+                    min(friction, contact_material.x),
+                    min(restitution, contact_material.y),
+                );
+                cell_kinematics.velocity += face_impulse / mass;
+                add_fluid_contact_velocity(fluid_index, -face_impulse * fluid_inverse_mass);
+            }
+            if length(cell_kinematics.velocity) >= RESTING_SPEED
+                || length(fluid.zw) >= FLUID_CURRENT_WAKE_SPEED
+            {
+                cell_kinematics.flags = cell_kinematics.flags & ~CELL_RESTING;
+            }
+        }
     }
     cell_kinematics.velocity =
         clamp(cell_kinematics.velocity, vec2<f32>(-SPEED_MAXIMUM), vec2<f32>(SPEED_MAXIMUM));

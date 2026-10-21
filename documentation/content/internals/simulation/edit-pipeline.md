@@ -18,7 +18,8 @@ An `Edit` groups a bit mask, material identifiers, and packed colors by cellular
 | Queued tile entries exceed 4096 before the next stream | Whole request rejected |
 | Tile outside the resident active region | Whole request rejected |
 | Unregistered material | Whole request rejected |
-| Fluid or gas material | Whole request rejected |
+| Gas material | Whole request rejected |
+| Fluid material | Queues particle spawns; the cellular write clears the selected cell |
 
 The first 4096 limit bounds one `fill_segment` call's candidates; the second bounds the queue between streams. Empty cells are allowed. `ScenePosition` uses integer coordinates and fixed-point offsets, so a segment's relative displacement is always finite.
 
@@ -49,3 +50,5 @@ When streaming produces a non-empty merged edit, an existing collision state req
 If rigid-body tiles are present, the next collision update waits for GPU readback before removing changed cells and splitting bodies; without them, it returns immediately. See [cellular rigid bodies](@/internals/simulation/rigid-bodies.md#edits-and-splitting) for the detachment conditions and split behavior.
 
 Scene streaming writes queued edits before it moves the tile ring, so validated target tiles remain resident for the GPU write. Before a requested region change moves tiles, rigid bodies that leave that region are rasterized back into active cells. On scene drop, pending edits are streamed first, then active tiles are returned to chunk storage for saving; see [tile streaming](@/internals/world-streaming/tile-streaming.md).
+
+Fluid edits also queue particle erasures and spawns for the next fluid simulation. Capacity reservations can reject an edit with `CapacityReached`; see [fluid simulation](@/internals/simulation/fluids.md).

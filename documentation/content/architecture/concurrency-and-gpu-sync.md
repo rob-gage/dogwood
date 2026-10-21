@@ -60,3 +60,7 @@ The synchronization strategy depends on the operation:
 ## Locks and ownership
 
 A failed map is re-requested, but the mapping error also propagates from `Scene::stream`; the native `GameInstance::update` path converts that error to a panic. Streaming and kinematics state is owned through exclusive scene borrows and receives completions through channels, so no locks guard it. For subsystem details, see [tile streaming](@/internals/world-streaming/tile-streaming.md), [kinematics](@/internals/simulation/cellular-kinematics.md), and [collision world](@/internals/simulation/collision-world.md).
+
+## Fluid readbacks
+
+Fluid live counts, actor feedback, import status, and resident save snapshots use asynchronous maps. Streaming retains chunks until particle exports or snapshots are applied. Scene teardown waits for outstanding imports and reads live particles synchronously. See [fluid simulation](@/internals/simulation/fluids.md).

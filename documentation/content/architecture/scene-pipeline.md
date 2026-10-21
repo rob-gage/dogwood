@@ -3,7 +3,7 @@ title = "Scene update pipeline"
 description = "The ordered streaming and simulation stages performed by a scene update."
 weight = 20
 [extra]
-sources = ["engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/kinematics/kinematics.rs", "engine_world/src/scenes/kinematics/kinematics_cellular_tile_pass.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/collision_cellular_tile_pass.rs", "engine_world/src/scenes/collisions/collision_rigid_body.wgsl"]
+sources = ["engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/kinematics/kinematics.rs", "engine_world/src/scenes/kinematics/kinematics_pass.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/collision_cellular_tile_pass.rs", "engine_world/src/scenes/collisions/collision_rigid_body.wgsl"]
 +++
 
 This page lists the ordered work inside `Scene::stream` and `Scene::simulate`, and why the order matters. It is for contributors changing scene, streaming, or collision code.
@@ -22,6 +22,7 @@ scene.simulate(accelerator)
   if an active region exists:
     GPU cellular kinematics + read available prior contacts
     CPU/Rapier collision and actor/cell updates (may read GPU occupancy)
+    GPU fluid particle simulation and streaming exports
 ```
 
 ## Streaming order
@@ -77,3 +78,7 @@ Collision uses Rapier for actor and rigid-body motion, applies cell changes, and
 See [cellular kinematics](@/internals/simulation/cellular-kinematics.md), [collision world](@/internals/simulation/collision-world.md), [static cell colliders](@/internals/simulation/static-cell-colliders.md), and [contact exchange](@/internals/simulation/contact-exchange.md).
 
 The separate graphics call consumes the resulting active tile buffers and actor sprites; rendering is not part of `Scene::simulate`. See [data flow](@/architecture/data-flow.md) and [scene renderer](@/internals/rendering/scene-renderer.md).
+
+## Fluid step
+
+After cellular kinematics, the scene polls earlier fluid actor feedback and runs collision. It then runs fluid simulation against the shared actor and rigid-body records, and marks any outgoing particle export submitted. See [fluid simulation](@/internals/simulation/fluids.md) for streaming and save handoffs.

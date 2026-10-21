@@ -12,7 +12,7 @@ Host types are the GPU, CPU, input, and window primitives under the engine. This
 
 `Accelerator` owns a WGPU instance, adapter, device, and queue. Its `instance()`, `adapter()`, `device()`, and `queue()` accessors return shared references.
 
-`Accelerator::default()` requests a high-performance adapter without a compatible surface and requests 16 storage buffers per shader stage. It panics if backend, adapter, or device initialization fails.
+`Accelerator::default()` requests a high-performance adapter without a compatible surface and requests 20 storage buffers per shader stage. It panics if backend, adapter, or device initialization fails.
 
 `AcceleratorError` variants:
 

@@ -51,6 +51,10 @@ use crate::{
         },
         SceneError,
         ScenePosition,
+        fluids::{
+            FLUID_TIME_STEP,
+            FluidActorContact,
+        },
     },
 };
 use engine_host::acceleration::Accelerator;
@@ -60,6 +64,9 @@ use std::collections::{
     HashMap,
     HashSet,
 };
+
+/// Fraction of a rigid body's wet-face fluid mass that drags it toward the current each tick
+const RIGID_BODY_FLUID_CURRENT_COUPLING: f32 = 1.0;
 
 /// Rapier simulation of a scene's actors and rigid bodies against the solid cells of its active
 /// cellular tiles
@@ -91,7 +98,7 @@ pub struct Collision {
         Option<(rapier2d::geometry::ColliderHandle, ActorContactComponent)>,
         ScenePosition,
         rapier2d::math::Vector,
-        Option<(rapier2d::math::Vector, bool, bool)>,
+        Option<(rapier2d::math::Vector, bool, bool, bool)>,
     )>,
     /// Character controller moving every pawn against the colliders it collides with
     pawn_movement_controller: rapier2d::control::KinematicCharacterController,
@@ -206,9 +213,10 @@ impl Collision {
 
     /// Synchronizes the active cellular tiles, rigid bodies, and actors, then advances one fixed
     /// step, moving pawns by the velocity change, contact normal, and contact depth in tiles of the
-    /// dynamic cells touching them, pushing rigid bodies by the impulses and holding cells of the
-    /// dynamic cells touching them, and rasterizing the rigid bodies where they moved
-    pub fn simulate_collisions(
+    /// dynamic cells touching them and by the fluid they are immersed in, pushing rigid bodies by
+    /// the impulses and holding cells of the dynamic cells touching them and the fluid currents
+    /// around them, and rasterizing the rigid bodies where they moved
+    pub(crate) fn simulate_collisions(
         &mut self,
         accelerator: &Accelerator,
         active_region: CellularTileRegion,
@@ -216,7 +224,8 @@ impl Collision {
         gravity: f32,
         actor_registry: &mut ActorRegistry,
         cellular_contacts: &HashMap<Actor, ([f32; 2], [f32; 2], f32)>,
-        rigid_body_contacts: &HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2])>,
+        rigid_body_contacts: &HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2], [f32; 7])>,
+        fluid_actor_contacts: &HashMap<Actor, FluidActorContact>,
         material_table: &MaterialTable,
     ) -> Result<(), SceneError> {
         // static occupancies only need a readback when streaming moves the ring or edits write cells
@@ -282,8 +291,9 @@ impl Collision {
         }
         // rigid bodies that left the active region stay behind as static cells
         self.release_rigid_bodies(accelerator, active_region, ring_offset, active_region);
-        // impulses apply once, while holding cells last until newer contacts arrive
-        for (rigid_body, (impulse, angular_impulse, holding)) in rigid_body_contacts {
+        // impulses apply once, while holding cells and fluid damping last until newer contacts
+        // arrive
+        for (rigid_body, (impulse, angular_impulse, holding, fluid_current)) in rigid_body_contacts {
             let Some(collision_rigid_body) = self.collision_rigid_bodies.get_mut(rigid_body)
             else { continue; };
             collision_rigid_body.holding = holding.map(|holding| (holding[0] > 0.0).then(|| {
@@ -297,12 +307,40 @@ impl Collision {
                 rigid_body.apply_impulse(rapier2d::math::Vector::new(impulse[0], impulse[1]), true);
                 rigid_body.apply_torque_impulse(*angular_impulse, true);
             }
+            // relax toward the wet faces' current with this body's newest velocity, exactly
+            // through an exponential, so a late sample of the current cannot overshoot
+            let fluid_mass: f32 = fluid_current[0];
+            if fluid_mass > 0.0 {
+                let mass: f32 = rigid_body.mass().max(f32::EPSILON);
+                let velocity: rapier2d::math::Vector = rigid_body.linvel();
+                let current: rapier2d::math::Vector =
+                    rapier2d::math::Vector::new(fluid_current[1], fluid_current[2]) / fluid_mass;
+                let linear_fraction: f32 =
+                    1.0 - (-RIGID_BODY_FLUID_CURRENT_COUPLING * fluid_mass / mass).exp();
+                rigid_body.apply_impulse((current - velocity) * (mass * linear_fraction), true);
+                // the faces' spin about the center, less what the body's own motion explains
+                let arm_moment: f32 = fluid_current[4];
+                let inertia: f32 = rigid_body.mass_properties().local_mprops.principal_inertia();
+                if arm_moment > 0.0 && inertia > 0.0 {
+                    let arm_sum: rapier2d::math::Vector =
+                        rapier2d::math::Vector::new(fluid_current[5], fluid_current[6]);
+                    let current_spin: f32 = (fluid_current[3]
+                        - (arm_sum.x * velocity.y - arm_sum.y * velocity.x)) / arm_moment;
+                    let angular_fraction: f32 =
+                        1.0 - (-RIGID_BODY_FLUID_CURRENT_COUPLING * arm_moment / inertia).exp();
+                    rigid_body.apply_torque_impulse(
+                        (current_spin - rigid_body.angvel()) * inertia * angular_fraction,
+                        true,
+                    );
+                }
+            }
         }
         self.simulate_collisions_step_actors(
             active_region,
             gravity,
             actor_registry,
             cellular_contacts,
+            fluid_actor_contacts,
         )?;
         self.simulate_collisions_rasterize_rigid_bodies(accelerator, active_region, ring_offset);
         Ok(())
@@ -578,6 +616,7 @@ impl Collision {
         gravity: f32,
         actor_registry: &mut ActorRegistry,
         cellular_contacts: &HashMap<Actor, ([f32; 2], [f32; 2], f32)>,
+        fluid_actor_contacts: &HashMap<Actor, FluidActorContact>,
     ) -> Result<(), SceneError> {
         let region_minimum: rapier2d::math::Vector = rapier2d::math::Vector::new(
             (active_region.bottom_left.x - self.origin.x) as f32,
@@ -648,6 +687,9 @@ impl Collision {
                 contact,
                 pawn_movement.is_some(),
             );
+            if let Some(fluid_contact) = fluid_actor_contacts.get(&actor) {
+                self.simulate_collisions_apply_fluid_actor_contact(actor, *fluid_contact, gravity);
+            }
         }
         // remove the bodies of actors that despawned, exited, or lost both colliders
         let removed_actors: Vec<Actor> = self.actors.keys()
@@ -672,7 +714,12 @@ impl Collision {
             actor_registry.despawn(actor)
                 .map_err(|error: ActorError| SceneError::ActorDespawn { error })?;
         }
-        self.simulate_collisions_move_pawns(&pawns, gravity, cellular_contacts);
+        self.simulate_collisions_move_pawns(
+            &pawns,
+            gravity,
+            cellular_contacts,
+            fluid_actor_contacts,
+        );
         self.simulate_collisions_hold_rigid_bodies(gravity);
         self.physics_pipeline.step(
             rapier2d::math::Vector::new(0.0, -gravity),
@@ -709,13 +756,52 @@ impl Collision {
         Ok(())
     }
 
-    /// Moves every pawn by its controlled velocity, gravity, and dynamic cell contacts with the
-    /// character controller
+    /// Applies fluid impulses and buoyancy to dynamic actors using the latest asynchronous sample
+    fn simulate_collisions_apply_fluid_actor_contact(
+        &mut self,
+        actor: Actor,
+        contact: FluidActorContact,
+        gravity: f32,
+    ) {
+        let Some((rigid_body_handle, Some((_, collision)), _, _, _, _)) = self.actors.get(&actor)
+        else { return; };
+        if collision.body != CollisionBody::Dynamic { return; }
+        let area_in_cells: f32 = Self::simulate_collisions_actor_area_in_cells(&collision.collider);
+        let actor_density: f32 = collision.mass / area_in_cells;
+        let buoyancy_ratio: f32 = contact.immersion * contact.fluid_density / actor_density;
+        let cells_per_tick_to_tiles_per_second: f32 =
+            1.0 / (CELLULAR_TILE_SIZE as f32 * FLUID_TIME_STEP);
+        let impulse: rapier2d::math::Vector = rapier2d::math::Vector::new(
+            contact.impulse[0] * cells_per_tick_to_tiles_per_second,
+            contact.impulse[1] * cells_per_tick_to_tiles_per_second
+                + collision.mass * gravity * buoyancy_ratio * self.integration_parameters.dt,
+        );
+        if let Some(rigid_body) = self.rigid_bodies.get_mut(*rigid_body_handle) {
+            rigid_body.apply_impulse(impulse, true);
+        }
+    }
+
+    /// Returns the collider's area in fluid cells, using one tile as eight cells
+    fn simulate_collisions_actor_area_in_cells(collider: &Collider) -> f32 {
+        let tile_area: f32 = match collider.shape {
+            ColliderShape::Circle { radius } => std::f32::consts::PI * radius * radius,
+            ColliderShape::Rectangle { width, height } => width * height,
+            ColliderShape::Capsule { width, height } => {
+                width * (height - width)
+                    + std::f32::consts::PI * (width * 0.5) * (width * 0.5)
+            }
+        };
+        (CELLULAR_TILE_SIZE * CELLULAR_TILE_SIZE) as f32 * tile_area
+    }
+
+    /// Moves every pawn by its controlled velocity, gravity, fluid sample, and dynamic cell
+    /// contacts with the character controller
     fn simulate_collisions_move_pawns(
         &mut self,
         pawns: &[(Actor, ActorPawnMovementComponent, ActorPawnControlComponent)],
         gravity: f32,
         cellular_contacts: &HashMap<Actor, ([f32; 2], [f32; 2], f32)>,
+        fluid_actor_contacts: &HashMap<Actor, FluidActorContact>,
     ) {
         let time_step: f32 = self.integration_parameters.dt;
         let maximum_slope_cosine: f32 = self.pawn_movement_controller.max_slope_climb_angle.cos();
@@ -727,36 +813,102 @@ impl Collision {
             let cellular_normal: rapier2d::math::Vector =
                 rapier2d::math::Vector::new(cellular_normal[0], cellular_normal[1]);
             let is_cellular_grounded: bool = cellular_normal.y >= maximum_slope_cosine;
-            let Some((rigid_body_handle, Some((collider_handle, _)), _, _, _, Some(pawn))) =
-                self.actors.get_mut(actor)
+            let fluid_contact: FluidActorContact =
+                fluid_actor_contacts.get(actor).copied().unwrap_or_default();
+            let Some((
+                rigid_body_handle,
+                Some((collider_handle, _)),
+                _,
+                _,
+                _,
+                Some(pawn),
+            )) = self.actors.get_mut(actor)
             else { continue; };
-            let (velocity, is_grounded, is_jump_held): &mut (rapier2d::math::Vector, bool, bool) =
-                pawn;
+            let (velocity, is_grounded, is_jump_held, is_swimming): &mut (
+                rapier2d::math::Vector,
+                bool,
+                bool,
+                bool,
+            ) = pawn;
             *velocity += rapier2d::math::Vector::new(velocity_change[0], velocity_change[1]);
             let is_standing: bool = *is_grounded || is_cellular_grounded;
+            let immersion: f32 = fluid_contact.immersion.clamp(0.0, 1.0);
+            let swimming_enter_immersion: f32 =
+                pawn_movement.swimming_enter_immersion.clamp(0.0, 1.0);
+            let swimming_exit_immersion: f32 = pawn_movement.swimming_exit_immersion
+                .clamp(0.0, swimming_enter_immersion);
+            *is_swimming = if *is_swimming {
+                immersion >= swimming_exit_immersion
+            } else {
+                immersion >= swimming_enter_immersion
+            };
             let (Some(rigid_body), Some(collider)) = (
                 self.rigid_bodies.get(*rigid_body_handle),
                 self.colliders.get(*collider_handle),
             ) else { continue; };
-            // approach the controlled speed, jumping once per press while grounded
-            let speed: f32 = if pawn_control.is_crouching {
-                pawn_movement.crouching_speed
-            } else {
-                pawn_movement.speed
-            };
-            let target_velocity_x: f32 = pawn_control.movement.clamp(-1.0, 1.0) * speed;
             let velocity_change: f32 = pawn_movement.acceleration * time_step;
-            velocity.x += (target_velocity_x - velocity.x).clamp(-velocity_change, velocity_change);
-            if pawn_control.is_jumping && !*is_jump_held && is_standing {
-                velocity.y = pawn_movement.jump_speed;
+            if *is_swimming {
+                let cells_per_tick_to_tiles_per_second: f32 =
+                    1.0 / (CELLULAR_TILE_SIZE as f32 * FLUID_TIME_STEP);
+                let fluid_velocity: rapier2d::math::Vector = rapier2d::math::Vector::new(
+                    fluid_contact.fluid_velocity[0] * cells_per_tick_to_tiles_per_second,
+                    fluid_contact.fluid_velocity[1] * cells_per_tick_to_tiles_per_second,
+                );
+                let buoyancy_ratio: f32 = immersion * fluid_contact.fluid_density
+                    / pawn_movement.swimming_density.max(0.000001);
+                velocity.y -= gravity * (1.0 - buoyancy_ratio) * time_step;
+                let drag: f32 = (-fluid_contact.fluid_drag.max(0.0)
+                    * pawn_movement.swimming_drag.max(0.0)
+                    * immersion
+                    * time_step).exp();
+                let mut relative_velocity: rapier2d::math::Vector =
+                    (*velocity - fluid_velocity) * drag;
+                let vertical_control: f32 = if pawn_control.is_jumping {
+                    1.0
+                } else if pawn_control.is_crouching {
+                    -1.0
+                } else { 0.0 };
+                let mut thrust: rapier2d::math::Vector = rapier2d::math::Vector::new(
+                    pawn_control.movement.clamp(-1.0, 1.0),
+                    vertical_control,
+                );
+                if thrust.length_squared() > 1.0 { thrust = thrust.normalize(); }
+                relative_velocity += thrust
+                    * pawn_movement.swimming_acceleration.max(0.0)
+                    * time_step;
+                let speed: f32 = relative_velocity.length();
+                let maximum_speed: f32 = pawn_movement.swimming_maximum_speed.max(0.0);
+                if speed > maximum_speed && speed > 0.0 {
+                    relative_velocity *= maximum_speed / speed;
+                }
+                *velocity = fluid_velocity + relative_velocity;
+                // the sampled water includes what the pawn itself shoves aside, so its world speed
+                // stays within the faster of its stroke and the current
+                let world_maximum_speed: f32 = maximum_speed.max(fluid_velocity.length());
+                let world_speed: f32 = velocity.length();
+                if world_speed > world_maximum_speed && world_speed > 0.0 {
+                    *velocity *= world_maximum_speed / world_speed;
+                }
+            } else {
+                // walking retains its platform speed and edge-triggered grounded jump
+                let speed: f32 = if pawn_control.is_crouching {
+                    pawn_movement.crouching_speed
+                } else {
+                    pawn_movement.speed
+                };
+                let target_velocity_x: f32 = pawn_control.movement.clamp(-1.0, 1.0) * speed;
+                velocity.x += (target_velocity_x - velocity.x)
+                    .clamp(-velocity_change, velocity_change);
+                if pawn_control.is_jumping && !*is_jump_held && is_standing {
+                    velocity.y = pawn_movement.jump_speed;
+                }
+                if is_standing && velocity.y <= 0.0 {
+                    velocity.y = 0.0;
+                } else {
+                    velocity.y -= gravity * time_step;
+                }
             }
             *is_jump_held = pawn_control.is_jumping;
-            // grounded pawns rest on the ground instead of pressing into it
-            if is_standing && velocity.y <= 0.0 {
-                velocity.y = 0.0;
-            } else {
-                velocity.y -= gravity * time_step;
-            }
             let cellular_approach_speed: f32 = velocity.dot(cellular_normal);
             if cellular_approach_speed < 0.0 {
                 *velocity -= cellular_normal * cellular_approach_speed;
@@ -892,6 +1044,15 @@ impl Collision {
 
     /// Returns the GPU rasterization of rigid body cells
     pub fn rigid_body_pass(&self) -> &CollisionRigidBodyPass { &self.rigid_body_pass }
+
+    /// Returns actors whose prior collision step selected swimming movement
+    pub(crate) fn swimming_actors(&self) -> HashSet<Actor> {
+        self.actors.iter()
+            .filter_map(|(actor, (_, _, _, _, _, pawn))| {
+                pawn.as_ref().and_then(|(_, _, _, swimming)| (*swimming).then_some(*actor))
+            })
+            .collect()
+    }
 
     /// Detaches every rigid body cell an edit replaced from its body, waiting for the GPU, then
     /// splits the bodies it divides
@@ -1559,7 +1720,9 @@ impl Collision {
         else { return; };
         // pawns start at rest and ungrounded
         match (is_pawn, pawn.is_some()) {
-            (true, false) => *pawn = Some((rapier2d::math::Vector::ZERO, false, false)),
+            (true, false) => {
+                *pawn = Some((rapier2d::math::Vector::ZERO, false, false, false));
+            }
             (false, true) => *pawn = None,
             _ => {}
         }
@@ -1571,9 +1734,10 @@ impl Collision {
             if *actor_position != position {
                 *actor_position = position;
                 *actor_translation = translation;
-                if let Some((velocity, is_grounded, _)) = pawn {
+                if let Some((velocity, is_grounded, _, is_swimming)) = pawn {
                     *velocity = rapier2d::math::Vector::ZERO;
                     *is_grounded = false;
+                    *is_swimming = false;
                 }
                 if rigid_body.is_kinematic() {
                     rigid_body.set_next_kinematic_translation(translation);
@@ -1611,6 +1775,7 @@ impl Collision {
                     collision.memberships,
                     collision.filter,
                     false,
+                    (collision.body == CollisionBody::Dynamic).then_some(collision.mass),
                 );
             if let Some((_, actor_collision, _, _, _, _)) = self.actors.get_mut(&actor) {
                 *actor_collision = Some((collider_handle, collision));
@@ -1624,6 +1789,7 @@ impl Collision {
                     contact.memberships,
                     contact.filter,
                     true,
+                    None,
                 );
             if let Some((_, _, actor_contact, _, _, _)) = self.actors.get_mut(&actor) {
                 *actor_contact = Some((collider_handle, contact));
@@ -1639,6 +1805,7 @@ impl Collision {
         memberships: u32,
         filter: u32,
         is_sensor: bool,
+        mass: Option<f32>,
     ) -> rapier2d::geometry::ColliderHandle {
         // contact sensors sense every body type, including fixed and kinematic ones
         let active_collision_types: rapier2d::geometry::ActiveCollisionTypes = if is_sensor {
@@ -1646,8 +1813,10 @@ impl Collision {
         } else {
             rapier2d::geometry::ActiveCollisionTypes::default()
         };
-        let rapier_collider: rapier2d::geometry::Collider =
-            rapier2d::geometry::ColliderBuilder::new(Self::rapier_shape(collider))
+        let mut builder: rapier2d::geometry::ColliderBuilder =
+            rapier2d::geometry::ColliderBuilder::new(Self::rapier_shape(collider));
+        if let Some(mass) = mass { builder = builder.mass(mass); }
+        let rapier_collider: rapier2d::geometry::Collider = builder
                 .position(rapier2d::math::Pose::new(
                     rapier2d::math::Vector::new(collider.offset_x, collider.offset_y),
                     collider.rotation,

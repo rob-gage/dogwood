@@ -8,6 +8,7 @@ use super::{
     ChunkCoordinates,
     ChunkData,
     ChunkError,
+    ChunkFluidParticle,
     ChunkRegion,
     ChunkRegionIndex,
     CHUNK_SIZE,
@@ -79,6 +80,8 @@ pub struct ChunkStreamingState {
     is_save_requested: bool,
     /// Save request identifiers of copies of active chunks that remain resident while saved
     copy_save_streaming_request_identifiers: HashMap<ChunkCoordinates, u64>,
+    /// Particle records copied into active chunks by the most recent resident save
+    fluid_particle_snapshots: HashMap<ChunkCoordinates, Vec<ChunkFluidParticle>>,
     /// Sender for nonblocking load and save responses
     response_sender: Sender<ChunkStreamingResponse>,
     /// Responses incorporated during scene advancement
@@ -113,6 +116,7 @@ impl ChunkStreamingState {
             retained_chunk_regions: BTreeMap::new(),
             is_save_requested: false,
             copy_save_streaming_request_identifiers: HashMap::new(),
+            fluid_particle_snapshots: HashMap::new(),
             next_streaming_request_identifier: 1,
             next_chunk_region_identifier: 1,
             pending_chunk_request_count: 0,
@@ -267,6 +271,116 @@ impl ChunkStreamingState {
         { return false; }
         *is_dirty = true;
         true
+    }
+
+    /// Removes and returns dormant particles whose cells belong to selected tiles
+    pub fn take_fluid_particles_in_tiles(
+        &mut self,
+        coordinates: &[CellularTileCoordinates],
+        maximum: usize,
+    ) -> Vec<(ChunkCoordinates, ChunkFluidParticle)> {
+        let mut particles: Vec<(ChunkCoordinates, ChunkFluidParticle)> = Vec::new();
+        let mut chunk_tiles: BTreeMap<ChunkCoordinates, Vec<CellularTileCoordinates>> =
+            BTreeMap::new();
+        for tile_coordinates in coordinates {
+            chunk_tiles.entry(tile_coordinates.chunk_coordinates())
+                .or_default().push(*tile_coordinates);
+        }
+        for (chunk_coordinates, tile_coordinates) in chunk_tiles {
+            if particles.len() >= maximum { break; }
+            let Some(ChunkResident::Active { chunk, is_dirty }) =
+                self.chunks.get_mut(&chunk_coordinates)
+            else { continue; };
+            // remove a prior resident save copy before treating chunk records as dormant
+            let had_snapshot: bool = self.fluid_particle_snapshots
+                .contains_key(&chunk_coordinates);
+            if let Some(snapshot) = self.fluid_particle_snapshots.remove(&chunk_coordinates) {
+                chunk.remove_fluid_particle_records(&snapshot);
+            }
+            if had_snapshot { *is_dirty = true; }
+            let selected: Vec<ChunkFluidParticle> = chunk.take_fluid_particles_in_tiles(
+                &tile_coordinates,
+                maximum.saturating_sub(particles.len()),
+            );
+            if !selected.is_empty() { *is_dirty = true; }
+            particles.extend(selected.into_iter().map(|particle| (chunk_coordinates, particle)));
+        }
+        particles
+    }
+
+    /// Appends exported particles to their owning active chunks in request order
+    pub fn append_fluid_particles(
+        &mut self,
+        particles: Vec<(ChunkCoordinates, ChunkFluidParticle)>,
+    ) -> Result<(), SceneError> {
+        let mut grouped_particles: BTreeMap<ChunkCoordinates, Vec<ChunkFluidParticle>> =
+            BTreeMap::new();
+        for (coordinates, particle) in particles {
+            grouped_particles.entry(coordinates).or_default().push(particle);
+        }
+        // validate every destination before changing any chunk
+        if let Some(coordinates) = grouped_particles.keys()
+            .find(|coordinates| !self.is_chunk_active(**coordinates))
+        {
+            return Err(SceneError::FluidParticleStreamingResponseChunkInactive {
+                coordinates: *coordinates,
+            });
+        }
+        for (coordinates, particles) in grouped_particles {
+            let Some(ChunkResident::Active { chunk, is_dirty }) = self.chunks.get_mut(&coordinates)
+            else { continue; };
+            if let Some(snapshot) = self.fluid_particle_snapshots.remove(&coordinates) {
+                chunk.remove_fluid_particle_records(&snapshot);
+            }
+            let mut chunk_particles: Vec<ChunkFluidParticle> = chunk.fluid_particles().to_vec();
+            chunk_particles.extend(particles);
+            chunk.set_fluid_particles(chunk_particles)
+                .map_err(|_| SceneError::FluidParticleStreamingRecordInvalid)?;
+            *is_dirty = true;
+        }
+        Ok(())
+    }
+
+    /// Copies resident particles into their chunks while retaining the live GPU particles
+    pub fn replace_resident_fluid_particle_snapshot(
+        &mut self,
+        chunk_coordinates: &[ChunkCoordinates],
+        particles: Vec<(ChunkCoordinates, ChunkFluidParticle)>,
+    ) -> Result<(), SceneError> {
+        let mut grouped_particles: BTreeMap<ChunkCoordinates, Vec<ChunkFluidParticle>> =
+            BTreeMap::new();
+        for (coordinates, particle) in particles {
+            grouped_particles.entry(coordinates).or_default().push(particle);
+        }
+        // check residency before replacing any saved copies
+        if let Some(coordinates) = chunk_coordinates.iter()
+            .chain(grouped_particles.keys())
+            .find(|coordinates| !self.is_chunk_active(**coordinates))
+        {
+            return Err(SceneError::FluidParticleStreamingResponseChunkInactive {
+                coordinates: *coordinates,
+            });
+        }
+        for coordinates in chunk_coordinates {
+            let Some(ChunkResident::Active { chunk, is_dirty }) = self.chunks.get_mut(coordinates)
+            else { continue; };
+            let previous_particles: Vec<ChunkFluidParticle> = chunk.fluid_particles().to_vec();
+            if let Some(snapshot) = self.fluid_particle_snapshots.remove(coordinates) {
+                chunk.remove_fluid_particle_records(&snapshot);
+            }
+            let snapshot: Vec<ChunkFluidParticle> =
+                grouped_particles.remove(coordinates).unwrap_or_default();
+            let mut chunk_particles: Vec<ChunkFluidParticle> = chunk.fluid_particles().to_vec();
+            chunk_particles.extend(snapshot.iter().copied());
+            chunk.set_fluid_particles(chunk_particles)
+                .map_err(|_| SceneError::FluidParticleStreamingRecordInvalid)?;
+            if chunk.fluid_particles() != previous_particles { *is_dirty = true; }
+            self.fluid_particle_snapshots.insert(*coordinates, snapshot);
+        }
+        if !grouped_particles.is_empty() {
+            return Err(SceneError::FluidParticleStreamingRecordInvalid);
+        }
+        Ok(())
     }
 
     /// Retries a failed save or a failed load that remains inside a requested region

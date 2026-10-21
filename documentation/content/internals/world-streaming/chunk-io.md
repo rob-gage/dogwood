@@ -68,3 +68,5 @@ Dropping `ChunkStreamingState` first waits for outstanding normal and copy saves
 Drop then synchronously saves every remaining dirty chunk, trying each at most three times. If any final save fails, drop panics. Scene shutdown first returns GPU tile contents to CPU chunks; the transfer path is described in [tile streaming](@/internals/world-streaming/tile-streaming.md).
 
 Chunk bytes and atomic file replacement are documented in [chunk storage format](@/internals/world-streaming/chunk-format.md).
+
+Chunks also own dormant fluid particles. Imports remove selected whole-tile groups from CPU storage, and GPU-rejected imports are returned. Resident snapshots replace saved particle copies while avoiding dormant import duplicates. See [fluid simulation](@/internals/simulation/fluids.md).

@@ -13,6 +13,14 @@ pub enum ChunkError {
     CellIndexIsDuplicate,
     /// Cells with an empty material identifier and no color must not be stored in sparse chunks
     CellIsEmpty,
+    /// The serialized chunk contains more fluid particles than its cell capacity
+    FluidParticleCapacityExceeded,
+    /// A persisted fluid particle has a non-fluid or empty material identifier
+    FluidParticleMaterialInvalid,
+    /// A persisted fluid particle position is nonfinite or outside the chunk
+    FluidParticlePositionInvalid,
+    /// A persisted fluid particle velocity is nonfinite
+    FluidParticleVelocityInvalid,
     /// The serialized chunk coordinates do not match the requested coordinates
     CoordinateMismatch,
     /// The chunk file could not be read or written

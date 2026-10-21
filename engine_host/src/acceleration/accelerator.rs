@@ -47,12 +47,11 @@ impl Accelerator {
             })
             .await
             .map_err(AcceleratorError::RequestAdapter)?;
-        // dynamic cell kinematics binds more storage buffers than the default eight, a limit
-        // every supported desktop and integrated GPU exceeds
+        // the fluid particle bind group contains twenty storage buffers per compute stage
         let (device, queue): (wgpu::Device, wgpu::Queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 required_limits: wgpu::Limits {
-                    max_storage_buffers_per_shader_stage: 16,
+                    max_storage_buffers_per_shader_stage: 20,
                     ..wgpu::Limits::default()
                 },
                 ..wgpu::DeviceDescriptor::default()

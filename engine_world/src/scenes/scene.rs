@@ -9,7 +9,10 @@ use super::{
         CELLULAR_TILE_SIZE,
     },
     chunks::{
+        ChunkCoordinates,
         ChunkData,
+        ChunkFluidParticle,
+        ChunkRegionIndex,
         ChunkStreamingState,
     },
     collisions::Collision,
@@ -18,18 +21,25 @@ use super::{
         EditError,
         EditStreamingState,
     },
+    fluids::{
+        FluidActorContact,
+        Fluids,
+    },
     kinematics::Kinematics,
     scene_error::SceneError,
     scene_generator::SceneGenerator,
     scene_position::ScenePosition,
     SCENE_CHUNK_THREAD_POOL_NAME,
+    SCENE_FLUID_CAPACITY_FACTOR_DEFAULT,
     SCENE_GRAVITY_DEFAULT,
 };
 use crate::{
     actors::{
         components::{
             ActorCameraComponent,
+            ActorCollisionComponent,
             ActorKinematicsPositionComponent,
+            ActorPawnControlComponent,
             ActorSpritesComponent,
         },
         Actor,
@@ -48,7 +58,11 @@ use engine_host::{
     processors::Processor,
 };
 use std::{
-    collections::HashMap,
+    collections::{
+        BTreeSet,
+        HashMap,
+        HashSet,
+    },
     sync::Arc,
 };
 
@@ -66,10 +80,20 @@ pub struct Scene {
     collision: Option<Collision>,
     /// GPU simulation of the active dynamic cells against actors, absent until simulated
     kinematics: Option<Kinematics>,
+    /// GPU PBF simulation and fixed-capacity particle pool, absent until the tile ring is created
+    fluids: Option<Fluids>,
     /// Requested edits awaiting their write into the GPU-resident cellular tiles
     edit_streaming_state: EditStreamingState,
+    /// Whether the next stream advance must start a resident particle save snapshot
+    is_fluid_save_requested: bool,
+    /// Chunk retention protecting a particle snapshot until it reaches chunk storage
+    fluid_snapshot_chunk_region_index: Option<ChunkRegionIndex>,
+    /// Tile region whose live particles are held by the pending snapshot
+    fluid_snapshot_region: Option<CellularTileRegion>,
     /// Downward acceleration of dynamic bodies and pawns in tiles per second squared
     gravity: f32,
+    /// Fraction of active-region cells available to fluid particles
+    fluid_capacity_factor: f32,
     /// ECS world and fixed-tick systems of every live actor
     actor_registry: ActorRegistry,
     /// Materials of every cell in this scene, shared with chunk generation to color new cells
@@ -96,8 +120,13 @@ impl Scene {
             cellular_tile_streaming_state: None,
             collision: None,
             kinematics: None,
+            fluids: None,
             edit_streaming_state: EditStreamingState::new(),
+            is_fluid_save_requested: false,
+            fluid_snapshot_chunk_region_index: None,
+            fluid_snapshot_region: None,
             gravity: SCENE_GRAVITY_DEFAULT,
+            fluid_capacity_factor: SCENE_FLUID_CAPACITY_FACTOR_DEFAULT,
             actor_registry: ActorRegistry::new(),
             material_table: Arc::new(material_table),
             generator,
@@ -111,6 +140,19 @@ impl Scene {
     /// Sets the downward acceleration of dynamic bodies and pawns in tiles per second squared
     pub fn set_gravity(&mut self, gravity: f32) { self.gravity = gravity; }
 
+    /// Sets capacity to `floor(factor * active-region cell count)` particles before the pool exists
+    pub fn set_fluid_capacity_factor(&mut self, factor: f32) -> Result<(), SceneError> {
+        if self.fluids.is_some() { return Err(SceneError::FluidCapacityFixed); }
+        if !factor.is_finite() || !(0.0..=1.0).contains(&factor) || factor == 0.0 {
+            return Err(SceneError::InvalidFluidCapacityFactor);
+        }
+        self.fluid_capacity_factor = factor;
+        Ok(())
+    }
+
+    /// Returns the configured fraction of active-region cells available to fluid particles
+    pub fn fluid_capacity_factor(&self) -> f32 { self.fluid_capacity_factor }
+
     /// Returns the compiled materials of this scene
     pub fn material_table(&self) -> &MaterialTable { &self.material_table }
 
@@ -119,16 +161,34 @@ impl Scene {
         self.cellular_tile_streaming_state.as_ref()?.active_cellular_tile_region()
     }
 
+    /// Returns the unique chunks overlapped by a tile region in row-major order
+    fn chunk_coordinates_in_region(
+        region: CellularTileRegion,
+    ) -> Vec<ChunkCoordinates> {
+        let mut coordinates: BTreeSet<ChunkCoordinates> = BTreeSet::new();
+        for tile in region.cellular_tile_coordinates() {
+            coordinates.insert(tile.chunk_coordinates());
+        }
+        coordinates.into_iter().collect()
+    }
+
     /// Requests an edit of resident cells, written before the next stream moves resident tiles
     pub fn edit(&mut self, edit: Edit) -> Result<(), EditError> {
         let active_region: Option<CellularTileRegion> = self.active_cellular_tile_region();
-        self.edit_streaming_state.request_edit(edit, &self.material_table, active_region)
+        if self.fluids.as_ref().is_some_and(|fluids| !fluids.can_queue_edit(&edit)) {
+            return Err(EditError::CapacityReached);
+        }
+        let queued_edit: Edit = edit.clone();
+        self.edit_streaming_state.request_edit(edit, &self.material_table, active_region)?;
+        if let Some(fluids) = self.fluids.as_mut() { fluids.queue_edit(&queued_edit); }
+        Ok(())
     }
 
     /// Requests that every edit be saved without unloading the resident tiles
     pub fn save(&mut self) {
         if let Some(cellular_tile_streaming_state) = self.cellular_tile_streaming_state.as_mut() {
             cellular_tile_streaming_state.save_cellular_tiles();
+            if self.fluids.is_some() { self.is_fluid_save_requested = true; }
         } else if let Some(chunk_streaming_state) = self.chunk_streaming_state.as_mut() {
             chunk_streaming_state.save_chunks();
         }
@@ -138,6 +198,10 @@ impl Scene {
     pub fn is_saved(&self) -> bool {
         !self.cellular_tile_streaming_state.as_ref()
             .is_some_and(|state| state.is_cellular_tile_save_requested())
+            && !self.is_fluid_save_requested
+            && !self.fluids.as_ref()
+                .is_some_and(|fluids| fluids.has_pending_particle_snapshot())
+            && self.fluid_snapshot_region.is_none()
             && !self.chunk_streaming_state.as_ref()
                 .is_some_and(|state| state.is_chunk_save_requested())
     }
@@ -186,6 +250,14 @@ impl Scene {
             .get_or_insert_with(|| {
                 CellularTileBuffers::new(accelerator, region_width as u32, region_height as u32)
             });
+        self.fluids.get_or_insert_with(|| Fluids::new(
+            accelerator,
+            cellular_tile_buffers,
+            &self.material_table,
+            self.fluid_capacity_factor,
+            region_width as u32,
+            region_height as u32,
+        ));
         match self.cellular_tile_streaming_state.as_mut() {
             Some(cellular_tile_streaming_state) => {
                 cellular_tile_streaming_state.set_cellular_tile_region(region)?;
@@ -195,9 +267,54 @@ impl Scene {
                     cellular_tile_buffers,
                     chunk_streaming_state,
                     region,
+                    self.fluids.as_ref()
+                        .expect("fluid storage exists with the tile buffers")
+                        .particle_export_buffer_size(),
                 )?);
             }
         }
+        let fluids: &mut Fluids = self.fluids.as_mut()
+            .expect("fluid storage exists with the tile buffers");
+        let rejected_imports: Vec<(ChunkCoordinates,
+            ChunkFluidParticle)> =
+            fluids.poll_rejected_imports(accelerator)?;
+        if let Err(error) = chunk_streaming_state.append_fluid_particles(rejected_imports.clone()) {
+            fluids.restore_rejected_imports(rejected_imports);
+            return Err(error);
+        }
+        if let Some(snapshot_particles) = fluids.read_particle_snapshot(accelerator)? {
+            let snapshot_region: CellularTileRegion = self.fluid_snapshot_region
+                .ok_or(SceneError::FluidParticleExportRecordInvalid)?;
+            let snapshot_chunks: Vec<ChunkCoordinates> =
+                Self::chunk_coordinates_in_region(snapshot_region);
+            chunk_streaming_state.replace_resident_fluid_particle_snapshot(
+                &snapshot_chunks,
+                snapshot_particles,
+            )?;
+            if let Some(chunk_region_index) = self.fluid_snapshot_chunk_region_index.take() {
+                chunk_streaming_state.release_chunk_region_request(chunk_region_index)?;
+            }
+            self.fluid_snapshot_region = None;
+        }
+        if self.is_fluid_save_requested && !fluids.has_pending_particle_imports()
+            && let Some(active_region) = self.cellular_tile_streaming_state.as_ref()
+                .and_then(CellularTileStreamingState::active_cellular_tile_region)
+        {
+            let snapshot_region: CellularTileRegion =
+                fluids.particle_snapshot_region(active_region);
+            let chunk_region_index: ChunkRegionIndex =
+                chunk_streaming_state.retain_chunk_region(snapshot_region.chunk_region())?;
+            if fluids.request_particle_snapshot(accelerator, snapshot_region) {
+                self.fluid_snapshot_chunk_region_index = Some(chunk_region_index);
+                self.fluid_snapshot_region = Some(snapshot_region);
+                self.is_fluid_save_requested = false;
+            } else {
+                chunk_streaming_state.release_chunk_region_request(chunk_region_index)?;
+            }
+        }
+        let is_particle_snapshot_pending: bool = self.is_fluid_save_requested
+            || fluids.has_pending_particle_snapshot()
+            || fluids.has_pending_particle_imports();
         // write requested edits before streaming can move the tiles they were requested for
         if let Some(cellular_tile_streaming_state) = self.cellular_tile_streaming_state.as_ref() {
             self.edit_streaming_state.stream_edits(
@@ -228,6 +345,8 @@ impl Scene {
                 accelerator,
                 cellular_tile_buffers,
                 chunk_streaming_state,
+                fluids,
+                is_particle_snapshot_pending,
             )?;
         }
         Ok(())
@@ -250,28 +369,54 @@ impl Scene {
         let collision: &mut Collision = self.collision
             .get_or_insert_with(|| Collision::new(accelerator, cellular_tile_buffers));
         let origin: CellularTileCoordinates = collision.origin();
+        let region_origin: (i32, i32) = (
+            ((active_region.bottom_left.x - origin.x) * CELLULAR_TILE_SIZE) as i32,
+            ((active_region.bottom_left.y - origin.y) * CELLULAR_TILE_SIZE) as i32,
+        );
+        let fluid_raster_buffer: &wgpu::Buffer = self.fluids
+            .as_ref()
+            .expect("fluid storage exists with the tile buffers")
+            .fluid_raster_buffer();
+        // only idle swimmers drag water along: a stroking swimmer would otherwise carry the water
+        // its speed is measured against and outrun its swimming speed
+        let swimming_actors: HashSet<Actor> = collision.swimming_actors()
+            .into_iter()
+            .filter(|actor| self.actor_registry
+                .component::<ActorPawnControlComponent>(*actor)
+                .map_or(true, |control| control.movement == 0.0
+                    && !control.is_jumping
+                    && !control.is_crouching))
+            .collect();
         let (cellular_contacts, rigid_body_contacts): (
             HashMap<Actor, ([f32; 2], [f32; 2], f32)>,
-            HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2])>,
+            HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2], [f32; 7])>,
         ) = self.kinematics
             .get_or_insert_with(|| Kinematics::new(
                 accelerator,
                 cellular_tile_buffers,
                 &self.material_table,
                 collision.rigid_body_pass(),
+                fluid_raster_buffer,
             ))
             .simulate_kinematics(
                 accelerator,
                 active_region,
                 cellular_tile_streaming_state.cellular_tile_ring_offset(),
-                (
-                    ((active_region.bottom_left.x - origin.x) * CELLULAR_TILE_SIZE) as i32,
-                    ((active_region.bottom_left.y - origin.y) * CELLULAR_TILE_SIZE) as i32,
-                ),
+                region_origin,
                 self.gravity,
                 &self.actor_registry,
+                &swimming_actors,
                 &collision.rigid_bodies(),
             )?;
+        let actor_components: &[(Actor, ActorCollisionComponent)] =
+            self.kinematics.as_ref()
+                .expect("kinematics storage exists after simulation")
+                .fluid_actors();
+        let particle_export_target: Option<(u64, &wgpu::Buffer)> =
+            cellular_tile_streaming_state.pending_fluid_particle_export_target();
+        let fluid_actor_contacts: HashMap<Actor, FluidActorContact> = self.fluids.as_mut()
+            .expect("fluid storage exists with the tile buffers")
+            .poll_actor_contacts(accelerator, actor_components)?;
         collision.simulate_collisions(
             accelerator,
             active_region,
@@ -280,8 +425,35 @@ impl Scene {
             &mut self.actor_registry,
             &cellular_contacts,
             &rigid_body_contacts,
+            &fluid_actor_contacts,
             &self.material_table,
-        )
+        )?;
+        let kinematics: &Kinematics = self.kinematics
+            .as_ref()
+            .expect("kinematics storage exists after simulation");
+        let kinematics_actor_buffer: &wgpu::Buffer = kinematics.actor_buffer();
+        let particle_simulation_result: Result<(), SceneError> =
+            self.fluids.as_mut().expect("fluid storage exists with the tile buffers")
+            .simulate(
+                accelerator,
+                active_region,
+                cellular_tile_streaming_state.cellular_tile_ring_offset(),
+                self.gravity,
+                region_origin,
+                cellular_tile_buffers,
+                collision.rigid_body_pass(),
+                Some(kinematics_actor_buffer),
+                actor_components,
+                particle_export_target.as_ref().map(|(_, buffer)| *buffer),
+                self.material_table.fluid_properties_buffer(),
+            );
+        particle_simulation_result?;
+        if let Some((streaming_request_identifier, _)) = particle_export_target {
+            self.cellular_tile_streaming_state.as_mut()
+                .expect("tile streaming state exists after simulation")
+                .mark_fluid_particle_export_submitted(streaming_request_identifier)?;
+        }
+        Ok(())
     }
 
     /// Returns the graphical representation of this scene seen through an actor's camera
@@ -381,7 +553,7 @@ impl Drop for Scene {
             self.cellular_tile_streaming_state.as_mut(),
         ) else { return; };
         let accelerator: &Accelerator = cellular_tile_buffers.accelerator();
-        let result: Result<(), SceneError> = self.edit_streaming_state
+        let tile_result: Result<(), SceneError> = self.edit_streaming_state
             .stream_edits(
                 accelerator,
                 cellular_tile_buffers,
@@ -394,8 +566,34 @@ impl Drop for Scene {
                 cellular_tile_buffers,
                 chunk_streaming_state,
             ));
-        if let Err(error) = result {
+        if let Err(error) = tile_result {
             panic!("Scene cellular tiles could not be returned: {error:?}");
+        }
+        let fluid_result: Result<(), SceneError> = (|| {
+            let Some(active_region) = cellular_tile_streaming_state
+                .active_cellular_tile_region()
+            else { return Ok(()); };
+            let Some(fluids) = self.fluids.as_mut() else { return Ok(()); };
+            let unspawned_particles: Vec<(
+                ChunkCoordinates,
+                ChunkFluidParticle,
+            )> = fluids.drain_unspawned_particles_blocking(accelerator)?;
+            chunk_streaming_state.append_fluid_particles(unspawned_particles)?;
+            let snapshot_region: CellularTileRegion =
+                fluids.particle_snapshot_region(active_region);
+            let live_particles: Vec<(
+                ChunkCoordinates,
+                ChunkFluidParticle,
+            )> = fluids.read_live_particles_blocking(accelerator, active_region)?;
+            let snapshot_chunks: Vec<ChunkCoordinates> =
+                Self::chunk_coordinates_in_region(snapshot_region);
+            chunk_streaming_state.replace_resident_fluid_particle_snapshot(
+                &snapshot_chunks,
+                live_particles,
+            )
+        })();
+        if let Err(error) = fluid_result {
+            panic!("Scene fluid particles could not be returned: {error:?}");
         }
     }
 

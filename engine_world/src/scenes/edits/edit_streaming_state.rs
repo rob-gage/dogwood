@@ -75,8 +75,9 @@ impl EditStreamingState {
                     None => return Err(EditError::MaterialUnregistered {
                         material_identifier: *material_identifier,
                     }),
-                    Some(MaterialForm::CellularStatic | MaterialForm::CellularDynamic) => {}
-                    Some(MaterialForm::Fluid | MaterialForm::Gas) => {
+                    Some(MaterialForm::CellularStatic | MaterialForm::CellularDynamic
+                        | MaterialForm::Fluid) => {}
+                    Some(MaterialForm::Gas) => {
                         return Err(EditError::MaterialFormUnsupported {
                             material_identifier: *material_identifier,
                         });
@@ -157,8 +158,13 @@ impl EditStreamingState {
                         }
                     };
                     if !is_written { continue; }
-                    edited_materials[cell_index] = material_identifiers[cell_index];
-                    edited_colors[cell_index] = colors[cell_index];
+                    if material_identifiers[cell_index].form() == MaterialForm::Fluid {
+                        edited_materials[cell_index] = MaterialIdentifier::EMPTY;
+                        edited_colors[cell_index] = 0;
+                    } else {
+                        edited_materials[cell_index] = material_identifiers[cell_index];
+                        edited_colors[cell_index] = colors[cell_index];
+                    }
                 }
             }
         }

@@ -22,12 +22,12 @@ For a cell at local coordinates `(x, y)`, the row-major cell index is `y * 512 +
 
 ## Sparse file bytes
 
-`Chunk::write` emits a 22-byte little-endian header followed by zero or more 20-byte entries:
+`Chunk::write` emits a 22-byte little-endian header followed by zero or more 20-byte cell entries and a particle section:
 
 | Header offset | Size | Value |
 | --- | ---: | --- |
 | 0 | 8 | ASCII `DOGWOOD` followed by NUL |
-| 8 | 2 | Format version `5` |
+| 8 | 2 | Format version `6` |
 | 10 | 4 | Chunk x coordinate as `i32` |
 | 14 | 4 | Chunk y coordinate as `i32` |
 | 18 | 4 | Number of stored entries as `u32` |
@@ -61,3 +61,11 @@ A missing file yields `Ok(None)`; other I/O errors propagate. Omitted indices lo
 The temporary sequence is shared by cloned `ChunkData` values. Separately constructed values have independent sequences and can choose the same temporary path. Temporary files are opened with `create_new`; if the chosen path already exists, opening it fails and the error cleanup attempts to remove that path.
 
 Chunk loading and save scheduling are covered in [chunk I/O scheduling](@/internals/world-streaming/chunk-io.md); the resident state machine is in [chunk residency](@/internals/world-streaming/chunk-residency.md).
+
+## Fluid particle section
+
+Version 6 appends a little-endian `u32` particle count after cell entries, then 20 bytes per particle: two `f32` position components relative to the chunk origin, two `f32` velocity components in cells/tick, and a `u32` fluid material identifier. Float bits are preserved exactly. The count cannot exceed `512 * 512`; positions must be finite and in `[0, 512)`, velocities finite, and identifiers fluid-form. Failures return `FluidParticleCapacityExceeded`, `FluidParticlePositionInvalid`, `FluidParticleVelocityInvalid`, or `FluidParticleMaterialInvalid`.
+
+`Chunk::fluid_particles` reads the list; `set_fluid_particles` validates and replaces it. `ChunkFluidParticle::new` validates the record and preserves supplied float bits; storage validates records again.
+
+> **Limitation:** The reader accepts only version 6; version 5 files return `InvalidVersion`.

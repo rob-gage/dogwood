@@ -55,3 +55,4 @@ Browse the {{ <rustdoc path="engine/index.html" text="public engine API" /> }}. 
 
 The site's references come from `./documentation/site.sh build`, which runs rustdoc twice: a public reference of the library crates (`cargo doc --workspace --exclude cli --no-deps`) and a private one of every crate, including the `dogwood` CLI (`--document-private-items`).
 
+The `engine::scenes::fluids` module exports engine-managed `Fluids` and solver constants. `engine::scenes::chunks::ChunkFluidParticle` represents dormant particles. See [fluid simulation](@/internals/simulation/fluids.md).

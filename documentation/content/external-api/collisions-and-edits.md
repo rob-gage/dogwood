@@ -106,3 +106,7 @@ In `Replace` mode, filling with `MaterialIdentifier::EMPTY` clears a cell; `Inse
 {{ <rustdoc path="engine/scenes/edits/struct.Edit.html" text="Edit" /> }} ·
 {{ <rustdoc path="engine/scenes/edits/enum.EditMode.html" text="EditMode" /> }} ·
 {{ <rustdoc path="engine/scenes/edits/enum.EditError.html" text="EditError" /> }}
+
+## Fluid edits
+
+Edits accept registered fluid materials and queue particle spawns for the next simulation. Fluid `Insert` spawns skip solid cells. Replacing or erasing cells also erases fluid particles in those cells. `CapacityReached` additionally covers reserved fluid-particle capacity. See [fluid simulation](@/internals/simulation/fluids.md).

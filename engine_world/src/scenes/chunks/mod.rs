@@ -11,7 +11,10 @@ mod chunk_streaming_request;
 mod chunk_streaming_response;
 mod chunk_streaming_state;
 
-pub use chunk::Chunk;
+pub use chunk::{
+    Chunk,
+    ChunkFluidParticle,
+};
 pub use chunk_data::ChunkData;
 pub use chunk_coordinates::ChunkCoordinates;
 pub use chunk_error::ChunkError;

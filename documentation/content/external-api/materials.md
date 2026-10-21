@@ -16,7 +16,7 @@ A `Material` is one of four variants, one per `MaterialForm`: `CellularStatic`, 
 |---|---|---|
 | `MaterialPropertiesCellularStatic` | `graphics`; `mass`, `friction`, `restitution: f32`; `debris: Option<MaterialIdentifier>` | `mass` uses dynamic cellular material mass units. `friction` is the Coulomb coefficient for rigid bodies. `restitution` is the fraction of speed kept, reversed, on collision. `debris` selects the dynamic material used when cells break off, or `None` to vanish. |
 | `MaterialPropertiesCellularDynamic` | `graphics`; `mass`, `friction`, `restitution: f32` | `mass` uses dynamic cellular material mass units. `friction` is the tangent of the steepest slope a resting cell holds. `restitution` is the fraction of speed kept, reversed, when a cell hits something it cannot enter. |
-| `MaterialPropertiesFluid` | `graphics`; `density`, `viscosity`, `cohesion`, `artificial_pressure`, `drag`, `friction`, `restitution: f32` | Density is mass per fluid cell; viscosity is XSPH velocity smoothing; cohesion and artificial pressure control surface cohesion and PBF artificial pressure. Drag configures body drag and swimming; friction and restitution configure direct fluid-cell contacts. Simulation consumers are not implemented yet. |
+| `MaterialPropertiesFluid` | `graphics`; `density`, `viscosity`, `cohesion`, `artificial_pressure`, `drag`, `friction`, `restitution: f32` | Density is mass per fluid cell; viscosity is XSPH velocity smoothing; cohesion and artificial pressure control surface cohesion and PBF artificial pressure. Drag configures body drag and swimming; friction and restitution configure direct fluid-cell contacts. |
 | `MaterialPropertiesGas` | `graphics` | Properties for gas registration. |
 
 ### Validation at compile time
@@ -34,7 +34,7 @@ A `Material` is one of four variants, one per `MaterialForm`: `CellularStatic`, 
 
 `MaterialGraphicsFluid` has a `color: u32` field containing packed sRGB RGBA; alpha specifies the opacity of a full fluid cell. It is re-exported as `engine::MaterialGraphicsFluid`. `MaterialGraphicsGas` remains an empty struct in `engine_graphics::world::materials`.
 
-> **Limitation:** Fluid and gas materials can be registered and queried, but have no simulation rules or form-specific rendering, and edits cannot place them. Fluid properties are uploaded to a GPU buffer; gas properties are not. If a fluid or gas identifier appears in a chunk, the generic cellular renderer still draws it from its stored color. Static cellular GPU property buffers are also absent; dynamic cellular properties are uploaded.
+> **Limitation:** Fluid materials can be painted and simulated as [particles](@/internals/simulation/fluids.md), but particle rendering is not implemented. Gas has no simulation rules and edits cannot place it. Fluid properties are uploaded to a GPU buffer; gas properties are not. If a fluid or gas identifier appears in a chunk, the generic cellular renderer still draws it from its stored color. Static cellular GPU property buffers are also absent; dynamic cellular properties are uploaded.
 
 ## Identifiers
 

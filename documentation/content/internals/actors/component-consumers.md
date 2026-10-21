@@ -56,3 +56,7 @@ These components are empty markers that no system reads:
 For the host-level fixed-update and rendering sequence, see [frame and update lifecycle](@/architecture/frame-lifecycle.md). Within scene simulation, `Scene::simulate` calls kinematics before collision. Kinematics returns asynchronous contact data; see [cell and body contact exchange](@/internals/simulation/contact-exchange.md) for readback timing and cached values.
 
 For the simulations themselves, see [cellular kinematics](@/internals/simulation/cellular-kinematics.md) and the [Rapier collision world](@/internals/simulation/collision-world.md).
+
+## Fluid consumers
+
+Cellular kinematics uploads collider records for fluid projection and sampling. Collision consumes completed fluid actor samples and the swimming fields of `ActorPawnMovementComponent`; see [swimming](@/internals/actors/pawn-movement.md#swimming).
