@@ -82,8 +82,21 @@ impl<'a> Window<'a> {
         update_interval: Duration,
         maximum_accumulated_time: Duration,
     ) -> Result<(), WindowError> {
+        let mut event_loop_builder = winit::event_loop::EventLoop::builder();
+        // GNOME supplies system decorations for X11 windows, including through XWayland.
+        #[cfg(target_os = "linux")]
+        {
+            use winit::platform::x11::EventLoopBuilderExtX11;
+
+            let is_gnome = std::env::var("XDG_CURRENT_DESKTOP")
+                .is_ok_and(|desktop| desktop.split(':').any(|name| name.eq_ignore_ascii_case("GNOME")));
+            let has_x11 = std::env::var_os("DISPLAY").is_some_and(|display| !display.is_empty());
+            if is_gnome && has_x11 {
+                event_loop_builder.with_x11();
+            }
+        }
         let event_loop: winit::event_loop::EventLoop<()> =
-            winit::event_loop::EventLoop::new().map_err(WindowError::from)?;
+            event_loop_builder.build().map_err(WindowError::from)?;
         let mut window: Self = Self {
             window: None,
             accelerator,

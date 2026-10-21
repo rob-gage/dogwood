@@ -20,6 +20,8 @@ This page describes how the host creates a native window, configures its WGPU su
 
 If there is no supported default configuration, initialization returns `WindowError::UnsupportedSurface`.
 
+On Linux, when `XDG_CURRENT_DESKTOP` includes `GNOME` and `DISPLAY` is nonempty, the host selects X11 (including XWayland) so GNOME supplies system window decorations. Otherwise Winit selects the window system automatically.
+
 ### Configuration source
 
 The host explicitly inspects advertised formats only to prefer an sRGB format; the remaining configuration values, including present and alpha modes, come from `Surface::get_default_config`. When an sRGB format is available, a source comment says scene rendering writes linear color and the surface encodes it as sRGB. See [GPU accelerator](@/internals/runtime/accelerator.md) for the adapter selection that precedes surface setup.
