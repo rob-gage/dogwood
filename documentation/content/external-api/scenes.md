@@ -98,3 +98,5 @@ See the linked rustdoc for variant payloads.
 `fluid_capacity_factor()` returns the configured pool fraction. `set_fluid_capacity_factor(factor)` accepts finite values in `(0, 1]` before the first stream creates the pool; otherwise it returns `InvalidFluidCapacityFactor` or `FluidCapacityFixed`. The default is `0.25`, and capacity is `floor(factor * active-region cell count)`.
 
 Simulation runs cellular kinematics, collision, then fluid particles. Saving includes resident particle snapshots; see [fluid simulation](@/internals/simulation/fluids.md).
+
+`fluid_graphics(camera_position)` returns optional borrowed `SceneGraphicsFluid` with the raster, material buffer, and camera-relative ring placement. It is absent before an active region exists. `graphics(camera_actor)` includes it automatically.

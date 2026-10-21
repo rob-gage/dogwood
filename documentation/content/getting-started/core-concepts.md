@@ -40,7 +40,7 @@ A **material** defines how a kind of cell behaves and looks. A game registers ma
 
 See [Defining materials](@/examples/materials-and-sprites.md) for setup.
 
-> **Limitation:** Fluid materials use [GPU particle simulation](@/internals/simulation/fluids.md). Gas has no simulation rules; fluid particle rendering is not implemented.
+> **Limitation:** Fluid materials use [GPU particle simulation](@/internals/simulation/fluids.md). Fluids render from their cell raster; gas has no simulation rules.
 
 ### Actors and pawns
 

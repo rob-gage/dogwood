@@ -41,4 +41,4 @@ Fluid edits queue erasures and spawns; conservative reservations prevent exceedi
 
 `Scene::save` requests a resident particle snapshot alongside cellular saving. Chunks are retained until the mapped snapshot is applied; `is_saved` includes pending particle saves. Drop drains unspawned imports and synchronously reads live particles into chunk storage. See [chunk format](@/internals/world-streaming/chunk-format.md#fluid-particle-section).
 
-> **Not implemented:** Fluid particle rendering. The particle raster supports simulation feedback but is not connected to the scene renderer in this change.
+The scene renderer also consumes the particle raster for [fluid rendering](@/internals/rendering/fluid-pass.md).

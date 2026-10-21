@@ -77,7 +77,7 @@ Collision uses Rapier for actor and rigid-body motion, applies cell changes, and
 
 See [cellular kinematics](@/internals/simulation/cellular-kinematics.md), [collision world](@/internals/simulation/collision-world.md), [static cell colliders](@/internals/simulation/static-cell-colliders.md), and [contact exchange](@/internals/simulation/contact-exchange.md).
 
-The separate graphics call consumes the resulting active tile buffers and actor sprites; rendering is not part of `Scene::simulate`. See [data flow](@/architecture/data-flow.md) and [scene renderer](@/internals/rendering/scene-renderer.md).
+The separate graphics call consumes the resulting active tile buffers, fluid raster, material properties, and actor sprites; rendering is not part of `Scene::simulate`. See [data flow](@/architecture/data-flow.md) and [scene renderer](@/internals/rendering/scene-renderer.md).
 
 ## Fluid step
 

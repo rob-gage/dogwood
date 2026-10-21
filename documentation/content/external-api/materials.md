@@ -34,7 +34,7 @@ A `Material` is one of four variants, one per `MaterialForm`: `CellularStatic`, 
 
 `MaterialGraphicsFluid` has a `color: u32` field containing packed sRGB RGBA; alpha specifies the opacity of a full fluid cell. It is re-exported as `engine::MaterialGraphicsFluid`. `MaterialGraphicsGas` remains an empty struct in `engine_graphics::world::materials`.
 
-> **Limitation:** Fluid materials can be painted and simulated as [particles](@/internals/simulation/fluids.md), but particle rendering is not implemented. Gas has no simulation rules and edits cannot place it. Fluid properties are uploaded to a GPU buffer; gas properties are not. If a fluid or gas identifier appears in a chunk, the generic cellular renderer still draws it from its stored color. Static cellular GPU property buffers are also absent; dynamic cellular properties are uploaded.
+> **Limitation:** Fluid materials can be painted and simulated as [particles](@/internals/simulation/fluids.md) and [raster-based rendering](@/internals/rendering/fluid-pass.md). Gas has no simulation rules and edits cannot place it. Fluid properties are uploaded to a GPU buffer; gas properties are not. If a fluid or gas identifier appears in a chunk, the generic cellular renderer still draws it from its stored color. Static cellular GPU property buffers are also absent; dynamic cellular properties are uploaded.
 
 ## Identifiers
 

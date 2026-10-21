@@ -3,10 +3,10 @@ title = "Render shaders"
 description = "Documents cellular and sprite WGSL inputs, coordinate transforms, ring lookup, and color output."
 weight = 20
 [extra]
-sources = ["engine_graphics/src/renders/scene_renderer_cellular.wgsl", "engine_graphics/src/renders/scene_renderer_sprites.wgsl", "engine_graphics/src/renders/scene_renderer_cellular_pass.rs", "engine_graphics/src/renders/scene_renderer_sprites_pass.rs", "engine_graphics/src/sprites/sprite_sheet.rs"]
+sources = ["engine_graphics/src/renders/scene_renderer_fluid.wgsl", "engine_graphics/src/renders/scene_renderer_fluid_pass.rs", "engine_graphics/src/renders/scene_renderer_cellular.wgsl", "engine_graphics/src/renders/scene_renderer_sprites.wgsl", "engine_graphics/src/renders/scene_renderer_cellular_pass.rs", "engine_graphics/src/renders/scene_renderer_sprites_pass.rs", "engine_graphics/src/sprites/sprite_sheet.rs"]
 +++
 
-This page is the reference for the two render shaders, `scene_renderer_cellular.wgsl` and `scene_renderer_sprites.wgsl`, for engine contributors. It covers bindings, record layouts, coordinate math, and color output. Pass resources and draw setup are in [cellular rendering](@/internals/rendering/cellular-pass.md) and [sprite rendering](@/internals/rendering/sprite-pass.md); pass order is in the [scene renderer](@/internals/rendering/scene-renderer.md).
+This page is the reference for the cellular, fluid, and sprite render shaders, for engine contributors. It covers bindings, record layouts, coordinate math, and color output. Pass resources and draw setup are in [cellular rendering](@/internals/rendering/cellular-pass.md) and [sprite rendering](@/internals/rendering/sprite-pass.md); pass order is in the [scene renderer](@/internals/rendering/scene-renderer.md).
 
 ## Cellular shader
 
@@ -84,3 +84,7 @@ The fragment stage samples mip level zero, multiplies the texel by the instance 
 ### Sampler and batching
 
 The Rust pass uses a nearest, clamp-to-edge sampler. It groups consecutive instances with the same texture view into batches and draws four vertices per instance, as seen in `SceneRendererSpritesPass::prepare` and `draw`.
+
+## Fluid shader
+
+`scene_renderer_fluid.wgsl` adds `classify` and `shade` compute entry points, each with 8×8 workgroups, plus fullscreen `vertex` and `fragment` entry points. Its bindings, record layout, and shading are documented on [fluid rendering](@/internals/rendering/fluid-pass.md).

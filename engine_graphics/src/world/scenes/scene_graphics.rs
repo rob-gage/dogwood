@@ -2,6 +2,7 @@
 
 use super::{
     SceneGraphicsCellular,
+    SceneGraphicsFluid,
     SceneGraphicsSprites,
 };
 
@@ -14,6 +15,8 @@ pub struct SceneGraphics<'a> {
     pub visible_height: f32,
     /// Resident cellular content, absent until a cellular region has streamed onto the GPU
     pub cellular: Option<SceneGraphicsCellular<'a>>,
+    /// Resident fluid raster, absent until a cellular region has streamed onto the GPU
+    pub fluid: Option<SceneGraphicsFluid<'a>>,
     /// Sprite content drawn around the cellular content by depth
     pub sprites: SceneGraphicsSprites<'a>,
 }

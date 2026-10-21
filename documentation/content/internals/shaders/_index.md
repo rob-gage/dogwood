@@ -32,3 +32,5 @@ This section is the reference for Dogwood's six embedded WGSL shaders, for engin
 Rendering and pass scheduling are covered in [cellular rendering](@/internals/rendering/cellular-pass.md), [sprite rendering](@/internals/rendering/sprite-pass.md), [cellular kinematics](@/internals/simulation/cellular-kinematics.md), [static cell colliders](@/internals/simulation/static-cell-colliders.md), [rigid bodies](@/internals/simulation/rigid-bodies.md), and the [edit pipeline](@/internals/simulation/edit-pipeline.md).
 
 The [fluid solver](@/internals/simulation/fluids.md) adds `fluid_particle.wgsl`, driven by `FluidParticlePass`, for particle compaction, neighbor search, pressure correction, and fluid raster/feedback generation.
+
+`scene_renderer_fluid.wgsl` classifies and shades raster cells with compute, then draws the shaded colors with a fullscreen triangle. See [fluid rendering](@/internals/rendering/fluid-pass.md).

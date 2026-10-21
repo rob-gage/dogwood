@@ -65,6 +65,6 @@ Packed colors are little-endian RGBA. White returns the sampled albedo unchanged
 
 The kinematics pass binds the dynamic property buffer as `array<vec4<f32>>` and indexes it with the dynamic identifier's low 30 bits. It uses mass, friction, and restitution in cell movement and collisions; see [cellular kinematics](@/internals/simulation/cellular-kinematics.md) and the [kinematics shader](@/internals/shaders/kinematics-shader.md). Static-cell mass, friction, and restitution are instead looked up on the CPU when calculating a detached [cellular rigid body's properties](@/internals/simulation/rigid-bodies.md).
 
-> **Limitation:** `MaterialTable` creates dynamic cellular and fluid property buffers. Static and gas property-buffer accessors return `None`. The fluid solver and cellular kinematics consume the fluid buffer for particle constraints and fluid/body coupling. Fluid rendering is not implemented.
+> **Limitation:** `MaterialTable` creates dynamic cellular and fluid property buffers. Static and gas property-buffer accessors return `None`. The fluid solver and cellular kinematics consume the fluid buffer for particle constraints and fluid/body coupling. The fluid renderer reads density and packed color from the same buffer.
 
 The albedo readback and dynamic buffer setup are implemented in {{ <rustdoc path="engine/materials/struct.MaterialTable.html" text="MaterialTable" /> }}.
