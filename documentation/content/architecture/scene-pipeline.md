@@ -69,10 +69,10 @@ Its GPU pass advances dynamic cells using the previous step's state and queues a
 
 After kinematics, the scene passes the returned contacts to collision. Dynamic cells therefore move where the previous step left them, then push back on actors and rigid bodies once their contacts are read.
 
-Collision uses Rapier for actor and rigid-body motion, applies cell changes, and may rasterize rigid bodies back into tiles. It reads cellular occupancy from the GPU, and those reads wait for completion:
+Collision uses Rapier for actor and rigid-body motion, applies cell changes, and may rasterize rigid bodies back into tiles. It reads cellular occupancy from the GPU:
 
-- Static occupancy is refreshed when its snapshot is absent, the region or ring offset changes, or a reread is requested.
-- Settled dynamic occupancy is read each step when rigid bodies exist.
+- Static occupancy is read with a GPU wait and refreshed when its snapshot is absent, the region or ring offset changes, or a reread is requested.
+- When rigid bodies exist, settled dynamic occupancy uses completed asynchronous snapshots, with a blocking fallback when no held snapshot matches the region and ring offset. See [occupancy readback](@/internals/simulation/static-cell-colliders.md#occupancy-readback).
 
 See [cellular kinematics](@/internals/simulation/cellular-kinematics.md), [collision world](@/internals/simulation/collision-world.md), [static cell colliders](@/internals/simulation/static-cell-colliders.md), and [contact exchange](@/internals/simulation/contact-exchange.md).
 

@@ -27,7 +27,7 @@ Rapier positions use a local tile origin to retain sub-cell precision in `f32`. 
 Each call to `simulate_collisions` runs these steps in order:
 
 1. Processes any pending changed rigid-body cells, reads and applies static occupancy when needed (see [refresh triggers](@/internals/simulation/static-cell-colliders.md#refresh-triggers)), then checks newly changed cells for detached groups.
-2. If cellular rigid bodies exist, reads settled dynamic-cell occupancy and refreshes that separate collider.
+2. If cellular rigid bodies exist, consumes the newest completed settled dynamic-cell occupancy snapshot, with a blocking fallback when no held snapshot matches the region and ring offset, then requests another asynchronous snapshot. See [occupancy readback](@/internals/simulation/static-cell-colliders.md#occupancy-readback).
 3. Releases rigid bodies that no longer fit in the active region: static cells remain at rest, while covered dynamic cells stay dynamic; the release clears rigid-body markers from covered cells.
 4. Applies the latest kinematics impulses to rigid bodies and stores the latest holding contacts.
 5. Synchronizes actors with identity and position components (see [actor lifetime](@/internals/actors/actor-lifetime.md) for region exit). Collision checks region membership for each such actor. It creates or updates a fixed, dynamic, or position-based kinematic Rapier body only when the actor has an `ActorCollisionComponent` or `ActorContactComponent`, and replaces the relevant collider when its component changes. Actors that leave the active region lose their Rapier bodies.

@@ -18,7 +18,7 @@ event-loop thread             chunk_io workers              GPU queue
        |
        +── submit tile copies / kinematics ──────────────────>
        |         map_async callback ──channel──> later poll
-       +── collision occupancy submit ───────────────────────>
+       +── blocking occupancy submit ───────────────────────>
                  map_async + wait_indefinitely <──────────────
 ```
 
@@ -50,7 +50,8 @@ The synchronization strategy depends on the operation:
 
 | Operation | Wait behavior | Why |
 | --- | --- | --- |
-| Collision occupancy read ([collision world](@/internals/simulation/collision-world.md)) | Blocks with `wait_indefinitely` after mapping. | Collision needs the current GPU tile occupancy for this step. |
+| Static occupancy and settled-dynamic fallback reads | Block with `wait_indefinitely` after mapping. | Static refreshes need current occupancy; the dynamic fallback supplies a snapshot matching the region and ring offset. |
+| Ordinary settled dynamic occupancy reads | Poll without waiting and retain the held snapshot if no matching result is ready. | See [occupancy readback](@/internals/simulation/static-cell-colliders.md#occupancy-readback) for slot handling and fallback conditions. |
 | Rigid-body cell reads, `read_changed_cells` and `read_cells` ([collision world](@/internals/simulation/collision-world.md)) | Block with `wait_indefinitely`; an empty `read_cells` input returns immediately. | Edit-driven detachment and detached-group construction need the mapped cell data immediately. |
 | Normal tile-streaming and kinematics readbacks ([tile streaming](@/internals/world-streaming/tile-streaming.md)) | Map asynchronously; later stream and update calls poll and consume available responses. | These results can be applied after their GPU work completes. |
 | Active tile return during `Scene` drop | On success, polls with `wait_indefinitely` until every response has been applied. A polling, mapping, or inactive-chunk error aborts the return and makes `Scene::drop` panic. | Teardown must return all active tile data to chunks. See [resources and lifetimes](@/architecture/resources-and-lifetimes.md#saving-and-drop-behavior). |

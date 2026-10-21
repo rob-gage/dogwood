@@ -80,6 +80,8 @@ pub struct Collision {
     dynamic_cellular_tiles: Option<(CellularTileRegion, Vec<CollisionCellularTile>)>,
     /// Number of settled dynamic cells held by their collider
     dynamic_cell_count: u64,
+    /// Ring offset of the active region when the held settled dynamic occupancies were copied
+    dynamic_ring_offset: Option<(u32, u32)>,
     /// Fixed voxel collider of settled dynamic cells, interacting only with cellular rigid bodies
     dynamic_cellular_tile_collider: Option<rapier2d::geometry::ColliderHandle>,
     /// Body, colliders, position, translation, and pawn velocity, grounding, and held jump
@@ -153,6 +155,7 @@ impl Collision {
             cellular_tile_collider: None,
             dynamic_cellular_tiles: None,
             dynamic_cell_count: 0,
+            dynamic_ring_offset: None,
             dynamic_cellular_tile_collider: None,
             actors: HashMap::new(),
             // round pawns roll over steps lower than their radius, so taller ledges are walls
@@ -255,11 +258,27 @@ impl Collision {
                 material_table,
             )?;
         }
-        // read settled cells before every rigid body step so moving grains leave no stale geometry
+        // rigid bodies step against the newest settled cells the GPU has finished copying,
+        // normally those of the previous tick, and wait only when no snapshot of this region and
+        // ring offset exists yet, so moving grains never stall a tick behind queued GPU work
         if !self.collision_rigid_bodies.is_empty() {
-            let cellular_tiles: Vec<CollisionCellularTile> = self.cellular_tile_pass
-                .read_cellular_tiles(accelerator, active_region, ring_offset, true)?;
-            self.simulate_collisions_apply_cellular_tiles(active_region, cellular_tiles, true);
+            let snapshot: Option<Vec<CollisionCellularTile>> = self.cellular_tile_pass
+                .read_dynamic_cellular_tiles(accelerator, active_region, ring_offset)?;
+            let has_current_snapshot: bool = self.dynamic_ring_offset == Some(ring_offset)
+                && self.dynamic_cellular_tiles.as_ref()
+                    .is_some_and(|(region, _)| *region == active_region);
+            let cellular_tiles: Option<Vec<CollisionCellularTile>> = match snapshot {
+                Some(cellular_tiles) => Some(cellular_tiles),
+                None if !has_current_snapshot => Some(self.cellular_tile_pass
+                    .read_cellular_tiles(accelerator, active_region, ring_offset, true)?),
+                None => None,
+            };
+            if let Some(cellular_tiles) = cellular_tiles {
+                self.simulate_collisions_apply_cellular_tiles(active_region, cellular_tiles, true);
+                self.dynamic_ring_offset = Some(ring_offset);
+            }
+            self.cellular_tile_pass
+                .request_dynamic_cellular_tiles(accelerator, active_region, ring_offset)?;
         }
         // rigid bodies that left the active region stay behind as static cells
         self.release_rigid_bodies(accelerator, active_region, ring_offset, active_region);

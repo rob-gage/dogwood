@@ -32,7 +32,7 @@ Rust dispatches `ceil(region width * region height / 64)` workgroups, one invoca
 - Dynamic mode marks dynamic cells whose resting bit is set.
 - Cells claimed by a rigid body are excluded.
 
-The output is two `u32` words per tile, where bit `y * 8 + x` marks occupancy. The pass copies the output to a staging buffer and waits for the mapping before returning row-major `CollisionCellularTile` values.
+The output is two `u32` words per tile, where bit `y * 8 + x` marks occupancy. The pass decodes the output into row-major `CollisionCellularTile` values. Static reads and the settled-dynamic fallback wait for a staging-buffer mapping; ordinary settled-dynamic reads use three asynchronous staging slots. See [occupancy readback](@/internals/simulation/static-cell-colliders.md#occupancy-readback).
 
 ## Rigid-body cell pass
 
