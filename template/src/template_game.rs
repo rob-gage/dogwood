@@ -21,6 +21,7 @@ use engine::{
         MaterialPropertiesCellularDynamic,
         MaterialPropertiesCellularStatic,
         MaterialPropertiesFluid,
+        MaterialPropertiesGas,
         MaterialRegistry,
     },
     scenes::{
@@ -46,6 +47,7 @@ use engine::{
     MaterialGraphicsCellularDynamic,
     MaterialGraphicsCellularStatic,
     MaterialGraphicsFluid,
+    MaterialGraphicsGas,
     SpriteSheet,
 };
 use std::{
@@ -118,6 +120,17 @@ impl TemplateGame {
                 restitution: 0.0,
                 graphics: MaterialGraphicsFluid {
                     color: u32::from_le_bytes([40, 110, 200, 200]),
+                },
+            },
+        })?;
+        let _water_vapor: MaterialIdentifier = material_registry.register(Material::Gas {
+            name: String::from("water vapor"),
+            properties: MaterialPropertiesGas {
+                mass: 18.0,
+                diffusivity: 0.01,
+                cohesion: 0.1,
+                graphics: MaterialGraphicsGas {
+                    color: u32::from_le_bytes([225, 230, 240, 150]),
                 },
             },
         })?;
