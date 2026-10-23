@@ -9,6 +9,7 @@ pub use engine_graphics::{
         MaterialGraphicsCellularDynamic,
         MaterialGraphicsCellularStatic,
         MaterialGraphicsFluid,
+        MaterialGraphicsGas,
     },
 };
 pub use engine_host::{

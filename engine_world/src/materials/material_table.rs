@@ -31,8 +31,8 @@ pub struct MaterialTable {
     /// Density, XSPH viscosity, cohesion, artificial pressure, drag, friction, restitution, and
     /// color as eight 32-bit words per fluid index
     fluid_properties_buffer: wgpu::Buffer,
-    /// Absent until gas properties have meaningful GPU records
-    gas_properties_buffer: Option<wgpu::Buffer>,
+    /// Mass, diffusivity, cohesion, and color bits as four 32-bit words per gas index
+    gas_properties_buffer: wgpu::Buffer,
     /// Packed sRGB albedo pixels, frame size, and repetition size in cells of each static
     /// cellular material, indexed from reserved empty index zero
     cellular_static_albedos: Vec<(Vec<u32>, u32, u32, f64, f64)>,
@@ -158,6 +158,42 @@ impl MaterialTable {
             },
         );
         accelerator.queue().write_buffer(&fluid_properties_buffer, 0, &fluid_property_bytes);
+        // serialize gas records as mass, diffusivity, cohesion, and color bits
+        let mut gas_property_bytes: Vec<u8> = Vec::new();
+        for index in 0.. {
+            let Ok(identifier) = MaterialIdentifier::new(MaterialForm::Gas, index)
+            else { break; };
+            let Some(properties) = material_registry.gas_properties(identifier) else { break; };
+            // species slots store gas indices in eight bits, and gas simulation stores each
+            // index plus one in eight bits
+            if index > 254 {
+                return Err(String::from("at most 255 gas materials can be registered"));
+            }
+            if !properties.mass.is_finite() || properties.mass <= 0.0
+                || !(0.0..=0.1).contains(&properties.diffusivity)
+                || !(0.0..=1.0).contains(&properties.cohesion)
+            {
+                return Err(String::from(
+                    "gas materials need a positive mass, a diffusivity from zero to 0.1, and a \
+                    cohesion from zero to one",
+                ));
+            }
+            for value in [properties.mass, properties.diffusivity, properties.cohesion] {
+                gas_property_bytes.extend_from_slice(&value.to_le_bytes());
+            }
+            gas_property_bytes.extend_from_slice(&properties.graphics.color.to_le_bytes());
+        }
+        // keep the storage binding valid when the registry has no gas materials
+        if gas_property_bytes.is_empty() { gas_property_bytes.resize(16, 0); }
+        let gas_properties_buffer: wgpu::Buffer = device.create_buffer(
+            &wgpu::BufferDescriptor {
+                label: Some("`MaterialTable.gas_properties_buffer`"),
+                size: gas_property_bytes.len() as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
+        accelerator.queue().write_buffer(&gas_properties_buffer, 0, &gas_property_bytes);
         // copy every frame into a readable buffer with rows padded to the copy alignment
         let mut command_encoder: wgpu::CommandEncoder = device.create_command_encoder(
             &wgpu::CommandEncoderDescriptor {
@@ -271,7 +307,7 @@ impl MaterialTable {
             cellular_static_properties_buffer: None,
             cellular_dynamic_properties_buffer,
             fluid_properties_buffer,
-            gas_properties_buffer: None,
+            gas_properties_buffer,
             cellular_static_albedos: albedos,
             cellular_dynamic_albedos,
         })
@@ -384,9 +420,9 @@ impl MaterialTable {
         &self.fluid_properties_buffer
     }
 
-    /// Returns gas GPU properties when defined
-    pub fn gas_properties_buffer(&self) -> Option<&wgpu::Buffer> {
-        self.gas_properties_buffer.as_ref()
+    /// Returns gas GPU properties as mass, diffusivity, cohesion, and packed color bits
+    pub fn gas_properties_buffer(&self) -> &wgpu::Buffer {
+        &self.gas_properties_buffer
     }
 
 }
