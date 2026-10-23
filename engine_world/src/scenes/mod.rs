@@ -5,6 +5,7 @@ pub mod chunks;
 pub mod collisions;
 pub mod edits;
 pub mod fluids;
+pub mod gases;
 pub mod kinematics;
 mod scene;
 mod scene_error;
@@ -37,6 +38,12 @@ const SCENE_FLUID_IMPORT_COUNT_MAXIMUM_PER_TICK: usize = 4096;
 
 /// Downward acceleration of dynamic bodies and pawns in tiles per second squared
 const SCENE_GRAVITY_DEFAULT: f32 = 50.0;
+
+/// Default pressure of the phantom air in empty cells in atmospheres
+const SCENE_AMBIENT_GAS_PRESSURE_DEFAULT: f32 = 1.0;
+
+/// Default mass of one atmosphere of the phantom air in empty cells, compared with gas masses
+const SCENE_AMBIENT_GAS_MASS_DEFAULT: f32 = 29.0;
 
 /// Default fraction of active-region cells available to fluid particles
 const SCENE_FLUID_CAPACITY_FACTOR_DEFAULT: f32 = 0.25;

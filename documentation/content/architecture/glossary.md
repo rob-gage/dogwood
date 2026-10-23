@@ -12,6 +12,7 @@ This page defines Dogwood's world terms and coordinate spaces, with the conversi
 
 - **Cell:** one grid square, the smallest simulated unit.
 - **Fluid particle:** a continuous-position sample stored separately from cellular cells; see [fluid simulation](@/internals/simulation/fluids.md).
+- **Phantom air:** the ambient gas held as a separate amount in each cell's gas, filling empty cells at the scene's ambient gas pressure; see [tile ring](@/internals/world-streaming/tile-ring.md).
 - **Fluid raster:** per-physical-ring-cell mass, momentum, and selected material derived from particles, shared by simulation and rendering.
 - **Dormant particle:** a chunk-owned record awaiting admission to the live GPU pool; a resident-save copy is distinct from dormant state.
 - **Cellular tile (tile):** an 8 × 8 group of cells (`CELLULAR_TILE_SIZE = 8`).

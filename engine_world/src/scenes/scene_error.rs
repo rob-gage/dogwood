@@ -21,6 +21,10 @@ pub enum SceneError {
     InvalidFluidCapacityFactor,
     /// The fluid particle pool already exists and its capacity can no longer change
     FluidCapacityFixed,
+    /// Ambient gas pressure is not finite or is outside the range `[0, 256)` atmospheres
+    InvalidAmbientGasPressure,
+    /// Ambient gas mass is not finite or is not positive
+    InvalidAmbientGasMass,
     /// The scene already has its maximum number of chunk region requests
     ChunkRegionRequestLimitReached,
     /// A chunk region has reversed bounds or exceeds the per-side size limit

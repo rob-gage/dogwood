@@ -27,13 +27,16 @@ use std::{
 const CHUNK_FILE_HEADER: [u8; 8] = *b"DOGWOOD\0";
 
 /// Current sparse chunk file format version
-const CHUNK_FILE_VERSION: u16 = 6;
+const CHUNK_FILE_VERSION: u16 = 7;
 
 /// Bytes in one sparse cell entry holding its index, material identifier, color, and kinematics
 const CHUNK_FILE_CELL_BYTE_COUNT: usize = 20;
 
 /// Bytes in one persisted fluid particle record
 const CHUNK_FILE_FLUID_PARTICLE_BYTE_COUNT: usize = 20;
+
+/// Bytes in one persisted cellular tile gas record
+const CHUNK_FILE_GAS_TILE_BYTE_COUNT: usize = 4 + 512 * 4;
 
 /// Number of cells addressable by one chunk
 const CHUNK_CELL_COUNT: usize = (CHUNK_SIZE * CHUNK_SIZE) as usize;
@@ -51,6 +54,9 @@ pub struct Chunk {
     kinematics: Vec<u64>,
     /// Sparse fluid particles stored relative to this chunk's origin
     fluid_particles: Vec<ChunkFluidParticle>,
+    /// Gas cells of each cellular tile whose gas differs from the default, keyed by row-major tile
+    /// index within the chunk, with eight words per row-major cell
+    gas_cellular_tiles: BTreeMap<u32, Box<[u32; 512]>>,
 }
 
 /// Exact bit representation of one persisted fluid particle
@@ -122,6 +128,7 @@ impl Chunk {
             colors: vec![0; CHUNK_CELL_COUNT],
             kinematics: vec![0; CHUNK_CELL_COUNT],
             fluid_particles: Vec::new(),
+            gas_cellular_tiles: BTreeMap::new(),
         }
     }
 
@@ -131,6 +138,7 @@ impl Chunk {
         self.colors.fill(color);
         self.kinematics.fill(0);
         self.fluid_particles.clear();
+        self.gas_cellular_tiles.clear();
     }
 
     /// Reads a versioned sparse chunk from a reader
@@ -182,6 +190,27 @@ impl Chunk {
             particle_count * CHUNK_FILE_FLUID_PARTICLE_BYTE_COUNT
         ];
         r.read_exact(&mut encoded_particles).map_err(|error| {
+            if error.kind() == io::ErrorKind::UnexpectedEof {
+                ChunkError::InvalidLength
+            } else {
+                ChunkError::Io(error)
+            }
+        })?;
+        let mut gas_tile_count_bytes: [u8; 4] = [0; 4];
+        r.read_exact(&mut gas_tile_count_bytes).map_err(|error| {
+            if error.kind() == io::ErrorKind::UnexpectedEof {
+                ChunkError::InvalidLength
+            } else {
+                ChunkError::Io(error)
+            }
+        })?;
+        let gas_tile_count: usize = u32::from_le_bytes(gas_tile_count_bytes) as usize;
+        if gas_tile_count > 4096 { return Err(ChunkError::GasTileCapacityExceeded); }
+        let mut encoded_gas_tiles: Vec<u8> = vec![
+            0;
+            gas_tile_count * CHUNK_FILE_GAS_TILE_BYTE_COUNT
+        ];
+        r.read_exact(&mut encoded_gas_tiles).map_err(|error| {
             if error.kind() == io::ErrorKind::UnexpectedEof {
                 ChunkError::InvalidLength
             } else {
@@ -258,6 +287,31 @@ impl Chunk {
             particle.validate()?;
             chunk.fluid_particles.push(particle);
         }
+        for encoded_gas_tile in encoded_gas_tiles.chunks_exact(
+            CHUNK_FILE_GAS_TILE_BYTE_COUNT,
+        ) {
+            let tile_index: u32 = u32::from_le_bytes([
+                encoded_gas_tile[0],
+                encoded_gas_tile[1],
+                encoded_gas_tile[2],
+                encoded_gas_tile[3],
+            ]);
+            if tile_index >= 4096 { return Err(ChunkError::GasTileIndexOutOfRange); }
+            if chunk.gas_cellular_tiles.contains_key(&tile_index) {
+                return Err(ChunkError::GasTileIndexIsDuplicate);
+            }
+            let mut gas_cells: [u32; 512] = [0; 512];
+            for (cell_index, gas_cell) in gas_cells.iter_mut().enumerate() {
+                let offset: usize = 4 + cell_index * 4;
+                *gas_cell = u32::from_le_bytes([
+                    encoded_gas_tile[offset],
+                    encoded_gas_tile[offset + 1],
+                    encoded_gas_tile[offset + 2],
+                    encoded_gas_tile[offset + 3],
+                ]);
+            }
+            chunk.gas_cellular_tiles.insert(tile_index, Box::new(gas_cells));
+        }
         Ok(chunk)
     }
 
@@ -309,7 +363,23 @@ impl Chunk {
                 encoded_particles.extend_from_slice(&value.to_le_bytes());
             }
         }
-        w.write_all(&encoded_particles).map_err(ChunkError::Io)
+        w.write_all(&encoded_particles).map_err(ChunkError::Io)?;
+        let gas_tile_count: u32 = self.gas_cellular_tiles.len().try_into()
+            .map_err(|_| ChunkError::GasTileCapacityExceeded)?;
+        if self.gas_cellular_tiles.len() > 4096 {
+            return Err(ChunkError::GasTileCapacityExceeded);
+        }
+        w.write_all(&gas_tile_count.to_le_bytes()).map_err(ChunkError::Io)?;
+        let mut encoded_gas_tiles: Vec<u8> = Vec::with_capacity(
+            self.gas_cellular_tiles.len() * CHUNK_FILE_GAS_TILE_BYTE_COUNT,
+        );
+        for (tile_index, gas_cells) in &self.gas_cellular_tiles {
+            encoded_gas_tiles.extend_from_slice(&tile_index.to_le_bytes());
+            for gas_cell in gas_cells.iter() {
+                encoded_gas_tiles.extend_from_slice(&gas_cell.to_le_bytes());
+            }
+        }
+        w.write_all(&encoded_gas_tiles).map_err(ChunkError::Io)
     }
 
     /// Returns the sparse fluid particles stored in this chunk
@@ -437,6 +507,19 @@ impl Chunk {
         Ok(kinematics)
     }
 
+    /// Returns one cellular tile's gas cells, or `None` when its gas is the default
+    pub fn cellular_tile_gas(
+        &self,
+        coordinates: CellularTileCoordinates,
+    ) -> Result<Option<[u32; 512]>, ChunkError> {
+        self.cellular_tile_row_starts(coordinates)?;
+        let tiles_per_chunk_side: i64 = CHUNK_SIZE / CELLULAR_TILE_SIZE;
+        let tile_x: usize = coordinates.x.rem_euclid(tiles_per_chunk_side) as usize;
+        let tile_y: usize = coordinates.y.rem_euclid(tiles_per_chunk_side) as usize;
+        let tile_index: u32 = (tile_y * tiles_per_chunk_side as usize + tile_x) as u32;
+        Ok(self.gas_cellular_tiles.get(&tile_index).map(|gas_cells| **gas_cells))
+    }
+
     /// Replaces the material identifiers of one cellular tile within this chunk
     pub fn set_cellular_tile_material_identifiers(
         &mut self,
@@ -481,6 +564,25 @@ impl Chunk {
         {
             self.kinematics[chunk_row_start..chunk_row_start + 8]
                 .copy_from_slice(&kinematics[tile_row * 8..tile_row * 8 + 8]);
+        }
+        Ok(())
+    }
+
+    /// Replaces one cellular tile's gas cells, or removes its stored gas when `None`
+    pub fn set_cellular_tile_gas(
+        &mut self,
+        coordinates: CellularTileCoordinates,
+        gas: Option<&[u32; 512]>,
+    ) -> Result<(), ChunkError> {
+        self.cellular_tile_row_starts(coordinates)?;
+        let tiles_per_chunk_side: i64 = CHUNK_SIZE / CELLULAR_TILE_SIZE;
+        let tile_x: usize = coordinates.x.rem_euclid(tiles_per_chunk_side) as usize;
+        let tile_y: usize = coordinates.y.rem_euclid(tiles_per_chunk_side) as usize;
+        let tile_index: u32 = (tile_y * tiles_per_chunk_side as usize + tile_x) as u32;
+        if let Some(gas_cells) = gas {
+            self.gas_cellular_tiles.insert(tile_index, Box::new(*gas_cells));
+        } else {
+            self.gas_cellular_tiles.remove(&tile_index);
         }
         Ok(())
     }

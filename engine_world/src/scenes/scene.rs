@@ -25,10 +25,16 @@ use super::{
         FluidActorContact,
         Fluids,
     },
+    gases::{
+        GAS_AMOUNT_MAXIMUM,
+        GAS_AMOUNT_PER_ATMOSPHERE,
+    },
     kinematics::Kinematics,
     scene_error::SceneError,
     scene_generator::SceneGenerator,
     scene_position::ScenePosition,
+    SCENE_AMBIENT_GAS_MASS_DEFAULT,
+    SCENE_AMBIENT_GAS_PRESSURE_DEFAULT,
     SCENE_CHUNK_THREAD_POOL_NAME,
     SCENE_FLUID_CAPACITY_FACTOR_DEFAULT,
     SCENE_GRAVITY_DEFAULT,
@@ -95,6 +101,10 @@ pub struct Scene {
     gravity: f32,
     /// Fraction of active-region cells available to fluid particles
     fluid_capacity_factor: f32,
+    /// Pressure of the phantom air in empty cells in atmospheres
+    ambient_gas_pressure: f32,
+    /// Mass of one atmosphere of the phantom air in empty cells
+    ambient_gas_mass: f32,
     /// ECS world and fixed-tick systems of every live actor
     actor_registry: ActorRegistry,
     /// Materials of every cell in this scene, shared with chunk generation to color new cells
@@ -128,6 +138,8 @@ impl Scene {
             fluid_snapshot_region: None,
             gravity: SCENE_GRAVITY_DEFAULT,
             fluid_capacity_factor: SCENE_FLUID_CAPACITY_FACTOR_DEFAULT,
+            ambient_gas_pressure: SCENE_AMBIENT_GAS_PRESSURE_DEFAULT,
+            ambient_gas_mass: SCENE_AMBIENT_GAS_MASS_DEFAULT,
             actor_registry: ActorRegistry::new(),
             material_table: Arc::new(material_table),
             generator,
@@ -153,6 +165,30 @@ impl Scene {
 
     /// Returns the configured fraction of active-region cells available to fluid particles
     pub fn fluid_capacity_factor(&self) -> f32 { self.fluid_capacity_factor }
+
+    /// Sets the pressure in atmospheres of the phantom air filling empty cells, which tiles without
+    /// stored gas and emptied cells start with; zero leaves empty cells a vacuum
+    pub fn set_ambient_gas_pressure(&mut self, pressure: f32) -> Result<(), SceneError> {
+        if !pressure.is_finite() || !(0.0..256.0).contains(&pressure) {
+            return Err(SceneError::InvalidAmbientGasPressure);
+        }
+        self.ambient_gas_pressure = pressure;
+        Ok(())
+    }
+
+    /// Sets the mass of one atmosphere of the phantom air filling empty cells: gases with less mass
+    /// rise through it and gases with more sink
+    pub fn set_ambient_gas_mass(&mut self, mass: f32) -> Result<(), SceneError> {
+        if !mass.is_finite() || mass <= 0.0 { return Err(SceneError::InvalidAmbientGasMass); }
+        self.ambient_gas_mass = mass;
+        Ok(())
+    }
+
+    /// Returns the phantom air amount of one empty cell at the ambient gas pressure
+    fn ambient_gas_amount(&self) -> u32 {
+        ((self.ambient_gas_pressure * GAS_AMOUNT_PER_ATMOSPHERE).round() as u32)
+            .min(GAS_AMOUNT_MAXIMUM)
+    }
 
     /// Returns the compiled materials of this scene
     pub fn material_table(&self) -> &MaterialTable { &self.material_table }
@@ -234,6 +270,7 @@ impl Scene {
                 y: bottom_left.y + region_height - 1,
             },
         };
+        let ambient_gas_amount: u32 = self.ambient_gas_amount();
         // create chunk streaming and the GPU tile ring when first streamed
         if self.chunk_streaming_state.is_none() {
             let thread_pool: Arc<rayon::ThreadPool> = processor
@@ -348,6 +385,7 @@ impl Scene {
                 chunk_streaming_state,
                 fluids,
                 is_particle_snapshot_pending,
+                ambient_gas_amount,
             )?;
         }
         Ok(())
@@ -576,6 +614,7 @@ impl Scene {
 impl Drop for Scene {
 
     fn drop(&mut self) {
+        let ambient_gas_amount: u32 = self.ambient_gas_amount();
         // write requested edits and return every active tile so the dropped chunks save them
         let (
             Some(chunk_streaming_state),
@@ -599,6 +638,7 @@ impl Drop for Scene {
                 accelerator,
                 cellular_tile_buffers,
                 chunk_streaming_state,
+                ambient_gas_amount,
             ));
         if let Err(error) = tile_result {
             panic!("Scene cellular tiles could not be returned: {error:?}");

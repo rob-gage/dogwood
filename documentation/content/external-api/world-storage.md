@@ -62,6 +62,7 @@ Tile access uses absolute `CellularTileCoordinates` and returns `Result`:
 | --- | --- |
 | Cell data | `CellCapacityExceeded`, `CellIndexOutOfRange`, `CellIndexIsDuplicate`, `CellIsEmpty` |
 | Fluid particles | `FluidParticleCapacityExceeded`, `FluidParticleMaterialInvalid`, `FluidParticlePositionInvalid`, `FluidParticleVelocityInvalid` |
+| Gas tiles | `GasTileCapacityExceeded`, `GasTileIndexOutOfRange`, `GasTileIndexIsDuplicate` |
 | Coordinates | `CoordinateMismatch` |
 | I/O and format | `Io`, `InvalidHeader`, `InvalidLength`, `InvalidVersion` |
 
@@ -69,8 +70,8 @@ Tile access uses absolute `CellularTileCoordinates` and returns `Result`:
 
 {{ <rustdoc path="engine/scenes/chunks/struct.ChunkStreamingState.html" text="ChunkStreamingState" /> }}, {{ <rustdoc path="engine/scenes/cellular_tiles/struct.CellularTileStreamingState.html" text="CellularTileStreamingState" /> }}, and {{ <rustdoc path="engine/scenes/cellular_tiles/struct.CellularTileBuffers.html" text="CellularTileBuffers" /> }} are public through the `chunks` and `cellular_tiles` module re-exports, but their intended use is scene-internal: `Scene` owns and advances them. Request, response, and resident implementation types are not re-exported from those modules. Games normally use [`Scene`](@/external-api/scenes.md) methods rather than constructing streaming state or GPU buffers directly.
 
-{{ <rustdoc path="engine/scenes/cellular_tiles/constant.CELLULAR_TILE_AWAKE.html" text="CELLULAR_TILE_AWAKE" /> }} (`0b11`) is the awake buffer value for a tile whose dynamic cells and neighbors must be simulated. It belongs to the streaming implementation; see the [glossary](@/architecture/glossary.md).
+{{ <rustdoc path="engine/scenes/cellular_tiles/constant.CELLULAR_TILE_AWAKE.html" text="CELLULAR_TILE_AWAKE" /> }} (`0b11`) is the awake buffer value for a tile whose dynamic cells and neighbors must be simulated. {{ <rustdoc path="engine/scenes/cellular_tiles/constant.CELLULAR_TILE_GAS_AWAKE.html" text="CELLULAR_TILE_GAS_AWAKE" /> }} (`0b1`) is the gas awake buffer value for a tile whose gas and neighbors must be simulated. Both belong to the streaming implementation; see the [glossary](@/architecture/glossary.md).
 
 {{ <rustdoc path="engine/scenes/chunks/struct.Chunk.html" text="Chunk" /> }} · {{ <rustdoc path="engine/scenes/chunks/struct.ChunkData.html" text="ChunkData" /> }} · {{ <rustdoc path="engine/scenes/chunks/enum.ChunkError.html" text="ChunkError" /> }}
 
-`ChunkFluidParticle` stores a fluid identifier and exact position/velocity bits. `Chunk::fluid_particles` and `set_fluid_particles` expose dormant particles; see [chunk format](@/internals/world-streaming/chunk-format.md#fluid-particle-section).
+`ChunkFluidParticle` stores a fluid identifier and exact position/velocity bits. `Chunk::fluid_particles` and `set_fluid_particles` expose dormant particles; see [chunk format](@/internals/world-streaming/chunk-format.md#fluid-particle-section). `Chunk::cellular_tile_gas` and `set_cellular_tile_gas` expose a tile's stored gas, or `None` for default gas; see [chunk format](@/internals/world-streaming/chunk-format.md#gas-tile-section).

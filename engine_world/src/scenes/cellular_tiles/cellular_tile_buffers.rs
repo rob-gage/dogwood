@@ -17,6 +17,12 @@ pub struct CellularTileBuffers {
     awake_buffer: wgpu::Buffer,
     /// Tile-major rigid body cell rasterized into each row-major cell plus one, zero for none
     rigid_body_cell_buffer: wgpu::Buffer,
+    /// Tile-major gas of each row-major cell as eight `u32`: four species slots with a gas index in
+    /// the top eight bits and an amount below, the phantom air amount, the flows through the cell's
+    /// right and top faces as `f32` bits, and padding
+    gas_buffer: wgpu::Buffer,
+    /// Whether each tile's gas must be simulated, with one `u32` per tile
+    gas_awake_buffer: wgpu::Buffer,
 }
 
 impl CellularTileBuffers {
@@ -63,6 +69,20 @@ impl CellularTileBuffers {
                 usage,
                 mapped_at_creation: false,
             });
+        let gas: wgpu::Buffer = accelerator.device()
+            .create_buffer(&wgpu::BufferDescriptor {
+                label: Some("`CellularTileBuffers.gas_buffer`"),
+                size: size * 8,
+                usage,
+                mapped_at_creation: false,
+            });
+        let gas_awake: wgpu::Buffer = accelerator.device()
+            .create_buffer(&wgpu::BufferDescriptor {
+                label: Some("`CellularTileBuffers.gas_awake_buffer`"),
+                size: (u64::from(width) * u64::from(height)).max(1) * 4,
+                usage,
+                mapped_at_creation: false,
+            });
         Self {
             accelerator: accelerator.clone(),
             material_identifier_buffer: material_identifiers,
@@ -70,6 +90,8 @@ impl CellularTileBuffers {
             kinematics_buffer: kinematics,
             awake_buffer: awake,
             rigid_body_cell_buffer: rigid_body_cells,
+            gas_buffer: gas,
+            gas_awake_buffer: gas_awake,
         }
     }
 
@@ -90,5 +112,11 @@ impl CellularTileBuffers {
 
     /// Returns the rigid body cell buffer
     pub fn rigid_body_cell_buffer(&self) -> &wgpu::Buffer { &self.rigid_body_cell_buffer }
+
+    /// Returns the gas buffer
+    pub fn gas_buffer(&self) -> &wgpu::Buffer { &self.gas_buffer }
+
+    /// Returns the tile gas awake buffer
+    pub fn gas_awake_buffer(&self) -> &wgpu::Buffer { &self.gas_awake_buffer }
 
 }

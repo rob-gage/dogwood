@@ -15,6 +15,8 @@ This page covers the `Scene` type, the `SceneGenerator` trait, `ScenePosition`, 
 - `actor_registry_mutable()` gives mutable access to the `ActorRegistry`.
 - `material_table()` returns the compiled material table.
 - `set_gravity(f32)` sets downward acceleration in tiles per second squared. The source default is `50.0`. The setter does not validate; negative values produce upward acceleration.
+- `set_ambient_gas_pressure(f32)` sets the pressure of the phantom air filling empty cells, in atmospheres. Values must be finite and in `[0, 256)`; otherwise it returns `InvalidAmbientGasPressure`. The default is `1.0`; zero leaves empty cells a vacuum. Tiles without stored gas start with it.
+- `set_ambient_gas_mass(f32)` sets the mass of one atmosphere of phantom air, compared with gas material masses. Values must be finite and positive; otherwise it returns `InvalidAmbientGasMass`. The default is `29.0`.
 - `edit(Edit)` queues an edit and returns `EditError` on failure. See [Collisions and edits](@/external-api/collisions-and-edits.md).
 - `save()` requests persistence; it is a no-op before streaming is initialized. Save requests are nonblocking; drive the normal `stream`/`simulate` lifecycle until `is_saved()` is true. [Particle persistence](@/internals/world-streaming/fluid-streaming.md#resident-saves) describes the pending phases.
 - `is_saved()` reports whether requested saves have completed.
@@ -89,6 +91,7 @@ Tile and cell coordinate conversion, including negative coordinates, is covered 
 | Tile streaming | `CellularTileStreamingRequestNotFound`, `InvalidCellularTileRegion`, `CellularTileStreamingResponse`, `CellularTileStreamingResponseChunkInactive`, `CellularTileStreamingPoll` |
 | Collision and kinematics | `CollisionCellularTileResponse`, `CollisionCellularTilePoll`, `KinematicsCellularTileResponse`, `KinematicsCellularTilePoll` |
 | Fluid configuration and transfers | `InvalidFluidCapacityFactor`, `FluidCapacityFixed`, `FluidParticleStreamingRecordInvalid`, `FluidParticleStreamingResponseChunkInactive`, `FluidParticleResponse`, `FluidParticlePoll`, `FluidParticleExportBufferSizeInvalid`, `FluidParticleExportRecordInvalid`, `FluidParticleSnapshotResponseChannelClosed` |
+| Gas configuration | `InvalidAmbientGasPressure`, `InvalidAmbientGasMass` |
 | Actors and colliders | `CameraActor`, `InvalidCollider`, `ActorDespawn` |
 
 See the linked rustdoc for variant payloads.

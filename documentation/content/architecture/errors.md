@@ -49,7 +49,7 @@ The enums identify failures; they do not decide whether a caller can recover.
 | `AcceleratorError` / `ProcessorError` | Graphics initialization (including unsupported adapter limits) and pool configuration or build failures. |
 | `WindowError` | Event-loop, OS, surface creation, unsupported surface, and surface validation failures. |
 | `ChunkError` | I/O and serialized chunk validation. |
-| `SceneError` | Streaming, storage, tile readback, collision/kinematics, despawn, and collider failures; chunk load, save, and generation variants carry coordinates and a lower-level error. |
+| `SceneError` | Streaming, storage, tile readback, collision/kinematics, ambient gas configuration, despawn, and collider failures; chunk load, save, and generation variants carry coordinates and a lower-level error. |
 | `EditError` | Invalid or unsupported edits, or edit request capacity reached. |
 | `EngineError` | Launch wrapper; see above. |
 

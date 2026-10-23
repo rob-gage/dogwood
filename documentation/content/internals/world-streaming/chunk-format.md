@@ -16,20 +16,20 @@ This page is for contributors who need the exact in-memory layout and on-disk fo
 - a packed RGBA `u32` color
 - a packed `u64` kinematics value, the packed per-cell motion state (see [cellular kinematics](@/internals/simulation/cellular-kinematics.md))
 
-A chunk also owns a separate sparse list of `ChunkFluidParticle` records.
+A chunk also owns a separate sparse list of `ChunkFluidParticle` records and a sparse map of gas cells for cellular tiles that differ from default gas.
 
-A newly created chunk fills these with `MaterialIdentifier::EMPTY`, zero color, and zero kinematics. `fill` replaces all three arrays, sets kinematics to zero, and clears the separate particle list.
+A newly created chunk fills these with `MaterialIdentifier::EMPTY`, zero color, and zero kinematics. `fill` replaces all three arrays, sets kinematics to zero, and clears the particle list and gas map.
 
 For a cell at local coordinates `(x, y)`, the row-major cell index is `y * 512 + x`. Tile accessors copy or replace eight rows of eight entries at a time. They first check that the tile's chunk coordinates match the chunk. They then use Euclidean remainder to find the tile's local position within the chunk's 64 × 64 tiles. Sizes are summarized in [coordinates, tiles, and chunks](@/external-api/world-storage.md).
 
 ## Sparse file bytes
 
-`Chunk::write` emits a 22-byte little-endian header followed by zero or more 20-byte cell entries and a particle section:
+`Chunk::write` emits a 22-byte little-endian header followed by zero or more 20-byte cell entries, a particle section, and a gas tile section:
 
 | Header offset | Size | Value |
 | --- | ---: | --- |
 | 0 | 8 | ASCII `DOGWOOD` followed by NUL |
-| 8 | 2 | Format version `6` |
+| 8 | 2 | Format version `7` |
 | 10 | 4 | Chunk x coordinate as `i32` |
 | 14 | 4 | Chunk y coordinate as `i32` |
 | 18 | 4 | Number of stored entries as `u32` |
@@ -66,10 +66,16 @@ Chunk loading and save scheduling are covered in [chunk I/O scheduling](@/intern
 
 ## Fluid particle section
 
-Version 6 appends a little-endian `u32` particle count after cell entries, then 20 bytes per particle: two `f32` position components relative to the chunk origin, two `f32` velocity components in cells/tick, and a `u32` fluid material identifier. Float bits are preserved exactly. The count cannot exceed `512 * 512`; positions must be finite and in `[0, 512)`, velocities finite, and identifiers fluid-form. Failures return `FluidParticleCapacityExceeded`, `FluidParticlePositionInvalid`, `FluidParticleVelocityInvalid`, or `FluidParticleMaterialInvalid`.
+Version 6 introduced a little-endian `u32` particle count after cell entries, then 20 bytes per particle: two `f32` position components relative to the chunk origin, two `f32` velocity components in cells/tick, and a `u32` fluid material identifier. Float bits are preserved exactly. The count cannot exceed `512 * 512`; positions must be finite and in `[0, 512)`, velocities finite, and identifiers fluid-form. Failures return `FluidParticleCapacityExceeded`, `FluidParticlePositionInvalid`, `FluidParticleVelocityInvalid`, or `FluidParticleMaterialInvalid`.
 
 `Chunk::fluid_particles` reads the list; `set_fluid_particles` validates and replaces it. `ChunkFluidParticle::new` validates the record and preserves supplied float bits; storage validates records again.
 
-> **Limitation:** The reader accepts only version 6; version 5 files return `InvalidVersion`.
+## Gas tile section
+
+Version 7 appends a little-endian `u32` gas tile count after the particle records. Each tile record contains its row-major tile index (`u32`) followed by 512 little-endian `u32` gas words in row-major cell order. The count cannot exceed 4096; tile indices must be below 4096 and unique. Failures return `GasTileCapacityExceeded`, `GasTileIndexOutOfRange`, or `GasTileIndexIsDuplicate`. Truncated sections return `InvalidLength`.
+
+`Chunk::cellular_tile_gas` returns `None` for default gas. `set_cellular_tile_gas` stores or removes a tile entry.
+
+> **Limitation:** The reader accepts only version 7; older files return `InvalidVersion`.
 
 The format validates that a particle identifier is fluid-form, but does not check that it is registered in a particular scene material table. GPU admission checks registration later. Saved records do not include particle sleep state, actor samples, raster data, or material definitions; reconstructed simulation uses the scene's registered materials.

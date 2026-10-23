@@ -85,6 +85,8 @@ These constants are fixed implementation values rather than runtime settings.
 | Constant | Value | Meaning |
 | --- | ---: | --- |
 | `SCENE_GRAVITY_DEFAULT` | 50.0 | Default downward acceleration, in tiles per second squared |
+| `SCENE_AMBIENT_GAS_PRESSURE_DEFAULT` | 1.0 | Default phantom air pressure, in atmospheres |
+| `SCENE_AMBIENT_GAS_MASS_DEFAULT` | 29.0 | Default mass of one atmosphere of phantom air |
 | `SCENE_CHUNK_THREAD_POOL_NAME` | `"chunk_io"` | Pool for background chunk loads, generation, and saves |
 | `COLLISION_GROUP_CELLULAR_DYNAMIC` | `1 << 27` | Settled dynamic cells collision group |
 | `COLLISION_GROUP_ACTOR` | `1 << 28` | Actor colliders collision group |

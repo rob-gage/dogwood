@@ -21,6 +21,12 @@ pub enum ChunkError {
     FluidParticlePositionInvalid,
     /// A persisted fluid particle velocity is nonfinite
     FluidParticleVelocityInvalid,
+    /// The serialized chunk contains more gas tiles than a chunk can hold
+    GasTileCapacityExceeded,
+    /// A serialized gas tile index is outside the chunk
+    GasTileIndexOutOfRange,
+    /// A serialized gas tile occurs more than once
+    GasTileIndexIsDuplicate,
     /// The serialized chunk coordinates do not match the requested coordinates
     CoordinateMismatch,
     /// The chunk file could not be read or written

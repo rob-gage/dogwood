@@ -48,7 +48,7 @@ Once incoming data is available, the state does the following in order:
 3. Marks the requested region resident.
 4. Queues writes for entering tiles.
 
-The queued writes upload material identifiers, colors, and kinematics. They set the awake value to `CELLULAR_TILE_AWAKE` and clear rigid-body cell data.
+The queued writes upload material identifiers, colors, kinematics, and gas. A tile without stored gas gets default gas: phantom air at the scene's ambient amount in each empty cell, with no species and no flow. They set the awake value to `CELLULAR_TILE_AWAKE`, set the gas awake value to `CELLULAR_TILE_GAS_AWAKE`, and clear rigid-body cell data.
 
 When the ring shifts, the old region's retention moves to the outgoing request. It is released after the departing tiles reach their chunks.
 
@@ -56,7 +56,7 @@ When the ring shifts, the old region's retention moves to the outgoing request. 
 
 ### Readback
 
-Each outgoing request copies the selected tiles' material identifiers, colors, and kinematics into a staging buffer. It submits the GPU copy and requests a read mapping with `map_async`. A callback sends the mapping result over a channel.
+Each outgoing request copies the selected tiles' material identifiers, colors, kinematics, and gas into a staging buffer. It submits the GPU copy and requests a read mapping with `map_async`. A callback sends the mapping result over a channel.
 
 The regular streaming path polls the device without waiting and incorporates any responses already received. After a mapping failure, response processing immediately requests another mapping. Its result is observed on a later poll.
 
@@ -65,6 +65,7 @@ The regular streaming path polls the device without waiting and incorporates any
 Responses are applied as an ascending-ID prefix. Processing stops at the first request that is not ready or whose destination chunks are not all active, so later ready responses wait.
 
 - Applied responses write tile data into their destination chunks and release any retained chunk region attached to the request.
+- A tile's gas is stored only when it differs from default gas for the scene's current ambient amount; otherwise its stored gas is removed.
 - Applying in order prevents an older readback from overwriting newer data for the same logical tile.
 - Mapping errors are returned as `SceneError::CellularTileStreamingResponse`. A failed request remains pending for another mapping attempt.
 

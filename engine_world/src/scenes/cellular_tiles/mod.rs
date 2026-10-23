@@ -21,3 +21,6 @@ pub const CELLULAR_TILE_SIZE: i64 = 8;
 
 /// Awake buffer value of a tile whose dynamic cells, and those of its neighbors, must be simulated
 pub const CELLULAR_TILE_AWAKE: u32 = 0b11;
+
+/// Gas awake buffer value of a tile whose gas, and that of its neighbors, must be simulated
+pub const CELLULAR_TILE_GAS_AWAKE: u32 = 0b1;
