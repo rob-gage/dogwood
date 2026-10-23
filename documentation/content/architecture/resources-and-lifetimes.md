@@ -3,7 +3,7 @@ title = "Resources and lifetimes"
 description = "How a scene creates, shares, saves, and releases its world resources."
 weight = 50
 [extra]
-sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/kinematics/kinematics_cellular_tile.wgsl", "engine_host/src/acceleration/accelerator.rs"]
+sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/gases", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/kinematics/kinematics_cellular_tile.wgsl", "engine_host/src/acceleration/accelerator.rs"]
 +++
 
 This page describes what a `Scene` owns, when its GPU and streaming state is created, the fixed capacity constants, and what happens on save and drop. It is for engine contributors.
@@ -30,7 +30,7 @@ Scene
 
 `Scene::new` leaves chunk streaming, tile buffers, tile streaming, collision, and kinematics absent. The first `Scene::stream` creates chunk streaming and the GPU tile ring, sized to twice the first camera's unzoomed width and height. Later requested regions must keep those dimensions.
 
-Collision and kinematics are created on the first `simulate` call with an active region. Tile buffers retain a cloned `Accelerator`; its clone holds handles to the same WGPU instance, adapter, device, and queue, so teardown can use that context. See the [scene pipeline](@/architecture/scene-pipeline.md) for call order.
+Collision and kinematics are created on the first `simulate` call with an active region; gas simulation is created on that call after fluids. Tile buffers retain a cloned `Accelerator`; its clone holds handles to the same WGPU instance, adapter, device, and queue, so teardown can use that context. See the [scene pipeline](@/architecture/scene-pipeline.md) for call order.
 
 ## Saving and drop behavior
 
@@ -118,3 +118,14 @@ Public solver constants in `engine_world/src/scenes/fluids/mod.rs`:
 | `FLUID_TIME_STEP` | 1/60 second |
 
 The private `FLUID_ACTOR_CONTACT_SCALE` is `1024`. Count, actor, and import readbacks each have three staging slots; the resident save has one separate snapshot slot. [GPU layouts](@/internals/shaders/fluid-shader.md) document record sizes and region/pool scaling. The collision-side `RIGID_BODY_FLUID_CURRENT_COUPLING` is `1.0`.
+
+## Gas resources
+
+Gas simulation allocates a scratch gas buffer the size of the tile ring's gas buffer, an eight-byte volume word per ring cell, and per-tile control storage. Its first `simulate` creates them; they live until the scene drops. Public constants in `engine_world/src/scenes/gases/mod.rs`:
+
+| Constant | Value |
+| --- | --- |
+| `GAS_AMOUNT_PER_ATMOSPHERE` | 65536 |
+| `GAS_AMOUNT_MAXIMUM` | `0xff_ffff` (about 256 atmospheres in one species slot) |
+
+The private `GAS_TIME_STEP` is 1/60 second, `GAS_SUBSTEP_COUNT` is 4, and `GAS_BUOYANCY_SCALE` is 0.5. See the [gas shader](@/internals/shaders/gas-shader.md) for its tuning constants.

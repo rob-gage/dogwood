@@ -26,6 +26,7 @@ use super::{
         Fluids,
     },
     gases::{
+        Gases,
         GAS_AMOUNT_MAXIMUM,
         GAS_AMOUNT_PER_ATMOSPHERE,
     },
@@ -89,6 +90,8 @@ pub struct Scene {
     kinematics: Option<Kinematics>,
     /// GPU PBF simulation and fixed-capacity particle pool, absent until the tile ring is created
     fluids: Option<Fluids>,
+    /// GPU simulation of the gas in the active cellular tiles, absent until simulated
+    gases: Option<Gases>,
     /// Requested edits awaiting their write into the GPU-resident cellular tiles
     edit_streaming_state: EditStreamingState,
     /// Whether the next stream advance must start a resident particle save snapshot
@@ -132,6 +135,7 @@ impl Scene {
             collision: None,
             kinematics: None,
             fluids: None,
+            gases: None,
             edit_streaming_state: EditStreamingState::new(),
             is_fluid_save_requested: false,
             fluid_snapshot_chunk_region_index: None,
@@ -488,6 +492,32 @@ impl Scene {
                 self.material_table.fluid_properties_buffer(),
             );
         particle_simulation_result?;
+        // gas moves last, through the cells the other simulations and actors left open
+        let ambient_gas_amount: u32 = self.ambient_gas_amount();
+        let fluid_raster_buffer: &wgpu::Buffer = self.fluids
+            .as_ref()
+            .expect("fluid storage exists with the tile buffers")
+            .fluid_raster_buffer();
+        let kinematics: &Kinematics = self.kinematics
+            .as_ref()
+            .expect("kinematics storage exists after simulation");
+        self.gases
+            .get_or_insert_with(|| Gases::new(
+                accelerator,
+                cellular_tile_buffers,
+                &self.material_table,
+                fluid_raster_buffer,
+                kinematics.actor_buffer(),
+            ))
+            .simulate_gases(
+                accelerator,
+                active_region,
+                cellular_tile_streaming_state.cellular_tile_ring_offset(),
+                self.gravity,
+                ambient_gas_amount,
+                self.ambient_gas_mass,
+                kinematics.fluid_actors().len() as u32,
+            )?;
         if let Some((streaming_request_identifier, _)) = particle_export_target {
             self.cellular_tile_streaming_state.as_mut()
                 .expect("tile streaming state exists after simulation")

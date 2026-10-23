@@ -63,4 +63,4 @@ Timeouts and occluded surfaces skip a frame. Outdated or lost surfaces are recon
 
 For the scene-internal order of edit application, streaming, and simulation, see [scene update pipeline](@/architecture/scene-pipeline.md). The public lifecycle hooks are {{ <rustdoc path="engine/games/trait.Game.html" text="Game" /> }} and {{ <rustdoc path="engine/runtime/struct.Engine.html" text="Engine" /> }}.
 
-Within each scene simulation, cellular kinematics precedes collision, and fluid particles run afterward. See [scene pipeline](@/architecture/scene-pipeline.md#fluid-step).
+Within each scene simulation, cellular kinematics precedes collision, fluid particles run afterward, and gas runs last. See [scene pipeline](@/architecture/scene-pipeline.md#fluid-step).

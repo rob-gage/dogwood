@@ -3,7 +3,7 @@ title = "Scene update pipeline"
 description = "The ordered streaming and simulation stages performed by a scene update."
 weight = 20
 [extra]
-sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/kinematics/kinematics.rs", "engine_world/src/scenes/kinematics/kinematics_pass.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/collision_cellular_tile_pass.rs", "engine_world/src/scenes/collisions/collision_rigid_body.wgsl"]
+sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/gases", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/kinematics/kinematics.rs", "engine_world/src/scenes/kinematics/kinematics_pass.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/collision_cellular_tile_pass.rs", "engine_world/src/scenes/collisions/collision_rigid_body.wgsl"]
 +++
 
 This page defines the ordered work inside `Scene::stream` and `Scene::simulate`. The [frame lifecycle](@/architecture/frame-lifecycle.md) calls both after `Game::update`; rendering is a separate redraw operation.
@@ -22,6 +22,7 @@ Scene::simulate (when an active region exists)
   poll completed fluid actor feedback
   collision / pawn movement / Rapier step / rigid-body rasterization
   fluid particles using current tile geometry and shared actor records
+  gas using current tile geometry, the new fluid raster, and shared actor records
   mark outgoing particle export submitted
 
 Scene::graphics -> renderer compute shading -> scene draw -> UI -> present
@@ -58,6 +59,10 @@ Static occupancy refreshes block when needed. Settled dynamic occupancy for rigi
 The particle solver runs after the collision submission, so queue order exposes updated cellular and rasterized rigid-body geometry. Actor records are copied from kinematics rather than uploaded again after collision; moving actor projection extrapolates those records through substeps.
 
 Fluid simulation consumes queued edits/imports and raster contact deltas, rebases and exports when needed, solves particles, rebuilds the raster, and queues actor/count feedback. The scene marks an outgoing export submitted only on success. [Fluid simulation](@/internals/simulation/fluids.md) gives the solver stages; [GPU synchronization](@/architecture/concurrency-and-gpu-sync.md) describes readback waits.
+
+### Gas step
+
+Gas runs last, after the particle solver rebuilds the raster, so it sees the tick's cells, fluid, and kinematics actor records. It is created on its first step and submits its passes without waiting or reading back. [Gas simulation](@/internals/simulation/gases.md) gives the passes.
 
 ## Drawing
 

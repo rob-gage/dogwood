@@ -5,10 +5,10 @@ weight = 60
 sort_by = "weight"
 template = "section.html"
 [extra]
-sources = ["engine_world/Cargo.toml", "engine_world/src/scenes/kinematics/kinematics_fluids.wgsl", "engine_graphics/src/renders", "engine_world/src/scenes/kinematics", "engine_world/src/scenes/collisions", "engine_world/src/scenes/edits"]
+sources = ["engine_world/Cargo.toml", "engine_world/src/scenes/gases/gas_cellular_tile.wgsl", "engine_world/src/scenes/kinematics/kinematics_fluids.wgsl", "engine_graphics/src/renders", "engine_world/src/scenes/kinematics", "engine_world/src/scenes/collisions", "engine_world/src/scenes/edits"]
 +++
 
-This section is the reference for Dogwood's embedded WGSL shaders, for engine contributors. Each shader's Rust pass creates the matching pipeline and bind groups, packs CPU-side data where needed, and submits work. Details live in the [render shader reference](@/internals/shaders/render-shaders.md), [kinematics shader reference](@/internals/shaders/kinematics-shader.md), [collision shader reference](@/internals/shaders/collision-shaders.md), and [edit shader reference](@/internals/shaders/edit-shader.md).
+This section is the reference for Dogwood's embedded WGSL shaders, for engine contributors. Each shader's Rust pass creates the matching pipeline and bind groups, packs CPU-side data where needed, and submits work. Details live in the [render shader reference](@/internals/shaders/render-shaders.md), [kinematics shader reference](@/internals/shaders/kinematics-shader.md), [collision shader reference](@/internals/shaders/collision-shaders.md), [edit shader reference](@/internals/shaders/edit-shader.md), and [gas shader reference](@/internals/shaders/gas-shader.md).
 
 ## Shader table
 
@@ -22,7 +22,8 @@ This section is the reference for Dogwood's embedded WGSL shaders, for engine co
 | `engine_graphics/src/renders/scene_renderer_fluid.wgsl` | Compute: `classify`, `shade`; render: `vertex`, `fragment` | `SceneRendererFluidPass` | Fluid raster, materials, classification and shaded-cell buffers | Two compute dispatches followed by a fullscreen draw |
 | `engine_world/src/scenes/collisions/collision_cellular_tile.wgsl` | Compute: `compute` | `CollisionCellularTilePass` | Uniforms, material IDs, occupancy output, rigid-body cell IDs and kinematics | One invocation per tile in the active region, dispatched in 64-thread workgroups |
 | `engine_world/src/scenes/collisions/collision_rigid_body.wgsl` | Compute: `release`, `rasterize`, `write_cells`, `read_cells` | `CollisionRigidBodyPass` | Uniforms, cellular buffers, rigid-body records, item lists, cell writes/read results and changed-cell atomics | Per-tile release/rasterize and per-cell read/write dispatches; shared helper selects workgroup count |
-| `engine_world/src/scenes/edits/edit_cellular_tile.wgsl` | Compute: `compute` | `EditCellularTilePass` | Edited tile records, material IDs, colors, kinematics and atomic awake flags | One 64-thread workgroup per edited tile |
+| `engine_world/src/scenes/edits/edit_cellular_tile.wgsl` | Compute: `compute` | `EditCellularTilePass` | Edited tile records, material IDs, colors, kinematics, gas and atomic awake and gas awake flags | One 64-thread workgroup per edited tile |
+| `engine_world/src/scenes/gases/gas_cellular_tile.wgsl` | [Compute: `volume`, `collect`, `clear`, `prepare`, `step`](@/internals/shaders/gas-shader.md) | `GasCellularTilePass` | Group 0: uniforms, material IDs, gas in and out, gas awake flags, volumes, control, gas materials, fluid raster and materials, actor records; group 1: indirect dispatch | Whole-ring and per-tile dispatches, then one indirect `step` per substep |
 
 ## Common conventions
 
