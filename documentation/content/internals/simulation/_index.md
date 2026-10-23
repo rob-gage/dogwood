@@ -1,14 +1,14 @@
 +++
 title = "Simulation"
-description = "How GPU cell kinematics and Rapier collision simulation exchange data during a scene step."
+description = "How scene simulation systems exchange data during a fixed step."
 weight = 40
 sort_by = "weight"
 template = "section.html"
 [extra]
-sources = ["engine_world/src/scenes/scene.rs", "engine_world/src/scenes/kinematics/kinematics.rs", "engine_world/src/scenes/kinematics/kinematics_pass.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/collision_rigid_body_pass.rs"]
+sources = ["engine_world/src/scenes/gases", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/kinematics/kinematics.rs", "engine_world/src/scenes/kinematics/kinematics_pass.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/collision_rigid_body_pass.rs"]
 +++
 
-This section is for engine contributors. It describes the two connected simulation systems that run over a scene's active region and the pages that cover each part.
+This section is for engine contributors. It describes the connected simulation systems that run over a scene's active region and the pages that cover each part.
 
 - GPU kinematics moves dynamic cells and records their contacts with actors and cellular rigid bodies.
 - The Rapier collision world steps actor and rigid-body motion against voxel colliders built from static cells and, for rigid-body collisions, settled dynamic cells. It then rasterizes moving cellular rigid bodies back into the tile buffers.

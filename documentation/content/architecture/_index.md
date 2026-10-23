@@ -17,7 +17,7 @@ The `engine` crate is the game-facing facade. It re-exports scene, actor, materi
 | Crate | Owns | Depends on |
 | --- | --- | --- |
 | `engine` | Facade, `Engine`, `GameInstance`, the `Game` trait | `engine_world`, `engine_graphics`, `engine_host`, `engine_user_interface` |
-| `engine_world` | Actors, scenes, chunk storage, tile streaming, edits, kinematics, collisions | `engine_graphics`, `engine_host` |
+| `engine_world` | Actors, scenes, chunk storage, tile streaming, edits, kinematics, collisions, fluids, gases | `engine_graphics`, `engine_host` |
 | `engine_graphics` | Drawing scene output | `engine_host` |
 | `engine_host` | Native window, GPU accelerator, processor pools, system input events | `engine_user_interface` |
 | `engine_user_interface` | egui integration and game UI | none |
@@ -47,7 +47,7 @@ The arrows show direct workspace dependencies.
 | `Window` | Host window that schedules fixed updates and redraws. |
 | `Scene` | Owns the `ActorRegistry`, the material table, the world generator, and chunk storage. |
 
-Streaming lazily creates chunk and [tile-ring state](@/architecture/glossary.md#world-terms). Simulation lazily creates kinematics and collision state once an [active tile region](@/architecture/glossary.md#world-terms) exists. See the [frame and update lifecycle](@/architecture/frame-lifecycle.md), the [scene update pipeline](@/architecture/scene-pipeline.md), and [resources and lifetimes](@/architecture/resources-and-lifetimes.md). Rustdoc: {{ <rustdoc path="engine/runtime/struct.Engine.html" text="Engine" /> }}.
+Streaming lazily creates chunk and [tile-ring state](@/architecture/glossary.md#world-terms). Simulation lazily creates kinematics, collision, and gas state once an [active tile region](@/architecture/glossary.md#world-terms) exists. See the [frame and update lifecycle](@/architecture/frame-lifecycle.md), the [scene update pipeline](@/architecture/scene-pipeline.md), and [resources and lifetimes](@/architecture/resources-and-lifetimes.md). Rustdoc: {{ <rustdoc path="engine/runtime/struct.Engine.html" text="Engine" /> }}.
 
 ## Reading order
 

@@ -3,7 +3,7 @@ title = "Actor components"
 description = "Fields, units, and current engine use of the public actor component types."
 weight = 60
 [extra]
-sources = ["engine_world/src/scenes/fluids", "engine_world/src/actors/components", "engine_world/src/actors/actor_registry.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/kinematics/kinematics.rs", "engine/src/games/game_instance.rs", "engine/src/lib.rs"]
+sources = ["engine_world/src/scenes/gases", "engine_world/src/scenes/fluids", "engine_world/src/actors/components", "engine_world/src/actors/actor_registry.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/kinematics/kinematics.rs", "engine/src/games/game_instance.rs", "engine/src/lib.rs"]
 +++
 
 Components are Bevy data attached to an `Actor` through `ActorRegistry`. This page is the reference for every public component, for game programmers. All are re-exported from `engine::actors::components`.
@@ -25,7 +25,7 @@ See [actors](@/external-api/actors.md) for registry operations and [collisions a
 | `ActorIdentityComponent` | Private `Actor`; `new(actor)`, `actor()` | None | Registry identity, inserted by `spawn`. Do not insert or remove it manually. |
 | `ActorCameraComponent` | `width`, `height: u32` in cellular tiles at zoom 1; `zoom: f32` | None | Scene camera size; `visible_width()` and `visible_height()` multiply `width` and `height` by `zoom`. |
 | `ActorKinematicsPositionComponent` | `position: ScenePosition` | Zero position | Position in tiles with fixed-point offsets, used for camera, rendering, collision, and kinematics. See [coordinate spaces](@/architecture/glossary.md). |
-| `ActorCollisionComponent` | `body: CollisionBody`; `collider: Collider`; `memberships`, `filter: u32`; `mass: f32` | None | Read by collision and dynamic-cell kinematics. `mass` uses dynamic cellular material mass units; it decides how far dynamic cells push the actor and how much they slow it. |
+| `ActorCollisionComponent` | `body: CollisionBody`; `collider: Collider`; `memberships`, `filter: u32`; `mass: f32` | None | Read by collision and dynamic-cell kinematics; gas simulation also reads its shape from the kinematics actor records to close cells and drag gas. `mass` uses dynamic cellular material mass units; it decides how far dynamic cells push the actor and how much they slow it. |
 | `ActorContactComponent` | `collider: Collider`; `memberships`, `filter: u32` | None | Sensor collider configuration; see [collision setup](@/examples/collision-setup.md). |
 | `ActorPawnControlComponent` | `movement: f32`; `is_jumping`, `is_crouching: bool` | `0.0`, `false`, `false` | Control intent for pawn movement. `movement` runs from -1 (left) to 1 (right). |
 | `ActorPawnMovementComponent` | `speed`, `crouching_speed`, `acceleration`, `jump_speed: f32`; swimming fields below | `10.0`, `4.0`, `80.0`, `18.0` | Pawn tuning in tiles per second (speeds) and tiles per second squared (`acceleration`). Acceleration must be nonnegative. The engine does not validate it; a negative value causes the pawn update to panic. |

@@ -133,3 +133,32 @@ fn register_water(registry: &mut MaterialRegistry) -> Result<MaterialIdentifier,
 Compile the registry as usual. Use this identifier in [world edits](@/examples/editing-cells.md) to spawn particles, or build validated `ChunkFluidParticle` records in a generator. A fluid identifier written directly into a cellular material array does not create particles. Increase the [scene capacity factor](@/external-api/scenes.md#fluid-capacity) before the first stream if the default pool is too small.
 
 For tuning, `viscosity` smooths neighboring velocities, `cohesion` adds surface attraction/short-range spline response, and `artificial_pressure` controls the PBF correction term. `drag` controls swimming/current coupling; friction/restitution apply to cellular wet-face contacts. Their [validation ranges](@/external-api/materials.md#validation-at-compile-time) are checked during compilation. See [fluid simulation](@/internals/simulation/fluids.md) for the implemented formulas.
+
+## Register gas
+
+Gas graphics also use a packed material color, whose alpha is the opacity of one atmosphere:
+
+```rust
+use engine::{
+    materials::{Material, MaterialError, MaterialIdentifier, MaterialPropertiesGas, MaterialRegistry},
+    MaterialGraphicsGas,
+};
+
+fn register_water_vapor(
+    registry: &mut MaterialRegistry,
+) -> Result<MaterialIdentifier, MaterialError> {
+    registry.register(Material::Gas {
+        name: String::from("water vapor"),
+        properties: MaterialPropertiesGas {
+            mass: 18.0,
+            diffusivity: 0.01,
+            cohesion: 0.1,
+            graphics: MaterialGraphicsGas {
+                color: u32::from_le_bytes([225, 230, 240, 150]),
+            },
+        },
+    })
+}
+```
+
+Compile the registry as usual. Use this identifier in [world edits](@/examples/editing-cells.md) to fill empty cells with gas. A `mass` below the scene's [ambient gas mass](@/external-api/scenes.md) rises and one above it sinks; `diffusivity` spreads the gas into its neighbors, and `cohesion` keeps thinning clouds from spreading into cells without it. Their [validation ranges](@/external-api/materials.md#validation-at-compile-time) are checked during compilation. See [gas simulation](@/internals/simulation/gases.md) for the implemented model.

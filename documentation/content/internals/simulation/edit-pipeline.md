@@ -41,7 +41,7 @@ At stream time, the edit state collects tiles touched by any Insert request and 
 
 This preserves the sequential effect of the queued edits while needing only one merged record per affected tile.
 
-The GPU edit pass uses one 64-invocation workgroup per tile. Replaced cells always write; inserted cells write only if the GPU cell is still empty. A write stores the material and color, clears the cell's kinematics, and marks its tile awake and disturbed. The edit state clears its queued tile count after processing; an empty merged result requires no GPU pass.
+The GPU edit pass uses one 64-invocation workgroup per tile. Replaced cells always write; inserted cells write only if the GPU cell is still empty. A write stores the material and color, or for a gas leaves the cell empty and fills its gas; it clears the cell's kinematics and marks its tile awake and disturbed and its gas awake. See the [edit shader](@/internals/shaders/edit-shader.md#cell-write-behavior). The edit state clears its queued tile count after processing; an empty merged result requires no GPU pass.
 
 ## Collision and persistence
 

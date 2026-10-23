@@ -12,7 +12,7 @@ This page is for engine contributors. It describes the private state a `Scene` o
 
 `Scene` coordinates actor data, material lookup, persistence, tile residency, and simulation. Its private state is split by lifecycle:
 
-- Chunk streaming, GPU tile buffers, tile streaming, fluids, collision, and kinematics start absent.
+- Chunk streaming, GPU tile buffers, tile streaming, fluids, collision, kinematics, and gases start absent.
 - Edit streaming is initialized immediately with an empty queue.
 - The material table and generator are shared with chunk work through `Arc` handles.
 
@@ -33,8 +33,10 @@ Scene
 ├── Option<Collision>             first Scene::simulate with active region
 │   ├── CollisionCellularTilePass
 │   └── CollisionRigidBodyPass
-└── Option<Kinematics>            first Scene::simulate with active region
-    └── KinematicsPass
+├── Option<Kinematics>            first Scene::simulate with active region
+│   └── KinematicsPass
+└── Option<Gases>                 first Scene::simulate with active region,
+    └── GasCellularTilePass       after fluids
 ```
 
 The pass objects are owned by their parent systems:
@@ -42,6 +44,7 @@ The pass objects are owned by their parent systems:
 - `Collision` manages actor and rigid-body Rapier state plus cellular occupancy.
 - `Kinematics` manages dynamic-cell motion and cellular/fluid coupling through `KinematicsPass`.
 - `Fluids` manages particle admission, simulation, and fluid actor feedback through `FluidParticlePass`.
+- `Gases` manages gas flow through `GasCellularTilePass`, reading the shared tile buffers, the fluid raster, and the kinematics actor records.
 
 `Scene` passes shared tile buffers to both and, when creating kinematics, the collision system's rigid-body pass. For ordering and resource lifetime, see [Scene update pipeline](@/architecture/scene-pipeline.md) and [Resources and lifetimes](@/architecture/resources-and-lifetimes.md).
 
@@ -53,7 +56,7 @@ The pass objects are owned by their parent systems:
 
 ### Simulation
 
-`Scene::simulate` returns early until an active region exists, then lazily creates `Collision` and `Kinematics`. It first calls `Kinematics::simulate_kinematics`, which returns cellular and rigid-body contact maps. It polls fluid actor feedback, passes the contact maps to `Collision::simulate_collisions`, then runs the particle solver. See [scene ordering](@/architecture/scene-pipeline.md#simulation-order).
+`Scene::simulate` returns early until an active region exists, then lazily creates `Collision` and `Kinematics`. It first calls `Kinematics::simulate_kinematics`, which returns cellular and rigid-body contact maps. It polls fluid actor feedback, passes the contact maps to `Collision::simulate_collisions`, runs the particle solver, then creates `Gases` if needed and runs gas. See [gas simulation](@/internals/simulation/gases.md) and [scene ordering](@/architecture/scene-pipeline.md#simulation-order).
 
 [Collision world](@/internals/simulation/collision-world.md), [Cellular kinematics](@/internals/simulation/cellular-kinematics.md), and [Edit pipeline](@/internals/simulation/edit-pipeline.md) describe those systems in depth.
 

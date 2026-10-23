@@ -19,7 +19,7 @@ sources = [
 ]
 +++
 
-An `Engine` bundles the GPU `Accelerator` and the worker-thread `Processor`. Use `Engine::default()` for the default accelerator and processor. This page covers the settings you can change: worker pools, window frame rate, and scene gravity.
+An `Engine` bundles the GPU `Accelerator` and the worker-thread `Processor`. Use `Engine::default()` for the default accelerator and processor. This page covers the settings you can change: worker pools, window frame rate, scene gravity, and ambient gas.
 
 ## Build an engine
 
@@ -75,6 +75,10 @@ See [host types](@/external-api/host.md) for the host API.
 
 ## Scene gravity
 
-Scenes start with downward gravity of `50.0` tiles per second squared. Call `Scene::set_gravity` to replace it; the value is used by dynamic bodies and pawns. See [scenes](@/external-api/scenes.md) for scene setup and [engine and Game](@/external-api/engine-and-games.md) for runtime behavior.
+Scenes start with downward gravity of `50.0` tiles per second squared. Call `Scene::set_gravity` to replace it; the value is used by dynamic bodies, pawns, and gas buoyancy. See [scenes](@/external-api/scenes.md) for scene setup and [engine and Game](@/external-api/engine-and-games.md) for runtime behavior.
+
+## Ambient gas
+
+Empty cells hold phantom air at `1.0` atmosphere with a mass of `29.0` per atmosphere. Call `Scene::set_ambient_gas_pressure` and `Scene::set_ambient_gas_mass` to replace them; gases lighter than the ambient mass rise and heavier ones sink, and a pressure of zero makes empty cells a vacuum. See [scenes](@/external-api/scenes.md) for validation.
 
 {{ <rustdoc path="engine/runtime/struct.Engine.html" text="Engine" /> }}
