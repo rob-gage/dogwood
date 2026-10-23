@@ -10,14 +10,15 @@ use crate::{
 };
 use engine_host::acceleration::Accelerator;
 
-/// Bytes of one edited tile: its index, padding, both cell masks, materials, and colors
+/// Bytes of one edited tile: its index, ambient gas amount, both cell masks, materials, and colors
 const EDIT_CELLULAR_TILE_BYTE_COUNT: u64 = (6 + 64 + 64) * 4;
 
 /// GPU writing of edited cells into the active cellular tiles
 pub struct EditCellularTilePass {
     /// Pipeline writing one edited cell per invocation
     pipeline: wgpu::ComputePipeline,
-    /// Bind group of the edited tiles, material identifiers, colors, kinematics, and awake tiles
+    /// Bind group of the edited tiles, material identifiers, colors, kinematics, awake tiles, gas,
+    /// and awake gas tiles
     bind_group: wgpu::BindGroup,
     /// Edited tiles uploaded for one stream
     edit_cellular_tile_buffer: wgpu::Buffer,
@@ -49,6 +50,8 @@ impl EditCellularTilePass {
                     storage_entry(2, false),
                     storage_entry(3, false),
                     storage_entry(4, false),
+                    storage_entry(5, false),
+                    storage_entry(6, false),
                 ],
             },
         );
@@ -108,19 +111,30 @@ impl EditCellularTilePass {
                     binding: 4,
                     resource: cellular_tile_buffers.awake_buffer().as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: cellular_tile_buffers.gas_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: cellular_tile_buffers.gas_awake_buffer().as_entire_binding(),
+                },
             ],
         });
         Self { pipeline, bind_group, edit_cellular_tile_buffer }
     }
 
-    /// Writes inserted and replaced cells into their tiles after every queued tile write
+    /// Writes inserted and replaced cells into their tiles after every queued tile write, emptied
+    /// cells holding phantom air of an ambient amount
     pub fn write_cellular_tiles(
         &self,
         accelerator: &Accelerator,
         edit_cellular_tiles: &[(CellularTileIndex, u64, u64, [MaterialIdentifier; 64], [u32; 64])],
+        ambient_gas_amount: u32,
     ) {
         if edit_cellular_tiles.is_empty() { return; }
-        // WGSL u32, vec2<u32>, vec2<u32>, and two array<u32, 64> at offsets 0, 8, 16, 24, and 280
+        // WGSL u32, u32, vec2<u32>, vec2<u32>, and two array<u32, 64> at offsets 0, 4, 8, 16, 24,
+        // and 280
         let mut edit_cellular_tile_bytes: Vec<u8> = Vec::with_capacity(
             edit_cellular_tiles.len() * EDIT_CELLULAR_TILE_BYTE_COUNT as usize,
         );
@@ -129,7 +143,7 @@ impl EditCellularTilePass {
         {
             let cellular_tile_index: u32 = (*cellular_tile_index).into();
             edit_cellular_tile_bytes.extend_from_slice(&cellular_tile_index.to_le_bytes());
-            edit_cellular_tile_bytes.extend_from_slice(&[0; 4]);
+            edit_cellular_tile_bytes.extend_from_slice(&ambient_gas_amount.to_le_bytes());
             edit_cellular_tile_bytes.extend_from_slice(&inserted_cells.to_le_bytes());
             edit_cellular_tile_bytes.extend_from_slice(&replaced_cells.to_le_bytes());
             for material_identifier in material_identifiers {

@@ -72,7 +72,7 @@ Pending edits are applied in request order before the next stream moves their re
 | `EditMode::Insert` | Fills empty cells not overlapped by physical `ActorCollisionComponent` colliders whose memberships include `COLLISION_GROUP_EDIT`; the collider filter is not checked. Contact sensors do not block inserts. |
 | `EditMode::Replace` | Fills every requested cell and ignores colliders. |
 
-In `Replace` mode, filling with `MaterialIdentifier::EMPTY` clears a cell; `Insert` skips fills with `EMPTY`.
+In `Replace` mode, filling with `MaterialIdentifier::EMPTY` clears a cell; `Insert` skips fills with `EMPTY`. Filling with a gas material leaves the cell empty and fills it with that gas at the scene's ambient gas pressure, or one atmosphere when the ambient pressure is lower; emptying a cell leaves only phantom air at the ambient pressure.
 
 ### Edit errors
 
@@ -80,7 +80,6 @@ In `Replace` mode, filling with `MaterialIdentifier::EMPTY` clears a cell; `Inse
 
 - `CellularTileInactive { coordinates }`: a tile of the edit is outside the active region.
 - `MaterialUnregistered { material_identifier }`: the material is not in the scene's material table.
-- `MaterialFormUnsupported { material_identifier }`: the material's form cannot be placed by edits.
 - `CapacityReached`: see below.
 
 `Scene::edit` also returns `CapacityReached` when the tile entries in edits awaiting the next stream would exceed 4096. Tile entries repeated across edits count separately.

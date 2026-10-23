@@ -67,7 +67,7 @@ See [actors, cameras, and pawns](@/examples/actors-and-pawns.md) for how a game 
 Validation is all-or-nothing: if any check fails, the entire edit is rejected and none of it is queued. Failures are:
 
 - `CellularTileInactive`: a targeted tile is outside the active region.
-- `MaterialUnregistered` and `MaterialFormUnsupported`: a filled material fails validation.
+- `MaterialUnregistered`: a filled material is not registered.
 - `CapacityReached`: the request exceeds capacity. `fill_segment` also returns it, before filling, when its bounding rectangle spans more than 4096 tiles.
 
 The complete API is in [collisions and edits](@/external-api/collisions-and-edits.md).

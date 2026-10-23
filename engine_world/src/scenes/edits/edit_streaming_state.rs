@@ -75,13 +75,7 @@ impl EditStreamingState {
                     None => return Err(EditError::MaterialUnregistered {
                         material_identifier: *material_identifier,
                     }),
-                    Some(MaterialForm::CellularStatic | MaterialForm::CellularDynamic
-                        | MaterialForm::Fluid) => {}
-                    Some(MaterialForm::Gas) => {
-                        return Err(EditError::MaterialFormUnsupported {
-                            material_identifier: *material_identifier,
-                        });
-                    }
+                    Some(_) => {}
                 }
             }
         }
@@ -104,7 +98,8 @@ impl EditStreamingState {
         Ok(())
     }
 
-    /// Writes requested edits into the resident tiles in request order before the ring moves
+    /// Writes requested edits into the resident tiles in request order before the ring moves,
+    /// emptied cells holding phantom air of an ambient amount
     pub fn stream_edits(
         &mut self,
         accelerator: &Accelerator,
@@ -112,6 +107,7 @@ impl EditStreamingState {
         cellular_tile_streaming_state: &CellularTileStreamingState,
         actor_registry: &ActorRegistry,
         collision: Option<&mut Collision>,
+        ambient_gas_amount: u32,
     ) -> Result<(), SceneError> {
         if self.edits.is_empty() { return Ok(()); }
         // insertion skips cells overlapped by colliders in the edit collision group
@@ -193,7 +189,7 @@ impl EditStreamingState {
         if edit_cellular_tiles.is_empty() { return Ok(()); }
         self.edit_cellular_tile_pass
             .get_or_insert_with(|| EditCellularTilePass::new(accelerator, cellular_tile_buffers))
-            .write_cellular_tiles(accelerator, &edit_cellular_tiles);
+            .write_cellular_tiles(accelerator, &edit_cellular_tiles, ambient_gas_amount);
         // collisions read the edited cells in the next simulation even when the ring is unmoved
         if let Some(collision) = collision { collision.request_cellular_tile_read(); }
         Ok(())

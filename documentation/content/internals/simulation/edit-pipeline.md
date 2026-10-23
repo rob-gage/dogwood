@@ -18,7 +18,7 @@ An `Edit` groups a bit mask, material identifiers, and packed colors by cellular
 | Queued tile entries exceed 4096 before the next stream | Whole request rejected |
 | Tile outside the resident active region | Whole request rejected |
 | Unregistered material | Whole request rejected |
-| Gas material | Whole request rejected |
+| Gas material | Writes gas into the selected empty cell; see the [edit shader](@/internals/shaders/edit-shader.md#cell-write-behavior) |
 | Fluid material | Queues particle spawns; the cellular write clears the selected cell |
 
 The first 4096 limit bounds one `fill_segment` call's candidates; the second bounds the queue between streams. Empty cells are allowed. `ScenePosition` uses integer coordinates and fixed-point offsets, so a segment's relative displacement is always finite.

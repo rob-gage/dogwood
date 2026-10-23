@@ -24,13 +24,15 @@ Group 0 bindings:
 | 1-2 | Material identifiers, colors | read/write |
 | 3 | Packed kinematics (`array<vec2<u32>>`) | read/write |
 | 4 | Awake flags (atomic) | read/write |
+| 5 | Gas (`array<vec4<u32>>`, two per cell) | read/write |
+| 6 | Gas awake flags (atomic) | read/write |
 
 Each tile record occupies 536 bytes, serialized little-endian by Rust:
 
 | Offset | Field | Size |
 |---:|---|---:|
 | 0 | `cellular_tile_index: u32` | 4 B |
-| 4 | Rust padding, aligning the next WGSL `vec2<u32>` | 4 B |
+| 4 | `ambient_gas_amount: u32` | 4 B |
 | 8 | `inserted_cells: vec2<u32>` | 8 B |
 | 16 | `replaced_cells: vec2<u32>` | 8 B |
 | 24 | `material_identifiers: array<u32, 64>` | 256 B |
@@ -40,7 +42,8 @@ Each tile record occupies 536 bytes, serialized little-endian by Rust:
 
 - The two-word masks cover the tile's 64 cells in row-major order. The shader selects word `cell / 32` and bit `cell % 32`.
 - Cell buffers are addressed at `cellular_tile_index * 64 + cell`.
-- The awake buffer is addressed at `cellular_tile_index`.
+- Gas is addressed at `(cellular_tile_index * 64 + cell) * 2` for the species slots and one more for phantom air and flows.
+- The awake and gas awake buffers are addressed at `cellular_tile_index`.
 
 ## Cell write behavior
 
@@ -49,6 +52,10 @@ Each invocation reads its cell's inserted and replaced mask bits:
 - A replacement always writes.
 - An insertion writes only when the current material identifier is zero.
 
-On a write, the shader copies the supplied material identifier and packed color, zeros the cell's kinematics, then atomically ORs `3` into the tile's awake value (awake and disturbed flags).
+On a write, the shader zeros the cell's kinematics, atomically ORs `3` into the tile's awake value (awake and disturbed flags), and ORs `1` into its gas awake value. The rest depends on the material:
+
+- A gas material leaves the cell empty with zero color. Its gas becomes one species slot of that gas holding the ambient amount, or one atmosphere when the ambient amount is lower, with no phantom air or flow.
+- `EMPTY` is copied with its color, and the gas becomes phantom air at the ambient amount alone.
+- Any other material is copied with its color. The cell keeps its species slots, which gas simulation later pushes out, but loses its phantom air and flows.
 
 The shader does not evaluate actor colliders or material registration; those decisions are made before the pass receives the records.

@@ -18,11 +18,6 @@ pub enum EditError {
         /// Identifier of the unregistered material
         material_identifier: MaterialIdentifier,
     },
-    /// A material of the edit has a form that edits cannot place
-    MaterialFormUnsupported {
-        /// Identifier of the unsupported material
-        material_identifier: MaterialIdentifier,
-    },
     /// The edit would exceed a segment, queued tile, or fluid-particle capacity
     CapacityReached,
 }

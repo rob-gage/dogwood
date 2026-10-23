@@ -844,6 +844,7 @@ impl<G: Game> Editor<G> {
                 (MaterialForm::CellularStatic, 1),
                 (MaterialForm::CellularDynamic, 0),
                 (MaterialForm::Fluid, 0),
+                (MaterialForm::Gas, 0),
             ]
         {
             for index in first_index.. {

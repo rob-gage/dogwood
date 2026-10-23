@@ -361,6 +361,7 @@ impl Scene {
                 cellular_tile_streaming_state,
                 &self.actor_registry,
                 self.collision.as_mut(),
+                ambient_gas_amount,
             )?;
         }
         // advance chunk streaming before moving resident tiles
@@ -633,6 +634,7 @@ impl Drop for Scene {
                 cellular_tile_streaming_state,
                 &self.actor_registry,
                 None,
+                ambient_gas_amount,
             )
             .and_then(|()| cellular_tile_streaming_state.return_cellular_tiles(
                 accelerator,

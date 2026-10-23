@@ -50,14 +50,14 @@ The enums identify failures; they do not decide whether a caller can recover.
 | `WindowError` | Event-loop, OS, surface creation, unsupported surface, and surface validation failures. |
 | `ChunkError` | I/O and serialized chunk validation. |
 | `SceneError` | Streaming, storage, tile readback, collision/kinematics, ambient gas configuration, despawn, and collider failures; chunk load, save, and generation variants carry coordinates and a lower-level error. |
-| `EditError` | Invalid or unsupported edits, or edit request capacity reached. |
+| `EditError` | Inactive tiles, unregistered materials, or edit request capacity reached. |
 | `EngineError` | Launch wrapper; see above. |
 
 ### Recovery and retry
 
 - Failed dirty saves keep their chunk for retry. `retry_chunk_streaming_request` retries dirty saves with the retained chunk, and retries failed loads or generations only while their coordinate is still in a requested region.
 - `Scene::stream` wraps camera lookup failures in `SceneError::CameraActor`; `Scene::graphics` returns `ActorError` directly.
-- `Scene::edit` returns `EditError` for inactive tiles, unregistered or unsupported materials, or request capacity.
+- `Scene::edit` returns `EditError` for inactive tiles, unregistered materials, or request capacity.
 
 These remain ordinary results until a caller propagates, handles, or panics on them.
 
