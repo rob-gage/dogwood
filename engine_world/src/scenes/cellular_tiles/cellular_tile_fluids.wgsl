@@ -300,7 +300,7 @@ fn rigid_fluid(
     var sums: array<f32, 10>;
     if body_index != RIGID_FLUID_NO_BODY {
         let cell: vec2<i32> = rigid_fluid_cell(invocation.x);
-        let rigid_body: KinematicsRigidBody = rigid_bodies[body_index];
+        let rigid_body: CellularTileRigidBody = rigid_bodies[body_index];
         let arm: vec2<f32> = rigid_body_arm(body_index, cell);
         let body_velocity: vec2<f32> = rigid_body.velocity
             + rigid_body.angular_velocity * vec2<f32>(-arm.y, arm.x);

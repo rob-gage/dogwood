@@ -66,7 +66,7 @@ All words are serialized little-endian by Rust. Sizes below are record strides, 
 | Neighbor | 20 | Old position xy, cohesion, artificial pressure, sleeping flag |
 | Lambda | 4 | `f32` |
 | Boundary cell/node | 16 | Cell: psi, velocity xy, body index; node: density, gradient xy, moving-gradient scalar |
-| Actor | 64 | Shared [kinematics actor layout](@/internals/shaders/kinematics-shader.md#actors-and-rigid-bodies); word 14 is the idle-swimmer flag |
+| Actor | 64 | Shared [cellular tile actor layout](@/internals/shaders/cellular-tile-shader.md#actors-and-rigid-bodies); word 14 is the idle-swimmer flag |
 | Actor feedback | 32 | Signed fixed-point impulse xy, immersion, current xy, density, drag, unused word |
 | Import result | 4 | Zero accepted, nonzero rejected |
 | Export | 40 | Whole world-cell x/y as four low/high words, fractional xy, velocity xy, material ID, padding |

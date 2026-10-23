@@ -3,7 +3,7 @@ title = "Pawn movement"
 description = "How pawn input, acceleration, jumping, gravity, and dynamic-cell contacts move kinematic actors."
 weight = 30
 [extra]
-sources = ["engine_world/src/scenes/collisions/collision.rs", "engine_world/src/actors/components/actor_pawn_movement.rs", "engine_world/src/actors/components/actor_pawn_control.rs", "engine/src/games/game_instance.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/kinematics/kinematics.rs", "engine_world/src/scenes/kinematics/kinematics_pass.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/actors/components/actor_collision.rs", "engine_world/src/actors/components/actor_identity.rs", "engine_world/src/actors/components/actor_kinematics_position.rs"]
+sources = ["engine_world/src/scenes/collisions/collision.rs", "engine_world/src/actors/components/actor_pawn_movement.rs", "engine_world/src/actors/components/actor_pawn_control.rs", "engine/src/games/game_instance.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_pass.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/actors/components/actor_collision.rs", "engine_world/src/actors/components/actor_identity.rs", "engine_world/src/actors/components/actor_kinematics_position.rs"]
 +++
 
 This page is for engine contributors. It describes the character controller that collision runs each fixed step for pawns: an actor with `ActorPawnMovementComponent` that moves under keyboard or game-written control.
@@ -65,7 +65,7 @@ The controller is Rapier's `KinematicCharacterController`. For its tuning consta
 
 ## Dynamic-cell contact
 
-Kinematics passes actor-contact data to collision when readbacks are available. See [cell and body contact exchange](@/internals/simulation/contact-exchange.md) for latency and caching.
+`CellularTiles` passes actor-contact data to collision when readbacks are available. See [cell and body contact exchange](@/internals/simulation/contact-exchange.md) for latency and caching.
 
 The pawn first receives the velocity change, then loses any velocity directed into the cellular contact normal. To let dynamic cells overlap a pawn slightly, collision allows one cell of depth and applies half of any excess depth as a correction along the contact normal before calling `move_shape`.
 

@@ -26,7 +26,7 @@ Prediction sweeps each substep in pieces no longer than approximately half a cel
 
 ## Actor projection
 
-The shared actor list contains eligible cellular-collision actors, limited to `KINEMATICS_ACTOR_COUNT_MAXIMUM`. It supports rotated circles, rectangles, and vertical capsules. Projection expands the shape by approximately half a cell: the implementation uses `0.4501` for circles and rectangle corners, and `0.5001` for capsule radii and rectangle interior-face exits. A `0.002` contact tolerance retains normals just outside the surface.
+The shared actor list contains eligible cellular-collision actors, limited to `CELLULAR_TILE_ACTOR_COUNT_MAXIMUM`. It supports rotated circles, rectangles, and vertical capsules. Projection expands the shape by approximately half a cell: the implementation uses `0.4501` for circles and rectangle corners, and `0.5001` for capsule radii and rectangle interior-face exits. A `0.002` contact tolerance retains normals just outside the surface.
 
 Each substep linearly extrapolates the uploaded actor using its inferred velocity and sweeps that translation in at most eight half-cell pieces. Projection runs after prediction and each pressure correction, then projects against solids again. It accumulates the opposite particle momentum change into the actor's feedback record. After velocity commit, another pass restores any missing actor-normal velocity and records its reaction. Rotation is sampled, not swept through an angular trajectory.
 

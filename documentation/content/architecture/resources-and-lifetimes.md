@@ -3,7 +3,7 @@ title = "Resources and lifetimes"
 description = "How a scene creates, shares, saves, and releases its world resources."
 weight = 50
 [extra]
-sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/gases", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/kinematics/kinematics_cellular_tile.wgsl", "engine_host/src/acceleration/accelerator.rs"]
+sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/gases", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl", "engine_host/src/acceleration/accelerator.rs"]
 +++
 
 This page describes what a `Scene` owns, when its GPU and streaming state is created, the fixed capacity constants, and what happens on save and drop. It is for engine contributors.
@@ -23,7 +23,7 @@ Scene
 ├── CellularTileBuffers ── cloned Accelerator + GPU buffers
 ├── CellularTileStreamingState
 ├── Collision
-└── Kinematics
+└── CellularTiles
 ```
 
 ### Lazy initialization

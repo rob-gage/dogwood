@@ -16,7 +16,7 @@ struct GasUniforms {
     padding_2: u32,
 };
 
-/// An actor displacing gas, laid out like the kinematics actor records
+/// An actor displacing gas, laid out like the cellular tile actor records
 struct GasActor {
     center: vec2<f32>,
     velocity: vec2<f32>,
@@ -150,7 +150,7 @@ const ACTOR_WAKE_LENGTH: f32 = 3.0;
 /// Fraction of the difference between a face flow and an actor's velocity removed per substep
 const ACTOR_DRAG: f32 = 0.2;
 
-/// Largest actor velocity in cells per tick, matching the kinematics actor records
+/// Largest actor velocity in cells per tick, matching the cellular tile actor records
 const ACTOR_VELOCITY_MAXIMUM: f32 = 8.0;
 
 /// Flow added per substep for each unit of difference in the net outflow of the cells across a

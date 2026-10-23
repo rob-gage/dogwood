@@ -3,13 +3,13 @@ title = "Cell and body contact exchange"
 description = "How the GPU cellular simulation reports actor and rigid-body contacts to collision resolution."
 weight = 80
 [extra]
-sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/kinematics/kinematics.rs", "engine_world/src/scenes/kinematics/kinematics_pass.rs", "engine_world/src/scenes/kinematics/kinematics_cellular_tile.wgsl", "engine_world/src/scenes/kinematics/mod.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/scene.rs"]
+sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_pass.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl", "engine_world/src/scenes/cellular_tiles/mod.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/scene.rs"]
 +++
 This page documents the records kinematics sends to and receives from collision. It is for engine contributors working on actor and rigid-body contact response.
 
 ## Inputs to cellular kinematics
 
-The scene runs kinematics before Rapier collision simulation. Kinematics uploads 64-byte actor records and shares each rigid body's 64-byte record with the rasterization pass (selection rules and caps: [cellular kinematics](@/internals/simulation/cellular-kinematics.md#actors-and-cellular-rigid-bodies); layouts: [kinematics shader](@/internals/shaders/kinematics-shader.md)).
+The scene runs kinematics before Rapier collision simulation. `CellularTiles` uploads 64-byte actor records and shares each rigid body's 64-byte record with the rasterization pass (selection rules and caps: [cellular kinematics](@/internals/simulation/cellular-kinematics.md#actors-and-cellular-rigid-bodies); layouts: [cellular tile shader](@/internals/shaders/cellular-tile-shader.md)).
 
 The pass also receives `(GPU record index, collision identifier)` pairs for cellular rigid bodies, which it uses to find the body records shared with the collision rasterization pass.
 
@@ -45,7 +45,7 @@ Collision normalizes the summed normal and divides the summed arm by count, keep
 Contact buffers are copied to one of three staging slots per contact type and mapped asynchronously. A kinematics call returns completed readbacks, if any, rather than waiting for the current GPU tick. The contacts therefore describe an earlier tick and can arrive later than one tick if readback is still in flight.
 
 - Actor readbacks are drained in submission order. If several are ready, only the newest map is returned and earlier actor deltas are discarded.
-- Kinematics then zeros the returned velocity changes in its cache, retaining normals and depths until another map arrives.
+- `CellularTiles` then zeros the returned velocity changes in its cache, retaining normals and depths until another map arrives.
 - Rigid-body readbacks accumulate impulses by body identifier.
 
 > **Limitation:** If all three actor-contact readback slots are in flight, that tick's actor contacts are skipped and cleared on the next simulation call. Rigid-body contacts remain accumulated until a slot is available.

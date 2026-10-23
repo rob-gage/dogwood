@@ -11,7 +11,7 @@ sources = [
     "engine_world/src/lib.rs",
     "engine_world/src/scenes/scene.rs",
     "engine_world/src/materials/material_form.rs",
-    "engine_world/src/scenes/kinematics/kinematics.rs",
+    "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs",
     "engine_world/src/scenes/collisions/collision.rs",
     "engine_graphics/src/lib.rs",
     "engine_graphics/src/renders/scene_renderer.rs",

@@ -3,7 +3,7 @@ title = "Material table compilation"
 description = "How MaterialRegistry::compile builds dynamic-cell, fluid, and gas properties and cellular albedo frames from registered materials."
 weight = 20
 [extra]
-sources = ["engine_world/src/materials", "engine_graphics/src/sprites", "engine_graphics/src/world/materials/material_graphics_fluid.rs", "engine_graphics/src/world/materials/material_graphics_gas.rs", "engine_graphics/src/world/materials/material_graphics_cellular_static.rs", "engine_graphics/src/world/materials/material_graphics_cellular_dynamic.rs", "engine_world/src/scenes/kinematics/kinematics_cellular_tile.wgsl", "engine_world/src/scenes/collisions/collision_rigid_body.rs"]
+sources = ["engine_world/src/materials", "engine_graphics/src/sprites", "engine_graphics/src/world/materials/material_graphics_fluid.rs", "engine_graphics/src/world/materials/material_graphics_gas.rs", "engine_graphics/src/world/materials/material_graphics_cellular_static.rs", "engine_graphics/src/world/materials/material_graphics_cellular_dynamic.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl", "engine_world/src/scenes/collisions/collision_rigid_body.rs"]
 +++
 
 This page is for engine contributors. It explains how `MaterialRegistry::compile` turns registered materials into the GPU property buffer and CPU albedo lookup data that the simulation uses.
@@ -18,7 +18,7 @@ Static and dynamic cellular materials use separate identifier-indexed albedo arr
 
 ## Identifier indexing
 
-`MaterialIdentifier` stores a two-bit form tag in its top bits and a 30-bit form-specific index below it. The tags are static `00`, dynamic `01`, fluid `10`, and gas `11`. `EMPTY` is static index zero; registered static materials begin at index one, while the other forms begin at zero. Simulation shaders test the tag; the kinematics shader masks the low 30 bits to index the dynamic property array. The encoding is defined in {{ <rustdoc path="engine/materials/struct.MaterialIdentifier.html" text="MaterialIdentifier" /> }}.
+`MaterialIdentifier` stores a two-bit form tag in its top bits and a 30-bit form-specific index below it. The tags are static `00`, dynamic `01`, fluid `10`, and gas `11`. `EMPTY` is static index zero; registered static materials begin at index one, while the other forms begin at zero. Simulation shaders test the tag; the cellular tile shader masks the low 30 bits to index the dynamic property array. The encoding is defined in {{ <rustdoc path="engine/materials/struct.MaterialIdentifier.html" text="MaterialIdentifier" /> }}.
 
 ## Compilation path
 
@@ -69,7 +69,7 @@ Packed colors are little-endian RGBA. White returns the sampled albedo unchanged
 
 ## GPU property consumers
 
-The kinematics pass binds the dynamic property buffer as `array<vec4<f32>>` and indexes it with the dynamic identifier's low 30 bits. It uses mass, friction, and restitution in cell movement and collisions; see [cellular kinematics](@/internals/simulation/cellular-kinematics.md) and the [kinematics shader](@/internals/shaders/kinematics-shader.md). Static-cell mass, friction, and restitution are instead looked up on the CPU when calculating a detached [cellular rigid body's properties](@/internals/simulation/rigid-bodies.md).
+The cellular tile pass binds the dynamic property buffer as `array<vec4<f32>>` and indexes it with the dynamic identifier's low 30 bits. It uses mass, friction, and restitution in cell movement and collisions; see [cellular kinematics](@/internals/simulation/cellular-kinematics.md) and the [cellular tile shader](@/internals/shaders/cellular-tile-shader.md). Static-cell mass, friction, and restitution are instead looked up on the CPU when calculating a detached [cellular rigid body's properties](@/internals/simulation/rigid-bodies.md).
 
 > **Limitation:** `MaterialTable` creates dynamic cellular, fluid, and gas property buffers. The static property-buffer accessor returns `None`. The fluid solver and cellular kinematics consume the fluid buffer for particle constraints and fluid/body coupling. The fluid renderer reads density and packed color from the same buffer. The [gas simulation](@/internals/simulation/gases.md) reads mass, diffusivity, and cohesion from the gas buffer, and [gas rendering](@/internals/rendering/gas-pass.md) reads its packed color.
 

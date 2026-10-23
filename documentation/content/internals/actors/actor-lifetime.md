@@ -3,7 +3,7 @@ title = "Actor lifetime in the active region"
 description = "How collision simulation removes actors that leave the active region and how persistence affects despawning."
 weight = 40
 [extra]
-sources = ["engine_world/src/scenes/collisions/collision.rs", "engine_world/src/actors/components/actor_persistence.rs", "engine_world/src/scenes/scene.rs", "engine/src/games/game_instance.rs", "engine_world/src/actors/components/actor_identity.rs", "engine_world/src/actors/actor_registry.rs", "engine_world/src/scenes/chunks", "engine_world/src/actors/components/actor_camera.rs", "engine_world/src/scenes/kinematics/kinematics.rs", "editor/src/editor.rs"]
+sources = ["engine_world/src/scenes/collisions/collision.rs", "engine_world/src/actors/components/actor_persistence.rs", "engine_world/src/scenes/scene.rs", "engine/src/games/game_instance.rs", "engine_world/src/actors/components/actor_identity.rs", "engine_world/src/actors/actor_registry.rs", "engine_world/src/scenes/chunks", "engine_world/src/actors/components/actor_camera.rs", "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs", "editor/src/editor.rs"]
 +++
 
 This page is for engine contributors. It explains when an actor is despawned because it left the [active region](@/architecture/glossary.md), and how `ActorPersistenceComponent` and camera actors affect that.
@@ -26,7 +26,7 @@ Actors with a collision or contact collider that exit are removed from the colli
 
 If a persistent actor later re-enters the active region, collision simulation adds it back and recreates its Rapier body if it has a collision or contact collider.
 
-Kinematics can still include eligible actors up to four tiles beyond the region for [dynamic-cell interactions](@/internals/simulation/contact-exchange.md).
+`CellularTiles` can still include eligible actors up to four tiles beyond the region for [dynamic-cell interactions](@/internals/simulation/contact-exchange.md).
 
 > **Not implemented:** Actor components are not serialized with chunk data. `ActorPersistenceComponent` keeps an actor registered in memory after region exit; it does not persist components to disk.
 

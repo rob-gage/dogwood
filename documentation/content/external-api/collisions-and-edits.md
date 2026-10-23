@@ -3,10 +3,10 @@ title = "Collisions and edits"
 description = "Public collider and edit data types, reserved collision groups, and engine-managed simulation APIs."
 weight = 80
 [extra]
-sources = ["engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/collisions/collider.rs", "engine_world/src/scenes/collisions/collider_shape.rs", "engine_world/src/scenes/collisions/collision_body.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/actors/components/actor_collision.rs", "engine_world/src/actors/components/actor_contact.rs", "engine_world/src/scenes/edits/edit.rs", "engine_world/src/scenes/edits/edit_mode.rs", "engine_world/src/scenes/edits/edit_error.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine_world/src/scenes/edits/mod.rs", "engine_world/src/scenes/kinematics/mod.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/collisions/collision_cellular_tile.rs", "engine_world/src/scenes/collisions/collision_rigid_body_pass.rs", "engine_world/src/scenes/kinematics/kinematics.rs", "engine/src/lib.rs"]
+sources = ["engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/collisions/collider.rs", "engine_world/src/scenes/collisions/collider_shape.rs", "engine_world/src/scenes/collisions/collision_body.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/actors/components/actor_collision.rs", "engine_world/src/actors/components/actor_contact.rs", "engine_world/src/scenes/edits/edit.rs", "engine_world/src/scenes/edits/edit_mode.rs", "engine_world/src/scenes/edits/edit_error.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine_world/src/scenes/edits/mod.rs", "engine_world/src/scenes/cellular_tiles/mod.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/collisions/collision_cellular_tile.rs", "engine_world/src/scenes/collisions/collision_rigid_body_pass.rs", "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs", "engine/src/lib.rs"]
 +++
 
-This page covers the colliders actors attach to the physics world and the `Edit` API for changing cells. It also lists the public collision and kinematics types that games do not manage. The collision types are under `engine::scenes::collisions`.
+This page covers the colliders actors attach to the physics world and the `Edit` API for changing cells. It also lists the public collision and cellular tile simulation types that games do not manage. The collision types are under `engine::scenes::collisions`.
 
 ## Collider data
 
@@ -86,7 +86,7 @@ In `Replace` mode, filling with `MaterialIdentifier::EMPTY` clears a cell; `Inse
 
 ## Engine-managed public types
 
-`Collision`, `CollisionCellularTile`, `CollisionRigidBodyPass`, `Kinematics`, and `EditStreamingState` are public Rust types, but games do not construct or manage them. For engine-managed cell collider behavior, see [Static cell colliders](@/internals/simulation/static-cell-colliders.md); use `Scene::edit` to change cells.
+`Collision`, `CollisionCellularTile`, `CollisionRigidBodyPass`, `CellularTiles`, and `EditStreamingState` are public Rust types, but games do not construct or manage them. For engine-managed cell collider behavior, see [Static cell colliders](@/internals/simulation/static-cell-colliders.md); use `Scene::edit` to change cells.
 
 {{ <rustdoc path="engine/scenes/collisions/struct.Collider.html" text="Collider" /> }} ·
 {{ <rustdoc path="engine/scenes/collisions/enum.ColliderShape.html" text="ColliderShape" /> }} ·
@@ -94,7 +94,7 @@ In `Replace` mode, filling with `MaterialIdentifier::EMPTY` clears a cell; `Inse
 {{ <rustdoc path="engine/scenes/collisions/struct.Collision.html" text="Collision" /> }} ·
 {{ <rustdoc path="engine/scenes/collisions/struct.CollisionCellularTile.html" text="CollisionCellularTile" /> }} ·
 {{ <rustdoc path="engine/scenes/collisions/struct.CollisionRigidBodyPass.html" text="CollisionRigidBodyPass" /> }} ·
-{{ <rustdoc path="engine/scenes/kinematics/struct.Kinematics.html" text="Kinematics" /> }} ·
+{{ <rustdoc path="engine/scenes/cellular_tiles/struct.CellularTiles.html" text="`CellularTiles`" /> }} ·
 {{ <rustdoc path="engine/scenes/collisions/constant.COLLISION_GROUP_CELLULAR_DYNAMIC.html" text="COLLISION_GROUP_CELLULAR_DYNAMIC" /> }} ·
 {{ <rustdoc path="engine/scenes/collisions/constant.COLLISION_GROUP_ACTOR.html" text="COLLISION_GROUP_ACTOR" /> }} ·
 {{ <rustdoc path="engine/scenes/collisions/constant.COLLISION_GROUP_CELLULAR_TILE.html" text="COLLISION_GROUP_CELLULAR_TILE" /> }} ·

@@ -31,6 +31,7 @@ use crate::{
             CellCoordinates,
             CellularTileBuffers,
             CellularTileRegion,
+            CELLULAR_TILE_ACTOR_COUNT_MAXIMUM,
             CELLULAR_TILE_SIZE,
         },
         chunks::{
@@ -39,7 +40,6 @@ use crate::{
             CHUNK_SIZE,
         },
         collisions::CollisionRigidBodyPass,
-        kinematics::KINEMATICS_ACTOR_COUNT_MAXIMUM,
         SceneError,
     },
 };
@@ -79,7 +79,7 @@ const EDIT_BYTE_COUNT: u64 = 16;
 /// Bytes in one actor contact record, including impulse and fluid sample values
 const ACTOR_CONTACT_BYTE_COUNT: u64 = 32;
 
-/// Bytes in one shared kinematics actor record
+/// Bytes in one shared cellular tile actor record
 const ACTOR_BYTE_COUNT: u64 = 64;
 
 /// Number of readbacks that can be in flight for live particle counts
@@ -120,7 +120,7 @@ pub struct FluidParticlePass {
     boundary_motion_bind_group_layout: wgpu::BindGroupLayout,
     /// Boundary motion resources shared with cellular kinematics and rigid-body rasterization
     boundary_motion_bind_group: Option<wgpu::BindGroup>,
-    /// Actor records copied from kinematics for projection and immersion sampling
+    /// Actor records copied from the cellular tile simulation for projection and immersion sampling
     actor_buffer: wgpu::Buffer,
     /// Dedicated fixed-point actor reactions and immersion samples
     actor_contact_buffer: wgpu::Buffer,
@@ -592,12 +592,12 @@ impl FluidParticlePass {
         );
         let actor_buffer: wgpu::Buffer = create_buffer(
             "`FluidParticlePass.actor_buffer`",
-            KINEMATICS_ACTOR_COUNT_MAXIMUM as u64 * ACTOR_BYTE_COUNT,
+            CELLULAR_TILE_ACTOR_COUNT_MAXIMUM as u64 * ACTOR_BYTE_COUNT,
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         );
         let actor_contact_buffer: wgpu::Buffer = create_buffer(
             "`FluidParticlePass.actor_contact_buffer`",
-            KINEMATICS_ACTOR_COUNT_MAXIMUM as u64 * ACTOR_CONTACT_BYTE_COUNT,
+            CELLULAR_TILE_ACTOR_COUNT_MAXIMUM as u64 * ACTOR_CONTACT_BYTE_COUNT,
             wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
@@ -1162,7 +1162,7 @@ impl FluidParticlePass {
         gravity: f32,
         cellular_tile_buffers: &CellularTileBuffers,
         collision_rigid_body_pass: &CollisionRigidBodyPass,
-        kinematics_actor_buffer: Option<&wgpu::Buffer>,
+        cellular_tile_actor_buffer: Option<&wgpu::Buffer>,
         fluid_properties_buffer: &wgpu::Buffer,
         actors: &[(Actor, ActorCollisionComponent)],
         edits: &[(CellCoordinates, FluidEdit)],
@@ -1188,8 +1188,8 @@ impl FluidParticlePass {
         let fluid_material_count: u32 = (fluid_properties_buffer.size() / 32)
             .min(u64::from(u32::MAX)) as u32;
         if bin_count != self.bin_count { return Err(SceneError::InvalidCellularTileRegion); }
-        let actors: &[(Actor, ActorCollisionComponent)] = if kinematics_actor_buffer.is_some() {
-            &actors[..actors.len().min(KINEMATICS_ACTOR_COUNT_MAXIMUM)]
+        let actors: &[(Actor, ActorCollisionComponent)] = if cellular_tile_actor_buffer.is_some() {
+            &actors[..actors.len().min(CELLULAR_TILE_ACTOR_COUNT_MAXIMUM)]
         } else {
             &[]
         };
@@ -1484,9 +1484,9 @@ impl FluidParticlePass {
                 label: Some("Scene fluid particles"),
             });
         command_encoder.clear_buffer(&self.export_buffer, 0, Some(4));
-        if let Some(kinematics_actor_buffer) = kinematics_actor_buffer {
+        if let Some(cellular_tile_actor_buffer) = cellular_tile_actor_buffer {
             command_encoder.copy_buffer_to_buffer(
-                kinematics_actor_buffer,
+                cellular_tile_actor_buffer,
                 0,
                 &self.actor_buffer,
                 0,

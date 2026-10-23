@@ -34,9 +34,9 @@ A call to `stream_chunks` drains only the responses currently available and sche
 
 Tile streaming and kinematics do not use a worker pool. They submit GPU work and call `map_async`; callbacks send map results over MPSC channels. `Scene::stream` polls the device with `Poll` and applies tile responses later.
 
-Kinematics likewise polls and reads available contact and control results before submitting the current tick. Those contacts come from the newest completed prior submission, so the current step's contacts can affect a later tick. Completed control readbacks also set `substep_count` and `resolve_count` for later submissions.
+`CellularTiles` likewise polls and reads available contact and control results before submitting the current tick. Those contacts come from the newest completed prior submission, so the current step's contacts can affect a later tick. Completed control readbacks also set `substep_count` and `resolve_count` for later submissions.
 
-Kinematics has three readback slots. If all actor-contact slots are busy, that tick's actor contacts are skipped; rigid-body contacts instead accumulate until a slot is available.
+`CellularTiles` has three readback slots. If all actor-contact slots are busy, that tick's actor contacts are skipped; rigid-body contacts instead accumulate until a slot is available.
 
 ## Queue ordering and readback
 
@@ -65,4 +65,4 @@ A failed map is re-requested, but the mapping error also propagates from `Scene:
 
 Fluid count, actor, and import status each have three asynchronous staging slots. A full count/actor ring skips that copy; a full import ring defers import submission. One independent resident-save snapshot is allowed at a time. Streaming retains chunks until particle exports or snapshots are applied; teardown waits for imports and reads the live pool synchronously. See [GPU readback policy](@/internals/shaders/fluid-shader.md#readback-policy).
 
-Queue order makes the previous fluid raster available to cellular kinematics and the current cellular/rigid-body writes available to the following particle solver. [Gas](@/internals/simulation/gases.md) is submitted after the particle solver and reads its new raster, the current tiles, and the kinematics actor records; it never reads back or waits. CPU body responses still use asynchronous older samples; [fluid coupling](@/internals/simulation/fluid-coupling.md) describes the resulting cache behavior.
+Queue order makes the previous fluid raster available to cellular kinematics and the current cellular/rigid-body writes available to the following particle solver. [Gas](@/internals/simulation/gases.md) is submitted after the particle solver and reads its new raster, the current tiles, and the cellular tile actor records; it never reads back or waits. CPU body responses still use asynchronous older samples; [fluid coupling](@/internals/simulation/fluid-coupling.md) describes the resulting cache behavior.

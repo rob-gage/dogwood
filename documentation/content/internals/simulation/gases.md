@@ -20,7 +20,7 @@ Each gas material contributes its registered mass, diffusivity, cohesion, and co
 
 ## Tick order
 
-`Scene::simulate` runs gas last, after fluid simulation, using the fluid raster buffer, the kinematics actor buffer, and `kinematics.fluid_actors().len()` as the actor count. `Gases` is created lazily when gas simulation first runs.
+`Scene::simulate` runs gas last, after fluid simulation, using the fluid raster buffer, the cellular tile actor buffer, and `cellular_tiles.fluid_actors().len()` as the actor count. `Gases` is created lazily when gas simulation first runs.
 
 Each gas tick proceeds in this order:
 

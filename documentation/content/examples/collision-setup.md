@@ -3,7 +3,7 @@ title = "Actor collision"
 description = "Configure actor bodies, collider shapes, masks, and contact sensors."
 weight = 40
 [extra]
-sources = ["engine_world/src/scenes/collisions/collider.rs", "engine_world/src/scenes/collisions/collider_shape.rs", "engine_world/src/scenes/collisions/collision_body.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/scene_error.rs", "engine_world/src/scenes/edits/edit_mode.rs", "engine_world/src/scenes/kinematics/kinematics.rs", "engine_world/src/actors/components/actor_collision.rs", "engine_world/src/actors/components/actor_contact.rs", "engine/src/lib.rs", "template/src/template_game.rs"]
+sources = ["engine_world/src/scenes/collisions/collider.rs", "engine_world/src/scenes/collisions/collider_shape.rs", "engine_world/src/scenes/collisions/collision_body.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/scene_error.rs", "engine_world/src/scenes/edits/edit_mode.rs", "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs", "engine_world/src/actors/components/actor_collision.rs", "engine_world/src/actors/components/actor_contact.rs", "engine/src/lib.rs", "template/src/template_game.rs"]
 +++
 
 ## Give an actor a body

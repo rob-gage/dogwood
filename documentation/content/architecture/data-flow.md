@@ -39,7 +39,7 @@ When no chunk file exists, a chunk-I/O worker asks the scene generator to create
 ### Tiles in the ring
 
 - **Entering tiles:** once all chunks for entering tiles are active, tile streaming copies each tile's material identifiers, colors, kinematics, and gas into its physical slot in the GPU tile ring.
-- **Simulation:** the scene simulates dynamic cells and gas in the ring. The [kinematics pass](@/internals/simulation/cellular-kinematics.md) and [collision world](@/internals/simulation/collision-world.md) describe the two cellular simulation branches; [gas simulation](@/internals/simulation/gases.md) describes gas.
+- **Simulation:** the scene simulates dynamic cells and gas in the ring. The [cellular tile pass](@/internals/simulation/cellular-kinematics.md) and [collision world](@/internals/simulation/collision-world.md) describe the two cellular simulation branches; [gas simulation](@/internals/simulation/gases.md) describes gas.
 - **Rendering:** the [scene renderer](@/internals/rendering/scene-renderer.md) samples material identifiers and colors using the same logical-region and ring-offset mapping.
 - **Leaving tiles:** for a tile leaving the active region, a GPU buffer copy and an asynchronous map return the material identifier, color, kinematics, and gas arrays to the chunk. Readbacks are applied in request order, and the destination chunk region stays retained while the request is in flight.
 

@@ -28,7 +28,7 @@ pub struct Gases {
 impl Gases {
 
     /// Creates a simulation of the gas in the cellular tile buffers, displaced by the fluid in the
-    /// fluid raster and the actors in the kinematics actor records
+    /// fluid raster and the actors in the cellular tile actor records
     pub fn new(
         accelerator: &Accelerator,
         cellular_tile_buffers: &CellularTileBuffers,

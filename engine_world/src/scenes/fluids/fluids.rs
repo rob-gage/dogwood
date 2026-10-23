@@ -313,7 +313,7 @@ impl Fluids {
         self.particle_pass.read_live_particles_blocking(accelerator, origin)
     }
 
-    /// Simulates one fixed tick using the actor records uploaded by kinematics and queues a
+    /// Simulates one fixed tick using the actor records uploaded by the cellular tile simulation and queues a
     /// live-particle count readback
     pub(crate) fn simulate(
         &mut self,
@@ -324,7 +324,7 @@ impl Fluids {
         coupling_origin: (i32, i32),
         cellular_tile_buffers: &CellularTileBuffers,
         collision_rigid_body_pass: &CollisionRigidBodyPass,
-        kinematics_actor_buffer: Option<&wgpu::Buffer>,
+        cellular_tile_actor_buffer: Option<&wgpu::Buffer>,
         actors: &[(Actor, ActorCollisionComponent)],
         export_target: Option<&wgpu::Buffer>,
         fluid_properties_buffer: &wgpu::Buffer,
@@ -364,7 +364,7 @@ impl Fluids {
             gravity,
             cellular_tile_buffers,
             collision_rigid_body_pass,
-            kinematics_actor_buffer,
+            cellular_tile_actor_buffer,
             fluid_properties_buffer,
             actors,
             &edits,

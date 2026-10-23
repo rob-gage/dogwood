@@ -3,10 +3,10 @@ title = "Cellular kinematics"
 description = "How the GPU moves dynamic cells through active tiles and exchanges momentum with actors and cellular rigid bodies."
 weight = 30
 [extra]
-sources = ["engine_world/src/scenes/kinematics", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/mod.rs"]
+sources = ["engine_world/src/scenes/cellular_tiles", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/mod.rs"]
 +++
 
-This page is for engine contributors. It describes how `Kinematics` advances dynamic cells in the active cellular tiles on the GPU, one tick of 1/60 second at a time, and how those cells interact with actors and cellular rigid bodies.
+This page is for engine contributors. It describes how `CellularTiles` advances dynamic cells in the active cellular tiles on the GPU, one tick of 1/60 second at a time, and how those cells interact with actors and cellular rigid bodies.
 
 ## Cell state
 
@@ -47,7 +47,7 @@ A later stage handles collisions between dynamic cells that remain in place.
 
 ### Actor selection and upload
 
-Kinematics selects actors with position and collision components whose collision filter includes `COLLISION_GROUP_CELLULAR_TILE`, within four tiles of the active region. At most 32 actors are uploaded per tick.
+`CellularTiles` selects actors with position and collision components whose collision filter includes `COLLISION_GROUP_CELLULAR_TILE`, within four tiles of the active region. At most 32 actors are uploaded per tick.
 
 - Fixed actors are assigned a very large simulation mass (`1.0e20`); kinematic and dynamic actors use their component mass.
 - The host converts actor position changes since the previous call into cell-space per-tick velocities and clamps each axis to ±8 cells per tick before upload.
@@ -63,7 +63,7 @@ If the pusher would increase the cell's speed along the escape direction, the sh
 
 The pass receives rigid-body records and rasterized cells from the collision rigid-body pass. A body moving at or above `RIGID_BODY_RESTING_SPEED` (0.01 cells per tick) pushes covered cells according to its velocity; a slower body pushes them away from its center. Cells leaving a rigid-body cell position restore the body's stored material identifier and color there. See the [rigid-body lifecycle](@/internals/simulation/rigid-bodies.md) for ownership and rasterization.
 
-The orchestration is in {{ <rustdoc path="engine/scenes/kinematics/struct.Kinematics.html" text="Kinematics" /> }}. Entry-point order, packed layouts, and dispatch details belong to the [kinematics shader reference](@/internals/shaders/kinematics-shader.md).
+The orchestration is in {{ <rustdoc path="engine/scenes/cellular_tiles/struct.CellularTiles.html" text="`CellularTiles`" /> }}. Entry-point order, packed layouts, and dispatch details belong to the [cellular tile shader reference](@/internals/shaders/cellular-tile-shader.md).
 
 ## Fluid interaction
 

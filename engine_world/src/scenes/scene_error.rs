@@ -108,13 +108,13 @@ pub enum SceneError {
     },
     /// The accelerator could not be polled for collision cellular tiles
     CollisionCellularTilePoll,
-    /// A kinematics contact readback staging buffer could not be mapped
-    KinematicsCellularTileResponse {
+    /// A cellular tile contact readback staging buffer could not be mapped
+    CellularTileResponse {
         /// Mapping error returned by WGPU
         error: wgpu::BufferAsyncError,
     },
-    /// The accelerator could not be polled for kinematics contacts
-    KinematicsCellularTilePoll,
+    /// The accelerator could not be polled for cellular tile contacts
+    CellularTilePoll,
     /// A fluid particle count readback staging buffer could not be mapped
     FluidParticleResponse {
         /// Mapping error returned by WGPU

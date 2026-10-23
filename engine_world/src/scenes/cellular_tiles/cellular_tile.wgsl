@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-struct KinematicsUniforms {
+struct CellularTileUniforms {
     region_width: u32,
     region_height: u32,
     ring_offset_x: u32,
@@ -14,7 +14,7 @@ struct KinematicsUniforms {
     region_origin: vec2<i32>,
 };
 
-struct KinematicsActor {
+struct CellularTileActor {
     center: vec2<f32>,
     velocity: vec2<f32>,
     rotation: vec2<f32>,
@@ -25,7 +25,7 @@ struct KinematicsActor {
     padding: vec2<u32>,
 };
 
-struct KinematicsRigidBodyCellularTile {
+struct CellularTileRigidBodyCellularTile {
     rigid_body: u32,
     padding_0: u32,
     tile: vec2<i32>,
@@ -33,7 +33,7 @@ struct KinematicsRigidBodyCellularTile {
     previous_cells: vec2<u32>,
 };
 
-struct KinematicsRigidBody {
+struct CellularTileRigidBody {
     position: vec2<f32>,
     rotation: vec2<f32>,
     previous_position: vec2<f32>,
@@ -45,7 +45,7 @@ struct KinematicsRigidBody {
     padding: vec2<u32>,
 };
 
-struct KinematicsControl {
+struct CellularTileControl {
     active_tile_count: atomic<u32>,
     step_count: atomic<u32>,
     pending_resolves: atomic<u32>,
@@ -59,7 +59,7 @@ struct CellKinematics {
 };
 
 @group(0) @binding(0)
-var<uniform> uniforms: KinematicsUniforms;
+var<uniform> uniforms: CellularTileUniforms;
 
 @group(0) @binding(1)
 var<storage, read_write> material_identifiers: array<u32>;
@@ -83,10 +83,10 @@ var<storage, read_write> motions: array<vec4<u32>>;
 var<storage, read_write> staged: array<vec4<u32>>;
 
 @group(0) @binding(8)
-var<storage, read_write> control: KinematicsControl;
+var<storage, read_write> control: CellularTileControl;
 
 @group(0) @binding(9)
-var<storage, read> actors: array<KinematicsActor>;
+var<storage, read> actors: array<CellularTileActor>;
 
 @group(0) @binding(10)
 var<storage, read_write> contacts: array<atomic<i32>>;
@@ -98,10 +98,10 @@ var<storage, read> rigid_body_cells: array<u32>;
 var<storage, read> rigid_body_cellular_tile_cells: array<vec2<u32>>;
 
 @group(0) @binding(13)
-var<storage, read> rigid_body_cellular_tiles: array<KinematicsRigidBodyCellularTile>;
+var<storage, read> rigid_body_cellular_tiles: array<CellularTileRigidBodyCellularTile>;
 
 @group(0) @binding(14)
-var<storage, read> rigid_bodies: array<KinematicsRigidBody>;
+var<storage, read> rigid_bodies: array<CellularTileRigidBody>;
 
 @group(0) @binding(15)
 var<storage, read_write> rigid_body_contacts: array<atomic<u32>>;
@@ -362,7 +362,7 @@ fn push_wall(cell: vec2<i32>, impulse: vec2<f32>) {
 
 /// Returns the signed distance in cells from an actor's surface to a point, negative inside,
 /// followed by the surface normal pointing out of the actor
-fn actor_distance(actor: KinematicsActor, point: vec2<f32>) -> vec3<f32> {
+fn actor_distance(actor: CellularTileActor, point: vec2<f32>) -> vec3<f32> {
     // measure in the actor's unrotated frame
     let relative: vec2<f32> = point - actor.center;
     let local: vec2<f32> = vec2<f32>(
@@ -413,7 +413,7 @@ fn actor_distance(actor: KinematicsActor, point: vec2<f32>) -> vec3<f32> {
 /// Returns the index of the first actor covering a point, or the actor count when none does
 fn covering_actor(point: vec2<f32>) -> u32 {
     for (var actor_index: u32 = 0u; actor_index < uniforms.actor_count; actor_index++) {
-        let actor: KinematicsActor = actors[actor_index];
+        let actor: CellularTileActor = actors[actor_index];
         if any(point < actor.bounds.xy) || any(point > actor.bounds.zw) { continue; }
         if actor_distance(actor, point).x < 0.0 { return actor_index; }
     }
@@ -542,7 +542,7 @@ fn integrate(
         var pushing_velocity: vec2<f32>;
         var pushing_mass: f32;
         if covering < uniforms.actor_count {
-            let actor: KinematicsActor = actors[covering];
+            let actor: CellularTileActor = actors[covering];
             normal = actor_distance(actor, center).yz;
             pushing_velocity = actor.velocity;
             pushing_mass = actor.mass;
@@ -1124,7 +1124,7 @@ fn contact(
     if !is_dynamic(material_identifiers[cell_index(cell)]) { return; }
     let center: vec2<f32> = vec2<f32>(cell) + 0.5;
     for (var actor_index: u32 = 0u; actor_index < uniforms.actor_count; actor_index++) {
-        let actor: KinematicsActor = actors[actor_index];
+        let actor: CellularTileActor = actors[actor_index];
         if any(center < actor.bounds.xy) || any(center > actor.bounds.zw) { continue; }
         let distance: vec3<f32> = actor_distance(actor, center);
         if distance.x >= 0.0 { continue; }

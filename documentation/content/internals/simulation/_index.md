@@ -5,7 +5,7 @@ weight = 40
 sort_by = "weight"
 template = "section.html"
 [extra]
-sources = ["engine_world/src/scenes/gases", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/kinematics/kinematics.rs", "engine_world/src/scenes/kinematics/kinematics_pass.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/collision_rigid_body_pass.rs"]
+sources = ["engine_world/src/scenes/gases", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_pass.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/collision_rigid_body_pass.rs"]
 +++
 
 This section is for engine contributors. It describes the connected simulation systems that run over a scene's active region and the pages that cover each part.

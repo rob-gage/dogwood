@@ -3,10 +3,10 @@ title = "Fluid interactions with cells and bodies"
 description = "The raster bridge, contact response, buoyancy, actor feedback, and swimming."
 weight = 77
 [extra]
-sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/kinematics", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/scene.rs"]
+sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/cellular_tiles", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/scene.rs"]
 +++
 
-Fluids have no separate Rapier collider. They interact through a shared cell raster and delayed CPU feedback. The particle solver lives in `scenes/fluids`; cellular-side helpers and rigid-body kernels live in `scenes/kinematics/kinematics_fluids.wgsl`, composed into `KinematicsPass`. [Scene ordering](@/architecture/scene-pipeline.md#simulation-order) determines which state each side sees.
+Fluids have no separate Rapier collider. They interact through a shared cell raster and delayed CPU feedback. The particle solver lives in `scenes/fluids`; cellular-side helpers and rigid-body kernels live in `scenes/cellular_tiles/cellular_tile_fluids.wgsl`, composed into `CellularTilePass`. [Scene ordering](@/architecture/scene-pipeline.md#simulation-order) determines which state each side sees.
 
 ## Raster bridge
 
@@ -36,7 +36,7 @@ Face contacts queue opposite velocity changes to fluid. The body's CPU response 
 
 ## Actors
 
-Kinematics builds the shared actor list from positioned physical colliders whose filter includes `COLLISION_GROUP_CELLULAR_TILE`, within a four-tile region margin. Fixed actors receive a large effective mass; invalid masses fail validation. The list is capped at 32. Contact-only sensors are not fluid obstacles. Fluid actor projection uses these uploaded records, not actor positions uploaded again after the Rapier step.
+`CellularTiles` builds the shared actor list from positioned physical colliders whose filter includes `COLLISION_GROUP_CELLULAR_TILE`, within a four-tile region margin. Fixed actors receive a large effective mass; invalid masses fail validation. The list is capped at 32. Contact-only sensors are not fluid obstacles. Fluid actor projection uses these uploaded records, not actor positions uploaded again after the Rapier step.
 
 The particle solver reports projection reaction impulse plus immersion, average current, dominant density, and drag. Sampling tests cell centers against an expanded rotated shape with a `2.5`-cell margin, skipping solid or rigid-body cells. Immersion is average sampled fluid mass divided by dominant density, clamped to `[0, 1]`. Dominance is selected by summing mass attributed to each raster material. Average current is total momentum divided by total mass.
 

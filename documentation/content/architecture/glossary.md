@@ -3,7 +3,7 @@ title = "Glossary and coordinate spaces"
 description = "Definitions and conversions for Dogwood's world, tile-ring, physics, and camera coordinates."
 weight = 70
 [extra]
-sources = ["engine_world/src/scenes/gases", "engine_world/src/scenes/fluids", "engine_world/src/scenes/scene_position.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/cellular_tiles", "engine_world/src/scenes/chunks/chunk_coordinates.rs", "engine_world/src/scenes/chunks/chunk_data.rs", "engine_world/src/scenes/chunks/chunk_region.rs", "engine_world/src/scenes/chunks/chunk_resident.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/chunks/mod.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/kinematics/kinematics_cellular_tile.wgsl", "engine_graphics/src/world/scenes", "engine_graphics/src/renders/scene_renderer.rs", "engine_graphics/src/renders/scene_renderer_sprites.wgsl"]
+sources = ["engine_world/src/scenes/gases", "engine_world/src/scenes/fluids", "engine_world/src/scenes/scene_position.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/cellular_tiles", "engine_world/src/scenes/chunks/chunk_coordinates.rs", "engine_world/src/scenes/chunks/chunk_data.rs", "engine_world/src/scenes/chunks/chunk_region.rs", "engine_world/src/scenes/chunks/chunk_resident.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/chunks/mod.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl", "engine_graphics/src/world/scenes", "engine_graphics/src/renders/scene_renderer.rs", "engine_graphics/src/renders/scene_renderer_sprites.wgsl"]
 +++
 
 This page defines Dogwood's world terms and coordinate spaces, with the conversion formulas between them. It is a reference for engine contributors.
@@ -20,7 +20,7 @@ This page defines Dogwood's world terms and coordinate spaces, with the conversi
 - **Chunk:** 512 × 512 cells, or 64 × 64 tiles (`CHUNK_SIZE = 512`). Chunks are CPU-side storage and persistence units.
 - **Region:** an inclusive rectangle of tile or chunk coordinates. Width and height are `top_right - bottom_left + 1`, zero for reversed bounds, and saturate at `usize::MAX`.
 - **Requested region:** the tile rectangle requested for streaming.
-- **Active region:** the rectangle of tiles currently resident in the GPU tile ring and simulated. The kinematics pass selects which tiles to process based on awake or disturbed neighbors and nearby actors.
+- **Active region:** the rectangle of tiles currently resident in the GPU tile ring and simulated. The cellular tile pass selects which tiles to process based on awake or disturbed neighbors and nearby actors.
 - **Tile ring:** a toroidal layout shared by the cellular tile GPU buffers for the active region. A ring offset maps logical tile coordinates to physical slots.
 - **Resident chunk:** a chunk tracked by chunk streaming in any state. A retained chunk is required by a region; a dirty chunk has unsaved changes.
 

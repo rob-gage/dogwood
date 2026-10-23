@@ -1,8 +1,10 @@
 // Copyright Rob Gage 2026
 
 use super::{
-    kinematics_pass::KinematicsPass,
-    KINEMATICS_FIXED_MASS,
+    cellular_tile_pass::CellularTilePass,
+    CellularTileBuffers,
+    CellularTileRegion,
+    CELLULAR_TILE_FIXED_MASS,
 };
 use crate::{
     actors::{
@@ -16,10 +18,6 @@ use crate::{
     },
     materials::MaterialTable,
     scenes::{
-        cellular_tiles::{
-            CellularTileBuffers,
-            CellularTileRegion,
-        },
         collisions::{
             ColliderShape,
             CollisionBody,
@@ -35,10 +33,10 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 /// Distance in tiles beyond the active region within which actors still reach its cells
-const KINEMATICS_ACTOR_REGION_MARGIN: f64 = 4.0;
+const CELLULAR_TILE_ACTOR_REGION_MARGIN: f64 = 4.0;
 
 /// GPU simulation of the dynamic cells of a scene's active cellular tiles and the actors in them
-pub struct Kinematics {
+pub struct CellularTiles {
     /// Position of every simulated actor in the previous tick, giving the velocity it pushes with
     actor_positions: HashMap<Actor, ScenePosition>,
     /// Newest contact normals and depths of every actor, kept while readbacks are in flight
@@ -46,10 +44,10 @@ pub struct Kinematics {
     /// Actor identities and collision settings aligned with the uploaded actor records
     fluid_actors: Vec<(Actor, ActorCollisionComponent)>,
     /// GPU simulation of dynamic cells and their fluid and body interactions
-    pass: KinematicsPass,
+    pass: CellularTilePass,
 }
 
-impl Kinematics {
+impl CellularTiles {
 
     /// Creates a simulation of the dynamic cells in the cellular tile buffers against the rigid
     /// bodies rasterized into them
@@ -64,7 +62,7 @@ impl Kinematics {
             actor_positions: HashMap::new(),
             cellular_contacts: HashMap::new(),
             fluid_actors: Vec::new(),
-            pass: KinematicsPass::new(
+            pass: CellularTilePass::new(
                 accelerator,
                 cellular_tile_buffers,
                 material_table,
@@ -74,11 +72,11 @@ impl Kinematics {
         }
     }
 
-    /// Returns the actor records shared with the fluid pass
-    pub(crate) fn actor_buffer(&self) -> &wgpu::Buffer { self.pass.actor_buffer() }
+    /// Returns the actor records shared with the fluid and gas passes
+    pub fn actor_buffer(&self) -> &wgpu::Buffer { self.pass.actor_buffer() }
 
     /// Returns actor identities and collision settings aligned with the shared GPU records
-    pub(crate) fn fluid_actors(&self) -> &[(Actor, ActorCollisionComponent)] { &self.fluid_actors }
+    pub fn fluid_actors(&self) -> &[(Actor, ActorCollisionComponent)] { &self.fluid_actors }
 
     /// Simulates one tick of the active dynamic cells against every actor colliding with cellular
     /// tiles and every rigid body at its record index, returning each actor's velocity change in
@@ -86,7 +84,7 @@ impl Kinematics {
     /// holding it back, read from an earlier tick, then each rigid body's impulse, angular impulse,
     /// and holding cells read since the last tick, with the region's bottom-left corner placed in
     /// cells from the rigid bodies' origin
-    pub fn simulate_kinematics(
+    pub fn simulate_cellular_tiles(
         &mut self,
         accelerator: &Accelerator,
         active_region: CellularTileRegion,
@@ -123,15 +121,15 @@ impl Kinematics {
             if collision.filter & COLLISION_GROUP_CELLULAR_TILE == 0 { continue; }
             let position: ScenePosition = position.position;
             let (x, y): (f64, f64) = position.relative_position(region_position);
-            if x < -KINEMATICS_ACTOR_REGION_MARGIN || y < -KINEMATICS_ACTOR_REGION_MARGIN
-                || x > region_width + KINEMATICS_ACTOR_REGION_MARGIN
-                || y > region_height + KINEMATICS_ACTOR_REGION_MARGIN
+            if x < -CELLULAR_TILE_ACTOR_REGION_MARGIN || y < -CELLULAR_TILE_ACTOR_REGION_MARGIN
+                || x > region_width + CELLULAR_TILE_ACTOR_REGION_MARGIN
+                || y > region_height + CELLULAR_TILE_ACTOR_REGION_MARGIN
             { continue; }
             let (velocity_x, velocity_y): (f64, f64) = self.actor_positions.get(&actor)
                 .map_or((0.0, 0.0), |previous| position.relative_position(*previous));
             actor_positions.insert(actor, position);
             let mass: f32 = match collision.body {
-                CollisionBody::Fixed => KINEMATICS_FIXED_MASS,
+                CollisionBody::Fixed => CELLULAR_TILE_FIXED_MASS,
                 CollisionBody::Kinematic | CollisionBody::Dynamic => collision.mass,
             };
             if !mass.is_finite() || mass <= 0.0 {
@@ -148,7 +146,7 @@ impl Kinematics {
             ));
             fluid_actors.push((actor, collision.clone()));
         }
-        fluid_actors.truncate(super::KINEMATICS_ACTOR_COUNT_MAXIMUM);
+        fluid_actors.truncate(super::CELLULAR_TILE_ACTOR_COUNT_MAXIMUM);
         self.fluid_actors = fluid_actors;
         self.actor_positions = actor_positions;
         let (contacts, rigid_body_contacts): (

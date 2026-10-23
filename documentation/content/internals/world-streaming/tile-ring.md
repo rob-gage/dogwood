@@ -3,7 +3,7 @@ title = "The cellular tile ring"
 description = "Documents the GPU buffers, tile coordinates, ring mapping, and awake flags."
 weight = 40
 [extra]
-sources = ["engine_world/src/scenes/cellular_tiles/cellular_tile_buffers.rs", "engine_world/src/scenes/gases/mod.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_index.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_region.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_coordinates.rs", "engine_world/src/scenes/cellular_tiles/cell_coordinates.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/mod.rs", "engine_world/src/scenes/chunks/mod.rs", "engine_world/src/scenes/kinematics/kinematics_cellular_tile.wgsl"]
+sources = ["engine_world/src/scenes/cellular_tiles/cellular_tile_buffers.rs", "engine_world/src/scenes/gases/mod.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_index.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_region.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_coordinates.rs", "engine_world/src/scenes/cellular_tiles/cell_coordinates.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/mod.rs", "engine_world/src/scenes/chunks/mod.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl"]
 +++
 
 This page is for contributors working on the GPU side of world streaming. It covers tile and region coordinates, the GPU buffers of the tile ring, how logical tiles map to physical slots, and the awake flags. The tile and chunk definitions are in the [glossary](@/architecture/glossary.md).

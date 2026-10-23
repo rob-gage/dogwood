@@ -12,7 +12,7 @@ This page is for engine contributors. It describes the private state a `Scene` o
 
 `Scene` coordinates actor data, material lookup, persistence, tile residency, and simulation. Its private state is split by lifecycle:
 
-- Chunk streaming, GPU tile buffers, tile streaming, fluids, collision, kinematics, and gases start absent.
+- Chunk streaming, GPU tile buffers, tile streaming, fluids, collision, cellular tile simulation, and gases start absent.
 - Edit streaming is initialized immediately with an empty queue.
 - The material table and generator are shared with chunk work through `Arc` handles.
 
@@ -20,7 +20,7 @@ This page is for engine contributors. It describes the private state a `Scene` o
 Scene
 ├── ActorRegistry                 created in Scene::new
 ├── Arc<MaterialTable>            cloned into chunk streaming; borrowed
-│                                 when constructing kinematics
+│                                 when constructing `CellularTiles`
 ├── ChunkData                     persistent storage handle
 ├── Option<ChunkStreamingState>   first Scene::stream
 ├── Option<CellularTileBuffers>   first Scene::stream
@@ -33,8 +33,8 @@ Scene
 ├── Option<Collision>             first Scene::simulate with active region
 │   ├── CollisionCellularTilePass
 │   └── CollisionRigidBodyPass
-├── Option<Kinematics>            first Scene::simulate with active region
-│   └── KinematicsPass
+├── Option<CellularTiles>         first Scene::simulate with active region
+│   └── CellularTilePass
 └── Option<Gases>                 first Scene::simulate with active region,
     └── GasCellularTilePass       after fluids
 ```
@@ -42,11 +42,11 @@ Scene
 The pass objects are owned by their parent systems:
 
 - `Collision` manages actor and rigid-body Rapier state plus cellular occupancy.
-- `Kinematics` manages dynamic-cell motion and cellular/fluid coupling through `KinematicsPass`.
+- `CellularTiles` manages dynamic-cell motion and cellular/fluid coupling through `CellularTilePass`.
 - `Fluids` manages particle admission, simulation, and fluid actor feedback through `FluidParticlePass`.
-- `Gases` manages gas flow through `GasCellularTilePass`, reading the shared tile buffers, the fluid raster, and the kinematics actor records.
+- `Gases` manages gas flow through `GasCellularTilePass`, reading the shared tile buffers, the fluid raster, and the cellular tile actor records.
 
-`Scene` passes shared tile buffers to both and, when creating kinematics, the collision system's rigid-body pass. For ordering and resource lifetime, see [Scene update pipeline](@/architecture/scene-pipeline.md) and [Resources and lifetimes](@/architecture/resources-and-lifetimes.md).
+`Scene` passes shared tile buffers to both and, when creating `CellularTiles`, the collision system's rigid-body pass. For ordering and resource lifetime, see [Scene update pipeline](@/architecture/scene-pipeline.md) and [Resources and lifetimes](@/architecture/resources-and-lifetimes.md).
 
 ## Initialization and call flow
 
@@ -56,7 +56,7 @@ The pass objects are owned by their parent systems:
 
 ### Simulation
 
-`Scene::simulate` returns early until an active region exists, then lazily creates `Collision` and `Kinematics`. It first calls `Kinematics::simulate_kinematics`, which returns cellular and rigid-body contact maps. It polls fluid actor feedback, passes the contact maps to `Collision::simulate_collisions`, runs the particle solver, then creates `Gases` if needed and runs gas. See [gas simulation](@/internals/simulation/gases.md) and [scene ordering](@/architecture/scene-pipeline.md#simulation-order).
+`Scene::simulate` returns early until an active region exists, then lazily creates `Collision` and `CellularTiles`. It first calls `CellularTiles::simulate_cellular_tiles`, which returns cellular and rigid-body contact maps. It polls fluid actor feedback, passes the contact maps to `Collision::simulate_collisions`, runs the particle solver, then creates `Gases` if needed and runs gas. See [gas simulation](@/internals/simulation/gases.md) and [scene ordering](@/architecture/scene-pipeline.md#simulation-order).
 
 [Collision world](@/internals/simulation/collision-world.md), [Cellular kinematics](@/internals/simulation/cellular-kinematics.md), and [Edit pipeline](@/internals/simulation/edit-pipeline.md) describe those systems in depth.
 
@@ -68,15 +68,15 @@ The pass objects are owned by their parent systems:
 
 The generated private docs expose each type's API and fields. The `Scene` definition is in `engine_world/src/scenes/scene.rs`; child module files own their subsystem state.
 
-{{ <rustdoc path="engine_world/scenes/struct.Scene.html" text="Scene" private={true} /> }} · {{ <rustdoc path="engine_world/scenes/chunks/struct.ChunkStreamingState.html" text="ChunkStreamingState" private={true} /> }} · {{ <rustdoc path="engine_world/scenes/cellular_tiles/struct.CellularTileStreamingState.html" text="CellularTileStreamingState" private={true} /> }} · {{ <rustdoc path="engine_world/scenes/edits/edit_streaming_state/struct.EditStreamingState.html" text="EditStreamingState" private={true} /> }} · {{ <rustdoc path="engine_world/scenes/kinematics/kinematics/struct.Kinematics.html" text="Kinematics" private={true} /> }} · {{ <rustdoc path="engine_world/scenes/collisions/collision/struct.Collision.html" text="Collision" private={true} /> }}
+{{ <rustdoc path="engine_world/scenes/struct.Scene.html" text="Scene" private={true} /> }} · {{ <rustdoc path="engine_world/scenes/chunks/struct.ChunkStreamingState.html" text="ChunkStreamingState" private={true} /> }} · {{ <rustdoc path="engine_world/scenes/cellular_tiles/struct.CellularTileStreamingState.html" text="CellularTileStreamingState" private={true} /> }} · {{ <rustdoc path="engine_world/scenes/edits/edit_streaming_state/struct.EditStreamingState.html" text="EditStreamingState" private={true} /> }} · {{ <rustdoc path="engine_world/scenes/cellular_tiles/cellular_tiles/struct.CellularTiles.html" text="`CellularTiles`" private={true} /> }} · {{ <rustdoc path="engine_world/scenes/collisions/collision/struct.Collision.html" text="Collision" private={true} /> }}
 
 ### Handoffs
 
 | Boundary | Shared data | Reference |
 | --- | --- | --- |
 | Scene → tile streaming | Tile arrays, retained chunk regions, fluid import/export state | [Tile streaming](@/internals/world-streaming/tile-streaming.md) |
-| Kinematics → collision | Actor contacts, rigid-body impulses, holding contacts, fluid moments | [Contact exchange](@/internals/simulation/contact-exchange.md) |
-| Kinematics ↔ particles | Fluid raster/contact deltas, actor records, rigid-body motion | [Fluid interactions](@/internals/simulation/fluid-coupling.md) |
+| `CellularTiles` → collision | Actor contacts, rigid-body impulses, holding contacts, fluid moments | [Contact exchange](@/internals/simulation/contact-exchange.md) |
+| `CellularTiles` ↔ particles | Fluid raster/contact deltas, actor records, rigid-body motion | [Fluid interactions](@/internals/simulation/fluid-coupling.md) |
 | Particles ↔ chunks | Dormant imports, outgoing exports, resident-save snapshots | [Fluid persistence](@/internals/world-streaming/fluid-streaming.md) |
 
 The implementation signatures are available in rustdoc above; these pages explain the units, ownership, and timing that signatures alone do not express. Fallible handoffs propagate `SceneError` to the caller.

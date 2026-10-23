@@ -1,12 +1,12 @@
 +++
-title = "Kinematics shader"
+title = "Cellular tile shader"
 description = "Reference for the cellular kinematics WGSL entry points, bindings, packed records, and asynchronous readbacks."
 weight = 30
 [extra]
-sources = ["engine_world/src/scenes/kinematics/kinematics_fluids.wgsl", "engine_world/src/scenes/kinematics/kinematics_cellular_tile.wgsl", "engine_world/src/scenes/kinematics/kinematics_pass.rs"]
+sources = ["engine_world/src/scenes/cellular_tiles/cellular_tile_fluids.wgsl", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl", "engine_world/src/scenes/cellular_tiles/cellular_tile_pass.rs"]
 +++
 
-This page is the reference for `kinematics_cellular_tile.wgsl` and `kinematics_fluids.wgsl`, the GPU stages driven by `KinematicsPass`, for engine contributors. It covers entry points, bindings, packed records, dispatch, and readbacks. The movement algorithm is in [cellular kinematics](@/internals/simulation/cellular-kinematics.md).
+This page is the reference for `cellular_tile.wgsl` and `cellular_tile_fluids.wgsl`, the GPU stages driven by `CellularTilePass`, for engine contributors. It covers entry points, bindings, packed records, dispatch, and readbacks. The movement algorithm is in [cellular kinematics](@/internals/simulation/cellular-kinematics.md).
 
 ## Entry points and dispatch order
 
@@ -33,7 +33,7 @@ There is no checkerboard or Margolus partition. Neighboring cells issue requests
 
 ### Adaptive substeps and resolve passes
 
-Each tick encodes `substep_count` substeps (1-8) and `resolve_count` resolve passes (even, 2-8; `KINEMATICS_RESOLVE_COUNT` is 8). The pass starts with the maximum counts and updates them from the newest control readback when one arrives; otherwise, it retains the previous counts:
+Each tick encodes `substep_count` substeps (1-8) and `resolve_count` resolve passes (even, 2-8; `CELLULAR_TILE_RESOLVE_COUNT` is 8). The pass starts with the maximum counts and updates them from the newest control readback when one arrives; otherwise, it retains the previous counts:
 
 - `integrate` records the largest per-cell step count in `step_count` with `atomicMax`, capped at 8. Rust sets `substep_count = step_count + 1`, clamped to 1-8.
 - Each resolve pass sets its bit in `pending_resolves` while move chains are still unresolved. Rust derives an even `resolve_count` from the highest pending-resolve bit. If a pending bit reaches the last pass used for that readback, it selects the maximum count of 8.
@@ -46,12 +46,12 @@ Group 0 bindings are declared in WGSL and matched by the Rust layout:
 
 | Binding | WGSL resource | Use |
 |---:|---|---|
-| 0 | `KinematicsUniforms` | Region dimensions and ring offsets, tick/substep, actor count, gravity, resolve selector, region origin |
+| 0 | `CellularTileUniforms` | Region dimensions and ring offsets, tick/substep, actor count, gravity, resolve selector, region origin |
 | 1-4 | `material_identifiers`, `colors`, `kinematics`, `awake` | Mutable cell and tile state |
 | 5 | `materials: array<vec4<f32>>` | Read-only material properties |
 | 6-7 | `motions`, `staged` | Per-cell motion/status and temporary incoming cell records |
-| 8 | `KinematicsControl` | Atomic active-tile, step and pending-resolve counts plus the active tile list |
-| 9 | `actors: array<KinematicsActor>` | Read-only actor records |
+| 8 | `CellularTileControl` | Atomic active-tile, step and pending-resolve counts plus the active tile list |
+| 9 | `actors: array<CellularTileActor>` | Read-only actor records |
 | 10 | `contacts: array<atomic<i32>>` | Actor contact and impulse accumulators |
 | 11-14 | `rigid_body_cells`, `rigid_body_cellular_tile_cells`, `rigid_body_cellular_tiles`, `rigid_bodies` | Read-only rigid-body raster and motion data |
 | 15 | `rigid_body_contacts: array<atomic<u32>>` | Rigid-body impulse, holding-cell, and fluid sample accumulators |
@@ -62,7 +62,7 @@ Group 1 binding 0 is the writable indirect dispatch array. Only the `prepare` pi
 
 ## Source composition
 
-`KinematicsPass` concatenates both WGSL files at Rust compile time into one shader source. `kinematics_fluids.wgsl` owns fluid bindings, constants, sampling/contact helpers, tile wake detection, and the `rigid_fluid_faces` and `rigid_fluid` kernels. Cellular movement retains its fluid contact call sites. Both fragments share one module and the existing pipelines, bindings, and dispatch order.
+`CellularTilePass` concatenates both WGSL files at Rust compile time into one shader source. `cellular_tile_fluids.wgsl` owns fluid bindings, constants, sampling/contact helpers, tile wake detection, and the `rigid_fluid_faces` and `rigid_fluid` kernels. Cellular movement retains its fluid contact call sites. Both fragments share one module and the existing pipelines, bindings, and dispatch order.
 
 ## CPU/GPU records
 
@@ -70,12 +70,12 @@ The pass serializes these records manually, little-endian; there is no Rust mirr
 
 ### Uniforms and cell state
 
-- `KinematicsUniforms` occupies 48 bytes: ten 32-bit scalar fields at offsets 0-36 and `region_origin: vec2<i32>` at 40. Each slot starts 256 bytes after the prior one.
+- `CellularTileUniforms` occupies 48 bytes: ten 32-bit scalar fields at offsets 0-36 and `region_origin: vec2<i32>` at 40. Each slot starts 256 bytes after the prior one.
 - Packed cell kinematics occupy two `u32` words. `unpack_kinematics` decodes them into the WGSL `CellKinematics` struct: signed 16-bit x/y velocities scaled by 1,024 in the first word, and signed 14-bit x/y progress values scaled by 512 in the second word's low 28 bits, with four flag bits in its high bits, including resting (`CELL_RESTING`, bit 28) and supported (`CELL_SUPPORTED`, bit 29).
 
 ### Actors and rigid bodies
 
-`KinematicsActor` is 64 bytes: center (0), velocity (8), rotation (16), size (24), bounds (32), shape tag (48), mass (52), then an idle-swimmer flag at 56 and one padding word at 60. WGSL cellular code treats those last words as padding; the shared fluid actor layout reads the flag.
+`CellularTileActor` is 64 bytes: center (0), velocity (8), rotation (16), size (24), bounds (32), shape tag (48), mass (52), then an idle-swimmer flag at 56 and one padding word at 60. WGSL cellular code treats those last words as padding; the shared fluid actor layout reads the flag.
 
 Rust converts units before writing:
 
@@ -85,7 +85,7 @@ Rust converts units before writing:
 - `bounds` is a box of the farthest extent plus 2.5 cells.
 - Shape tags: 0 circle, 1 rectangle, 2 capsule.
 
-`KinematicsRigidBodyCellularTile` is 32 bytes:
+`CellularTileRigidBodyCellularTile` is 32 bytes:
 
 | Field | Byte offset |
 |---|---:|
@@ -95,7 +95,7 @@ Rust converts units before writing:
 | `cells` | 16 |
 | `previous_cells` | 24 |
 
-`KinematicsRigidBody` is 64 bytes:
+`CellularTileRigidBody` is 64 bytes:
 
 | Field | Byte offset |
 |---|---:|

@@ -90,7 +90,7 @@ Tile and cell coordinate conversion, including negative coordinates, is covered 
 | --- | --- |
 | Chunk requests and storage | `ChunkRegionRequestLimitReached`, `InvalidChunkRegion`, `ChunkResidentLimitReached`, `ChunkRegionRequestNotFound`, `ChunkRetryUnavailable`, `ChunkStreamingCapacityReached`, `ChunkStreamingRequestAlreadyActive`, `ChunkStreamingResponseChannelClosed`, `ChunkLoad`, `ChunkSave`, `ChunkGeneration`, `ChunkThreadPoolUnavailable` |
 | Tile streaming | `CellularTileStreamingRequestNotFound`, `InvalidCellularTileRegion`, `CellularTileStreamingResponse`, `CellularTileStreamingResponseChunkInactive`, `CellularTileStreamingPoll` |
-| Collision and kinematics | `CollisionCellularTileResponse`, `CollisionCellularTilePoll`, `KinematicsCellularTileResponse`, `KinematicsCellularTilePoll` |
+| Collision and kinematics | `CollisionCellularTileResponse`, `CollisionCellularTilePoll`, `CellularTileResponse`, `CellularTilePoll` |
 | Fluid configuration and transfers | `InvalidFluidCapacityFactor`, `FluidCapacityFixed`, `FluidParticleStreamingRecordInvalid`, `FluidParticleStreamingResponseChunkInactive`, `FluidParticleResponse`, `FluidParticlePoll`, `FluidParticleExportBufferSizeInvalid`, `FluidParticleExportRecordInvalid`, `FluidParticleSnapshotResponseChannelClosed` |
 | Gas configuration | `InvalidAmbientGasPressure`, `InvalidAmbientGasMass` |
 | Actors and colliders | `CameraActor`, `InvalidCollider`, `ActorDespawn` |

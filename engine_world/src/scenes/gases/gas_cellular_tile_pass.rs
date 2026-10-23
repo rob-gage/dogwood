@@ -42,7 +42,7 @@ pub struct GasCellularTilePass {
 impl GasCellularTilePass {
 
     /// Creates simulation resources for every tile the cellular tile buffers can hold, with
-    /// actors displacing gas read from the kinematics actor records
+    /// actors displacing gas read from the cellular tile actor records
     pub fn new(
         accelerator: &Accelerator,
         cellular_tile_buffers: &CellularTileBuffers,

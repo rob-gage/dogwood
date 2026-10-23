@@ -117,7 +117,7 @@ var<storage, read_write> neighbor_data: array<u32>;
 @group(0) @binding(16)
 var<storage, read_write> fluid_raster: array<atomic<u32>>;
 
-/// Analytic kinematics actor record shared with dynamic-cell collision
+/// Analytic cellular tile actor record shared with dynamic-cell collision
 struct FluidActor {
     /// Collider center relative to the fluid region, in cells
     center: vec2<f32>,
@@ -133,7 +133,7 @@ struct FluidActor {
     shape: u32,
     /// Actor mass in cellular mass units
     mass: f32,
-    /// Alignment padding shared with the kinematics record
+    /// Alignment padding shared with the cellular tile record
     swimming: u32,
     padding: u32,
 };

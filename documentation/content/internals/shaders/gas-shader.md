@@ -55,10 +55,10 @@ The bind groups contain these resources:
 | 0 | 7 | Gas material records | Read |
 | 0 | 8 | Fluid raster | Read |
 | 0 | 9 | Fluid material records | Read |
-| 0 | 10 | Kinematics actor records | Read |
+| 0 | 10 | Cellular tile actor records | Read |
 | 1 | 0 | Indirect dispatch record | Read/write; `prepare` writes it |
 
-The actor record matches the kinematics actor record layout.
+The actor record matches the cellular tile actor record layout.
 
 ## Storage records
 

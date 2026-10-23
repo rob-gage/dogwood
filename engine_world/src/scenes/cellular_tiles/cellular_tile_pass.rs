@@ -1,19 +1,17 @@
 // Copyright Rob Gage 2026
 
 use super::{
-    KINEMATICS_ACTOR_COUNT_MAXIMUM,
-    KINEMATICS_RESOLVE_COUNT,
-    KINEMATICS_TIME_STEP,
+    CellularTileBuffers,
+    CellularTileRegion,
+    CELLULAR_TILE_ACTOR_COUNT_MAXIMUM,
+    CELLULAR_TILE_RESOLVE_COUNT,
+    CELLULAR_TILE_SIZE,
+    CELLULAR_TILE_TIME_STEP,
 };
 use crate::{
     actors::Actor,
     materials::MaterialTable,
     scenes::{
-        cellular_tiles::{
-            CellularTileBuffers,
-            CellularTileRegion,
-            CELLULAR_TILE_SIZE,
-        },
         collisions::{
             ColliderShape,
             CollisionRigidBodyPass,
@@ -57,7 +55,7 @@ const RIGID_BODY_CONTACT_BYTE_COUNT: u64 = 84;
 const READBACK_COUNT: usize = 3;
 
 /// GPU simulation of active dynamic cells and their interactions with actors, rigid bodies, and fluid
-pub struct KinematicsPass {
+pub struct CellularTilePass {
     /// Pipelines of every simulation step, named by their entry points
     pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
     /// Bind group of the uniforms, cells, tiles, scratch buffers, actors, and contacts
@@ -104,9 +102,9 @@ pub struct KinematicsPass {
     resolve_count: usize,
 }
 
-impl KinematicsPass {
+impl CellularTilePass {
 
-    /// Returns the actor records uploaded for the current kinematics tick
+    /// Returns the actor records uploaded for the current tick
     pub fn actor_buffer(&self) -> &wgpu::Buffer { &self.actor_buffer }
 
     /// Creates simulation resources for every tile the cellular tile buffers can hold
@@ -134,7 +132,7 @@ impl KinematicsPass {
         };
         let bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
-                label: Some("`KinematicsPass.bind_group_layout`"),
+                label: Some("`CellularTilePass.bind_group_layout`"),
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
@@ -168,33 +166,33 @@ impl KinematicsPass {
         );
         let dispatch_bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
-                label: Some("`KinematicsPass.dispatch_bind_group_layout`"),
+                label: Some("`CellularTilePass.dispatch_bind_group_layout`"),
                 entries: &[storage_entry(0, false)],
             },
         );
         // only the prepare step writes the indirect dispatches the other steps read
         let pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
-                label: Some("`KinematicsPass.pipeline_layout`"),
+                label: Some("`CellularTilePass.pipeline_layout`"),
                 bind_group_layouts: &[Some(&bind_group_layout)],
                 immediate_size: 0,
             },
         );
         let prepare_pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
-                label: Some("`KinematicsPass.prepare_pipeline_layout`"),
+                label: Some("`CellularTilePass.prepare_pipeline_layout`"),
                 bind_group_layouts: &[Some(&bind_group_layout), Some(&dispatch_bind_group_layout)],
                 immediate_size: 0,
             },
         );
         let shader_module: wgpu::ShaderModule = device.create_shader_module(
             wgpu::ShaderModuleDescriptor {
-                label: Some("`KinematicsPass.shader_module`"),
+                label: Some("`CellularTilePass.shader_module`"),
                 source: wgpu::ShaderSource::Wgsl(
                     concat!(
-                        include_str!("kinematics_cellular_tile.wgsl"),
+                        include_str!("cellular_tile.wgsl"),
                         "\n",
-                        include_str!("kinematics_fluids.wgsl"),
+                        include_str!("cellular_tile_fluids.wgsl"),
                     ).into(),
                 ),
             },
@@ -223,7 +221,7 @@ impl KinematicsPass {
             };
             pipelines.insert(entry_point, device.create_compute_pipeline(
                 &wgpu::ComputePipelineDescriptor {
-                    label: Some("`KinematicsPass.pipelines`"),
+                    label: Some("`CellularTilePass.pipelines`"),
                     layout: Some(layout),
                     module: &shader_module,
                     entry_point: Some(entry_point),
@@ -241,51 +239,51 @@ impl KinematicsPass {
             })
         };
         let uniform_buffer: wgpu::Buffer = create_buffer(
-            "`KinematicsPass.uniform_buffer`",
-            UNIFORM_STRIDE * (SUBSTEP_COUNT * KINEMATICS_RESOLVE_COUNT) as u64,
+            "`CellularTilePass.uniform_buffer`",
+            UNIFORM_STRIDE * (SUBSTEP_COUNT * CELLULAR_TILE_RESOLVE_COUNT) as u64,
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         );
         // each cell's requested move, pick, and two resolution statuses, the second reused for the
         // velocity its collisions leave it
         let motion_buffer: wgpu::Buffer = create_buffer(
-            "`KinematicsPass.motion_buffer`",
+            "`CellularTilePass.motion_buffer`",
             cell_count * 16,
             wgpu::BufferUsages::STORAGE,
         );
         // each cell's incoming material identifier, color, and kinematics
         let staged_buffer: wgpu::Buffer = create_buffer(
-            "`KinematicsPass.staged_buffer`",
+            "`CellularTilePass.staged_buffer`",
             cell_count * 16,
             wgpu::BufferUsages::STORAGE,
         );
         let control_buffer: wgpu::Buffer = create_buffer(
-            "`KinematicsPass.control_buffer`",
+            "`CellularTilePass.control_buffer`",
             12 + tile_count * 4,
             wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
         );
         let dispatch_buffer: wgpu::Buffer = create_buffer(
-            "`KinematicsPass.dispatch_buffer`",
+            "`CellularTilePass.dispatch_buffer`",
             (1 + SUBSTEP_COUNT as u64) * 12,
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
         );
         let actor_buffer: wgpu::Buffer = create_buffer(
-            "`KinematicsPass.actor_buffer`",
-            KINEMATICS_ACTOR_COUNT_MAXIMUM as u64 * ACTOR_BYTE_COUNT,
+            "`CellularTilePass.actor_buffer`",
+            CELLULAR_TILE_ACTOR_COUNT_MAXIMUM as u64 * ACTOR_BYTE_COUNT,
             wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
         );
         let contact_buffer: wgpu::Buffer = create_buffer(
-            "`KinematicsPass.contact_buffer`",
-            KINEMATICS_ACTOR_COUNT_MAXIMUM as u64 * CONTACT_BYTE_COUNT,
+            "`CellularTilePass.contact_buffer`",
+            CELLULAR_TILE_ACTOR_COUNT_MAXIMUM as u64 * CONTACT_BYTE_COUNT,
             wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
         );
         let rigid_body_contact_buffer: wgpu::Buffer = create_buffer(
-            "`KinematicsPass.rigid_body_contact_buffer`",
+            "`CellularTilePass.rigid_body_contact_buffer`",
             COLLISION_RIGID_BODY_COUNT_MAXIMUM as u64 * RIGID_BODY_CONTACT_BYTE_COUNT,
             wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
@@ -294,7 +292,7 @@ impl KinematicsPass {
         let rigid_body_contact_readbacks: Vec<(wgpu::Buffer, Option<Vec<u64>>)> =
             (0..READBACK_COUNT).map(|_| (
                 create_buffer(
-                    "`KinematicsPass.rigid_body_contact_readbacks`",
+                    "`CellularTilePass.rigid_body_contact_readbacks`",
                     rigid_body_contact_buffer.size(),
                     wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 ),
@@ -303,14 +301,14 @@ impl KinematicsPass {
         let contact_readbacks: Vec<(wgpu::Buffer, Option<Vec<(Actor, f32)>>)> =
             (0..READBACK_COUNT).map(|_| (
                 create_buffer(
-                    "`KinematicsPass.contact_readbacks`",
+                    "`CellularTilePass.contact_readbacks`",
                     contact_buffer.size(),
                     wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 ),
                 None,
             )).collect();
         let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("`KinematicsPass.bind_group`"),
+            label: Some("`CellularTilePass.bind_group`"),
             layout: &bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -381,7 +379,7 @@ impl KinematicsPass {
         });
         let dispatch_bind_group: wgpu::BindGroup = device.create_bind_group(
             &wgpu::BindGroupDescriptor {
-                label: Some("`KinematicsPass.dispatch_bind_group`"),
+                label: Some("`CellularTilePass.dispatch_bind_group`"),
                 layout: &dispatch_bind_group_layout,
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
@@ -404,7 +402,7 @@ impl KinematicsPass {
         let control_readbacks: Vec<(wgpu::Buffer, Option<usize>)> =
             (0..READBACK_COUNT).map(|_| (
                 create_buffer(
-                    "`KinematicsPass.control_readbacks`",
+                    "`CellularTilePass.control_readbacks`",
                     16,
                     wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 ),
@@ -432,7 +430,7 @@ impl KinematicsPass {
             rigid_body_response_receiver,
             rigid_bodies: vec![0; COLLISION_RIGID_BODY_COUNT_MAXIMUM],
             substep_count: SUBSTEP_COUNT,
-            resolve_count: KINEMATICS_RESOLVE_COUNT,
+            resolve_count: CELLULAR_TILE_RESOLVE_COUNT,
         }
     }
 
@@ -466,11 +464,11 @@ impl KinematicsPass {
             return Err(SceneError::InvalidCellularTileRegion);
         }
         let actors: &[(Actor, ColliderShape, [f32; 2], f32, [f32; 2], f32, bool)] =
-            &actors[..actors.len().min(KINEMATICS_ACTOR_COUNT_MAXIMUM)];
+            &actors[..actors.len().min(CELLULAR_TILE_ACTOR_COUNT_MAXIMUM)];
         // the shader measures everything in cells and ticks
         let cell_size: f32 = CELLULAR_TILE_SIZE as f32;
-        let gravity: f32 = gravity * cell_size * KINEMATICS_TIME_STEP * KINEMATICS_TIME_STEP;
-        let slot_count: usize = SUBSTEP_COUNT * KINEMATICS_RESOLVE_COUNT;
+        let gravity: f32 = gravity * cell_size * CELLULAR_TILE_TIME_STEP * CELLULAR_TILE_TIME_STEP;
+        let slot_count: usize = SUBSTEP_COUNT * CELLULAR_TILE_RESOLVE_COUNT;
         let mut uniform_bytes: Vec<u8> = vec![0; slot_count * UNIFORM_STRIDE as usize];
         for (slot, substep_bytes) in
             uniform_bytes.chunks_exact_mut(UNIFORM_STRIDE as usize).enumerate()
@@ -481,10 +479,10 @@ impl KinematicsPass {
                 ring_offset.0,
                 ring_offset.1,
                 self.tick,
-                (slot / KINEMATICS_RESOLVE_COUNT) as u32,
+                (slot / CELLULAR_TILE_RESOLVE_COUNT) as u32,
                 actors.len() as u32,
                 gravity.to_bits(),
-                (slot % KINEMATICS_RESOLVE_COUNT) as u32,
+                (slot % CELLULAR_TILE_RESOLVE_COUNT) as u32,
                 0,
                 region_origin.0 as u32,
                 region_origin.1 as u32,
@@ -537,7 +535,7 @@ impl KinematicsPass {
         }
         let mut command_encoder: wgpu::CommandEncoder = accelerator.device()
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Scene kinematics cellular tiles"),
+                label: Some("Scene cellular tiles"),
             });
         command_encoder.clear_buffer(&self.control_buffer, 0, Some(12));
         command_encoder.clear_buffer(&self.contact_buffer, 0, None);
@@ -560,7 +558,7 @@ impl KinematicsPass {
         {
             let mut compute_pass: wgpu::ComputePass<'_> = command_encoder
                 .begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("Scene kinematics cellular tiles"),
+                    label: Some("Scene cellular tiles"),
                     timestamp_writes: None,
                 });
             let pipelines: &HashMap<&'static str, wgpu::ComputePipeline> = &self.pipelines;
@@ -580,7 +578,7 @@ impl KinematicsPass {
             compute_pass.dispatch_workgroups(1, 1, 1);
             for substep in 0..self.substep_count {
                 let indirect_offset: u64 = 12 + substep as u64 * 12;
-                let slot: usize = substep * KINEMATICS_RESOLVE_COUNT;
+                let slot: usize = substep * CELLULAR_TILE_RESOLVE_COUNT;
                 let set_slot = |compute_pass: &mut wgpu::ComputePass<'_>, slot: usize| {
                     compute_pass.set_bind_group(
                         0,
@@ -720,7 +718,7 @@ impl KinematicsPass {
         accelerator: &Accelerator,
     ) -> Result<Option<HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2], [f32; 7])>>, SceneError> {
         accelerator.device().poll(wgpu::PollType::Poll)
-            .map_err(|_| SceneError::KinematicsCellularTilePoll)?;
+            .map_err(|_| SceneError::CellularTilePoll)?;
         let mut rigid_body_contacts: Option<
             HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2], [f32; 7])>
         > = None;
@@ -730,14 +728,14 @@ impl KinematicsPass {
                 &mut self.rigid_body_contact_readbacks[readback];
             let Some(readback_rigid_bodies) = readback_rigid_bodies.take() else { continue; };
             if let Err(error) = result {
-                first_error.get_or_insert(SceneError::KinematicsCellularTileResponse { error });
+                first_error.get_or_insert(SceneError::CellularTileResponse { error });
                 continue;
             }
             let contacts: &mut HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2], [f32; 7])> =
                 rigid_body_contacts.get_or_insert_with(HashMap::new);
             {
                 let mapped_bytes: wgpu::BufferView = buffer.get_mapped_range(..)
-                    .expect("mapped kinematics rigid body contact readback should be readable");
+                    .expect("mapped cellular tile rigid body contact readback should be readable");
                 for ((readback_rigid_body, rigid_body), contact_bytes) in readback_rigid_bodies
                     .iter()
                     .zip(&self.rigid_bodies)
@@ -754,7 +752,7 @@ impl KinematicsPass {
                     };
                     // convert impulses in mass cells per tick and arms in cells to tile units
                     let cell_size: f32 = 1.0 / CELLULAR_TILE_SIZE as f32;
-                    let tiles_per_second: f32 = cell_size / KINEMATICS_TIME_STEP;
+                    let tiles_per_second: f32 = cell_size / CELLULAR_TILE_TIME_STEP;
                     let (impulse, angular_impulse, holding, current): &mut (
                         [f32; 2],
                         f32,
@@ -799,15 +797,15 @@ impl KinematicsPass {
         accelerator: &Accelerator,
     ) -> Result<(), SceneError> {
         accelerator.device().poll(wgpu::PollType::Poll)
-            .map_err(|_| SceneError::KinematicsCellularTilePoll)?;
+            .map_err(|_| SceneError::CellularTilePoll)?;
         while let Ok((readback, result)) = self.control_response_receiver.try_recv() {
             let (buffer, resolve_count): &mut (wgpu::Buffer, Option<usize>) =
                 &mut self.control_readbacks[readback];
             let Some(resolve_count) = resolve_count.take() else { continue; };
-            result.map_err(|error| SceneError::KinematicsCellularTileResponse { error })?;
+            result.map_err(|error| SceneError::CellularTileResponse { error })?;
             let (step_count, pending_resolves): (u32, u32) = {
                 let mapped_bytes: wgpu::BufferView = buffer.get_mapped_range(..12)
-                    .expect("mapped kinematics control readback should be readable");
+                    .expect("mapped cellular tile control readback should be readable");
                 let value = |field: usize| -> u32 {
                     u32::from_le_bytes([
                         mapped_bytes[field * 4],
@@ -824,11 +822,11 @@ impl KinematicsPass {
             let needed_resolve_count: usize = match pending_resolves {
                 0 => 1,
                 _ if 32 - pending_resolves.leading_zeros() as usize >= resolve_count =>
-                    KINEMATICS_RESOLVE_COUNT,
+                    CELLULAR_TILE_RESOLVE_COUNT,
                 _ => 32 - pending_resolves.leading_zeros() as usize + 1,
             };
             self.resolve_count = (needed_resolve_count + 1).next_multiple_of(2)
-                .clamp(2, KINEMATICS_RESOLVE_COUNT);
+                .clamp(2, CELLULAR_TILE_RESOLVE_COUNT);
         }
         Ok(())
     }
@@ -839,7 +837,7 @@ impl KinematicsPass {
         accelerator: &Accelerator,
     ) -> Result<Option<HashMap<Actor, ([f32; 2], [f32; 2], f32)>>, SceneError> {
         accelerator.device().poll(wgpu::PollType::Poll)
-            .map_err(|_| SceneError::KinematicsCellularTilePoll)?;
+            .map_err(|_| SceneError::CellularTilePoll)?;
         let mut contacts: Option<HashMap<Actor, ([f32; 2], [f32; 2], f32)>> = None;
         let mut first_error: Option<SceneError> = None;
         while let Ok((readback, result)) = self.response_receiver.try_recv() {
@@ -847,14 +845,14 @@ impl KinematicsPass {
                 &mut self.contact_readbacks[readback];
             let Some(actors) = readback_actors.take() else { continue; };
             if let Err(error) = result {
-                first_error.get_or_insert(SceneError::KinematicsCellularTileResponse { error });
+                first_error.get_or_insert(SceneError::CellularTileResponse { error });
                 continue;
             }
             // readbacks are mapped in submission order, so a later one replaces an earlier one
             let mut readback_contacts: HashMap<Actor, ([f32; 2], [f32; 2], f32)> = HashMap::new();
             {
                 let mapped_bytes: wgpu::BufferView = buffer.get_mapped_range(..)
-                    .expect("mapped kinematics contact readback should be readable");
+                    .expect("mapped cellular tile contact readback should be readable");
                 for ((actor, mass), contact_bytes) in
                     actors.iter().zip(mapped_bytes.chunks_exact(CONTACT_BYTE_COUNT as usize))
                 {
@@ -868,7 +866,7 @@ impl KinematicsPass {
                     };
                     // convert impulses in mass cells per tick and depths in cells to tile units
                     let tiles_per_second: f32 =
-                        1.0 / CELLULAR_TILE_SIZE as f32 / KINEMATICS_TIME_STEP;
+                        1.0 / CELLULAR_TILE_SIZE as f32 / CELLULAR_TILE_TIME_STEP;
                     let velocity_change: [f32; 2] =
                         [value(0) / mass * tiles_per_second, value(1) / mass * tiles_per_second];
                     let normal_length: f32 = value(2).hypot(value(3));

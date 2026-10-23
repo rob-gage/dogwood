@@ -6,6 +6,7 @@ use super::{
         CellularTileCoordinates,
         CellularTileRegion,
         CellularTileStreamingState,
+        CellularTiles,
         CELLULAR_TILE_SIZE,
     },
     chunks::{
@@ -30,7 +31,6 @@ use super::{
         GAS_AMOUNT_MAXIMUM,
         GAS_AMOUNT_PER_ATMOSPHERE,
     },
-    kinematics::Kinematics,
     scene_error::SceneError,
     scene_generator::SceneGenerator,
     scene_position::ScenePosition,
@@ -88,7 +88,7 @@ pub struct Scene {
     /// Rapier simulation of actors against the active cellular tiles, absent until simulated
     collision: Option<Collision>,
     /// GPU simulation of the active dynamic cells against actors, absent until simulated
-    kinematics: Option<Kinematics>,
+    cellular_tiles: Option<CellularTiles>,
     /// GPU PBF simulation and fixed-capacity particle pool, absent until the tile ring is created
     fluids: Option<Fluids>,
     /// GPU simulation of the gas in the active cellular tiles, absent until simulated
@@ -134,7 +134,7 @@ impl Scene {
             cellular_tile_buffers: None,
             cellular_tile_streaming_state: None,
             collision: None,
-            kinematics: None,
+            cellular_tiles: None,
             fluids: None,
             gases: None,
             edit_streaming_state: EditStreamingState::new(),
@@ -435,15 +435,15 @@ impl Scene {
         let (cellular_contacts, rigid_body_contacts): (
             HashMap<Actor, ([f32; 2], [f32; 2], f32)>,
             HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2], [f32; 7])>,
-        ) = self.kinematics
-            .get_or_insert_with(|| Kinematics::new(
+        ) = self.cellular_tiles
+            .get_or_insert_with(|| CellularTiles::new(
                 accelerator,
                 cellular_tile_buffers,
                 &self.material_table,
                 collision.rigid_body_pass(),
                 fluid_raster_buffer,
             ))
-            .simulate_kinematics(
+            .simulate_cellular_tiles(
                 accelerator,
                 active_region,
                 cellular_tile_streaming_state.cellular_tile_ring_offset(),
@@ -454,8 +454,8 @@ impl Scene {
                 &collision.rigid_bodies(),
             )?;
         let actor_components: &[(Actor, ActorCollisionComponent)] =
-            self.kinematics.as_ref()
-                .expect("kinematics storage exists after simulation")
+            self.cellular_tiles.as_ref()
+                .expect("cellular tile simulation exists after simulation")
                 .fluid_actors();
         let particle_export_target: Option<(u64, &wgpu::Buffer)> =
             cellular_tile_streaming_state.pending_fluid_particle_export_target();
@@ -473,10 +473,10 @@ impl Scene {
             &fluid_actor_contacts,
             &self.material_table,
         )?;
-        let kinematics: &Kinematics = self.kinematics
+        let cellular_tiles: &CellularTiles = self.cellular_tiles
             .as_ref()
-            .expect("kinematics storage exists after simulation");
-        let kinematics_actor_buffer: &wgpu::Buffer = kinematics.actor_buffer();
+            .expect("cellular tile simulation exists after simulation");
+        let cellular_tile_actor_buffer: &wgpu::Buffer = cellular_tiles.actor_buffer();
         let particle_simulation_result: Result<(), SceneError> =
             self.fluids.as_mut().expect("fluid storage exists with the tile buffers")
             .simulate(
@@ -487,7 +487,7 @@ impl Scene {
                 region_origin,
                 cellular_tile_buffers,
                 collision.rigid_body_pass(),
-                Some(kinematics_actor_buffer),
+                Some(cellular_tile_actor_buffer),
                 actor_components,
                 particle_export_target.as_ref().map(|(_, buffer)| *buffer),
                 self.material_table.fluid_properties_buffer(),
@@ -499,16 +499,16 @@ impl Scene {
             .as_ref()
             .expect("fluid storage exists with the tile buffers")
             .fluid_raster_buffer();
-        let kinematics: &Kinematics = self.kinematics
+        let cellular_tiles: &CellularTiles = self.cellular_tiles
             .as_ref()
-            .expect("kinematics storage exists after simulation");
+            .expect("cellular tile simulation exists after simulation");
         self.gases
             .get_or_insert_with(|| Gases::new(
                 accelerator,
                 cellular_tile_buffers,
                 &self.material_table,
                 fluid_raster_buffer,
-                kinematics.actor_buffer(),
+                cellular_tiles.actor_buffer(),
             ))
             .simulate_gases(
                 accelerator,
@@ -517,7 +517,7 @@ impl Scene {
                 self.gravity,
                 ambient_gas_amount,
                 self.ambient_gas_mass,
-                kinematics.fluid_actors().len() as u32,
+                cellular_tiles.fluid_actors().len() as u32,
             )?;
         if let Some((streaming_request_identifier, _)) = particle_export_target {
             self.cellular_tile_streaming_state.as_mut()
