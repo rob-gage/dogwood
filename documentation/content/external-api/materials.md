@@ -37,9 +37,9 @@ A `Material` is one of four variants, one per `MaterialForm`: `CellularStatic`, 
 
 Fluid materials use [particle simulation](@/internals/simulation/fluids.md) and [raster-based rendering](@/internals/rendering/fluid-pass.md). Material density supplies physical mass; the pressure solver uses a shared rest spacing.
 
-Gas materials use [face-flow simulation](@/internals/simulation/gases.md) in the cellular tiles.
+Gas materials use [face-flow simulation](@/internals/simulation/gases.md) in the cellular tiles and [cell-aligned rendering](@/internals/rendering/gas-pass.md).
 
-> **Not implemented:** Gas rendering. The static cellular GPU property buffer is absent. Placing a fluid identifier directly in a cellular array does not create a particle; use edits or chunk particle records.
+> **Not implemented:** The static cellular GPU property buffer is absent. Placing a fluid identifier directly in a cellular array does not create a particle; use edits or chunk particle records.
 
 ## Identifiers
 

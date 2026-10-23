@@ -3,6 +3,7 @@
 use super::{
     SceneGraphicsCellular,
     SceneGraphicsFluid,
+    SceneGraphicsGas,
     SceneGraphicsSprites,
 };
 
@@ -17,6 +18,8 @@ pub struct SceneGraphics<'a> {
     pub cellular: Option<SceneGraphicsCellular<'a>>,
     /// Resident fluid raster, absent until a cellular region has streamed onto the GPU
     pub fluid: Option<SceneGraphicsFluid<'a>>,
+    /// Resident gas cells, absent until a cellular region has streamed onto the GPU
+    pub gas: Option<SceneGraphicsGas<'a>>,
     /// Sprite content drawn around the cellular content by depth
     pub sprites: SceneGraphicsSprites<'a>,
 }

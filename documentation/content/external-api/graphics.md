@@ -39,11 +39,12 @@ Game code generally needs only `SpriteSheet`. Integrators providing their own re
 
 ## Scene graphics and renderer
 
-`SceneGraphics`, `SceneGraphicsCellular`, `SceneGraphicsFluid`, and `SceneGraphicsSprites` (in `engine_graphics::world::scenes`) are borrowed descriptions of one frame:
+`SceneGraphics`, `SceneGraphicsCellular`, `SceneGraphicsFluid`, `SceneGraphicsGas`, and `SceneGraphicsSprites` (in `engine_graphics::world::scenes`) are borrowed descriptions of one frame:
 
 - the visible tile dimensions;
 - optional resident cellular buffers and ring placement;
 - optional fluid raster and material-property buffers with ring placement;
+- optional gas cell, material identifier, and gas material-property buffers with ring placement;
 - sprite texture views with position, size, rotation, depth, texture region, and linear color.
 
 The actor sprite tuple that feeds the sprite data is documented on [actor components](@/external-api/actor-components.md).
@@ -55,7 +56,7 @@ The target must be single-sample.
 Each frame is drawn in this order, into a centered letterboxed viewport:
 
 ```text
-[negative-depth sprites] -> [fluid] -> [cellular content] -> [nonnegative-depth sprites]
+[negative-depth sprites] -> [fluid] -> [gas] -> [cellular content] -> [nonnegative-depth sprites]
 ```
 
 Cellular rendering is skipped when there is no resident region or the viewport is empty. See [scene renderer](@/internals/rendering/scene-renderer.md) for the render passes.

@@ -31,6 +31,7 @@ Call `stream` and `simulate` each fixed update, and `graphics` when drawing. `Ga
 - `graphics(camera_actor)` returns borrowed graphics data, or an `ActorError` if the actor data is missing. Its actor also needs camera and kinematics-position components.
 - `cellular_graphics(camera_position)` returns active cellular graphics if available.
 - `fluid_graphics(camera_position)` returns optional borrowed raster/material data for fluid rendering, included automatically by `graphics`.
+- `gas_graphics(camera_position)` returns optional borrowed gas cell and material data for gas rendering, included automatically by `graphics`.
 
 ### Edge cases
 

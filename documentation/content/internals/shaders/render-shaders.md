@@ -3,10 +3,10 @@ title = "Render shaders"
 description = "Documents cellular and sprite WGSL inputs, coordinate transforms, ring lookup, and color output."
 weight = 20
 [extra]
-sources = ["engine_graphics/src/renders/scene_renderer_fluid.wgsl", "engine_graphics/src/renders/scene_renderer_fluid_pass.rs", "engine_graphics/src/renders/scene_renderer_cellular.wgsl", "engine_graphics/src/renders/scene_renderer_sprites.wgsl", "engine_graphics/src/renders/scene_renderer_cellular_pass.rs", "engine_graphics/src/renders/scene_renderer_sprites_pass.rs", "engine_graphics/src/sprites/sprite_sheet.rs"]
+sources = ["engine_graphics/src/renders/scene_renderer_fluid.wgsl", "engine_graphics/src/renders/scene_renderer_gas.wgsl", "engine_graphics/src/renders/scene_renderer_fluid_pass.rs", "engine_graphics/src/renders/scene_renderer_cellular.wgsl", "engine_graphics/src/renders/scene_renderer_sprites.wgsl", "engine_graphics/src/renders/scene_renderer_cellular_pass.rs", "engine_graphics/src/renders/scene_renderer_sprites_pass.rs", "engine_graphics/src/sprites/sprite_sheet.rs"]
 +++
 
-This page is the reference for the cellular, fluid, and sprite render shaders, for engine contributors. It covers bindings, record layouts, coordinate math, and color output. Pass resources and draw setup are in [cellular rendering](@/internals/rendering/cellular-pass.md) and [sprite rendering](@/internals/rendering/sprite-pass.md); pass order is in the [scene renderer](@/internals/rendering/scene-renderer.md).
+This page is the reference for the cellular, fluid, gas, and sprite render shaders, for engine contributors. It covers bindings, record layouts, coordinate math, and color output. Pass resources and draw setup are in [cellular rendering](@/internals/rendering/cellular-pass.md) and [sprite rendering](@/internals/rendering/sprite-pass.md); pass order is in the [scene renderer](@/internals/rendering/scene-renderer.md).
 
 ## Cellular shader
 
@@ -88,3 +88,7 @@ The Rust pass uses a nearest, clamp-to-edge sampler. It groups consecutive insta
 ## Fluid shader
 
 `scene_renderer_fluid.wgsl` adds `classify` and `shade` compute entry points, each with 8×8 workgroups, plus fullscreen `vertex` and `fragment` entry points. Its bindings, record layout, and shading are documented on [fluid rendering](@/internals/rendering/fluid-pass.md).
+
+## Gas shader
+
+`scene_renderer_gas.wgsl` has fullscreen `vertex` and `fragment` entry points and no compute stage. Its bindings, record layout, and color math are documented on [gas rendering](@/internals/rendering/gas-pass.md).

@@ -10,11 +10,12 @@ sources = ["engine_graphics/src/renders", "engine_graphics/src/world/scenes"]
 
 This page is for engine contributors working on `engine_graphics/src/renders`. It explains how `SceneRenderer` prepares and draws a scene's cellular content and sprites.
 
-`SceneRenderer` owns four passes and draws them in this order, so the first sprite group is behind cells and the second in front:
+`SceneRenderer` owns five passes and draws them in this order, so the first sprite group is behind cells and the second in front:
 
 ```text
 SceneGraphics -> SceneRenderer:
-  [sprites pass, depth < 0] -> [fluid pass] -> [cellular pass] -> [sprites pass, depth >= 0]
+  [sprites pass, depth < 0] -> [fluid pass] -> [gas pass] -> [cellular pass]
+    -> [sprites pass, depth >= 0]
   (one render pass, cleared to black)
 ```
 

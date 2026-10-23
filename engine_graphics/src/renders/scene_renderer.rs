@@ -3,12 +3,14 @@
 use super::{
     scene_renderer_cellular_pass::SceneRendererCellularPass,
     scene_renderer_fluid_pass::SceneRendererFluidPass,
+    scene_renderer_gas_pass::SceneRendererGasPass,
     scene_renderer_sprites_pass::SceneRendererSpritesPass,
 };
 use crate::world::scenes::{
     SceneGraphics,
     SceneGraphicsCellular,
     SceneGraphicsFluid,
+    SceneGraphicsGas,
 };
 use engine_host::acceleration::Accelerator;
 
@@ -18,6 +20,8 @@ pub struct SceneRenderer {
     behind_cellular_sprites_pass: SceneRendererSpritesPass,
     /// Renderer of resident fluid particles rasterized at cell resolution
     fluid_pass: SceneRendererFluidPass,
+    /// Renderer of resident gas cells
+    gas_pass: SceneRendererGasPass,
     /// Renderer of resident cellular tiles
     cellular_pass: SceneRendererCellularPass,
     /// Renderer of sprites with nonnegative depth, drawn above cellular content
@@ -31,6 +35,7 @@ impl SceneRenderer {
         Self {
             behind_cellular_sprites_pass: SceneRendererSpritesPass::new(accelerator, i32::MIN..=-1),
             fluid_pass: SceneRendererFluidPass::new(accelerator),
+            gas_pass: SceneRendererGasPass::new(accelerator),
             cellular_pass: SceneRendererCellularPass::new(accelerator),
             above_cellular_sprites_pass: SceneRendererSpritesPass::new(accelerator, 0..=i32::MAX),
         }
@@ -77,6 +82,13 @@ impl SceneRenderer {
                     && fluid_graphics.region_height > 0
                     && fluid_graphics.cellular_tile_size > 0
             });
+        let gas_graphics: Option<&SceneGraphicsGas<'_>> =
+            graphics.gas.as_ref().filter(|gas_graphics| {
+                is_viewport_visible
+                    && gas_graphics.region_width > 0
+                    && gas_graphics.region_height > 0
+                    && gas_graphics.cellular_tile_size > 0
+            });
         if is_viewport_visible {
             self.behind_cellular_sprites_pass.prepare(
                 accelerator,
@@ -111,6 +123,18 @@ impl SceneRenderer {
                 viewport_height,
                 pixels_per_tile,
                 fluid_graphics,
+            );
+        }
+        if let Some(gas_graphics) = gas_graphics {
+            self.gas_pass.prepare(
+                accelerator,
+                format,
+                viewport_x,
+                viewport_y,
+                viewport_width,
+                viewport_height,
+                pixels_per_tile,
+                gas_graphics,
             );
         }
         if is_viewport_visible {
@@ -162,6 +186,9 @@ impl SceneRenderer {
             self.behind_cellular_sprites_pass.draw(&mut render_pass, format);
             if fluid_graphics.is_some() {
                 self.fluid_pass.draw(&mut render_pass, format);
+            }
+            if gas_graphics.is_some() {
+                self.gas_pass.draw(&mut render_pass, format);
             }
             if cellular_graphics.is_some() {
                 self.cellular_pass.draw(&mut render_pass, format);

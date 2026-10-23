@@ -16,7 +16,7 @@ Each cell stores four 32-bit species slots, phantom air, flow through its right 
 
 Phantom air contributes to cell pressure and density alongside registered gases. The flow solver compares density with ambient density for buoyancy. When an edit places gas in an empty cell, it replaces phantom air with at least one atmosphere; emptying a cell leaves the configured ambient amount. A cellular edit removes phantom air but retains registered gas so it can be displaced. See the [edit shader](@/internals/shaders/edit-shader.md) for edit writes.
 
-Each gas material contributes its registered mass, diffusivity, cohesion, and color to a GPU property record. Mass determines the species contribution to density. Diffusivity sets exchange with open neighbors, and cohesion sets the minimum amount in an open source before it can transfer to a cell that does not already hold that species. Color is stored with the record but this simulation pass does not use it.
+Each gas material contributes its registered mass, diffusivity, cohesion, and color to a GPU property record. Mass determines the species contribution to density. Diffusivity sets exchange with open neighbors, and cohesion sets the minimum amount in an open source before it can transfer to a cell that does not already hold that species. The gas renderer uses the color; see [gas rendering](@/internals/rendering/gas-pass.md).
 
 ## Tick order
 
