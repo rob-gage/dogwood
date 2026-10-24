@@ -12,6 +12,9 @@ use std::{
     },
 };
 
+/// Extension removed from template file names when they are rendered
+const TEMPLATE_SUFFIX: &str = "template";
+
 static EMBEDDED_TEMPLATE: include_dir::Dir<'_> =
     include_dir::include_dir!("$CARGO_MANIFEST_DIR/../template");
 
@@ -83,6 +86,16 @@ impl TemplateSource {
                 )
                 .into());
             }
+            // Cargo discovers every `Cargo.toml` in a git dependency and rejects placeholders,
+            // so files that would be found store a `.template` suffix that rendering removes.
+            let relative_path: PathBuf = if relative_path
+                .extension()
+                .is_some_and(|extension| extension == TEMPLATE_SUFFIX)
+            {
+                relative_path.with_extension("")
+            } else {
+                relative_path
+            };
             let text_file: bool = matches!(
                 relative_path.extension().and_then(|extension| extension.to_str()),
                 Some("rs" | "toml" | "md" | "txt" | "ron")

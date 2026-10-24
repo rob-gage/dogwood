@@ -5,7 +5,7 @@ weight = 3
 sort_by = "weight"
 template = "section.html"
 [extra]
-sources = ["engine/src/lib.rs", "engine_host/src/lib.rs", "engine_graphics/src/lib.rs", "template/Cargo.toml", "documentation/site.sh"]
+sources = ["engine/src/lib.rs", "engine_host/src/lib.rs", "engine_graphics/src/lib.rs", "template/Cargo.toml.template", "documentation/site.sh"]
 +++
 
 The `engine` crate is the game-facing facade, and this section documents it together with the `editor` crate and the `dogwood` command-line tool. It is for game programmers who write a `Game` and need exact type, method, and module names. New readers should start with [Engine and Game](@/external-api/engine-and-games.md).

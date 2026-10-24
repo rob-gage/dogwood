@@ -3,7 +3,7 @@ title = "Template game walkthrough"
 description = "Explore the generated sample game, its materials and player actor, and the controls that drive it."
 weight = 40
 [extra]
-sources = ["template/src", "template/assets", "template/Cargo.toml", "cli/src/main.rs", "cli/src/commands/run.rs", "cli/src/commands/edit.rs", "cli/src/commands/run_template.rs", "cli/src/commands/edit_template.rs", "cli/src/template/template_cache.rs", "engine/src/games/game_instance.rs", "engine_world/src/actors/components/actor_pawn_movement.rs", "engine_world/src/actors/components/actor_pawn_possession.rs", "engine_world/src/actors/components/actor_camera.rs", "engine_graphics/src/sprites/sprite_sheet.rs"]
+sources = ["template/src", "template/assets", "template/Cargo.toml.template", "cli/src/main.rs", "cli/src/commands/run.rs", "cli/src/commands/edit.rs", "cli/src/commands/run_template.rs", "cli/src/commands/edit_template.rs", "cli/src/template/template_cache.rs", "engine/src/games/game_instance.rs", "engine_world/src/actors/components/actor_pawn_movement.rs", "engine_world/src/actors/components/actor_pawn_possession.rs", "engine_world/src/actors/components/actor_camera.rs", "engine_graphics/src/sprites/sprite_sheet.rs"]
 +++
 
 This page tours the code of the template game that `dogwood new` generates: its entry points, setup, and controls. Terms such as material form, actor, and pawn are defined in [core concepts](@/getting-started/core-concepts.md).

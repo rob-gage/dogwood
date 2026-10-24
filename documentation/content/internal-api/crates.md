@@ -3,7 +3,7 @@ title = "Crates and modules"
 description = "Workspace crate roles, module boundaries, and dependency relationships."
 weight = 10
 [extra]
-sources = ["Cargo.toml", "Cargo.lock", "engine/src/lib.rs", "engine_host/src/lib.rs", "engine_world/src/lib.rs", "engine_graphics/src/lib.rs", "engine_graphics/src/world/mod.rs", "engine_user_interface/src/lib.rs", "editor/src/lib.rs", "engine/Cargo.toml", "engine_host/Cargo.toml", "engine_graphics/Cargo.toml", "engine_world/Cargo.toml", "engine_user_interface/Cargo.toml", "engine_audio", "editor/Cargo.toml", "cli/Cargo.toml", "cli/src/main.rs", "cli/src/commands", "cli/src/template", "cli/src/utility", "template/Cargo.toml"]
+sources = ["Cargo.toml", "Cargo.lock", "engine/src/lib.rs", "engine_host/src/lib.rs", "engine_world/src/lib.rs", "engine_graphics/src/lib.rs", "engine_graphics/src/world/mod.rs", "engine_user_interface/src/lib.rs", "editor/src/lib.rs", "engine/Cargo.toml", "engine_host/Cargo.toml", "engine_graphics/Cargo.toml", "engine_world/Cargo.toml", "engine_user_interface/Cargo.toml", "engine_audio", "editor/Cargo.toml", "cli/Cargo.toml", "cli/src/main.rs", "cli/src/commands", "cli/src/template", "cli/src/utility", "template/Cargo.toml.template"]
 +++
 
 This page maps the Dogwood workspace for engine contributors: what each crate is responsible for, how the crates depend on each other, and which items they re-export. The workspace manifest lists eight members.
@@ -58,6 +58,7 @@ For the game-facing map, see [Public API](@/external-api/_index.md). For impleme
 
 `template/` is a project template rather than a workspace member. The CLI renders its manifest with dependency values substituted.
 
+- The manifest is stored as `template/Cargo.toml.template`. Cargo reads every `Cargo.toml` in a git dependency's repository and reports placeholders as parse errors, so the CLI removes the `.template` suffix from rendered file names instead.
 - `engine` and optional `editor` dependencies are injected through `{% raw %}{{engine_dependency}}{% endraw %}` and `{% raw %}{{editor_dependency}}{% endraw %}`.
 - Enabling the template's `editor` feature activates `dep:editor`.
 - The package name and `default-run` value contain `{% raw %}{{project_name}}{% endraw %}`; the explicit editor binary is named `editor`.

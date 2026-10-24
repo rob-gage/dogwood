@@ -10,7 +10,7 @@ sources = [
     "cli/src/commands/edit.rs",
     "cli/src/main.rs",
     "cli/src/commands/build.rs",
-    "template/Cargo.toml",
+    "template/Cargo.toml.template",
     "engine/src/games/game_instance.rs",
     "engine_world/src/scenes/scene.rs",
     "engine/src/lib.rs",

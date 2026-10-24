@@ -3,7 +3,7 @@ title = "Editor crate"
 description = "Launch a game in the Dogwood editor using its public Editor entry point."
 weight = 110
 [extra]
-sources = ["editor/src/lib.rs", "editor/src/editor.rs", "engine/src/runtime/engine.rs", "template/Cargo.toml", "template/src/bin/editor.rs", "cli/src/commands/edit.rs"]
+sources = ["editor/src/lib.rs", "editor/src/editor.rs", "engine/src/runtime/engine.rs", "template/Cargo.toml.template", "template/src/bin/editor.rs", "cli/src/commands/edit.rs"]
 +++
 
 ## Public entry point

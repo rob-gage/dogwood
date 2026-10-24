@@ -3,7 +3,7 @@ title = "Your first project"
 description = "Generate a Dogwood project and use the CLI to build, run, or open it in the editor."
 weight = 20
 [extra]
-sources = ["cli/src/main.rs", "cli/src/commands", "cli/src/template/template_parameters.rs", "cli/src/template/template_source.rs", "template/Cargo.toml", "template/src", "template/assets"]
+sources = ["cli/src/main.rs", "cli/src/commands", "cli/src/template/template_parameters.rs", "cli/src/template/template_source.rs", "template/Cargo.toml.template", "template/src", "template/assets"]
 +++
 
 This page is for game programmers who have installed the `dogwood` CLI. It creates a project from the template, then builds, runs, and edits it.
