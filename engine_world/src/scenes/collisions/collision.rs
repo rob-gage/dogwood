@@ -1243,6 +1243,105 @@ impl Collision {
     /// Returns the cellular tile whose bottom-left corner is the origin of every Rapier position
     pub fn origin(&self) -> CellularTileCoordinates { self.origin }
 
+    /// Returns the edges of every collider as scene-position line segments
+    pub fn collider_outlines(&self) -> Vec<(ScenePosition, ScenePosition)> {
+        use rapier2d::{math::Vector, parry::shape::AxisMask};
+
+        let origin_position: ScenePosition = ScenePosition {
+            tile_x: self.origin.x,
+            tile_y: self.origin.y,
+            offset_x: 0,
+            offset_y: 0,
+        };
+        // collider-local points move by the collider pose, then from the collision origin
+        let outline = |pose: &rapier2d::math::Pose, start: Vector, end: Vector| {
+            let start: Vector = pose.translation + pose.rotation * start;
+            let end: Vector = pose.translation + pose.rotation * end;
+            (
+                origin_position.translate(f64::from(start.x), f64::from(start.y)),
+                origin_position.translate(f64::from(end.x), f64::from(end.y)),
+            )
+        };
+        let mut outlines: Vec<(ScenePosition, ScenePosition)> = Vec::new();
+        for (_, collider) in self.colliders.iter() {
+            let pose: &rapier2d::math::Pose = collider.position();
+            let mut points: Vec<Vector> = Vec::new();
+            if let Some(voxels) = collider.shape().as_voxels() {
+                let half_size: Vector = voxels.voxel_size() / 2.0;
+                for voxel in voxels.voxels() {
+                    if voxel.state.is_empty() { continue; }
+                    let faces: AxisMask = voxel.state.free_faces();
+                    let center: Vector = voxel.center;
+                    let edges: [(AxisMask, [Vector; 2]); 4] = [
+                        (AxisMask::X_NEG, [
+                            center + Vector::new(-half_size.x, -half_size.y),
+                            center + Vector::new(-half_size.x, half_size.y),
+                        ]),
+                        (AxisMask::X_POS, [
+                            center + Vector::new(half_size.x, -half_size.y),
+                            center + Vector::new(half_size.x, half_size.y),
+                        ]),
+                        (AxisMask::Y_NEG, [
+                            center + Vector::new(-half_size.x, -half_size.y),
+                            center + Vector::new(half_size.x, -half_size.y),
+                        ]),
+                        (AxisMask::Y_POS, [
+                            center + Vector::new(-half_size.x, half_size.y),
+                            center + Vector::new(half_size.x, half_size.y),
+                        ]),
+                    ];
+                    for (face, [start, end]) in edges {
+                        if faces.contains(face) { outlines.push(outline(pose, start, end)); }
+                    }
+                }
+                continue;
+            }
+            if let Some(ball) = collider.shape().as_ball() {
+                for index in 0..48 {
+                    let angle: f32 = index as f32 * std::f32::consts::TAU / 48.0;
+                    points.push(Vector::new(
+                        angle.cos() * ball.radius,
+                        angle.sin() * ball.radius,
+                    ));
+                }
+            } else if let Some(cuboid) = collider.shape().as_cuboid() {
+                let half_extents: Vector = cuboid.half_extents;
+                points.extend([
+                    Vector::new(-half_extents.x, -half_extents.y),
+                    Vector::new(half_extents.x, -half_extents.y),
+                    Vector::new(half_extents.x, half_extents.y),
+                    Vector::new(-half_extents.x, half_extents.y),
+                ]);
+            } else if let Some(capsule) = collider.shape().as_capsule() {
+                let start: Vector = capsule.segment.a;
+                let end: Vector = capsule.segment.b;
+                let angle: f32 = (end.y - start.y).atan2(end.x - start.x);
+                for index in 0..=12 {
+                    let arc: f32 = angle - std::f32::consts::FRAC_PI_2
+                        + index as f32 * std::f32::consts::PI / 12.0;
+                    points.push(end + Vector::new(
+                        arc.cos() * capsule.radius,
+                        arc.sin() * capsule.radius,
+                    ));
+                }
+                for index in 0..=12 {
+                    let arc: f32 = angle + std::f32::consts::FRAC_PI_2
+                        + index as f32 * std::f32::consts::PI / 12.0;
+                    points.push(start + Vector::new(
+                        arc.cos() * capsule.radius,
+                        arc.sin() * capsule.radius,
+                    ));
+                }
+            } else if let Some(polygon) = collider.shape().as_convex_polygon() {
+                points.extend(polygon.points().iter().copied());
+            }
+            for index in 0..points.len() {
+                outlines.push(outline(pose, points[index], points[(index + 1) % points.len()]));
+            }
+        }
+        outlines
+    }
+
     /// Returns the GPU rasterization of rigid body cells
     pub fn rigid_body_pass(&self) -> &CollisionRigidBodyPass { &self.rigid_body_pass }
 

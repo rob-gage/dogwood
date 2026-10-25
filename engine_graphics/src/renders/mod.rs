@@ -4,6 +4,8 @@ mod scene_renderer;
 mod scene_renderer_cellular_pass;
 mod scene_renderer_fluid_pass;
 mod scene_renderer_gas_pass;
+mod scene_renderer_overlay_pass;
+mod scene_renderer_pressure_pass;
 mod scene_renderer_sprites_pass;
 
-pub use scene_renderer::SceneRenderer;
+pub use scene_renderer::{SceneRenderer, SceneRendererViewMode};

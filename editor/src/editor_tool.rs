@@ -9,4 +9,8 @@ pub enum EditorTool {
     Material(MaterialIdentifier),
     /// Empties cells, replacing any matter in them
     Eraser,
+    /// Adds or removes pressure
+    Pressure,
+    /// Places a delayed pressure explosion
+    Explosion,
 }

@@ -46,6 +46,8 @@ use crate::{
             ActorCameraComponent,
             ActorCollisionComponent,
             ActorKinematicsPositionComponent,
+            ActorOverlayComponent,
+            ActorOverlayShape,
             ActorPawnControlComponent,
             ActorSpritesComponent,
         },
@@ -60,6 +62,9 @@ use engine_graphics::world::scenes::{
     SceneGraphicsCellular,
     SceneGraphicsFluid,
     SceneGraphicsGas,
+    SceneGraphicsOverlay,
+    SceneGraphicsOverlayShape,
+    SceneGraphicsPressure,
     SceneGraphicsSprites,
 };
 use engine_host::{
@@ -154,6 +159,11 @@ impl Scene {
 
     /// Returns the actors of this scene for modification
     pub fn actor_registry_mutable(&mut self) -> &mut ActorRegistry { &mut self.actor_registry }
+
+    /// Returns the edges of every collider in the collision world as line segments for debugging
+    pub fn collider_outlines(&self) -> Vec<(ScenePosition, ScenePosition)> {
+        self.collision.as_ref().map_or_else(Vec::new, Collision::collider_outlines)
+    }
 
     /// Sets the downward acceleration of dynamic bodies and pawns in tiles per second squared
     pub fn set_gravity(&mut self, gravity: f32) { self.gravity = gravity; }
@@ -583,10 +593,34 @@ impl Scene {
         Ok(SceneGraphics {
             visible_width: camera.visible_width(),
             visible_height: camera.visible_height(),
+            cellular_tile_size: CELLULAR_TILE_SIZE as u32,
+            cell_grid_origin: [
+                -(camera_position.offset_x as f64 / ScenePosition::OFFSET_UNITS_PER_TILE) as f32,
+                -(camera_position.offset_y as f64 / ScenePosition::OFFSET_UNITS_PER_TILE) as f32,
+            ],
             cellular: self.cellular_graphics(camera_position),
             fluid: self.fluid_graphics(camera_position),
             gas: self.gas_graphics(camera_position),
+            pressure: self.pressure_graphics(camera_position),
             sprites,
+            overlays: self.actor_registry
+                .components::<ActorOverlayComponent, ActorKinematicsPositionComponent>()
+                .map(|(overlay, position)| {
+                    let (center_x, center_y): (f64, f64) =
+                        position.position.relative_position(camera_position);
+                    SceneGraphicsOverlay {
+                        center_x: center_x as f32,
+                        center_y: center_y as f32,
+                        shape: match overlay.shape {
+                            ActorOverlayShape::Circle { radius } =>
+                                SceneGraphicsOverlayShape::Circle { radius },
+                            ActorOverlayShape::Rectangle { width, height } =>
+                                SceneGraphicsOverlayShape::Rectangle { width, height },
+                        },
+                        color: overlay.color,
+                    }
+                })
+                .collect(),
         })
     }
 
@@ -685,6 +719,38 @@ impl Scene {
             ring_offset_y,
             cellular_tile_size: CELLULAR_TILE_SIZE as u32,
             amount_per_atmosphere: GAS_AMOUNT_PER_ATMOSPHERE,
+        })
+    }
+
+    /// Returns the resident pressure relative to a camera, or `None` before it streams
+    pub fn pressure_graphics(
+        &self,
+        camera_position: ScenePosition,
+    ) -> Option<SceneGraphicsPressure<'_>> {
+        let cellular_tile_streaming_state: &CellularTileStreamingState =
+            self.cellular_tile_streaming_state.as_ref()?;
+        let cellular_tile_buffers: &CellularTileBuffers = self.cellular_tile_buffers.as_ref()?;
+        let active_region: CellularTileRegion =
+            cellular_tile_streaming_state.active_cellular_tile_region()?;
+        let (ring_offset_x, ring_offset_y): (u32, u32) =
+            cellular_tile_streaming_state.cellular_tile_ring_offset();
+        let region_position: ScenePosition = ScenePosition {
+            tile_x: active_region.bottom_left.x,
+            tile_y: active_region.bottom_left.y,
+            offset_x: 0,
+            offset_y: 0,
+        };
+        let (region_x, region_y): (f64, f64) = region_position.relative_position(camera_position);
+        Some(SceneGraphicsPressure {
+            pressure_buffer: cellular_tile_buffers.pressure_buffer(),
+            ambient_pressure: self.ambient_gas_pressure,
+            region_x: region_x as f32,
+            region_y: region_y as f32,
+            region_width: active_region.width() as u32,
+            region_height: active_region.height() as u32,
+            ring_offset_x,
+            ring_offset_y,
+            cellular_tile_size: CELLULAR_TILE_SIZE as u32,
         })
     }
 

@@ -11,6 +11,8 @@ use engine::{
         components::{
             ActorCameraComponent,
             ActorKinematicsPositionComponent,
+            ActorOverlayComponent,
+            ActorOverlayShape,
             ActorPersistenceComponent,
         },
         Actor,
@@ -41,6 +43,7 @@ use engine::{
             EditError,
             EditMode,
         },
+        pressure::PRESSURE_MAXIMUM,
         ScenePosition,
     },
     system_events::{
@@ -67,6 +70,10 @@ use engine::{
     },
     Accelerator,
     Processor,
+    SceneGraphicsOverlay,
+    SceneGraphicsOverlayShape,
+    SceneRenderer,
+    SceneRendererViewMode,
 };
 use engine_host::windows::{
     Window,
@@ -96,6 +103,28 @@ const EDITOR_BRUSH_SIZE_MAXIMUM: u32 = 64;
 
 /// Zoom range of the free camera, within the region streamed for the game camera
 const EDITOR_CAMERA_ZOOM_RANGE: (f32, f32) = (0.25, 2.0);
+
+/// Pressure applied per second by the pressure tool
+const EDITOR_PRESSURE_RATE_DEFAULT: f32 = 100.0;
+
+/// Initial explosion radius in tiles
+const EDITOR_EXPLOSION_RADIUS_DEFAULT: f32 = 3.0;
+
+/// Initial explosion magnitude in atmospheres
+const EDITOR_EXPLOSION_MAGNITUDE_DEFAULT: f32 = 50.0;
+
+/// Initial explosion delay in seconds
+const EDITOR_EXPLOSION_DELAY_DEFAULT: f32 = 2.0;
+
+/// Mode for the pressure tool
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+enum EditorPressureMode {
+    /// Adds pressure to cells
+    #[default]
+    Add,
+    /// Removes pressure from cells
+    Remove,
+}
 
 /// Editor hosting a game in a scalable viewport beside its scene editing tools
 pub struct Editor<G: Game> {
@@ -129,6 +158,20 @@ pub struct Editor<G: Game> {
     held_keys: HashSet<KeyCode>,
     /// Action applied by strokes
     tool: EditorTool,
+    /// Appearance shown in the game viewport
+    view_mode: SceneRendererViewMode,
+    /// Pressure edit direction
+    pressure_mode: EditorPressureMode,
+    /// Pressure applied per second
+    pressure_rate: f32,
+    /// Radius of a delayed explosion in tiles
+    explosion_radius: f32,
+    /// Pressure added by a delayed explosion in atmospheres
+    explosion_magnitude: f32,
+    /// Delay before an explosion adds pressure, in seconds
+    explosion_delay: f32,
+    /// Delayed explosions tracked by the editor
+    pending_explosions: Vec<EditorExplosion>,
     /// Whether material strokes keep or replace existing matter
     mode: EditMode,
     /// Shape stamped along strokes
@@ -141,8 +184,12 @@ pub struct Editor<G: Game> {
     is_tile_grid_shown: bool,
     /// Whether chunk boundaries are drawn over the viewport
     is_chunk_grid_shown: bool,
+    /// Whether collider outlines are drawn over the viewport
+    is_collision_shown: bool,
     /// Cell under the pointer, absent while the pointer is outside the viewport
     cursor_cell: Option<CellCoordinates>,
+    /// Host overlay showing the current cursor, absent outside the viewport
+    cursor_overlay: Option<SceneGraphicsOverlay>,
     /// Cell of the previous sample of the current stroke, absent between strokes
     stroke_cell: Option<CellCoordinates>,
     /// Error of the latest rejected edit, cleared by the next accepted edit
@@ -159,6 +206,20 @@ pub struct Editor<G: Game> {
     measurement_time: Instant,
     /// Measured frames and updates per second
     rates: (u32, u32),
+}
+
+/// Explosion is the main area of effect; pressure may reach beyond it
+struct EditorExplosion {
+    /// Actor showing this explosion's area
+    actor: Actor,
+    /// Scene position where pressure will be added
+    position: ScenePosition,
+    /// Radius of the pressure area in tiles
+    radius: f32,
+    /// Pressure added in atmospheres
+    magnitude: f32,
+    /// Time remaining before pressure is added, in seconds
+    remaining_delay: f32,
 }
 
 impl<G: Game> Editor<G> {
@@ -196,13 +257,22 @@ impl<G: Game> Editor<G> {
             camera_actor: None,
             held_keys: HashSet::new(),
             tool,
+            view_mode: SceneRendererViewMode::Graphics,
+            pressure_mode: EditorPressureMode::Add,
+            pressure_rate: EDITOR_PRESSURE_RATE_DEFAULT,
+            explosion_radius: EDITOR_EXPLOSION_RADIUS_DEFAULT,
+            explosion_magnitude: EDITOR_EXPLOSION_MAGNITUDE_DEFAULT,
+            explosion_delay: EDITOR_EXPLOSION_DELAY_DEFAULT,
+            pending_explosions: Vec::new(),
             mode: EditMode::Insert,
             brush: EditorBrush::Circle,
             brush_size: 8,
             color: egui::Color32::WHITE,
             is_tile_grid_shown: false,
             is_chunk_grid_shown: false,
+            is_collision_shown: false,
             cursor_cell: None,
+            cursor_overlay: None,
             stroke_cell: None,
             edit_error: None,
             is_edited: false,
@@ -312,6 +382,7 @@ impl<G: Game> Editor<G> {
                     position.position.translate(horizontal * speed, vertical * speed);
             }
         }
+        self.update_explosions(elapsed_time);
         if self.is_playing {
             self.game_instance.update(accelerator, processor, elapsed_time);
         } else {
@@ -340,6 +411,10 @@ impl<G: Game> Editor<G> {
             .run(input, |user_interface| self.render_editor(user_interface));
         let platform_output: egui::PlatformOutput = mem::take(&mut output.platform_output);
         self.is_keyboard_wanted = user_interface_context.egui_context().egui_wants_keyboard_input();
+        self.game_instance.set_view_mode(self.view_mode);
+        self.game_instance.set_overlays(
+            self.cursor_overlay.into_iter().collect::<Vec<SceneGraphicsOverlay>>(),
+        );
         let user_interface_renderer: &mut UserInterfaceRenderer = self.user_interface_renderer
             .get_or_insert_with(|| UserInterfaceRenderer::new(device, texture.format()));
         // size the viewport texture to its tab, then draw the game into it
@@ -467,6 +542,20 @@ impl<G: Game> Editor<G> {
                 if user_interface.button("Save").on_hover_text("Ctrl+S").clicked() {
                     self.render_save();
                 }
+                user_interface.separator();
+                user_interface.selectable_value(
+                    &mut self.view_mode,
+                    SceneRendererViewMode::Graphics,
+                    "Graphics",
+                );
+                user_interface.selectable_value(
+                    &mut self.view_mode,
+                    SceneRendererViewMode::Pressure,
+                    "Pressure",
+                );
+                user_interface.toggle_value(&mut self.is_chunk_grid_shown, "Chunks");
+                user_interface.toggle_value(&mut self.is_tile_grid_shown, "Tiles");
+                user_interface.toggle_value(&mut self.is_collision_shown, "Collision");
             });
         });
         egui::Panel::bottom("editor-status-bar").show(user_interface, |user_interface| {
@@ -541,6 +630,40 @@ impl<G: Game> Editor<G> {
         self.is_edited = false;
     }
 
+    /// Counts down live explosions while playing and applies their pressure when the delay ends
+    fn update_explosions(&mut self, elapsed_time: Duration) {
+        let Some((scene, _)) = self.game_instance.game_mutable().scene() else {
+            self.pending_explosions.clear();
+            return;
+        };
+        for mut explosion in mem::take(&mut self.pending_explosions) {
+            if !scene.actor_registry_mutable().is_loaded(explosion.actor) { continue; }
+            if self.is_playing {
+                explosion.remaining_delay -= elapsed_time.as_secs_f32();
+            }
+            if explosion.remaining_delay > 0.0 {
+                self.pending_explosions.push(explosion);
+                continue;
+            }
+            let mut edit: Edit = Edit::new(EditMode::Insert);
+            let edit_result: Result<(), EditError> = edit.add_pressure_segment(
+                explosion.position,
+                explosion.position,
+                f64::from(explosion.radius),
+                explosion.magnitude,
+            );
+            let result: Result<(), EditError> = edit_result.and_then(|()| scene.edit(edit));
+            match result {
+                Ok(()) => {
+                    self.edit_error = None;
+                    self.is_edited = true;
+                }
+                Err(error) => self.edit_error = Some(error),
+            }
+            let _ = scene.actor_registry_mutable().despawn(explosion.actor);
+        }
+    }
+
     /// Switches between the game's camera and a free camera starting where the game's camera is
     fn render_camera(&mut self) {
         let Some((scene, game_camera_actor)) = self.game_instance.game_mutable().scene()
@@ -580,6 +703,8 @@ impl<G: Game> Editor<G> {
 
     /// Shows the game, grids, and brush, applying strokes and free camera zoom
     fn render_viewport(&mut self, user_interface: &mut egui::Ui) {
+        self.cursor_overlay = None;
+        self.cursor_cell = None;
         let rect: egui::Rect = user_interface.available_rect_before_wrap();
         let response: egui::Response =
             user_interface.allocate_rect(rect, egui::Sense::click_and_drag());
@@ -616,6 +741,9 @@ impl<G: Game> Editor<G> {
             egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
             egui::Color32::WHITE,
         );
+        if self.view_mode == SceneRendererViewMode::Pressure {
+            Self::render_pressure_legend(&painter, rect);
+        }
         let Some((camera_position, visible_width, visible_height)) = camera_view else { return; };
         // the texture may lag the tab by one frame while resizing, so map through its size
         let texture: &wgpu::Texture = viewport.texture_view().texture();
@@ -628,7 +756,6 @@ impl<G: Game> Editor<G> {
                 viewport.pixel_position(camera_position, visible_width, visible_height, position);
             rect.min + egui::vec2(x * scale.x, y * scale.y)
         };
-        let pixels_per_tile: f32 = viewport.pixels_per_tile(visible_width, visible_height);
         if self.is_tile_grid_shown || self.is_chunk_grid_shown {
             Self::render_grids(
                 &painter,
@@ -639,6 +766,15 @@ impl<G: Game> Editor<G> {
                 self.is_tile_grid_shown,
                 self.is_chunk_grid_shown,
             );
+        }
+        if self.is_collision_shown
+            && let Some((scene, _)) = self.game_instance.game_mutable().scene()
+        {
+            let outlines: Vec<(ScenePosition, ScenePosition)> = scene.collider_outlines();
+            let stroke: egui::Stroke = egui::Stroke::new(1.0, egui::Color32::GREEN);
+            for (start, end) in outlines {
+                painter.line_segment([point(start), point(end)], stroke);
+            }
         }
         let cursor_position: Option<ScenePosition> = response.hover_pos().map(|pointer| {
             let pixel: egui::Vec2 = (pointer - rect.min) / scale;
@@ -651,44 +787,29 @@ impl<G: Game> Editor<G> {
             )
         });
         self.cursor_cell = cursor_position.map(ScenePosition::cell_coordinates);
-        // outline the cells the brush covers around the hovered cell
         if let Some(cell) = self.cursor_cell {
-            let stroke: egui::Stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
-            let half_size: f32 = self.brush_size as f32 / 2.0;
-            match self.brush {
-                EditorBrush::Circle => {
-                    let half_cell_size: f64 = 0.5 / CELLULAR_TILE_SIZE as f64;
-                    painter.circle_stroke(
-                        point(Self::cell_position(cell).translate(half_cell_size, half_cell_size)),
-                        half_size * pixels_per_tile / CELLULAR_TILE_SIZE as f32 * scale.x,
-                        stroke,
-                    );
-                }
-                EditorBrush::Square => {
-                    let low: i64 = -(i64::from(self.brush_size) - 1) / 2;
-                    let high: i64 = i64::from(self.brush_size) / 2 + 1;
-                    painter.rect_stroke(
-                        egui::Rect::from_two_pos(
-                            point(Self::cell_position(CellCoordinates {
-                                x: cell.x + low,
-                                y: cell.y + low,
-                            })),
-                            point(Self::cell_position(CellCoordinates {
-                                x: cell.x + high,
-                                y: cell.y + high,
-                            })),
-                        ),
-                        0.0,
-                        stroke,
-                        egui::StrokeKind::Inside,
-                    );
-                }
+            let half_cell_size: f64 = 0.5 / CELLULAR_TILE_SIZE as f64;
+            let center: ScenePosition =
+                Self::cell_position(cell).translate(half_cell_size, half_cell_size);
+            self.cursor_overlay = Some(self.render_cursor_overlay(center, camera_position));
+            if response.clicked() && self.tool == EditorTool::Explosion {
+                self.render_explosion(center);
             }
         }
         // stroke from the previous sample so fast pointer movement leaves no gaps
         let is_stroking: bool = response.is_pointer_button_down_on()
             && user_interface.input(|input| input.pointer.primary_down());
         match (is_stroking, self.cursor_cell) {
+            (_, _) if self.tool == EditorTool::Explosion => self.stroke_cell = None,
+            (true, Some(cell)) if self.tool == EditorTool::Pressure => {
+                let frame_time: f32 = user_interface.input(|input| input.stable_dt);
+                self.render_pressure_stroke(
+                    self.stroke_cell.unwrap_or(cell),
+                    cell,
+                    frame_time,
+                );
+                self.stroke_cell = Some(cell);
+            }
             (true, Some(cell)) if self.stroke_cell != Some(cell) => {
                 self.render_stroke(self.stroke_cell.unwrap_or(cell), cell);
                 self.stroke_cell = Some(cell);
@@ -696,6 +817,58 @@ impl<G: Game> Editor<G> {
             (true, _) => {}
             (false, _) => self.stroke_cell = None,
         }
+    }
+
+    /// Creates a cell-aligned overlay for the current tool around the hovered cell
+    fn render_cursor_overlay(
+        &self,
+        center: ScenePosition,
+        camera_position: ScenePosition,
+    ) -> SceneGraphicsOverlay {
+        let (center_x, center_y): (f64, f64) = center.relative_position(camera_position);
+        let brush_size: f32 = self.brush_size as f32 / CELLULAR_TILE_SIZE as f32;
+        let shape: SceneGraphicsOverlayShape = match (self.tool, self.brush) {
+            (EditorTool::Explosion, _) =>
+                SceneGraphicsOverlayShape::Circle { radius: self.explosion_radius },
+            (EditorTool::Pressure, _) | (_, EditorBrush::Circle) =>
+                SceneGraphicsOverlayShape::Circle { radius: brush_size / 2.0 },
+            (_, EditorBrush::Square) =>
+                SceneGraphicsOverlayShape::Rectangle { width: brush_size, height: brush_size },
+        };
+        let color: egui::Color32 = match self.tool {
+            EditorTool::Pressure => egui::Color32::from_rgba_unmultiplied(150, 205, 255, 90),
+            EditorTool::Explosion => egui::Color32::from_rgba_unmultiplied(255, 50, 35, 110),
+            _ => egui::Color32::from_white_alpha(70),
+        };
+        SceneGraphicsOverlay {
+            center_x: center_x as f32,
+            center_y: center_y as f32,
+            shape,
+            color: u32::from_le_bytes(color.to_srgba_unmultiplied()),
+        }
+    }
+
+    /// Places a visible actor for a delayed pressure explosion at a cell center
+    fn render_explosion(&mut self, position: ScenePosition) {
+        let Some((scene, _)) = self.game_instance.game_mutable().scene() else { return; };
+        let overlay: ActorOverlayComponent = ActorOverlayComponent {
+            shape: ActorOverlayShape::Circle { radius: self.explosion_radius },
+            color: u32::from_le_bytes([230, 40, 30, 90]),
+        };
+        let actor: Actor = match scene.actor_registry_mutable().spawn((
+            ActorKinematicsPositionComponent { position },
+            overlay,
+        )) {
+            Ok(actor) => actor,
+            Err(_) => return,
+        };
+        self.pending_explosions.push(EditorExplosion {
+            actor,
+            position,
+            radius: self.explosion_radius,
+            magnitude: self.explosion_magnitude,
+            remaining_delay: self.explosion_delay,
+        });
     }
 
     /// Requests an edit filling the cells covered by a stroke within the resident region
@@ -708,6 +881,8 @@ impl<G: Game> Editor<G> {
                     u32::from_le_bytes(self.color.to_srgba_unmultiplied()),
                 ),
                 EditorTool::Eraser => (EditMode::Replace, MaterialIdentifier::EMPTY, 0),
+                EditorTool::Pressure => return,
+                EditorTool::Explosion => return,
             };
         let mut edit: Edit = Edit::new(mode);
         let result: Result<(), EditError> = self.brush
@@ -733,6 +908,140 @@ impl<G: Game> Editor<G> {
         }
     }
 
+    /// Requests a pressure edit along a stroke within the resident region
+    fn render_pressure_stroke(
+        &mut self,
+        start: CellCoordinates,
+        end: CellCoordinates,
+        frame_time: f32,
+    ) {
+        let point = |cell: CellCoordinates| -> ScenePosition {
+            let half_cell_size: f64 = 0.5 / CELLULAR_TILE_SIZE as f64;
+            Self::cell_position(cell).translate(half_cell_size, half_cell_size)
+        };
+        let pressure: f32 = self.pressure_rate * frame_time.max(0.0);
+        let radius: f64 = f64::from(self.brush_size) / 2.0 / CELLULAR_TILE_SIZE as f64;
+        let mut edit: Edit = Edit::new(EditMode::Insert);
+        let start_position: ScenePosition = point(start);
+        let end_position: ScenePosition = point(end);
+        let edit_result: Result<(), EditError> = match self.pressure_mode {
+            EditorPressureMode::Add => {
+                edit.add_pressure_segment(start_position, end_position, radius, pressure)
+            }
+            EditorPressureMode::Remove => {
+                edit.remove_pressure_segment(start_position, end_position, radius, pressure)
+            }
+        };
+        let result: Result<(), EditError> = edit_result.and_then(|()| {
+            let Some((scene, _)) = self.game_instance.game_mutable().scene() else {
+                return Ok(());
+            };
+            let active_region: Option<CellularTileRegion> = scene.active_cellular_tile_region();
+            edit.pressures.retain(|coordinates, _| {
+                active_region.is_some_and(|region| region.contains(*coordinates))
+            });
+            if edit.pressures.is_empty() { return Ok(()); }
+            scene.edit(edit)
+        });
+        match result {
+            Ok(()) => {
+                self.edit_error = None;
+                self.is_edited = true;
+            }
+            Err(EditError::CellularTileInactive { .. }) => {}
+            Err(error) => self.edit_error = Some(error),
+        }
+    }
+
+    /// Draws the pressure scale over the viewport
+    fn render_pressure_legend(painter: &egui::Painter, viewport: egui::Rect) {
+        let panel_size: egui::Vec2 = egui::vec2(310.0, 66.0);
+        let panel_min: egui::Pos2 = viewport.left_bottom() + egui::vec2(10.0, -76.0);
+        let panel: egui::Rect = egui::Rect::from_min_size(panel_min, panel_size);
+        painter.rect_filled(
+            panel,
+            4.0,
+            egui::Color32::from_rgba_unmultiplied(12, 14, 20, 220),
+        );
+        painter.text(
+            panel.left_top() + egui::vec2(8.0, 5.0),
+            egui::Align2::LEFT_TOP,
+            "Pressure (atm)",
+            egui::FontId::proportional(12.0),
+            egui::Color32::WHITE,
+        );
+        let bar: egui::Rect = egui::Rect::from_min_size(
+            panel.left_top() + egui::vec2(8.0, 24.0),
+            egui::vec2(panel.width() - 16.0, 12.0),
+        );
+        // zero to one atmosphere fills the bar's first part linearly, and the rest is logarithmic
+        let ambient_position: f32 = 0.22;
+        let map_pressure = |pressure: f32| -> f32 {
+            if pressure <= 1.0 {
+                pressure * ambient_position
+            } else {
+                ambient_position
+                    + (1.0 - ambient_position) * pressure.ln() / PRESSURE_MAXIMUM.ln()
+            }
+        };
+        let stops: [(f32, &str); 7] = [
+            (0.0, "0"),
+            (0.5, "0.5"),
+            (1.0, "1"),
+            (10.0, "10"),
+            (100.0, "100"),
+            (1000.0, "1000"),
+            (PRESSURE_MAXIMUM, "4095"),
+        ];
+        for segment in 0..bar.width() as usize {
+            let left: f32 = segment as f32 / bar.width();
+            let right: f32 = (segment + 1) as f32 / bar.width();
+            let position: f32 = (left + right) * 0.5;
+            let pressure: f32 = if position <= ambient_position {
+                position / ambient_position
+            } else {
+                ((position - ambient_position) / (1.0 - ambient_position) * PRESSURE_MAXIMUM.ln())
+                    .exp()
+            };
+            let color: [f32; 4] = SceneRenderer::pressure_color(pressure);
+            let color: egui::Color32 = egui::Color32::from_rgba_unmultiplied(
+                (color[0] * 255.0) as u8,
+                (color[1] * 255.0) as u8,
+                (color[2] * 255.0) as u8,
+                (color[3] * 255.0) as u8,
+            );
+            painter.rect_filled(
+                egui::Rect::from_min_max(
+                    egui::pos2(bar.left() + left * bar.width(), bar.top()),
+                    egui::pos2(bar.left() + right * bar.width() + 1.0, bar.bottom()),
+                ),
+                0.0,
+                color,
+            );
+        }
+        for (pressure, label) in stops {
+            let x: f32 = bar.left() + map_pressure(pressure) * bar.width();
+            painter.line_segment(
+                [egui::pos2(x, bar.bottom()), egui::pos2(x, bar.bottom() + 3.0)],
+                egui::Stroke::new(1.0, egui::Color32::WHITE),
+            );
+            let alignment: egui::Align2 = if pressure == 0.0 {
+                egui::Align2::LEFT_TOP
+            } else if pressure == PRESSURE_MAXIMUM {
+                egui::Align2::RIGHT_TOP
+            } else {
+                egui::Align2::CENTER_TOP
+            };
+            painter.text(
+                egui::pos2(x, bar.bottom() + 4.0),
+                alignment,
+                label,
+                egui::FontId::proportional(9.0),
+                egui::Color32::WHITE,
+            );
+        }
+    }
+
     /// Draws tile and chunk boundaries across the visible area of the camera
     fn render_grids(
         painter: &egui::Painter,
@@ -744,10 +1053,14 @@ impl<G: Game> Editor<G> {
         is_chunk_grid_shown: bool,
     ) {
         let tiles_per_chunk: i64 = CHUNK_SIZE / CELLULAR_TILE_SIZE;
-        let tile_stroke: egui::Stroke =
-            egui::Stroke::new(1.0, egui::Color32::from_white_alpha(32));
-        let chunk_stroke: egui::Stroke =
-            egui::Stroke::new(1.5, egui::Color32::from_rgba_unmultiplied(255, 196, 64, 160));
+        let tile_stroke: egui::Stroke = egui::Stroke::new(
+            1.0,
+            egui::Color32::from_rgb(170, 40, 110),
+        );
+        let chunk_stroke: egui::Stroke = egui::Stroke::new(
+            1.5,
+            egui::Color32::from_rgb(255, 105, 180),
+        );
         // the visible area extends half its size beyond the camera along each axis
         let corner = |x: f32, y: f32| -> ScenePosition {
             camera_position.translate(f64::from(x * visible_width), f64::from(y * visible_height))
@@ -782,6 +1095,50 @@ impl<G: Game> Editor<G> {
             .scene()
             .map(|(scene, _)| Self::materials(scene.material_table()))
             .unwrap_or_default();
+        InspectorSection::new("Pressure")
+            .id_salt("editor-pressure")
+            .show(user_interface, |user_interface| {
+                user_interface.selectable_value(&mut self.tool, EditorTool::Pressure, "Pressure");
+                SettingsRow::show(user_interface, "Rate", |user_interface| {
+                    user_interface.add(
+                        egui::Slider::new(&mut self.pressure_rate, 1.0..=1000.0)
+                            .logarithmic(true)
+                            .suffix(" atm/s"),
+                    );
+                });
+                SettingsRow::show(user_interface, "Mode", |user_interface| {
+                    user_interface.radio_value(&mut self.pressure_mode, EditorPressureMode::Add, "Add");
+                    user_interface.radio_value(
+                        &mut self.pressure_mode,
+                        EditorPressureMode::Remove,
+                        "Remove",
+                    );
+                });
+            });
+        InspectorSection::new("Explosion")
+            .id_salt("editor-explosion")
+            .show(user_interface, |user_interface| {
+                user_interface.selectable_value(&mut self.tool, EditorTool::Explosion, "Explosion");
+                SettingsRow::show(user_interface, "Radius", |user_interface| {
+                    user_interface.add(
+                        egui::Slider::new(&mut self.explosion_radius, 0.5..=16.0)
+                            .suffix(" tiles"),
+                    );
+                });
+                SettingsRow::show(user_interface, "Magnitude", |user_interface| {
+                    user_interface.add(
+                        egui::Slider::new(&mut self.explosion_magnitude, 1.0..=1000.0)
+                            .logarithmic(true)
+                            .suffix(" atm"),
+                    );
+                });
+                SettingsRow::show(user_interface, "Delay", |user_interface| {
+                    user_interface.add(
+                        egui::Slider::new(&mut self.explosion_delay, 0.0..=10.0)
+                            .suffix(" s"),
+                    );
+                });
+            });
         InspectorSection::new("Materials")
             .id_salt("editor-materials")
             .show(user_interface, |user_interface| {
@@ -826,12 +1183,6 @@ impl<G: Game> Editor<G> {
                         );
                     });
                 });
-            });
-        InspectorSection::new("View")
-            .id_salt("editor-view")
-            .show(user_interface, |user_interface| {
-                user_interface.checkbox(&mut self.is_tile_grid_shown, "Tile grid");
-                user_interface.checkbox(&mut self.is_chunk_grid_shown, "Chunk grid");
             });
     }
 

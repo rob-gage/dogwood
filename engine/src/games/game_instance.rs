@@ -2,8 +2,8 @@
 
 use super::Game;
 use engine_graphics::{
-    renders::SceneRenderer,
-    world::scenes::SceneGraphics,
+    renders::{SceneRenderer, SceneRendererViewMode},
+    world::scenes::{SceneGraphics, SceneGraphicsOverlay},
 };
 use engine_host::{
     acceleration::Accelerator,
@@ -43,6 +43,8 @@ pub struct GameInstance<G: Game> {
     held_keys: HashSet<KeyCode>,
     /// Camera replacing the game's own camera, used by hosts such as the editor
     camera_actor: Option<Actor>,
+    /// Additional overlays supplied by the host for the next rendered frames
+    overlays: Vec<SceneGraphicsOverlay>,
     /// Renderer of the game's scene
     scene_renderer: SceneRenderer,
     /// User interface composed by the game over its scene
@@ -59,6 +61,7 @@ impl<G: Game> GameInstance<G> {
             game,
             held_keys: HashSet::new(),
             camera_actor: None,
+            overlays: Vec::new(),
             scene_renderer: SceneRenderer::new(accelerator),
             user_interface_context: UserInterfaceContext::new(),
             user_interface_renderer: None,
@@ -74,6 +77,17 @@ impl<G: Game> GameInstance<G> {
     /// Sets a camera replacing the game's own camera for streaming and drawing, or `None`
     pub fn set_camera_actor(&mut self, camera_actor: Option<Actor>) {
         self.camera_actor = camera_actor;
+    }
+
+    /// Sets cell-aligned areas drawn over the scene in addition to actor overlays, such as a
+    /// host's cursor; they are appended to the scene's overlays before rendering
+    pub fn set_overlays(&mut self, overlays: Vec<SceneGraphicsOverlay>) {
+        self.overlays = overlays;
+    }
+
+    /// Sets the scene appearance drawn by this game instance
+    pub fn set_view_mode(&mut self, view_mode: SceneRendererViewMode) {
+        self.scene_renderer.set_view_mode(view_mode);
     }
 
     /// Handles a host window event, releasing held keys when focus is lost
@@ -158,9 +172,10 @@ impl<G: Game> GameInstance<G> {
         let camera_actor: Option<Actor> = self.camera_actor;
         match self.game.scene() {
             Some((scene, game_camera_actor)) => {
-                let graphics: SceneGraphics<'_> = scene
+                let mut graphics: SceneGraphics<'_> = scene
                     .graphics(camera_actor.unwrap_or(game_camera_actor))
                     .unwrap_or_else(|error| panic!("Scene graphics failed: {error:?}"));
+                graphics.overlays.extend(self.overlays.iter().copied());
                 self.scene_renderer.render(accelerator, texture_view, &graphics);
             }
             None => {

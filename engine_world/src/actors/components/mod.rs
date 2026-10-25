@@ -9,6 +9,7 @@ mod actor_kinematics_angular_velocity;
 mod actor_kinematics_position;
 mod actor_kinematics_rotation;
 mod actor_kinematics_velocity;
+mod actor_overlay;
 mod actor_pawn_control;
 mod actor_pawn_movement;
 mod actor_pawn_possession;
@@ -25,6 +26,7 @@ pub use actor_kinematics_angular_velocity::ActorKinematicsAngularVelocityCompone
 pub use actor_kinematics_position::ActorKinematicsPositionComponent;
 pub use actor_kinematics_rotation::ActorKinematicsRotationComponent;
 pub use actor_kinematics_velocity::ActorKinematicsVelocityComponent;
+pub use actor_overlay::{ActorOverlayComponent, ActorOverlayShape};
 pub use actor_pawn_control::ActorPawnControlComponent;
 pub use actor_pawn_movement::ActorPawnMovementComponent;
 pub use actor_pawn_possession::ActorPawnPossessionComponent;
