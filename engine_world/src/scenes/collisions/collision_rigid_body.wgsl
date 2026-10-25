@@ -68,10 +68,16 @@ var<storage, read> items: array<u32>;
 var<storage, read> cell_writes: array<vec4<u32>>;
 
 @group(0) @binding(11)
-var<storage, read_write> cell_reads: array<vec2<u32>>;
+var<storage, read_write> cell_reads: array<vec4<u32>>;
 
 @group(0) @binding(12)
 var<storage, read_write> changed_cells: array<atomic<u32>>;
+
+@group(0) @binding(13)
+var<storage, read_write> rigid_body_cell_states: array<vec2<u32>>;
+
+@group(0) @binding(14)
+var<storage, read_write> gas: array<u32>;
 
 /// Release mode emptying cells a rigid body leaves, or turning them into their cells' debris
 const MODE_CLEAR: u32 = 0u;
@@ -209,8 +215,13 @@ fn release(
             // cells whose material became debris or nothing take it moving with the body, and
             // the rest are emptied for wherever their body rasterizes next
             if is_static(material_identifier) {
+                rigid_body_cell_states[rigid_body_cell - 1u] = vec2<u32>(
+                    gas[index * 8u + 7u],
+                    kinematics[index].y & 0xffffu,
+                );
                 material_identifiers[index] = select(0u, rigid_cell.x, !is_static(rigid_cell.x));
                 colors[index] = select(0u, rigid_cell.y, is_dynamic(rigid_cell.x));
+                gas[index * 8u + 7u] = 0u;
                 kinematics[index] = select(
                     vec2<u32>(0u),
                     pack_velocity(point_velocity(rigid_body, cell)),
@@ -219,7 +230,13 @@ fn release(
             }
         } else if uniforms.mode == MODE_RETURN {
             // the body's cells stay as static cells at rest
-            if is_static(material_identifier) { kinematics[index] = vec2<u32>(0u); }
+            if is_static(material_identifier) {
+                rigid_body_cell_states[rigid_body_cell - 1u] = vec2<u32>(
+                    gas[index * 8u + 7u],
+                    kinematics[index].y & 0xffffu,
+                );
+                kinematics[index] = vec2<u32>(0u, kinematics[index].y & 0xffffu);
+            }
         } else {
             if material_identifier == rigid_cell.x || is_dynamic(material_identifier) {
                 continue;
@@ -284,6 +301,8 @@ fn rasterize(
             material_identifiers[index] = rigid_cell.x;
             colors[index] = rigid_cell.y;
             kinematics[index] = pack_velocity(point_velocity(rigid_body, cell));
+            gas[index * 8u + 7u] = rigid_body_cell_states[rigid_body_cell - 1u].x;
+            kinematics[index].y = rigid_body_cell_states[rigid_body_cell - 1u].y;
         }
         atomicOr(&awake[tile_index(vec2<u32>(cell) / 8u)], TILE_AWAKE);
     }
@@ -306,15 +325,31 @@ fn write_cells(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if atomicLoad(&rigid_body_cells[index]) != 0u { return; }
     material_identifiers[index] = cell_write.z;
     if cell_write.z == 0u { colors[index] = 0u; }
+    gas[index * 8u + 7u] = 0u;
     kinematics[index] = vec2<u32>(0u);
     atomicOr(&awake[tile_index(vec2<u32>(cell) / 8u)], TILE_AWAKE);
 }
 
-/// Copies one listed cell's material and color for the CPU
+/// Copies one listed cell's material, color, pressure, and integrity for the CPU
 @compute @workgroup_size(64)
 fn read_cells(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if invocation.x >= uniforms.item_count { return; }
     let cell_write: vec4<u32> = cell_writes[uniforms.item_offset + invocation.x];
     let index: u32 = cell_index(vec2<i32>(cell_write.xy));
-    cell_reads[invocation.x] = vec2<u32>(material_identifiers[index], colors[index]);
+    cell_reads[invocation.x] = vec4<u32>(
+        material_identifiers[index],
+        colors[index],
+        gas[index * 8u + 7u],
+        kinematics[index].y & 0xffffu,
+    );
+}
+
+/// Copies stored pressure and integrity from old rigid body cell indices to newly allocated ones
+@compute @workgroup_size(64)
+fn copy_states(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    if invocation.x >= uniforms.item_count { return; }
+    let item_index: u32 = uniforms.item_offset + invocation.x * 2u;
+    let old_cell: u32 = items[item_index];
+    let new_cell: u32 = items[item_index + 1u];
+    rigid_body_cell_states[new_cell] = rigid_body_cell_states[old_cell];
 }

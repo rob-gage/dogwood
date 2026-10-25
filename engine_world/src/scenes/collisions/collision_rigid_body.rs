@@ -17,8 +17,12 @@ pub struct CollisionRigidBody {
     /// Index of this rigid body's GPU record
     pub index: u32,
     /// Cells of every rigid body tile by its coordinates in this body: cells as bit `y * 8 + x`,
-    /// their material identifiers and colors, its GPU tile, and the cells last rasterized
-    pub cellular_tiles: BTreeMap<(i32, i32), (u64, [MaterialIdentifier; 64], [u32; 64], u32, u64)>,
+    /// their material identifiers, colors, pressure and integrity, its GPU tile, and the cells
+    /// last rasterized
+    pub cellular_tiles: BTreeMap<
+        (i32, i32),
+        (u64, [MaterialIdentifier; 64], [u32; 64], [[u32; 2]; 64], u32, u64),
+    >,
     /// Rapier body of this rigid body
     pub rigid_body_handle: rapier2d::dynamics::RigidBodyHandle,
     /// Voxel collider of this rigid body's cells

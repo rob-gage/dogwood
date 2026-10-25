@@ -14,7 +14,7 @@ use crate::{
         SceneError,
     },
 };
-use engine_host::acceleration::Accelerator;
+use engine_host::acceleration::{Accelerator, AcceleratorReadback, AcceleratorReadbackError};
 use std::{
     collections::HashMap,
     sync::mpsc::{
@@ -70,6 +70,8 @@ pub struct CollisionRigidBodyPass {
     uniform_buffer: wgpu::Buffer,
     /// Material identifier and packed color of every rigid body tile cell
     cellular_tile_cell_buffer: wgpu::Buffer,
+    /// Stored pressure and integrity of every rigid body cell
+    cellular_tile_state_buffer: wgpu::Buffer,
     /// Rigid body, tile coordinates, and occupied cells of every rigid body tile
     cellular_tile_buffer: wgpu::Buffer,
     /// Positions, velocities, and masses of every rigid body
@@ -80,12 +82,12 @@ pub struct CollisionRigidBodyPass {
     cell_write_buffer: wgpu::Buffer,
     /// Material identifiers and colors of read cells
     cell_read_buffer: wgpu::Buffer,
-    /// Mappable copy of the read cells
-    cell_read_staging_buffer: wgpu::Buffer,
     /// Count and rigid body cells of every changed cell found under rigid bodies
     changed_cell_buffer: wgpu::Buffer,
     /// Mappable copy of the changed cells
     changed_cell_staging_buffer: wgpu::Buffer,
+    /// Asynchronous cells read for detach groups, preserving their region and ring offset
+    cell_readbacks: AcceleratorReadback<(CellularTileRegion, (u32, u32), Vec<Vec<(u32, u32)>>)>,
     /// Sender for staging buffer mapping results
     response_sender: Sender<Result<(), wgpu::BufferAsyncError>>,
     /// Staging buffer mapping results
@@ -135,6 +137,8 @@ impl CollisionRigidBodyPass {
                     storage_entry(10, true),
                     storage_entry(11, false),
                     storage_entry(12, false),
+                    storage_entry(13, false),
+                    storage_entry(14, false),
                 ],
             },
         );
@@ -152,7 +156,7 @@ impl CollisionRigidBodyPass {
             },
         );
         let mut pipelines: HashMap<&'static str, wgpu::ComputePipeline> = HashMap::new();
-        for entry_point in ["release", "rasterize", "write_cells", "read_cells"] {
+        for entry_point in ["release", "rasterize", "write_cells", "read_cells", "copy_states"] {
             pipelines.insert(entry_point, device.create_compute_pipeline(
                 &wgpu::ComputePipelineDescriptor {
                     label: Some("`CollisionRigidBodyPass.pipelines`"),
@@ -185,6 +189,11 @@ impl CollisionRigidBodyPass {
             cellular_tile_count * 64 * 8,
             storage,
         );
+        let cellular_tile_state_buffer: wgpu::Buffer = create_buffer(
+            "`CollisionRigidBodyPass.cellular_tile_state_buffer`",
+            cellular_tile_count * 64 * 8,
+            storage,
+        );
         let cellular_tile_buffer: wgpu::Buffer = create_buffer(
             "`CollisionRigidBodyPass.cellular_tile_buffer`",
             cellular_tile_count * CELLULAR_TILE_BYTE_COUNT,
@@ -208,13 +217,8 @@ impl CollisionRigidBodyPass {
         );
         let cell_read_buffer: wgpu::Buffer = create_buffer(
             "`CollisionRigidBodyPass.cell_read_buffer`",
-            CELL_COUNT_MAXIMUM as u64 * 8,
+            CELL_COUNT_MAXIMUM as u64 * 16,
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        );
-        let cell_read_staging_buffer: wgpu::Buffer = create_buffer(
-            "`CollisionRigidBodyPass.cell_read_staging_buffer`",
-            cell_read_buffer.size(),
-            wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         );
         let changed_cell_buffer: wgpu::Buffer = create_buffer(
             "`CollisionRigidBodyPass.changed_cell_buffer`",
@@ -225,6 +229,16 @@ impl CollisionRigidBodyPass {
             "`CollisionRigidBodyPass.changed_cell_staging_buffer`",
             changed_cell_buffer.size(),
             wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        );
+        let cell_readbacks: AcceleratorReadback<(
+            CellularTileRegion,
+            (u32, u32),
+            Vec<Vec<(u32, u32)>>,
+        )> = AcceleratorReadback::new(
+            accelerator,
+            "`CollisionRigidBodyPass.cell_readbacks`",
+            cell_read_buffer.size(),
+            3,
         );
         let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("`CollisionRigidBodyPass.bind_group`"),
@@ -284,6 +298,14 @@ impl CollisionRigidBodyPass {
                     binding: 12,
                     resource: changed_cell_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 13,
+                    resource: cellular_tile_state_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: cellular_tile_buffers.gas_buffer().as_entire_binding(),
+                },
             ],
         });
         let (response_sender, response_receiver): (
@@ -295,14 +317,15 @@ impl CollisionRigidBodyPass {
             bind_group,
             uniform_buffer,
             cellular_tile_cell_buffer,
+            cellular_tile_state_buffer,
             cellular_tile_buffer,
             rigid_body_buffer,
             item_buffer,
             cell_write_buffer,
             cell_read_buffer,
-            cell_read_staging_buffer,
             changed_cell_buffer,
             changed_cell_staging_buffer,
+            cell_readbacks,
             response_sender,
             response_receiver,
         }
@@ -329,6 +352,7 @@ impl CollisionRigidBodyPass {
         previous_cells: u64,
         material_identifiers: &[MaterialIdentifier; 64],
         colors: &[u32; 64],
+        states: &[[u32; 2]; 64],
     ) {
         let mut record_bytes: Vec<u8> = Vec::with_capacity(CELLULAR_TILE_BYTE_COUNT as usize);
         record_bytes.extend_from_slice(&rigid_body.to_le_bytes());
@@ -352,6 +376,13 @@ impl CollisionRigidBodyPass {
             u64::from(cellular_tile) * 64 * 8,
             &cell_bytes,
         );
+        let state_bytes: Vec<u8> = states.iter().flatten().copied()
+            .flat_map(u32::to_le_bytes).collect();
+        accelerator.queue().write_buffer(
+            &self.cellular_tile_state_buffer,
+            u64::from(cellular_tile) * 64 * 8,
+            &state_bytes,
+        );
     }
 
     /// Writes rigid body records: position, rotation cosine and sine, the position and rotation
@@ -372,22 +403,21 @@ impl CollisionRigidBodyPass {
         }
     }
 
-    /// Returns the material identifier and packed color of cells in the active region, waiting
-    /// for the GPU
-    pub fn read_cells(
-        &mut self,
+    /// Copies the current state of cells moving into newly allocated rigid body tiles
+    pub fn copy_cell_states(
+        &self,
         accelerator: &Accelerator,
         active_region: CellularTileRegion,
         ring_offset: (u32, u32),
-        cells: &[(u32, u32)],
-    ) -> Result<Vec<(MaterialIdentifier, u32)>, SceneError> {
-        let mut cell_reads: Vec<(MaterialIdentifier, u32)> = Vec::with_capacity(cells.len());
-        for cells in cells.chunks(CELL_COUNT_MAXIMUM) {
-            let cell_write_bytes: Vec<u8> = cells.iter()
-                .flat_map(|(x, y)| [*x, *y, 0, 0])
-                .flat_map(u32::to_le_bytes)
-                .collect();
-            accelerator.queue().write_buffer(&self.cell_write_buffer, 0, &cell_write_bytes);
+        cell_copies: &[(u32, u32)],
+    ) {
+        if cell_copies.is_empty() { return; }
+        let copy_count_maximum: usize = self.item_buffer.size() as usize / 8;
+        for cell_copies in cell_copies.chunks(copy_count_maximum) {
+            let item_bytes: Vec<u8> = cell_copies.iter().flat_map(|(old_cell, new_cell)| {
+                [*old_cell, *new_cell]
+            }).flat_map(u32::to_le_bytes).collect();
+            accelerator.queue().write_buffer(&self.item_buffer, 0, &item_bytes);
             self.write_uniforms(
                 accelerator,
                 SLOT_READ,
@@ -395,47 +425,136 @@ impl CollisionRigidBodyPass {
                 ring_offset,
                 (0, 0),
                 0,
-                cells.len(),
+                cell_copies.len(),
             );
             let mut command_encoder: wgpu::CommandEncoder = accelerator.device()
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Scene collision rigid body cell reads"),
+                    label: Some("Scene collision rigid body cell state copies"),
                 });
             {
                 let mut compute_pass: wgpu::ComputePass<'_> = self.begin_compute_pass(
                     &mut command_encoder,
                 );
-                self.dispatch(&mut compute_pass, "read_cells", SLOT_READ, cells.len(), false);
+                self.dispatch(
+                    &mut compute_pass,
+                    "copy_states",
+                    SLOT_READ,
+                    cell_copies.len(),
+                    false,
+                );
             }
-            let byte_count: u64 = cells.len() as u64 * 8;
-            command_encoder.copy_buffer_to_buffer(
-                &self.cell_read_buffer,
-                0,
-                &self.cell_read_staging_buffer,
-                0,
-                byte_count,
-            );
             accelerator.queue().submit(Some(command_encoder.finish()));
-            let cell_bytes: Vec<u8> =
-                self.read_staging_buffer(accelerator, &self.cell_read_staging_buffer, byte_count)?;
-            for cell_bytes in cell_bytes.chunks_exact(8) {
-                cell_reads.push((
-                    MaterialIdentifier::from_u32(u32::from_le_bytes([
-                        cell_bytes[0],
-                        cell_bytes[1],
-                        cell_bytes[2],
-                        cell_bytes[3],
-                    ])),
-                    u32::from_le_bytes([
-                        cell_bytes[4],
-                        cell_bytes[5],
-                        cell_bytes[6],
-                        cell_bytes[7],
-                    ]),
-                ));
-            }
         }
-        Ok(cell_reads)
+    }
+
+    /// Dispatches reads of the leading groups of cells that fit in one read and maps them for the
+    /// next tick without waiting for the GPU, returning the groups left for a later tick
+    pub fn request_cell_reads(
+        &mut self,
+        accelerator: &Accelerator,
+        active_region: CellularTileRegion,
+        ring_offset: (u32, u32),
+        mut groups: Vec<Vec<(u32, u32)>>,
+    ) -> Vec<Vec<(u32, u32)>> {
+        let mut cell_count: usize = 0;
+        let read_group_count: usize = groups.iter()
+            .take_while(|group| {
+                cell_count += group.len();
+                cell_count <= CELL_COUNT_MAXIMUM
+            })
+            .count();
+        let remaining_groups: Vec<Vec<(u32, u32)>> = groups.split_off(read_group_count);
+        let cells: Vec<(u32, u32)> = groups.iter().flatten().copied().collect();
+        if cells.is_empty() { return remaining_groups; }
+        let cell_write_bytes: Vec<u8> = cells.iter()
+            .flat_map(|(x, y)| [*x, *y, 0, 0])
+            .flat_map(u32::to_le_bytes)
+            .collect();
+        accelerator.queue().write_buffer(&self.cell_write_buffer, 0, &cell_write_bytes);
+        self.write_uniforms(
+            accelerator,
+            SLOT_READ,
+            active_region,
+            ring_offset,
+            (0, 0),
+            0,
+            cells.len(),
+        );
+        let mut command_encoder: wgpu::CommandEncoder = accelerator.device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Scene collision rigid body cell reads"),
+            });
+        {
+            let mut compute_pass: wgpu::ComputePass<'_> = self.begin_compute_pass(
+                &mut command_encoder,
+            );
+            self.dispatch(&mut compute_pass, "read_cells", SLOT_READ, cells.len(), false);
+        }
+        let byte_count: u64 = cells.len() as u64 * 16;
+        self.cell_readbacks.copy(
+            &mut command_encoder,
+            &self.cell_read_buffer,
+            0,
+            byte_count,
+            (active_region, ring_offset, groups),
+        );
+        let submission_index: wgpu::SubmissionIndex =
+            accelerator.queue().submit(Some(command_encoder.finish()));
+        self.cell_readbacks.map(submission_index);
+        remaining_groups
+    }
+
+    /// Returns every completed group of cell reads, waiting only for its own submission
+    pub fn read_cell_reads(
+        &mut self,
+        accelerator: &Accelerator,
+    ) -> Result<Vec<(
+        CellularTileRegion,
+        (u32, u32),
+        Vec<Vec<((u32, u32), (MaterialIdentifier, u32, [u32; 2]))>>,
+    )>, SceneError> {
+        let mut cell_groups: Vec<(
+            CellularTileRegion,
+            (u32, u32),
+            Vec<Vec<((u32, u32), (MaterialIdentifier, u32, [u32; 2]))>>,
+        )> = Vec::new();
+        let read_result: Result<(), AcceleratorReadbackError> = self.cell_readbacks.read(
+            accelerator,
+            true,
+            |(active_region, ring_offset, groups), bytes| {
+                let mut cell_offset: usize = 0;
+                let mut read_groups: Vec<
+                    Vec<((u32, u32), (MaterialIdentifier, u32, [u32; 2]))>,
+                > = Vec::new();
+                for group in groups {
+                    let mut read_group: Vec<((u32, u32), (MaterialIdentifier, u32, [u32; 2]))> =
+                        Vec::new();
+                    for cell in group {
+                        let start: usize = cell_offset * 16;
+                        let read: &[u8] = &bytes[start..start + 16];
+                        read_group.push((cell, (
+                            MaterialIdentifier::from_u32(
+                                u32::from_le_bytes(read[0..4].try_into().unwrap()),
+                            ),
+                            u32::from_le_bytes(read[4..8].try_into().unwrap()),
+                            [
+                                u32::from_le_bytes(read[8..12].try_into().unwrap()),
+                                u32::from_le_bytes(read[12..16].try_into().unwrap()),
+                            ],
+                        )));
+                        cell_offset += 1;
+                    }
+                    read_groups.push(read_group);
+                }
+                cell_groups.push((active_region, ring_offset, read_groups));
+            },
+        );
+        read_result.map_err(|error| match error {
+            AcceleratorReadbackError::Poll(_) => SceneError::CollisionCellularTilePoll,
+            AcceleratorReadbackError::BufferAsync(error) =>
+                SceneError::CollisionCellularTileResponse { error },
+        })?;
+        Ok(cell_groups)
     }
 
     /// Detaches every cell under the listed rigid body tiles that no longer holds its rigid body
