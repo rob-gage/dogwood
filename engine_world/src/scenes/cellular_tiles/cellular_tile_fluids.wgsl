@@ -334,6 +334,14 @@ fn rigid_fluid(
             if material_identifiers[fluid_index] != 0u || rigid_body_cells[fluid_index] != 0u {
                 continue;
             }
+            let gauge: f32 = pressure[fluid_index];
+            if abs(gauge) >= PRESSURE_PUSH_MINIMUM {
+                let pressure_impulse: vec2<f32> =
+                    -vec2<f32>(offsets[neighbor_index]) * gauge * PRESSURE_IMPULSE;
+                sums[0] += pressure_impulse.x;
+                sums[1] += pressure_impulse.y;
+                sums[2] += arm.x * pressure_impulse.y - arm.y * pressure_impulse.x;
+            }
             let fluid: vec3<f32> = fluid_raster_cell(fluid_index);
             if fluid.x <= 0.0 { continue; }
             let fluid_inverse_mass: f32 = fluid_contact_face_count(neighbor) / fluid.x;

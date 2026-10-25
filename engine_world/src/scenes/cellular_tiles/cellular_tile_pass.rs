@@ -143,6 +143,7 @@ impl CellularTilePass {
                     storage_entry(15, false),
                     storage_entry(16, false),
                     storage_entry(17, true),
+                    storage_entry(18, true),
                 ],
             },
         );
@@ -350,6 +351,10 @@ impl CellularTilePass {
                 wgpu::BindGroupEntry {
                     binding: 17,
                     resource: material_table.fluid_properties_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 18,
+                    resource: cellular_tile_buffers.pressure_buffer().as_entire_binding(),
                 },
             ],
         });

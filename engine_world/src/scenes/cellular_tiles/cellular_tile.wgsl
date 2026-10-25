@@ -106,6 +106,9 @@ var<storage, read> rigid_bodies: array<CellularTileRigidBody>;
 @group(0) @binding(15)
 var<storage, read_write> rigid_body_contacts: array<atomic<u32>>;
 
+@group(0) @binding(18)
+var<storage, read> pressure: array<f32>;
+
 @group(1) @binding(0)
 var<storage, read_write> dispatches: array<u32>;
 
@@ -179,11 +182,36 @@ const RIGID_BODY_CONTACT_STRIDE: u32 = 21u;
 /// Speed in cells per tick below which a rigid body pushes covered cells away from its center
 const RIGID_BODY_RESTING_SPEED: f32 = 0.01;
 
+/// Pressure impulse in mass * cells per tick per atmosphere, matching the other pressure shaders
+const PRESSURE_IMPULSE: f32 = 0.1111;
+
+/// Absolute gauge pressure below this value in atmospheres does not produce an impulse
+const PRESSURE_PUSH_MINIMUM: f32 = 0.02;
+
 /// Returns the physical index of a tile from its position in the active region
 fn tile_index(tile: vec2<u32>) -> u32 {
     let physical_x: u32 = (tile.x + uniforms.ring_offset_x) % uniforms.region_width;
     let physical_y: u32 = (tile.y + uniforms.ring_offset_y) % uniforms.region_height;
     return physical_y * uniforms.region_width + physical_x;
+}
+
+/// Returns the pressure push on a cell from the gauges on its in-region faces
+fn pressure_push(cell: vec2<i32>) -> vec2<f32> {
+    let offsets: array<vec2<i32>, 4> = array<vec2<i32>, 4>(
+        vec2<i32>(-1, 0),
+        vec2<i32>(1, 0),
+        vec2<i32>(0, -1),
+        vec2<i32>(0, 1),
+    );
+    var push: vec2<f32> = vec2<f32>(0.0);
+    for (var face: u32 = 0u; face < 4u; face++) {
+        let neighbor: vec2<i32> = cell + offsets[face];
+        if !is_cell_inside(neighbor) { continue; }
+        let gauge: f32 = pressure[cell_index(neighbor)];
+        if abs(gauge) < PRESSURE_PUSH_MINIMUM { continue; }
+        push -= vec2<f32>(offsets[face]) * gauge;
+    }
+    return push;
 }
 
 /// Returns whether a cell position lies inside the active region
@@ -535,6 +563,14 @@ fn integrate(
     let gravity: f32 = uniforms.gravity;
     var cell_kinematics: CellKinematics = unpack_kinematics(kinematics[index]);
     cell_kinematics.flags = 0u;
+    var pressure_velocity_change: vec2<f32> = vec2<f32>(0.0);
+    if !is_covered {
+        pressure_velocity_change = pressure_push(cell) * PRESSURE_IMPULSE / mass;
+        if is_cell_supporting(cell + vec2<i32>(0, -1)) {
+            pressure_velocity_change.y = max(pressure_velocity_change.y, 0.0);
+        }
+        cell_kinematics.velocity += pressure_velocity_change;
+    }
     if is_covered {
         // leave an actor through the free cell nearest its outward normal, and a rigid body the
         // way it moves through the cell, or away from its center while it rests
@@ -649,10 +685,13 @@ fn integrate(
         cell_kinematics.velocity.x -= sign(cell_kinematics.velocity.x) * friction_speed;
         if abs(cell_kinematics.velocity.x) < RESTING_SPEED
             && cell_kinematics.velocity.y < RESTING_SPEED
+            && length(pressure_velocity_change) < RESTING_SPEED
         {
             cell_kinematics.velocity = vec2<f32>(0.0);
             cell_kinematics.progress = vec2<f32>(0.0);
             cell_kinematics.flags = CELL_RESTING | CELL_SUPPORTED;
+        } else if length(pressure_velocity_change) >= RESTING_SPEED {
+            cell_kinematics.flags = 0u;
         }
     } else {
         cell_kinematics.velocity.y -= gravity;
@@ -1121,18 +1160,43 @@ fn contact(
     @builtin(local_invocation_index) local_cell: u32,
 ) {
     let cell: vec2<i32> = workgroup_cell(workgroup.x, local_cell);
-    if !is_dynamic(material_identifiers[cell_index(cell)]) { return; }
+    let dynamic: bool = is_dynamic(material_identifiers[cell_index(cell)]);
     let center: vec2<f32> = vec2<f32>(cell) + 0.5;
     for (var actor_index: u32 = 0u; actor_index < uniforms.actor_count; actor_index++) {
         let actor: CellularTileActor = actors[actor_index];
         if any(center < actor.bounds.xy) || any(center > actor.bounds.zw) { continue; }
         let distance: vec3<f32> = actor_distance(actor, center);
         if distance.x >= 0.0 { continue; }
-        let normal: vec2<i32> = vec2<i32>(round(-distance.yz * CONTACT_SCALE));
         let contact_index: u32 = actor_index * CONTACT_STRIDE;
-        atomicAdd(&contacts[contact_index + 2u], normal.x);
-        atomicAdd(&contacts[contact_index + 3u], normal.y);
-        atomicAdd(&contacts[contact_index + 4u], 1);
-        atomicMax(&contacts[contact_index + 5u], i32(-distance.x * CONTACT_SCALE));
+        if dynamic {
+            let normal: vec2<i32> = vec2<i32>(round(-distance.yz * CONTACT_SCALE));
+            atomicAdd(&contacts[contact_index + 2u], normal.x);
+            atomicAdd(&contacts[contact_index + 3u], normal.y);
+            atomicAdd(&contacts[contact_index + 4u], 1);
+            atomicMax(&contacts[contact_index + 5u], i32(-distance.x * CONTACT_SCALE));
+        }
+        let offsets: array<vec2<i32>, 4> = array<vec2<i32>, 4>(
+            vec2<i32>(-1, 0),
+            vec2<i32>(1, 0),
+            vec2<i32>(0, -1),
+            vec2<i32>(0, 1),
+        );
+        for (var face: u32 = 0u; face < 4u; face++) {
+            let neighbor: vec2<i32> = cell + offsets[face];
+            if !is_cell_inside(neighbor) { continue; }
+            // only faces between the actor and cells outside it push it
+            let neighbor_center: vec2<f32> = vec2<f32>(neighbor) + 0.5;
+            if all(neighbor_center >= actor.bounds.xy)
+                && all(neighbor_center <= actor.bounds.zw)
+                && actor_distance(actor, neighbor_center).x < 0.0
+            { continue; }
+            let gauge: f32 = pressure[cell_index(neighbor)];
+            if abs(gauge) < PRESSURE_PUSH_MINIMUM { continue; }
+            let impulse: vec2<i32> = vec2<i32>(round(
+                -vec2<f32>(offsets[face]) * gauge * PRESSURE_IMPULSE * CONTACT_SCALE,
+            ));
+            atomicAdd(&contacts[contact_index], impulse.x);
+            atomicAdd(&contacts[contact_index + 1u], impulse.y);
+        }
     }
 }

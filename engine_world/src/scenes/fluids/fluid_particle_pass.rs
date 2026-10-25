@@ -255,6 +255,7 @@ impl FluidParticlePass {
                     storage_entry(14, false),
                     storage_entry(15, false),
                     storage_entry(16, false),
+                    storage_entry(21, true),
                     storage_entry(25, true),
                     storage_entry(26, false),
                     storage_entry(27, false),
@@ -653,6 +654,10 @@ impl FluidParticlePass {
                 wgpu::BindGroupEntry {
                     binding: 16,
                     resource: fluid_raster_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 21,
+                    resource: cellular_tile_buffers.pressure_buffer().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry { binding: 25, resource: import_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry {

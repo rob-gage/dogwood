@@ -117,6 +117,9 @@ var<storage, read_write> neighbor_data: array<u32>;
 @group(0) @binding(16)
 var<storage, read_write> fluid_raster: array<atomic<u32>>;
 
+@group(0) @binding(21)
+var<storage, read> pressure: array<f32>;
+
 /// Analytic cellular tile actor record shared with dynamic-cell collision
 struct FluidActor {
     /// Collider center relative to the fluid region, in cells
@@ -215,6 +218,12 @@ const SLEEP_TILE_STRIDE: u32 = 7u;
 const FLUID_ACTOR_SAMPLE_MARGIN: f32 = 2.5;
 /// Duration of one fluid tick in seconds
 const FLUID_TICK_TIME_STEP: f32 = 1.0 / 60.0;
+
+/// Pressure impulse in mass * cells per tick per atmosphere, matching the other pressure shaders
+const PRESSURE_IMPULSE: f32 = 0.1111;
+
+/// Absolute gauge pressure below this value in atmospheres does not produce an impulse
+const PRESSURE_PUSH_MINIMUM: f32 = 0.02;
 
 /// Bit marking a tile whose fluid particles are frozen
 const SLEEP_TILE_SLEEPING: u32 = 1u;
@@ -321,6 +330,25 @@ fn tile_index(tile: vec2<u32>) -> u32 {
 fn cell_index(cell: vec2<i32>) -> u32 {
     let position: vec2<u32> = vec2<u32>(cell);
     return tile_index(position / 8u) * 64u + (position.y % 8u) * 8u + position.x % 8u;
+}
+
+/// Returns the pressure push on a cell from the gauges on its in-region faces
+fn pressure_push(cell: vec2<i32>) -> vec2<f32> {
+    let offsets: array<vec2<i32>, 4> = array<vec2<i32>, 4>(
+        vec2<i32>(-1, 0),
+        vec2<i32>(1, 0),
+        vec2<i32>(0, -1),
+        vec2<i32>(0, 1),
+    );
+    var push: vec2<f32> = vec2<f32>(0.0);
+    for (var face: u32 = 0u; face < 4u; face++) {
+        let neighbor: vec2<i32> = cell + offsets[face];
+        if !cell_inside(neighbor) { continue; }
+        let gauge: f32 = pressure[cell_index(neighbor)];
+        if abs(gauge) < PRESSURE_PUSH_MINIMUM { continue; }
+        push -= vec2<f32>(offsets[face]) * gauge;
+    }
+    return push;
 }
 
 /// Decodes the packed dynamic-cell velocity stored in the kinematics buffer
@@ -1917,7 +1945,28 @@ fn predict(@builtin(global_invocation_id) invocation: vec3<u32>) {
         particle.tick_start_x = particle.state.x;
         particle.tick_start_y = particle.state.y;
     }
-    if position_is_sleeping(particle.state.xy) {
+    var pressure_velocity_change: vec2<f32> = vec2<f32>(0.0);
+    if uniforms.substep_index == 0u {
+        let cell: vec2<i32> = vec2<i32>(floor(particle.state.xy));
+        if cell_inside(cell) {
+            let raster_index: u32 = cell_index(cell) * 4u;
+            let mass: f32 = f32(bitcast<i32>(atomicLoad(&fluid_raster[raster_index])))
+                / uniforms.raster_scale;
+            if mass > 0.0 {
+                pressure_velocity_change = pressure_push(cell) * PRESSURE_IMPULSE / mass;
+                particle.state = vec4<f32>(
+                    particle.state.xy,
+                    particle.state.zw + pressure_velocity_change,
+                );
+                if any(pressure_velocity_change != vec2<f32>(0.0)) {
+                    request_tile_wake(particle_tile_index(particle.state.xy));
+                }
+            }
+        }
+    }
+    if position_is_sleeping(particle.state.xy)
+        && all(pressure_velocity_change == vec2<f32>(0.0))
+    {
         store_predicted(invocation.x, 0u, particle.state.xy);
         var frozen: FluidParticle = particle;
         store_particle(invocation.x, uniforms.state_side, frozen);
