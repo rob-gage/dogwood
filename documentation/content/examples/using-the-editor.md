@@ -39,14 +39,18 @@ Material strokes use the selected color and **Insert** or **Replace** mode; eras
 
 Click and drag with the primary mouse button in the Viewport to apply a stroke.
 
-The View settings can show cellular-tile and chunk grid lines. The status bar shows:
+The toolbar selects Graphics or Pressure view. Pressure view colors cells by pressure in atmospheres and displays a legend. Overlay toggles show chunks in pink, tiles in dark pink, and collision outlines in green. The cursor is drawn as a cell-grid overlay. The status bar shows:
 
 - The cell under the cursor.
 - The latest edit rejection, cleared by the next stroke that succeeds or is clipped to no cells.
 - Frames per second and updates per second.
 - Save state.
 
-The editor starts paused, with Circle size 8, Insert mode, white color, and both grids off. It selects the first material in its list, or Eraser if the list is empty.
+The editor starts paused, with Circle size 8, Insert mode, white color, and Graphics view and overlays off. It selects the first material in its list, or Eraser if the list is empty.
+
+## Pressure tools
+
+The Pressure tool adds or removes pressure along a stroke at a rate in atmospheres per second. The Explosion tool sets radius, pressure magnitude in atmospheres, and delay from 0 to 10 seconds. Clicking places an actor with a red overlay; when its delay ends during Play, the editor adds pressure across its radius. See [pressure edit behavior](@/external-api/collisions-and-edits.md#building-an-edit).
 
 ## Play, pause, and move the camera
 

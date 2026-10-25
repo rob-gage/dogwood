@@ -29,13 +29,14 @@ The runtime sets updates to 60 per second and caps accumulated time at six updat
 - the game,
 - the held physical key codes,
 - an optional camera override,
-- a scene renderer,
+- a scene renderer with a selected `SceneRendererViewMode`;
+- host overlays appended to scene overlays during rendering,
 - the game's UI context, and
 - an optional UI renderer.
 
 The UI renderer is created on the first rendered frame using that frame's texture format and retained. Later render targets must use the same format.
 
-The editor depends on `game_mutable` and `set_camera_actor` (see [Editor internals](@/internal-api/editor.md)).
+The editor depends on `game_mutable`, `set_camera_actor`, `set_view_mode`, and `set_overlays` (see [Editor internals](@/internal-api/editor.md)).
 
 ### Update steps
 

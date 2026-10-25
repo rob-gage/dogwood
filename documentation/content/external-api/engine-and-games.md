@@ -79,6 +79,8 @@ Most games never touch `GameInstance`; it exists for hosts such as the editor th
 | `game_mutable() -> &mut G` | Access the wrapped game |
 | `user_interface_context() -> &UserInterfaceContext` | Access the UI context |
 | `set_camera_actor(Option<Actor>)` | Override the camera actor |
+| `set_view_mode(SceneRendererViewMode)` | Select Graphics or Pressure scene view |
+| `set_overlays(Vec<SceneGraphicsOverlay>)` | Add cell-aligned host overlays to scene rendering |
 | `window_event`, `keyboard_event`, `mouse_event` | Forward host events to the game |
 | `update(&Accelerator, &Processor, Duration)` | Run one fixed update |
 | `stream(&Accelerator, &Processor)` | Stream the scene around the camera |
@@ -86,7 +88,7 @@ Most games never touch `GameInstance`; it exists for hosts such as the editor th
 
 - A camera set with `set_camera_actor` overrides the camera returned by `scene()` for streaming and drawing; `None` restores the game's camera.
 - If `scene()` returns `None` during rendering, the frame is cleared to black and the game UI is still composed and drawn.
-- The first `render` call fixes the UI renderer's texture format; later render targets must use the same format.
+- The first `render` call fixes the UI renderer's texture format; later render targets must use the same format. Pressure view and host overlays are described in [Graphics](@/external-api/graphics.md).
 - The `egui` types are re-exported by `engine::user_interface`.
 
 ## Errors and panics

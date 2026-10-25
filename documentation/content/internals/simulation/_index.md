@@ -5,7 +5,7 @@ weight = 40
 sort_by = "weight"
 template = "section.html"
 [extra]
-sources = ["engine_world/src/scenes/gases", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_pass.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/collision_rigid_body_pass.rs"]
+sources = ["engine_world/src/scenes/pressure", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_pass.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/collision_rigid_body_pass.rs"]
 +++
 
 This section is for engine contributors. It describes the connected simulation systems that run over a scene's active region and the pages that cover each part.
@@ -30,7 +30,7 @@ tile buffers + materials + actors + rigid bodies
 
 ## Step order
 
-At each fixed simulation step, `Scene::simulate` runs kinematics first. Its actor contacts and rigid-body impulses and holding contacts feed `Collision::simulate_collisions`. Collision consumes fluid actor samples as well, synchronizes actors and voxel state, advances Rapier, and queues rigid-body rasterization. Fluid particles run afterward and rebuild the shared raster. Gas runs last, displaced by the cells, the new raster, and actors.
+At each fixed step, cellular tile passes run first using the previous pressure publication and fluid raster. Collision applies one-tick-old contacts and breakage, synchronizes topology, and advances Rapier. Fluids run next using previous-tick pressure, then pressure updates the shared substrate and publishes values for the following tick. [Scene update ordering](@/architecture/scene-pipeline.md#simulation-order) is canonical.
 
 GPU kinematics submits work without waiting for its contact readbacks, so collision consumes contacts returned from earlier GPU work. See [scene update ordering](@/architecture/scene-pipeline.md) and [contact exchange](@/internals/simulation/contact-exchange.md) for the exact handoff.
 
@@ -49,4 +49,4 @@ GPU kinematics submits work without waiting for its contact readbacks, so collis
 - [Fluid boundaries and sleeping](@/internals/simulation/fluid-boundaries.md) — solid samples, projection, and wake rules.
 - [Fluid interactions](@/internals/simulation/fluid-coupling.md) — raster contacts, buoyancy, body feedback, and swimming.
 - [Fluid streaming](@/internals/world-streaming/fluid-streaming.md) — capacity, edits, import/export ownership, and saving.
-- [Gas simulation](@/internals/simulation/gases.md) — face flows, exact integer transfers, phantom air, and displacement by cells, fluid, and actors.
+- [Pressure simulation](@/internals/simulation/pressure.md) — face flows, exact integer transfers, phantom air, and displacement by cells, fluid, and actors.

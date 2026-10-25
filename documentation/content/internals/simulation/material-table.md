@@ -11,7 +11,7 @@ This page is for engine contributors. It explains how `MaterialRegistry::compile
 `MaterialRegistry::register` assigns each material identifier. `MaterialRegistry::compile` consumes the populated registry and builds an immutable `MaterialTable` holding:
 
 - the material definitions, for CPU lookups;
-- GPU buffers of dynamic-cell, fluid, and gas properties;
+- GPU buffers of static-cell, dynamic-cell, fluid, and gas properties;
 - CPU pixel arrays that assign colors to generated or edited cells.
 
 Static and dynamic cellular materials use separate identifier-indexed albedo arrays. Fluid and gas definitions remain available through table lookups but do not participate in this cellular path. See the [materials API](@/external-api/materials.md) for registration and property types.
@@ -31,11 +31,16 @@ Static and dynamic materials are validated against the same physical ranges:
 - mass is positive and finite;
 - friction is nonnegative and finite;
 - restitution is in `[0, 1]`;
+- static strength is positive and not NaN (positive infinity is allowed), and absorption is finite in `[0, 1]`;
 - for a static material, a debris identifier, if present, names a registered dynamic material.
 
 ### Dynamic property buffer
 
 Each dynamic record is serialized as four little-endian `f32` values: mass, friction, restitution, and zero padding. The records form a `STORAGE | COPY_DST` buffer with a 16-byte stride. If no dynamic material exists, a zeroed 16-byte record keeps the binding nonempty.
+
+### Static property buffer
+
+Each static record is four little-endian `f32` values: mass, absorption, strength, and zero padding. The `STORAGE | COPY_DST` buffer has a 16-byte stride. Index zero is the empty material and contains zeros.
 
 ### Fluid property buffer
 
@@ -47,7 +52,7 @@ Compilation validates positive finite density, viscosity and restitution in `[0,
 
 Each gas record contains three little-endian `f32` values (mass, diffusivity, cohesion), followed by a packed RGBA `u32` color. The `STORAGE | COPY_DST` buffer has a 16-byte stride. With no gas materials, a zeroed 16-byte record keeps the binding nonempty.
 
-Compilation validates positive finite mass, diffusivity in `[0, 0.1]`, and cohesion in `[0, 1]`. It allows at most 255 gas materials: gas indices are stored in eight bits, and the gas simulation also stores each index plus one in eight bits.
+Compilation validates positive finite mass, diffusivity in `[0, 0.4]`, and cohesion in `[0, 1]`. It allows at most 255 gas materials: gas indices are stored in eight bits, and the pressure simulation also stores each index plus one in eight bits.
 
 ### Albedo readback
 
@@ -71,6 +76,6 @@ Packed colors are little-endian RGBA. White returns the sampled albedo unchanged
 
 The cellular tile pass binds the dynamic property buffer as `array<vec4<f32>>` and indexes it with the dynamic identifier's low 30 bits. It uses mass, friction, and restitution in cell movement and collisions; see [cellular kinematics](@/internals/simulation/cellular-kinematics.md) and the [cellular tile shader](@/internals/shaders/cellular-tile-shader.md). Static-cell mass, friction, and restitution are instead looked up on the CPU when calculating a detached [cellular rigid body's properties](@/internals/simulation/rigid-bodies.md).
 
-> **Limitation:** `MaterialTable` creates dynamic cellular, fluid, and gas property buffers. The static property-buffer accessor returns `None`. The fluid solver and cellular kinematics consume the fluid buffer for particle constraints and fluid/body coupling. The fluid renderer reads density and packed color from the same buffer. The [gas simulation](@/internals/simulation/gases.md) reads mass, diffusivity, and cohesion from the gas buffer, and [gas rendering](@/internals/rendering/gas-pass.md) reads its packed color.
+`MaterialTable` creates static cellular, dynamic cellular, fluid, and gas property buffers. The fluid solver and cellular kinematics consume the fluid buffer for particle constraints and fluid/body coupling. The fluid renderer reads density and packed color from the same buffer. The [pressure simulation](@/internals/simulation/pressure.md) reads mass, diffusivity, and cohesion from the gas buffer, and [gas rendering](@/internals/rendering/gas-pass.md) reads its packed color.
 
 The albedo readback and dynamic buffer setup are implemented in {{ <rustdoc path="engine/materials/struct.MaterialTable.html" text="MaterialTable" /> }}.

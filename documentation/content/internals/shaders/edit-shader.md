@@ -52,10 +52,12 @@ Each invocation reads its cell's inserted and replaced mask bits:
 - A replacement always writes.
 - An insertion writes only when the current material identifier is zero.
 
-On a write, the shader zeros the cell's kinematics, atomically ORs `3` into the tile's awake value (awake and disturbed flags), and ORs `1` into its gas awake value. The rest depends on the material:
+On a write, the shader zeros the cell's kinematics, atomically ORs `3` into the tile's awake value (awake and disturbed flags), and ORs `1` into its pressure awake value. The rest depends on the material:
 
 - A gas material leaves the cell empty with zero color. Its gas becomes one species slot of that gas holding the ambient amount, or one atmosphere when the ambient amount is lower, with no phantom air or flow.
 - `EMPTY` is copied with its color, and the gas becomes phantom air at the ambient amount alone.
-- Any other material is copied with its color. The cell keeps its species slots, which the [gas simulation](@/internals/simulation/gases.md) later pushes out, but loses its phantom air and flows.
+- Any other material is copied with its color. The cell keeps its species slots, which the [pressure simulation](@/internals/simulation/pressure.md) later pushes out, but loses its phantom air and flows.
+
+Queued pressure edits use atmospheres. Static cells receive signed stored pressure; other cells add to phantom air or proportionally reduce their gas.
 
 The shader does not evaluate actor colliders or material registration; those decisions are made before the pass receives the records.

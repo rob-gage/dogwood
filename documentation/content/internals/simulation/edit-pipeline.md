@@ -9,10 +9,12 @@ This page explains how cell edits move from an `Edit` request through validation
 
 ## Request and validation
 
-An `Edit` groups a bit mask, material identifiers, and packed colors by cellular tile. `fill_cell` replaces an earlier fill at the same cell. `fill_segment` rasterizes cells whose centers lie within the requested radius (in tiles) of a segment.
+An `Edit` groups cell fills and pressure changes by cellular tile. Fills carry a bit mask, material identifiers, and packed colors; `pressures` stores per-cell signed pressure deltas in atmospheres. `fill_cell` replaces an earlier fill at the same cell. `fill_segment` rasterizes cells whose centers lie within the requested radius (in tiles) of a segment.
 
 | Limit or rule | Behaviour |
 | --- | --- |
+| `add_pressure_segment` or `remove_pressure_segment` with a negative or non-finite pressure | Returns `EditError::InvalidPressure` |
+| `add_pressure_cell` or `remove_pressure_cell` with a negative or non-finite pressure | Ignored |
 | `fill_segment` with a non-finite or negative radius | No-op; returns `Ok(())` |
 | `fill_segment` candidate bounds span more than 4096 tiles | Returns `EditError::CapacityReached` |
 | Queued tile entries exceed 4096 before the next stream | Whole request rejected |
@@ -41,11 +43,11 @@ At stream time, the edit state collects tiles touched by any Insert request and 
 
 This preserves the sequential effect of the queued edits while needing only one merged record per affected tile.
 
-The GPU edit pass uses one 64-invocation workgroup per tile. Replaced cells always write; inserted cells write only if the GPU cell is still empty. A write stores the material and color, or for a gas leaves the cell empty and fills its gas; it clears the cell's kinematics and marks its tile awake and disturbed and its gas awake. See the [edit shader](@/internals/shaders/edit-shader.md#cell-write-behavior). The edit state clears its queued tile count after processing; an empty merged result requires no GPU pass.
+The GPU edit pass uses one 64-invocation workgroup per tile and applies queued pressure deltas. For static cells, edits change stored pressure. For other cells, added pressure becomes phantom air; removed pressure reduces all gas proportionally. Replaced cells always write; inserted cells write only if the GPU cell is still empty. A write stores the material and color, or for a gas leaves the cell empty and fills its gas; it clears the cell's kinematics and marks its tile awake and disturbed and pressure awake. See the [edit shader](@/internals/shaders/edit-shader.md#cell-write-behavior). The edit state clears its queued tile count after processing; an empty merged result requires no GPU pass.
 
 ## Collision and persistence
 
-When streaming produces a non-empty merged edit, an existing collision state requests a cell reread for its next simulation. If no collision state exists, the first collision simulation reads the active occupancy.
+When streaming produces a non-empty merged edit, an existing collision state requests a cell reread for its next simulation. Edit occupancy and changed-cell reads still block when collision refreshes them. If no collision state exists, the first collision simulation reads the active occupancy.
 
 If rigid-body tiles are present, the next collision update waits for GPU readback before removing changed cells and splitting bodies; without them, it returns immediately. See [cellular rigid bodies](@/internals/simulation/rigid-bodies.md#edits-and-splitting) for the detachment conditions and split behavior.
 

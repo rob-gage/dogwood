@@ -86,6 +86,8 @@ The binding uses 152 bytes at each 256-byte dynamic stride. Four setup slots pre
 | 120–132 | World origin low xy and high xy |
 | 136–148 | Actor count, contact scale, actor time, padding |
 
+Sparse contact clearing sizes the shared indirect dispatch for contact tiles. The pass restores the live-particle dispatch before prediction, sorting, and the solver substeps.
+
 The two particle buffers alternate during compaction, scattering, and commit. Predicted positions alternate during scatter and Jacobi correction. CPU uniform slot selection tracks both sides; the WGSL is not free to select arbitrary current buffers.
 
 ## Raster and control storage
@@ -107,6 +109,8 @@ Control begins with live count, survivor count, listed-boundary count, and occup
 With `P` particle capacity, the two state arrays, two predicted arrays, neighbor records, and lambdas use `104 * P` bytes before import/export/readback storage. Boundary-cell and corner-node maps use 16 bytes per cell/node independently of particle capacity. Empty storage allocations have a 16-byte minimum.
 
 Bin storage has counts, exclusive offsets, and scatter cursors, then block totals/prefixes and chunk totals/prefixes. Boundary tiles store flags, a compact list, and sixteen packed occupancy words per tile; each word holds four cell occupancy bytes.
+
+The first `predict` substep reads the pressure buffer published by the prior tick and applies pressure push above the 0.02-atmosphere threshold. See [pressure simulation](@/internals/simulation/pressure.md#published-pressure-and-consumers).
 
 ## Readback policy
 

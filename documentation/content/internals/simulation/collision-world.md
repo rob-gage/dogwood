@@ -26,15 +26,15 @@ Rapier positions use a local tile origin to retain sub-cell precision in `f32`. 
 
 Each call to `simulate_collisions` runs these steps in order:
 
-1. Processes any pending changed rigid-body cells, reads and applies static occupancy when needed (see [refresh triggers](@/internals/simulation/static-cell-colliders.md#refresh-triggers)), then checks newly changed cells for detached groups.
-2. If cellular rigid bodies exist, consumes the newest completed settled dynamic-cell occupancy snapshot, with a blocking fallback when no held snapshot matches the region and ring offset, then requests another asynchronous snapshot. See [occupancy readback](@/internals/simulation/static-cell-colliders.md#occupancy-readback).
-3. Releases rigid bodies that no longer fit in the active region: static cells remain at rest, while covered dynamic cells stay dynamic; the release clears rigid-body markers from covered cells.
-4. Applies the latest kinematics impulses to rigid bodies and stores the latest holding contacts.
-5. Synchronizes actors with identity and position components (see [actor lifetime](@/internals/actors/actor-lifetime.md) for region exit). Collision checks region membership for each such actor. It creates or updates a fixed, dynamic, or position-based kinematic Rapier body only when the actor has an `ActorCollisionComponent` or `ActorContactComponent`, and replaces the relevant collider when its component changes. Actors that leave the active region lose their Rapier bodies.
-6. Moves pawns through the character controller using movement input, gravity, and dynamic-cell contacts, then runs the four-pass holding response for rigid bodies supported by dynamic cells.
-7. Steps Rapier and writes changed body positions back to actors’ `ActorKinematicsPositionComponent` values.
-8. Queues changed cellular rigid bodies for rasterization into the tile buffers.
+1. Reads pressure breakage copied during the preceding tick and applies broken tile masks and rigid-body cell removals. Detached group material reads are verified asynchronously; resulting bodies are created on a later tick.
+2. Refreshes static occupancy when region, ring, or edit state requires it. Edit changed-cell reads can block. Applies changed occupancy to the static voxel collider and detaches affected rigid bodies.
+3. Consumes the newest completed settled dynamic-cell occupancy snapshot, falling back to a blocking read only when no matching region/ring snapshot exists; requests another snapshot.
+4. Releases bodies outside the active region and applies cellular kinematics impulses and fluid moments from prior GPU contact feedback.
+5. Synchronizes actors and collider components, then moves pawns through the character controller using movement, gravity, and dynamic-cell contacts.
+6. Steps Rapier and writes body positions back to actors.
+7. Rasterizes changed cellular rigid bodies into tile buffers and requests detached-cell copies for later processing.
 
+Pressure breakage and contact results are one tick late. The [scene pipeline](@/architecture/scene-pipeline.md#simulation-order) gives the complete scene order; [GPU synchronization](@/architecture/concurrency-and-gpu-sync.md) describes waits.
 A release during this step requests a static occupancy reread; its newly rasterized cells enter the static collider on a later collision call.
 
 `Collision` creates actor Rapier bodies with rotations locked. `ActorKinematicsRotationComponent` is currently a marker with no rotation value. An actor with only `ActorContactComponent` gets a position-based kinematic body, and its contact collider is a sensor. The collision and occupancy phases, including collider delta updates, are detailed on [static cell colliders](@/internals/simulation/static-cell-colliders.md); the kinematics-to-collision contact formats are on [contact exchange](@/internals/simulation/contact-exchange.md).

@@ -8,7 +8,7 @@ sources = ["engine_world/src/scenes", "engine_world/src/materials/material_table
 
 This page traces two paths through the engine: a world cell from generation to pixels and back to disk, and keyboard input to a rendered frame. It is for contributors who need the big picture before reading the subsystem pages.
 
-The scene connects CPU-owned chunk data to GPU-resident cellular tiles. Streaming copies tile properties and gas into the [tile ring](@/architecture/glossary.md#world-terms), simulation updates them, and graphics reads material identifiers, colors, and gas. Tile readback returns the current state to chunks for persistence. It normally happens as tiles leave the [active region](@/architecture/glossary.md#world-terms). `Scene::save` and scene teardown request readback of all active tiles.
+The scene connects CPU-owned chunk data to GPU-resident cellular tiles. Streaming copies tile properties and gas into the [tile ring](@/architecture/glossary.md#world-terms), simulation updates them, and graphics reads material identifiers, colors, and pressure state. Tile readback returns the current state to chunks for persistence. It normally happens as tiles leave the [active region](@/architecture/glossary.md#world-terms). `Scene::save` and scene teardown request readback of all active tiles.
 
 ## Overview
 
@@ -39,9 +39,9 @@ When no chunk file exists, a chunk-I/O worker asks the scene generator to create
 ### Tiles in the ring
 
 - **Entering tiles:** once all chunks for entering tiles are active, tile streaming copies each tile's material identifiers, colors, kinematics, and gas into its physical slot in the GPU tile ring.
-- **Simulation:** the scene simulates dynamic cells and gas in the ring. The [cellular tile pass](@/internals/simulation/cellular-kinematics.md) and [collision world](@/internals/simulation/collision-world.md) describe the two cellular simulation branches; [gas simulation](@/internals/simulation/gases.md) describes gas.
+- **Simulation:** the scene simulates dynamic cells, fluids, and pressure in the ring. The [cellular tile pass](@/internals/simulation/cellular-kinematics.md) and [collision world](@/internals/simulation/collision-world.md) describe the two cellular simulation branches; [pressure simulation](@/internals/simulation/pressure.md) describes gas.
 - **Rendering:** the [scene renderer](@/internals/rendering/scene-renderer.md) samples material identifiers and colors using the same logical-region and ring-offset mapping.
-- **Leaving tiles:** for a tile leaving the active region, a GPU buffer copy and an asynchronous map return the material identifier, color, kinematics, and gas arrays to the chunk. Readbacks are applied in request order, and the destination chunk region stays retained while the request is in flight.
+- **Leaving tiles:** for a tile leaving the active region, a GPU buffer copy and an asynchronous map return the material identifier, color, kinematics, and gas and pressure arrays to the chunk. Readbacks are applied in request order, and the destination chunk region stays retained while the request is in flight.
 
 ### Edits and saving
 
@@ -78,4 +78,4 @@ gas edit / chunk gas tile -> tile ring gas (GPU)
   tile readback -> Chunk gas tile (only when it differs from ambient phantom air) -> chunk file
 ```
 
-Gas lives in the tile ring with the cells and returns to chunks with them. See [gas simulation](@/internals/simulation/gases.md), [gas rendering](@/internals/rendering/gas-pass.md), and [chunk format](@/internals/world-streaming/chunk-format.md#gas-tile-section).
+Gas species and stored pressure live in the tile ring with the cells and return to chunks with them. See [pressure simulation](@/internals/simulation/pressure.md), [gas rendering](@/internals/rendering/gas-pass.md), and [chunk format](@/internals/world-streaming/chunk-format.md#gas-tile-section).

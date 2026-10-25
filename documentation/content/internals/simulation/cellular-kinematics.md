@@ -55,7 +55,7 @@ A later stage handles collisions between dynamic cells that remain in place.
 
 ### Covered cells
 
-When a dynamic cell is covered, it tries to move into a free neighboring cell. The preferred direction follows the actor surface's outward normal; for a rigid body, it follows the body's motion or points away from its center when the body is nearly still. If that cell is blocked, the shader tries the neighboring directions 45° to either side. A destination must be inside the active region and free of cells, rigid-body markers, and actors. If no destination is free, the cell stops; a rigid-body pusher also records a holding contact.
+When a dynamic cell is covered, it tries to move into a free neighboring cell. The preferred direction follows the actor surface's outward normal; for a rigid body, it follows the body's motion or points away from its center when the body is nearly still. If that cell is blocked, the shader tries the neighboring directions 45° to either side. A destination must be inside the active region and free of cells, rigid-body markers, and actors. If no destination is free, the cell stops; a rigid-body pusher records a GPU impulse. Pressure is read from the previous tick's publication in `integrate`; contact impulses do not load the pressure substrate.
 
 If the pusher would increase the cell's speed along the escape direction, the shader applies a mass-weighted velocity change and records the opposite impulse. Otherwise it makes no velocity exchange. The GPU also reports actor contact normals and penetration depths. The collision step consumes these contacts as described in [contact exchange](@/internals/simulation/contact-exchange.md).
 

@@ -12,7 +12,7 @@ This page is for engine contributors. It describes the private state a `Scene` o
 
 `Scene` coordinates actor data, material lookup, persistence, tile residency, and simulation. Its private state is split by lifecycle:
 
-- Chunk streaming, GPU tile buffers, tile streaming, fluids, collision, cellular tile simulation, and gases start absent.
+- Chunk streaming, GPU tile buffers, tile streaming, fluids, collision, cellular tile simulation, and pressure start absent.
 - Edit streaming is initialized immediately with an empty queue.
 - The material table and generator are shared with chunk work through `Arc` handles.
 
@@ -35,8 +35,8 @@ Scene
 │   └── CollisionRigidBodyPass
 ├── Option<CellularTiles>         first Scene::simulate with active region
 │   └── CellularTilePass
-└── Option<Gases>                 first Scene::simulate with active region,
-    └── GasCellularTilePass       after fluids
+└── Option<Pressure>              first Scene::simulate with active region, after fluids
+    └── PressureCellularTilePass
 ```
 
 The pass objects are owned by their parent systems:
@@ -44,9 +44,9 @@ The pass objects are owned by their parent systems:
 - `Collision` manages actor and rigid-body Rapier state plus cellular occupancy.
 - `CellularTiles` manages dynamic-cell motion and cellular/fluid coupling through `CellularTilePass`.
 - `Fluids` manages particle admission, simulation, and fluid actor feedback through `FluidParticlePass`.
-- `Gases` manages gas flow through `GasCellularTilePass`, reading the shared tile buffers, the fluid raster, and the cellular tile actor records.
+- `Pressure` manages the shared pressure substrate through `PressureCellularTilePass`, reading tile buffers, fluid raster, actor records, and rigid-body cell records.
 
-`Scene` passes shared tile buffers to both and, when creating `CellularTiles`, the collision system's rigid-body pass. For ordering and resource lifetime, see [Scene update pipeline](@/architecture/scene-pipeline.md) and [Resources and lifetimes](@/architecture/resources-and-lifetimes.md).
+`Scene` passes shared tile buffers to these systems and, when creating `CellularTiles`, the collision system's rigid-body pass. For ordering and resource lifetime, see [Scene update pipeline](@/architecture/scene-pipeline.md) and [Resources and lifetimes](@/architecture/resources-and-lifetimes.md).
 
 ## Initialization and call flow
 
@@ -56,7 +56,7 @@ The pass objects are owned by their parent systems:
 
 ### Simulation
 
-`Scene::simulate` returns early until an active region exists, then lazily creates `Collision` and `CellularTiles`. It first calls `CellularTiles::simulate_cellular_tiles`, which returns cellular and rigid-body contact maps. It polls fluid actor feedback, passes the contact maps to `Collision::simulate_collisions`, runs the particle solver, then creates `Gases` if needed and runs gas. See [gas simulation](@/internals/simulation/gases.md) and [scene ordering](@/architecture/scene-pipeline.md#simulation-order).
+`Scene::simulate` returns early until an active region exists, then lazily creates `Collision` and `CellularTiles`. It first calls `CellularTiles::simulate_cellular_tiles`, which returns cellular and rigid-body contact maps. It polls fluid actor feedback, passes the contact maps to `Collision::simulate_collisions`, runs the particle solver, then creates `Pressure` if needed and advances pressure. See [pressure simulation](@/internals/simulation/pressure.md) and [scene ordering](@/architecture/scene-pipeline.md#simulation-order).
 
 [Collision world](@/internals/simulation/collision-world.md), [Cellular kinematics](@/internals/simulation/cellular-kinematics.md), and [Edit pipeline](@/internals/simulation/edit-pipeline.md) describe those systems in depth.
 
@@ -75,7 +75,7 @@ The generated private docs expose each type's API and fields. The `Scene` defini
 | Boundary | Shared data | Reference |
 | --- | --- | --- |
 | Scene → tile streaming | Tile arrays, retained chunk regions, fluid import/export state | [Tile streaming](@/internals/world-streaming/tile-streaming.md) |
-| `CellularTiles` → collision | Actor contacts, rigid-body impulses, holding contacts, fluid moments | [Contact exchange](@/internals/simulation/contact-exchange.md) |
+| `CellularTiles` → collision | Actor contacts, rigid-body impulses, fluid moments, fluid moments | [Contact exchange](@/internals/simulation/contact-exchange.md) |
 | `CellularTiles` ↔ particles | Fluid raster/contact deltas, actor records, rigid-body motion | [Fluid interactions](@/internals/simulation/fluid-coupling.md) |
 | Particles ↔ chunks | Dormant imports, outgoing exports, resident-save snapshots | [Fluid persistence](@/internals/world-streaming/fluid-streaming.md) |
 

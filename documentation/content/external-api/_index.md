@@ -40,6 +40,7 @@ The facade re-exports selected types from the host, graphics, world, and user-in
 | `engine::Accelerator`, `engine::AcceleratorError` | GPU context and initialization error | [Host types](@/external-api/host.md) |
 | `engine::Processor`, `engine::ProcessorConfiguration`, `engine::ProcessorError` | Named CPU pools and configuration | [Host types](@/external-api/host.md) |
 | `engine::SpriteSheet` | Sprite sheet type | [Graphics](@/external-api/graphics.md) |
+| `engine::SceneRenderer`, `engine::SceneRendererViewMode`, `engine::SceneGraphicsOverlay`, `engine::SceneGraphicsOverlayShape` | Scene renderer, its view modes, and cell-aligned overlays | [Graphics](@/external-api/graphics.md) |
 | `engine::MaterialGraphicsCellularDynamic`, `engine::MaterialGraphicsCellularStatic`, `engine::MaterialGraphicsFluid`, `engine::MaterialGraphicsGas` | Graphics properties for cellular, fluid, and gas materials | [Materials](@/external-api/materials.md) |
 | `engine::user_interface` | Re-export of the `engine_user_interface` crate | [User interface](@/external-api/user-interface.md) |
 
@@ -55,4 +56,4 @@ Browse the {{ <rustdoc path="engine/index.html" text="public engine API" /> }}. 
 
 The site's references come from `./documentation/site.sh build`, which runs rustdoc twice: a public reference of the library crates (`cargo doc --workspace --exclude cli --no-deps`) and a private one of every crate, including the `dogwood` CLI (`--document-private-items`).
 
-The `engine::scenes::fluids` module exports engine-managed `Fluids` and solver constants. `engine::scenes::chunks::ChunkFluidParticle` represents dormant particles. See [fluid simulation](@/internals/simulation/fluids.md). The `engine::scenes::gases` module exports engine-managed `Gases` and the gas amount constants; see [gas simulation](@/internals/simulation/gases.md).
+The `engine::scenes::fluids` module exports engine-managed `Fluids` and solver constants. `engine::scenes::chunks::ChunkFluidParticle` represents dormant particles. See [fluid simulation](@/internals/simulation/fluids.md). The `engine::scenes::pressure` module exports engine-managed `Pressure` and pressure constants; see [pressure simulation](@/internals/simulation/pressure.md).

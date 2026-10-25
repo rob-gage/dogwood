@@ -12,7 +12,7 @@ sources = ["engine_graphics/src/renders/scene_renderer.rs", "engine/src/games/ga
 
 This section is for engine contributors. It explains how Dogwood renders a scene and overlays the user interface.
 
-Dogwood renders a scene into a caller-provided texture, then can overlay egui output on that target. The scene renderer clears the target and draws the two sprite depth ranges around resident fluid, gas, and cellular content. The UI renderer uses a load operation, so it preserves the scene image beneath the interface.
+Dogwood renders a scene into a caller-provided texture, then can overlay egui output on that target. The scene renderer clears the target and draws the two sprite depth ranges around resident fluid, gas, pressure, and cellular content. The UI renderer uses a load operation, so it preserves the scene image beneath the interface.
 
 ```text
 Scene::graphics(camera)
@@ -41,6 +41,7 @@ UserInterfaceRenderer::render(target, output)
 
 - [Scene renderer](@/internals/rendering/scene-renderer.md): scene graphics input, viewport, and pass order.
 - [Fluid render pass](@/internals/rendering/fluid-pass.md): raster smoothing, depth shading, and blending.
+- [Pressure view](@/internals/rendering/scene-renderer.md#pass-order): pressure tint and gradient.
 - [Gas render pass](@/internals/rendering/gas-pass.md): cell-aligned cloud edges, slot opacity, and blending.
 - [Cellular render pass](@/internals/rendering/cellular-pass.md): uniforms, bindings, and pipeline cache.
 - [Sprite render pass](@/internals/rendering/sprite-pass.md): instances, batching, and sprite sheets.

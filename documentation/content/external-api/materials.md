@@ -14,18 +14,19 @@ A `Material` is one of four variants, one per `MaterialForm`: `CellularStatic`, 
 
 | Properties type | Fields | Meaning |
 |---|---|---|
-| `MaterialPropertiesCellularStatic` | `graphics`; `mass`, `friction`, `restitution: f32`; `debris: Option<MaterialIdentifier>` | `mass` uses dynamic cellular material mass units. `friction` is the Coulomb coefficient for rigid bodies. `restitution` is the fraction of speed kept, reversed, on collision. `debris` selects the dynamic material used when cells break off, or `None` to vanish. |
+| `MaterialPropertiesCellularStatic` | `graphics`; `mass`, `friction`, `restitution`, `strength`, `absorption: f32`; `debris: Option<MaterialIdentifier>` | `mass` uses dynamic cellular material mass units. `friction` is the Coulomb coefficient for rigid bodies. `restitution` is the fraction of speed kept, reversed, on collision. `strength` is the pressure difference in atmospheres held indefinitely; infinity makes cells unbreakable. `absorption` is the fraction of passing pressure absorbed by each cell, damping waves and damaging cells above their strength. `debris` selects the dynamic material used when cells break off, or `None` to vanish. |
 | `MaterialPropertiesCellularDynamic` | `graphics`; `mass`, `friction`, `restitution: f32` | `mass` uses dynamic cellular material mass units. `friction` is the tangent of the steepest slope a resting cell holds. `restitution` is the fraction of speed kept, reversed, when a cell hits something it cannot enter. |
 | `MaterialPropertiesFluid` | `graphics`; `density`, `viscosity`, `cohesion`, `artificial_pressure`, `drag`, `friction`, `restitution: f32` | Density is mass per fluid cell; viscosity is XSPH velocity smoothing; cohesion and artificial pressure control surface cohesion and PBF artificial pressure. Drag configures swimming and idle-swimmer current coupling; friction and restitution configure direct fluid-cell contacts. |
-| `MaterialPropertiesGas` | `graphics`; `mass`, `diffusivity`, `cohesion: f32` | `mass` is the mass of one atmosphere of the gas in one cell, compared with the scene's ambient gas mass. `diffusivity` is the fraction exchanged with each neighboring cell per substep. `cohesion` is the atmospheres a cell must hold before the gas spreads into a cell without it. |
+| `MaterialPropertiesGas` | `graphics`; `mass`, `diffusivity`, `cohesion: f32` | `mass` is the mass of one atmosphere of the gas in one cell, compared with the scene's ambient gas mass. `diffusivity` is the fraction exchanged with each neighboring cell per tick. `cohesion` is the atmospheres a cell must hold before the gas spreads into a cell without it. |
 
 ### Validation at compile time
 
 - Cellular `mass` must be finite and positive.
 - `friction` must be finite and nonnegative.
 - `restitution` must be between 0 and 1 inclusive.
+- Static `strength` must be positive and not NaN; positive infinity is allowed. Static `absorption` must be finite and in `[0, 1]`.
 - Fluid `density` must be finite and positive; `viscosity` must be in `[0, 1]`. Fluid `cohesion`, `artificial_pressure`, and `drag` must be finite and nonnegative.
-- Gas `mass` must be finite and positive; `diffusivity` must be in `[0, 0.1]` and `cohesion` in `[0, 1]`. At most 255 gas materials can be registered.
+- Gas `mass` must be finite and positive; `diffusivity` must be in `[0, 0.4]` and `cohesion` in `[0, 1]`. At most 255 gas materials can be registered.
 - Static `debris` must identify a registered cellular dynamic material.
 - Graphics `width` and `height` repetition scales must be finite and positive, and the sprite-sheet `frame` must be valid.
 
@@ -37,9 +38,9 @@ A `Material` is one of four variants, one per `MaterialForm`: `CellularStatic`, 
 
 Fluid materials use [particle simulation](@/internals/simulation/fluids.md) and [raster-based rendering](@/internals/rendering/fluid-pass.md). Material density supplies physical mass; the pressure solver uses a shared rest spacing.
 
-Gas materials use [face-flow simulation](@/internals/simulation/gases.md) in the cellular tiles and [cell-aligned rendering](@/internals/rendering/gas-pass.md).
+Gas species use the shared [pressure substrate](@/internals/simulation/pressure.md) in the cellular tiles and [cell-aligned rendering](@/internals/rendering/gas-pass.md).
 
-> **Not implemented:** The static cellular GPU property buffer is absent. Placing a fluid identifier directly in a cellular array does not create a particle; use edits or chunk particle records.
+Placing a fluid identifier directly in a cellular array does not create a particle; use edits or chunk particle records.
 
 ## Identifiers
 
@@ -72,7 +73,7 @@ Registered static materials start at index 1. Dynamic, fluid, and gas indices st
 
 ### Advanced: GPU buffers
 
-The accessors `cellular_static_properties_buffer`, `cellular_dynamic_properties_buffer`, `fluid_properties_buffer`, and `gas_properties_buffer` expose GPU buffers; the dynamic, fluid, and gas accessors return buffers containing records, while the static accessor returns an optional buffer that is currently `None`. Compilation waits for cellular albedo-frame texture readback, so it completes synchronously from the caller's perspective. See [material table compilation](@/internals/simulation/material-table.md) for buffer layout and tint details.
+The accessors `cellular_static_properties_buffer`, `cellular_dynamic_properties_buffer`, `fluid_properties_buffer`, and `gas_properties_buffer` expose buffers containing records. Compilation waits for cellular albedo-frame texture readback, so it completes synchronously from the caller's perspective. See [material table compilation](@/internals/simulation/material-table.md) for buffer layout and tint details.
 
 ## Rustdoc
 

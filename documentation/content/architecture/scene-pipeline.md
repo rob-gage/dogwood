@@ -3,7 +3,7 @@ title = "Scene update pipeline"
 description = "The ordered streaming and simulation stages performed by a scene update."
 weight = 20
 [extra]
-sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/gases", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_pass.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/collision_cellular_tile_pass.rs", "engine_world/src/scenes/collisions/collision_rigid_body.wgsl"]
+sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/pressure", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_pass.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/collision_cellular_tile_pass.rs", "engine_world/src/scenes/collisions/collision_rigid_body.wgsl"]
 +++
 
 This page defines the ordered work inside `Scene::stream` and `Scene::simulate`. The [frame lifecycle](@/architecture/frame-lifecycle.md) calls both after `Game::update`; rendering is a separate redraw operation.
@@ -42,27 +42,36 @@ Ring movement can be deferred by chunk readiness, readback capacity, resident sa
 
 ## Simulation order
 
-### Cellular tile simulation
+When the active region is resident, `Scene::simulate` runs these steps in order. Pressure consumers read the buffer published during the preceding tick. Contact and pressure-breakage readbacks copied during tick N are consumed starting in tick N+1; waits target only the submission containing each copy. The [synchronization page](@/architecture/concurrency-and-gpu-sync.md) describes waits and feedback latency.
 
-Before the first active region, simulation returns immediately. Otherwise collision and cellular tile simulation are created lazily. `CellularTiles` receives tile buffers, ring placement, collision-relative region origin, gravity, eligible actor colliders, rigid-body records, and the shared fluid raster.
+1. **Read cellular feedback.** At the start of `CellularTiles::simulate_cellular_tiles`, `CellularTilePass` reads actor contacts, rigid-body contacts, and control counts from prior submissions. Actor contacts use the newest completed sample; rigid-body contacts accumulate. Control results size this tick's cellular work. Contact reads wait only for their copied submission when needed; control sizing never waits.
+2. **Simulate cellular tiles.** GPU stages run in order: `collect`, `clear`, `prepare`, `integrate`; then `prepare` and, for each cellular substep, `request`, `pick`, `resolve_begin`, the configured `resolve_even`/`resolve_odd` chain, `stage`, and `commit`; finally `contact`, `rigid_fluid_faces`, and `rigid_fluid`. `integrate`, `contact`, and `rigid_fluid` read previous published pressure; kinematics and rigid-fluid stages read the previous fluid raster. Contacts are copied for later CPU use. Actor records use pre-collision positions and inferred displacement.
+3. **Poll fluid actor feedback.** `Scene` polls completed fluid actor samples using the actor identities and collision settings from their submission before calling collision.
+4. **Read pressure breakage.** Collision reads the prior tick's broken-tile and broken-rigid-cell copies, waiting only for those copy submissions. It applies broken tile occupancy, removes broken rigid-body cells, and updates affected voxel colliders. Oversized tile lists request a full occupancy refresh.
+5. **Apply collision topology and occupancy.** Collision applies detached-cell results and detached groups whose asynchronous material reads have arrived. Static occupancy is read when region/ring changes or edits request it; edit changed-cell reads and required occupancy reads can block. Settled dynamic occupancy uses completed snapshots, falling back to a blocking read when no matching snapshot exists. Collision updates voxel colliders, releases bodies outside the region, applies cellular and fluid impulses to rigid bodies, and updates actors and pawns using prior contacts.
+6. **Step Rapier and rasterize.** Pawn movement and Rapier advance actors and rigid bodies. Collision rasterizes rigid bodies into cellular tile buffers, retaining per-cell stored pressure and integrity through rasterization and splits. It requests detached-cell GPU copies for a later collision step.
+7. **Simulate fluid particles.** The solver consumes queued edits/imports and raster-contact deltas, predicts, solves, and updates particles against current cellular and rasterized rigid-body geometry. The first `predict` substep reads previous-tick pressure and applies pressure push. The solver rebuilds the fluid raster and queues actor/count feedback. A result copied in tick N is consumed starting in N+1; actor feedback waits only for its copy submission when a response is needed.
+8. **Measure pressure volume.** `PressureCellularTilePass` measures open volume and actor drag. It measures the full ring when the region or ring offset changes; otherwise `volume_collect` lists only tiles that may have changed: tiles whose cellular cells changed or were simulated this tick, tiles awake from edits, streaming, or moving gas, tiles near fluid or dragging actors at the last measurement, and tiles within an actor's drag range.
+9. **Collect pressure work.** `collect`, `clear`, and `prepare` build a sparse dispatch for awake pressure tiles and neighbors.
+10. **Step pressure.** Twelve fixed `step` substeps update staggered gas/solid face flows and cell state, double-buffered between cellular gas storage and scratch. Solid load also reduces integrity in each substep.
+11. **Publish and damage.** `publish` writes gauge atmospheres to the shared pressure buffer and wakes dynamic cells next to pushing pressure. `damage` releases broken-cell pressure as phantom air and records changed tile masks and rigid-body cells.
+12. **Request breakage copies.** `Collision::request_broken_cells` copies the new broken-tile and broken-rigid-cell lists without waiting. Collision reads them next tick, so damage topology is applied incrementally one tick later. The scene marks a particle export submitted only after successful fluid simulation.
 
-`CellularTilePass` advances cellular matter and computes fluid/cell and fluid/rigid-body contacts against the prior fluid submission's raster. It uploads actor records based on pre-collision positions and inferred displacement since the preceding tick. Completed earlier contact/control readbacks are consumed without waiting. See [cellular kinematics](@/internals/simulation/cellular-kinematics.md) and [fluid coupling](@/internals/simulation/fluid-coupling.md).
+## Ownership
 
-### Collision
+| Interaction | Owner |
+| --- | --- |
+| Pressure storage and transmission through open cells and same-owner solids | Pressure substrate |
+| Pressure load, absorption, relaxation, integrity, and breakage | Pressure substrate |
+| Pressure pushes on dynamic cells, actors, rigid bodies, and fluid particles | Their consumer passes (`integrate`, `contact`, `rigid_fluid`, and first `predict` substep) |
+| Gravel with gravel and gravel with fluid | Cellular tile GPU pass |
+| Fluid particle pressure response | Fluid particle GPU pass |
+| Rigid body with terrain and rigid body with rigid body | Rapier |
+| Rigid bodies with settled grains | Rapier voxel collider |
+| Rigid bodies with moving grains | Cellular tile GPU impulses |
+| Breakage, detach, and occupancy topology | Collision world, using asynchronous GPU readbacks |
 
-The scene polls fluid actor feedback with the same actor identities/settings, then passes it and kinematics contacts to collision. Collision synchronizes actors, applies responses, controls walking/swimming pawns, steps Rapier, and rasterizes cellular rigid bodies.
-
-Static occupancy refreshes block when needed. Settled dynamic occupancy for rigid bodies uses completed asynchronous snapshots, falling back to a blocking read when no held snapshot matches the region/ring offset. See [collision ordering](@/internals/simulation/collision-world.md) and [occupancy readback](@/internals/simulation/static-cell-colliders.md#occupancy-readback).
-
-### Fluid step
-
-The particle solver runs after the collision submission, so queue order exposes updated cellular and rasterized rigid-body geometry. Actor records are copied from `CellularTiles` rather than uploaded again after collision; moving actor projection extrapolates those records through substeps.
-
-Fluid simulation consumes queued edits/imports and raster contact deltas, rebases and exports when needed, solves particles, rebuilds the raster, and queues actor/count feedback. The scene marks an outgoing export submitted only on success. [Fluid simulation](@/internals/simulation/fluids.md) gives the solver stages; [GPU synchronization](@/architecture/concurrency-and-gpu-sync.md) describes readback waits.
-
-### Gas step
-
-Gas runs last, after the particle solver rebuilds the raster, so it sees the tick's cells, fluid, and cellular tile actor records. It is created on its first step and submits its passes without waiting or reading back. [Gas simulation](@/internals/simulation/gases.md) gives the passes.
+Settled grains support bodies only through the settled voxel collider, and moving grains push them only through GPU impulses; resting grains still pass their weight to a body under them. See [collision world](@/internals/simulation/collision-world.md) and [rigid bodies](@/internals/simulation/rigid-bodies.md).
 
 ## Drawing
 

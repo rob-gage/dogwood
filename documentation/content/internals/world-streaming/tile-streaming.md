@@ -48,7 +48,7 @@ Once incoming data is available, the state does the following in order:
 3. Marks the requested region resident.
 4. Queues writes for entering tiles.
 
-The queued writes upload material identifiers, colors, kinematics, and gas. A tile without stored gas gets default gas: phantom air at the scene's ambient amount in each empty cell, with no species and no flow. They set the awake value to `CELLULAR_TILE_AWAKE`, set the gas awake value to `CELLULAR_TILE_GAS_AWAKE`, and clear rigid-body cell data.
+The queued writes upload material identifiers, colors, kinematics, and pressure state. A tile without stored gas gets default gas: phantom air at the scene's ambient amount in each empty cell, with no species and no flow. They set the awake value to `CELLULAR_TILE_AWAKE`, set the gas/pressure awake value to `CELLULAR_TILE_GAS_AWAKE`, and clear rigid-body cell data.
 
 When the ring shifts, the old region's retention moves to the outgoing request. It is released after the departing tiles reach their chunks.
 

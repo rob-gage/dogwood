@@ -54,7 +54,7 @@ Group 0 bindings are declared in WGSL and matched by the Rust layout:
 | 9 | `actors: array<CellularTileActor>` | Read-only actor records |
 | 10 | `contacts: array<atomic<i32>>` | Actor contact and impulse accumulators |
 | 11-14 | `rigid_body_cells`, `rigid_body_cellular_tile_cells`, `rigid_body_cellular_tiles`, `rigid_bodies` | Read-only rigid-body raster and motion data |
-| 15 | `rigid_body_contacts: array<atomic<u32>>` | Rigid-body impulse, holding-cell, and fluid sample accumulators |
+| 15 | `rigid_body_contacts: array<atomic<u32>>` | Rigid-body impulse and fluid sample accumulators |
 | 16 | `fluid_raster` | Fluid mass, momentum, material, and contact data |
 | 17 | `fluid_materials` | Fluid property records |
 

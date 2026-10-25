@@ -20,7 +20,7 @@ Queue order makes the prior fluid submission's raster available to kinematics, w
 
 For a dynamic cell not covered by an actor or rigid body, kinematics samples its four neighboring fluid cells. Immersion is clamped average mass divided by the density of the sampled material with the largest summed mass. Buoyancy adds `gravity_per_tick * immersion * fluid_density / cell_mass` to vertical velocity.
 
-Every wet face also solves a contact using relative normal speed and effective inverse mass. Fluid cell mass is shared across its neighboring solid faces. Only approaching contacts above `0.0001` cell/tick produce an impulse. Normal impulse uses restitution; tangential impulse is limited by Coulomb friction. Dynamic-cell contacts use the smaller of cellular and fluid friction/restitution coefficients. The cell receives its velocity change immediately; the opposite change is queued for the fluid raster cell.
+Every wet face also solves a contact using relative normal speed and effective inverse mass. Fluid cell mass is shared across its neighboring solid faces. Only approaching contacts above `0.0001` cell/tick produce an impulse. Normal impulse uses restitution; tangential impulse is limited by Coulomb friction. Dynamic-cell contacts use the smaller of cellular and fluid friction/restitution coefficients. The cell receives its velocity change immediately. The opposite impulse is divided by the full fluid cell mass before its velocity change is queued, because every particle in that raster cell receives the change; the face share limits the solved impulse only.
 
 Fluid adjacency or current can activate resting cellular tiles. Cellular sleep and particle sleep are separate systems; a live fluid raster can keep cellular work active even when fluid particles themselves are sleeping.
 
@@ -53,3 +53,6 @@ Kinematic pawns use immersion/current/density/drag for [swimming](@/internals/ac
 Only swimmers with no horizontal, jump, or crouch intent set the GPU swimming flag. Those idle swimmers draw nearby water velocity toward actor velocity with `1 - exp(-material_drag * coverage * dt)`. Stroking swimmers still displace particles by projection, but do not add this current-following term. This prevents swim-speed feedback through the current used by the controller.
 
 > **Limitation:** Body coupling is staggered: particle geometry uses uploaded actor state and rasterized rigid bodies, while CPU reactions use asynchronous earlier samples. It is not one simultaneous fluid/Rapier constraint solve.
+
+
+Fluid particles read published gauge pressure in the first `predict` substep and apply the shared pressure impulse when the magnitude is at least 0.02 atm. The publication is from the preceding tick; see [pressure simulation](@/internals/simulation/pressure.md#published-pressure-and-consumers).

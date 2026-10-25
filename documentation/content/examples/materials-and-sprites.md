@@ -57,6 +57,8 @@ fn register_gravel(
             mass: 2.0,
             friction: 0.6,
             restitution: 0.1,
+            strength: 10.0,
+            absorption: 0.1,
             debris: Some(gravel),
         },
     })?;
@@ -85,6 +87,7 @@ Compilation checks each cellular material:
 - `mass` is finite and positive.
 - `friction` is finite and nonnegative.
 - `restitution` is in `0.0..=1.0`.
+- Static `strength` is positive and not NaN; positive infinity is allowed. Static `absorption` is finite and in `0.0..=1.0`.
 - Repetition scales (`width`, `height`) are finite and positive.
 - The sprite frame is valid.
 - A non-`None` `debris` identifies a registered dynamic material.
@@ -151,7 +154,7 @@ fn register_water_vapor(
         name: String::from("water vapor"),
         properties: MaterialPropertiesGas {
             mass: 18.0,
-            diffusivity: 0.01,
+            diffusivity: 0.04,
             cohesion: 0.1,
             graphics: MaterialGraphicsGas {
                 color: u32::from_le_bytes([225, 230, 240, 150]),
@@ -161,4 +164,4 @@ fn register_water_vapor(
 }
 ```
 
-Compile the registry as usual. Use this identifier in [world edits](@/examples/editing-cells.md) to fill empty cells with gas. A `mass` below the scene's [ambient gas mass](@/external-api/scenes.md) rises and one above it sinks; `diffusivity` spreads the gas into its neighbors, and `cohesion` keeps thinning clouds from spreading into cells without it. Their [validation ranges](@/external-api/materials.md#validation-at-compile-time) are checked during compilation. See [gas simulation](@/internals/simulation/gases.md) for the implemented model.
+Compile the registry as usual. Use this identifier in [world edits](@/examples/editing-cells.md) to fill empty cells with gas. A `mass` below the scene's [ambient gas mass](@/external-api/scenes.md) rises and one above it sinks; `diffusivity` spreads the gas into its neighbors, and `cohesion` keeps thinning clouds from spreading into cells without it. Their [validation ranges](@/external-api/materials.md#validation-at-compile-time) are checked during compilation. See [pressure simulation](@/internals/simulation/pressure.md) for the implemented model.

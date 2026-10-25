@@ -3,7 +3,7 @@ title = "Concurrency and GPU synchronization"
 description = "How chunk workers and GPU submissions exchange data without stale or overwritten tiles."
 weight = 40
 [extra]
-sources = ["engine_host/src/processors", "engine_world/src/scenes", "engine/src/games/game_instance.rs"]
+sources = ["engine_host/src/acceleration/accelerator_readback.rs", "engine_host/src/acceleration/accelerator_readback_error.rs", "engine_host/src/processors", "engine_world/src/scenes", "engine/src/games/game_instance.rs"]
 +++
 
 This page explains which work runs on which thread, how GPU results come back, and where the runtime blocks. It is for contributors changing streaming, kinematics, or collision code.
@@ -34,7 +34,7 @@ A call to `stream_chunks` drains only the responses currently available and sche
 
 Tile streaming and kinematics do not use a worker pool. They submit GPU work and call `map_async`; callbacks send map results over MPSC channels. `Scene::stream` polls the device with `Poll` and applies tile responses later.
 
-`CellularTiles` likewise polls and reads available contact and control results before submitting the current tick. Those contacts come from the newest completed prior submission, so the current step's contacts can affect a later tick. Completed control readbacks also set `substep_count` and `resolve_count` for later submissions.
+`CellularTiles` likewise polls and reads available contact and control results before submitting the current tick. Tick N actor and rigid-body contact copies are read from tick N+1, waiting only for the submission containing the copy when contact response needs it. Completed control readbacks set `substep_count` and `resolve_count` for later submissions and never wait.
 
 `CellularTiles` has three readback slots. If all actor-contact slots are busy, that tick's actor contacts are skipped; rigid-body contacts instead accumulate until a slot is available.
 
@@ -52,7 +52,11 @@ The synchronization strategy depends on the operation:
 | --- | --- | --- |
 | Static occupancy and settled-dynamic fallback reads | Block with `wait_indefinitely` after mapping. | Static refreshes need current occupancy; the dynamic fallback supplies a snapshot matching the region and ring offset. |
 | Ordinary settled dynamic occupancy reads | Poll without waiting and retain the held snapshot if no matching result is ready. | See [occupancy readback](@/internals/simulation/static-cell-colliders.md#occupancy-readback) for slot handling and fallback conditions. |
-| Rigid-body cell reads, `read_changed_cells` and `read_cells` ([collision world](@/internals/simulation/collision-world.md)) | Block with `wait_indefinitely`; an empty `read_cells` input returns immediately. | Edit-driven detachment and detached-group construction need the mapped cell data immediately. |
+| Rigid-body changed-cell reads, `read_changed_cells` ([collision world](@/internals/simulation/collision-world.md)) | Block when changed-cell data is needed. | Cells under bodies must detach before the step. |
+| Detached-group cell reads, `request_cell_reads` and `read_cell_reads` | Copied at tick N end and read at tick N+1 start; waits only for that copy submission. | Groups are verified against current occupancy before they become bodies or debris. |
+| Pressure breakage tile and rigid-cell feedback | Copied at tick N end and read at tick N+1 start; waits only for that copy submission. | Topology updates are applied on the following tick. |
+| Cellular actor and rigid-body contact feedback | Copied during tick N and consumed starting tick N+1; contact reads wait only for their copied submission. Control sizing never waits. | Feedback is exactly one tick late, never delayed by later queue work. |
+| Fluid actor feedback | Copied during tick N and read starting tick N+1; waits only for that copy submission when actor response needs it. | Samples match the actor records used by that tick. |
 | Normal tile-streaming and kinematics readbacks ([tile streaming](@/internals/world-streaming/tile-streaming.md)) | Map asynchronously; later stream and update calls poll and consume available responses. | These results can be applied after their GPU work completes. |
 | Active tile return during `Scene` drop | On success, polls with `wait_indefinitely` until every response has been applied. A polling, mapping, or inactive-chunk error aborts the return and makes `Scene::drop` panic. | Teardown must return all active tile data to chunks. See [resources and lifetimes](@/architecture/resources-and-lifetimes.md#saving-and-drop-behavior). |
 | Dirty chunk saves during drop | Attempts to save each remaining dirty chunk synchronously up to three times; if any save still fails, drop panics. | See [chunk I/O scheduling](@/internals/world-streaming/chunk-io.md). |
@@ -65,4 +69,4 @@ A failed map is re-requested, but the mapping error also propagates from `Scene:
 
 Fluid count, actor, and import status each have three asynchronous staging slots. A full count/actor ring skips that copy; a full import ring defers import submission. One independent resident-save snapshot is allowed at a time. Streaming retains chunks until particle exports or snapshots are applied; teardown waits for imports and reads the live pool synchronously. See [GPU readback policy](@/internals/shaders/fluid-shader.md#readback-policy).
 
-Queue order makes the previous fluid raster available to cellular kinematics and the current cellular/rigid-body writes available to the following particle solver. [Gas](@/internals/simulation/gases.md) is submitted after the particle solver and reads its new raster, the current tiles, and the cellular tile actor records; it never reads back or waits. CPU body responses still use asynchronous older samples; [fluid coupling](@/internals/simulation/fluid-coupling.md) describes the resulting cache behavior.
+Queue order makes the previous fluid raster available to cellular kinematics and current cellular/rigid-body writes available to the following particle solver. Pressure runs after fluid simulation and consumes current geometry and the new fluid raster. Cellular, actor, rigid-body, and fluid pressure consumers read the buffer published by the preceding tick. Pressure breakage copies are requested after pressure and read the following tick. CPU body responses still use asynchronous older samples; [fluid coupling](@/internals/simulation/fluid-coupling.md) describes the resulting cache behavior.

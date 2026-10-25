@@ -50,13 +50,14 @@ The high five group bits are reserved by the engine:
 
 ## Edits
 
-An `Edit` exposes its `mode` and a `cellular_tiles` map holding each tile's cell mask, material identifiers, and colors. Request one with `Scene::edit`; see [editing and saving the world](@/examples/editing-cells.md) for the request flow.
+An `Edit` exposes its `mode`, `cellular_tiles` fills, and `pressures` map of per-cell pressure deltas. Request one with `Scene::edit`; see [editing and saving the world](@/examples/editing-cells.md) for the request flow.
 
 ### Building an edit
 
 - `Edit::new(mode)` starts an empty edit.
 - `fill_cell(cell: CellCoordinates, material_identifier: MaterialIdentifier, color: u32)` records a cell and replaces any earlier fill of that cell in the edit. Pack `color` as RGBA with red in the least-significant byte: `u32::from_le_bytes([r, g, b, a])`.
 - `fill_segment(start: ScenePosition, end: ScenePosition, radius: f64, material_identifier: MaterialIdentifier, color: u32) -> Result<(), EditError>` fills cells whose centers fall within `radius` of the segment; `radius` is in tiles.
+- `add_pressure_cell` / `remove_pressure_cell` change one cell by an atmosphere amount. `add_pressure_segment` / `remove_pressure_segment` apply the change within a segment radius in tiles.
 
 `fill_segment` edge cases:
 
@@ -72,7 +73,7 @@ Pending edits are applied in request order before the next stream moves their re
 | `EditMode::Insert` | Fills empty cells not overlapped by physical `ActorCollisionComponent` colliders whose memberships include `COLLISION_GROUP_EDIT`; the collider filter is not checked. Contact sensors do not block inserts. |
 | `EditMode::Replace` | Fills every requested cell and ignores colliders. |
 
-In `Replace` mode, filling with `MaterialIdentifier::EMPTY` clears a cell; `Insert` skips fills with `EMPTY`. Filling with a gas material leaves the cell empty and fills it with that gas at the scene's ambient gas pressure, or one atmosphere when the ambient pressure is lower; emptying a cell leaves only phantom air at the ambient pressure.
+In `Replace` mode, filling with `MaterialIdentifier::EMPTY` clears a cell; `Insert` skips fills with `EMPTY`. Filling with a gas material leaves the cell empty and fills it with that gas at scene ambient gas pressure, or one atmosphere when ambient pressure is lower; emptying leaves phantom air at ambient pressure. Pressure edits add to stored pressure in static cells; other cells add phantom air or reduce all gas proportionally.
 
 ### Edit errors
 
@@ -80,6 +81,7 @@ In `Replace` mode, filling with `MaterialIdentifier::EMPTY` clears a cell; `Inse
 
 - `CellularTileInactive { coordinates }`: a tile of the edit is outside the active region.
 - `MaterialUnregistered { material_identifier }`: the material is not in the scene's material table.
+- `InvalidPressure`: a segment pressure is negative or not finite.
 - `CapacityReached`: see below.
 
 `Scene::edit` also returns `CapacityReached` when the tile entries in edits awaiting the next stream would exceed 4096. Tile entries repeated across edits count separately.

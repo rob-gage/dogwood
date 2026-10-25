@@ -17,7 +17,7 @@ The `engine` crate is the game-facing facade. It re-exports scene, actor, materi
 | Crate | Owns | Depends on |
 | --- | --- | --- |
 | `engine` | Facade, `Engine`, `GameInstance`, the `Game` trait | `engine_world`, `engine_graphics`, `engine_host`, `engine_user_interface` |
-| `engine_world` | Actors, scenes, chunk storage, tile streaming, edits, kinematics, collisions, fluids, gases | `engine_graphics`, `engine_host` |
+| `engine_world` | Actors, scenes, chunk storage, tile streaming, edits, kinematics, collisions, fluids, pressure | `engine_graphics`, `engine_host` |
 | `engine_graphics` | Drawing scene output | `engine_host` |
 | `engine_host` | Native window, GPU accelerator, processor pools, system input events | `engine_user_interface` |
 | `engine_user_interface` | egui integration and game UI | none |

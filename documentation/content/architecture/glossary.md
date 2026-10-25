@@ -3,7 +3,7 @@ title = "Glossary and coordinate spaces"
 description = "Definitions and conversions for Dogwood's world, tile-ring, physics, and camera coordinates."
 weight = 70
 [extra]
-sources = ["engine_world/src/scenes/gases", "engine_world/src/scenes/fluids", "engine_world/src/scenes/scene_position.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/cellular_tiles", "engine_world/src/scenes/chunks/chunk_coordinates.rs", "engine_world/src/scenes/chunks/chunk_data.rs", "engine_world/src/scenes/chunks/chunk_region.rs", "engine_world/src/scenes/chunks/chunk_resident.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/chunks/mod.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl", "engine_graphics/src/world/scenes", "engine_graphics/src/renders/scene_renderer.rs", "engine_graphics/src/renders/scene_renderer_sprites.wgsl"]
+sources = ["engine_world/src/scenes/pressure", "engine_world/src/scenes/fluids", "engine_world/src/scenes/scene_position.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/cellular_tiles", "engine_world/src/scenes/chunks/chunk_coordinates.rs", "engine_world/src/scenes/chunks/chunk_data.rs", "engine_world/src/scenes/chunks/chunk_region.rs", "engine_world/src/scenes/chunks/chunk_resident.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/chunks/mod.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl", "engine_graphics/src/world/scenes", "engine_graphics/src/renders/scene_renderer.rs", "engine_graphics/src/renders/scene_renderer_sprites.wgsl"]
 +++
 
 This page defines Dogwood's world terms and coordinate spaces, with the conversion formulas between them. It is a reference for engine contributors.
@@ -12,7 +12,7 @@ This page defines Dogwood's world terms and coordinate spaces, with the conversi
 
 - **Cell:** one grid square, the smallest simulated unit.
 - **Fluid particle:** a continuous-position sample stored separately from cellular cells; see [fluid simulation](@/internals/simulation/fluids.md).
-- **Gas cell:** a cell's gas state in the tile ring: four species slots of a gas index and an amount, phantom air, and face flows. `GAS_AMOUNT_PER_ATMOSPHERE` (65,536) amount units make one atmosphere; see [gas simulation](@/internals/simulation/gases.md).
+- **Gas cell:** a cell's gas state in the tile ring: four species slots of a gas index and an amount, phantom air, and face flows. `GAS_AMOUNT_PER_ATMOSPHERE` (4096) amount units make one atmosphere; see [pressure simulation](@/internals/simulation/pressure.md).
 - **Phantom air:** the ambient gas held as a separate amount in each cell's gas, filling empty cells at the scene's ambient gas pressure; see [tile ring](@/internals/world-streaming/tile-ring.md).
 - **Fluid raster:** per-physical-ring-cell mass, momentum, and selected material derived from particles, shared by simulation and rendering.
 - **Dormant particle:** a chunk-owned record awaiting admission to the live GPU pool; a resident-save copy is distinct from dormant state.

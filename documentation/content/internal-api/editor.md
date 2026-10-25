@@ -31,7 +31,7 @@ Defaults at launch:
 - the editor is paused, in Insert mode;
 - the brush is a circle of 8 cells, white;
 - the selected material is the first in the picker (cellular static first, then cellular dynamic, then fluid, then gas), or the eraser if the picker is empty;
-- tile and chunk grid overlays are hidden;
+- Graphics view is selected; chunks, tiles, and collision overlays are hidden;
 - the update interval is 60 Hz, with a maximum accumulated interval of six updates.
 
 See [editor crate API](@/external-api/editor.md) and [host internals](@/internal-api/host.md).
@@ -79,7 +79,7 @@ Edge cases:
 - An empty clipped edit is not sent to `Scene::edit`, but the editor still treats the request as successful, clears the error, and marks itself edited.
 - Failed edits are retained as the displayed error.
 
-The viewport also supports tile and chunk boundary overlays.
+The toolbar selects Graphics or Pressure view; the pressure view adds a legend. Overlay toggles draw chunks (pink), tiles (dark pink), and collision outlines (green). The cursor is sent as a cell-aligned overlay. The Pressure tool calls `Edit::add_pressure_segment` or `remove_pressure_segment` at its configured rate in atmospheres per second. The Explosion tool places a red-overlay actor and, after its 0–10 second delay while playing, applies pressure within its configured radius.
 
 ### Free camera
 

@@ -20,7 +20,7 @@ The result maps have these tuple shapes:
 | Map | Tuple fields |
 | --- | --- |
 | `cellular_contacts: HashMap<Actor, ([f32; 2], [f32; 2], f32)>` | `(velocity change in tiles/second, contact normal, penetration depth in tiles)` |
-| `rigid_body_contacts: HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2], [f32; 7])>` | `(linear impulse in mass·tiles/second, angular impulse in mass·tiles²/second, two holding-contact records, seven wet-face fluid moments)` |
+| `rigid_body_contacts: HashMap<u64, ([f32; 2], f32, [f32; 7])>` | `(linear impulse in mass·tiles/second, angular impulse in mass·tiles²/second, seven wet-face fluid moments)` |
 
 ### Actor contacts
 
@@ -36,13 +36,11 @@ A map entry is omitted if both velocity change and normal are zero.
 
 The GPU accumulates x/y impulse and angular impulse per body. Rust scales the linear values by tiles per second and the angular value by the cell-to-tile scale and tiles per second.
 
-Each of the two five-float holding records contains contact count, summed normal x/y, and summed arm x/y. Each arm is measured from the body's center of mass and converted to tiles. Contacts are split between the records by the sign of the arm's projection onto the body's local x axis.
-
-Collision normalizes the summed normal and divides the summed arm by count, keeping a normal and average arm per side. Holding contacts persist until a newer readback arrives.
+Rigid-body feedback contains only linear/angular impulse and seven fluid moments. Dynamic grains push moving rigid bodies through GPU impulses; settled grains support them through the Rapier voxel collider. Resting grains still pass their weight.
 
 ## Readback timing and collision response
 
-Contact buffers are copied to one of three staging slots per contact type and mapped asynchronously. A kinematics call returns completed readbacks, if any, rather than waiting for the current GPU tick. The contacts therefore describe an earlier tick and can arrive later than one tick if readback is still in flight.
+Contact buffers are copied to one of three staging slots per contact type and mapped asynchronously. Tick N feedback is read from tick N+1, waiting only for the submission containing that copy when needed; it never waits for later GPU work.
 
 - Actor readbacks are drained in submission order. If several are ready, only the newest map is returned and earlier actor deltas are discarded.
 - `CellularTiles` then zeros the returned velocity changes in its cache, retaining normals and depths until another map arrives.
@@ -50,12 +48,10 @@ Contact buffers are copied to one of three staging slots per contact type and ma
 
 > **Limitation:** If all three actor-contact readback slots are in flight, that tick's actor contacts are skipped and cleared on the next simulation call. Rigid-body contacts remain accumulated until a slot is available.
 
-In the following collision update, collision applies each rigid body's reported linear and angular impulses, updates its holding contacts, and runs the Rapier step.
-
-Before the Rapier step, the holding solver runs four iterations for each awake rigid body; sleeping bodies are skipped. It applies impulses that cancel motion into the dynamic cells holding the body back, including the velocity gravity adds during the step. See [cellular kinematics](@/internals/simulation/cellular-kinematics.md) for the GPU cell interactions and [Rapier collision world](@/internals/simulation/collision-world.md) for collision ordering.
+The following collision update applies each rigid body's reported linear and angular impulses before Rapier advances. Pressure pushes use a separate published-pressure path described in [pressure simulation](@/internals/simulation/pressure.md). See [cellular kinematics](@/internals/simulation/cellular-kinematics.md) for the GPU cell interactions and [Rapier collision world](@/internals/simulation/collision-world.md) for collision ordering.
 
 Fluid actor feedback uses separate asynchronous 32-byte records; [fluid interactions](@/internals/simulation/fluid-coupling.md#actors) describes its cache and response. The [fluid shader reference](@/internals/shaders/fluid-shader.md#packed-records) owns the GPU layout.
 
 ### Rigid-body fluid moments
 
-The final seven values are wet-face mass, x/y momentum, angular current moment, squared-arm mass moment, and x/y mass-weighted arm. Rust converts momentum from cells/tick to tiles/second, angular current by an additional cell-to-tile factor, and arm moments to tiles or tiles². Impulses accumulate over completed readbacks, but holding records are replaced and the seven fluid moments are summed. Collision uses them only when a result map entry arrives; it does not maintain a separate persistent fluid-moment cache. See [rigid-body coupling](@/internals/simulation/fluid-coupling.md#cellular-rigid-bodies).
+The final seven values are wet-face mass, x/y momentum, angular current moment, squared-arm mass moment, and x/y mass-weighted arm. Rust converts momentum from cells/tick to tiles/second, angular current by an additional cell-to-tile factor, and arm moments to tiles or tiles². Impulses accumulate over completed readbacks, but the seven fluid moments are summed. Collision uses them only when a result map entry arrives; it does not maintain a separate persistent fluid-moment cache. See [rigid-body coupling](@/internals/simulation/fluid-coupling.md#cellular-rigid-bodies).
