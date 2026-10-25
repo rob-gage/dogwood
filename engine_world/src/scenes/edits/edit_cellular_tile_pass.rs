@@ -10,8 +10,8 @@ use crate::{
 };
 use engine_host::acceleration::Accelerator;
 
-/// Bytes of one edited tile: its index, ambient gas amount, both cell masks, materials, and colors
-const EDIT_CELLULAR_TILE_BYTE_COUNT: u64 = (6 + 64 + 64) * 4;
+/// Bytes of one edited tile: its index, ambient gas amount, masks, materials, colors, and pressures
+const EDIT_CELLULAR_TILE_BYTE_COUNT: u64 = (6 + 64 + 64 + 64) * 4;
 
 /// GPU writing of edited cells into the active cellular tiles
 pub struct EditCellularTilePass {
@@ -129,17 +129,24 @@ impl EditCellularTilePass {
     pub fn write_cellular_tiles(
         &self,
         accelerator: &Accelerator,
-        edit_cellular_tiles: &[(CellularTileIndex, u64, u64, [MaterialIdentifier; 64], [u32; 64])],
+        edit_cellular_tiles: &[(
+            CellularTileIndex,
+            u64,
+            u64,
+            [MaterialIdentifier; 64],
+            [u32; 64],
+            [f32; 64],
+        )],
         ambient_gas_amount: u32,
     ) {
         if edit_cellular_tiles.is_empty() { return; }
-        // WGSL u32, u32, vec2<u32>, vec2<u32>, and two array<u32, 64> at offsets 0, 4, 8, 16, 24,
-        // and 280
+        // WGSL u32, u32, vec2<u32>, vec2<u32>, two array<u32, 64>, and array<f32, 64> at offsets
+        // 0, 4, 8, 16, 24, 280, and 536
         let mut edit_cellular_tile_bytes: Vec<u8> = Vec::with_capacity(
             edit_cellular_tiles.len() * EDIT_CELLULAR_TILE_BYTE_COUNT as usize,
         );
-        for (cellular_tile_index, inserted_cells, replaced_cells, material_identifiers, colors)
-            in edit_cellular_tiles
+        for (cellular_tile_index, inserted_cells, replaced_cells, material_identifiers, colors,
+            pressures) in edit_cellular_tiles
         {
             let cellular_tile_index: u32 = (*cellular_tile_index).into();
             edit_cellular_tile_bytes.extend_from_slice(&cellular_tile_index.to_le_bytes());
@@ -152,6 +159,9 @@ impl EditCellularTilePass {
             }
             for color in colors {
                 edit_cellular_tile_bytes.extend_from_slice(&color.to_le_bytes());
+            }
+            for pressure in pressures {
+                edit_cellular_tile_bytes.extend_from_slice(&pressure.to_le_bytes());
             }
         }
         accelerator.queue().write_buffer(

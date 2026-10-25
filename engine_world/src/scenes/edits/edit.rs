@@ -28,13 +28,15 @@ pub struct Edit {
         CellularTileCoordinates,
         (u64, [MaterialIdentifier; 64], [u32; 64]),
     >,
+    /// Pressure in atmospheres added to each row-major cell of each tile, negative where removed
+    pub pressures: BTreeMap<CellularTileCoordinates, [f32; 64]>,
 }
 
 impl Edit {
 
     /// Creates an edit without cells
     pub fn new(mode: EditMode) -> Self {
-        Self { mode, cellular_tiles: BTreeMap::new() }
+        Self { mode, cellular_tiles: BTreeMap::new(), pressures: BTreeMap::new() }
     }
 
     /// Fills one cell with a material and packed RGBA color, replacing an earlier fill of the cell
@@ -55,6 +57,26 @@ impl Edit {
         colors[cell_index] = color;
     }
 
+    /// Adds pressure in atmospheres to one cell, accumulating with earlier calls and ignoring a
+    /// negative or nonfinite pressure
+    pub fn add_pressure_cell(&mut self, cell: CellCoordinates, pressure: f32) {
+        if !pressure.is_finite() || pressure < 0.0 { return; }
+        let cell_index: usize = (cell.y.rem_euclid(CELLULAR_TILE_SIZE) * CELLULAR_TILE_SIZE
+            + cell.x.rem_euclid(CELLULAR_TILE_SIZE)) as usize;
+        self.pressures.entry(cell.cellular_tile_coordinates())
+            .or_insert([0.0; 64])[cell_index] += pressure;
+    }
+
+    /// Removes pressure in atmospheres from one cell, accumulating with earlier calls and ignoring
+    /// a negative or nonfinite pressure
+    pub fn remove_pressure_cell(&mut self, cell: CellCoordinates, pressure: f32) {
+        if !pressure.is_finite() || pressure < 0.0 { return; }
+        let cell_index: usize = (cell.y.rem_euclid(CELLULAR_TILE_SIZE) * CELLULAR_TILE_SIZE
+            + cell.x.rem_euclid(CELLULAR_TILE_SIZE)) as usize;
+        self.pressures.entry(cell.cellular_tile_coordinates())
+            .or_insert([0.0; 64])[cell_index] -= pressure;
+    }
+
     /// Fills every cell whose center lies within a radius in tiles of a segment
     pub fn fill_segment(
         &mut self,
@@ -64,9 +86,51 @@ impl Edit {
         material_identifier: MaterialIdentifier,
         color: u32,
     ) -> Result<(), EditError> {
+        for cell in Self::segment_cells(start, end, radius)? {
+            self.fill_cell(cell, material_identifier, color);
+        }
+        Ok(())
+    }
+
+    /// Adds pressure in atmospheres to every cell within a segment radius
+    pub fn add_pressure_segment(
+        &mut self,
+        start: ScenePosition,
+        end: ScenePosition,
+        radius: f64,
+        pressure: f32,
+    ) -> Result<(), EditError> {
+        if !pressure.is_finite() || pressure < 0.0 { return Err(EditError::InvalidPressure); }
+        for cell in Self::segment_cells(start, end, radius)? {
+            self.add_pressure_cell(cell, pressure);
+        }
+        Ok(())
+    }
+
+    /// Removes pressure in atmospheres from every cell within a segment radius
+    pub fn remove_pressure_segment(
+        &mut self,
+        start: ScenePosition,
+        end: ScenePosition,
+        radius: f64,
+        pressure: f32,
+    ) -> Result<(), EditError> {
+        if !pressure.is_finite() || pressure < 0.0 { return Err(EditError::InvalidPressure); }
+        for cell in Self::segment_cells(start, end, radius)? {
+            self.remove_pressure_cell(cell, pressure);
+        }
+        Ok(())
+    }
+
+    /// Returns cells whose centers lie within a radius in tiles of a segment
+    fn segment_cells(
+        start: ScenePosition,
+        end: ScenePosition,
+        radius: f64,
+    ) -> Result<Vec<CellCoordinates>, EditError> {
         let (relative_x, relative_y): (f64, f64) = end.relative_position(start);
         if !radius.is_finite() || radius < 0.0 || !relative_x.is_finite() || !relative_y.is_finite()
-        { return Ok(()); }
+        { return Ok(Vec::new()); }
         // rasterize in cells relative to the start tile so distant positions stay exact
         let cellular_tile_size: f64 = CELLULAR_TILE_SIZE as f64;
         let start_x: f64 =
@@ -88,8 +152,9 @@ impl Edit {
         if cellular_tile_count > EDIT_CELLULAR_TILE_COUNT_MAXIMUM as i128 {
             return Err(EditError::CapacityReached);
         }
-        // fill every cell whose center is within the radius of its closest segment point
+        // select every cell whose center is within the radius of its closest segment point
         let segment_length_squared: f64 = segment_x * segment_x + segment_y * segment_y;
+        let mut cells: Vec<CellCoordinates> = Vec::new();
         for cell_y in minimum_y..=maximum_y {
             for cell_x in minimum_x..=maximum_x {
                 let center_x: f64 = cell_x as f64 + 0.5 - start_x;
@@ -101,17 +166,13 @@ impl Edit {
                 let distance_x: f64 = center_x - projection * segment_x;
                 let distance_y: f64 = center_y - projection * segment_y;
                 if distance_x * distance_x + distance_y * distance_y > radius * radius { continue; }
-                self.fill_cell(
-                    CellCoordinates {
-                        x: start.tile_x * CELLULAR_TILE_SIZE + cell_x,
-                        y: start.tile_y * CELLULAR_TILE_SIZE + cell_y,
-                    },
-                    material_identifier,
-                    color,
-                );
+                cells.push(CellCoordinates {
+                    x: start.tile_x * CELLULAR_TILE_SIZE + cell_x,
+                    y: start.tile_y * CELLULAR_TILE_SIZE + cell_y,
+                });
             }
         }
-        Ok(())
+        Ok(cells)
     }
 
 }

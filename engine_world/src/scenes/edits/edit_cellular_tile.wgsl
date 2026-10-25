@@ -7,6 +7,7 @@ struct EditCellularTile {
     replaced_cells: vec2<u32>,
     material_identifiers: array<u32, 64>,
     colors: array<u32, 64>,
+    pressures: array<f32, 64>,
 };
 
 @group(0) @binding(0)
@@ -40,7 +41,9 @@ const AMOUNT_MAXIMUM: u32 = 16773120u;
 /// tile so dynamic cells and gas around the edit notice it. A gas fills an emptied cell in place
 /// of its phantom air at the ambient pressure, or one atmosphere when there is none; emptying a
 /// cell leaves only ambient phantom air; and a cellular material keeps the cell's gases, which it
-/// then pushes out, but removes its phantom air
+/// then pushes out, but removes its phantom air. Added pressure raises a static cell's stored
+/// pressure or another cell's phantom air, and removed pressure lowers the stored pressure or
+/// every gas amount in proportion, waking the tile's pressure but not its cellular tiles
 @compute @workgroup_size(64)
 fn compute(
     @builtin(workgroup_id) workgroup: vec3<u32>,
@@ -85,6 +88,49 @@ fn compute(
         // awake and disturbed, matching `CELLULAR_TILE_AWAKE`
         atomicOr(&awake[edit_cellular_tiles[edit_cellular_tile_index].cellular_tile_index], 3u);
         // awake, matching `CELLULAR_TILE_GAS_AWAKE`
+        atomicOr(&gas_awake[edit_cellular_tiles[edit_cellular_tile_index].cellular_tile_index], 1u);
+    }
+    let pressure: f32 = edit_cellular_tiles[edit_cellular_tile_index].pressures[cell];
+    if pressure != 0.0 {
+        let amount: u32 = u32(round(abs(pressure) * f32(AMOUNT_PER_ATMOSPHERE)));
+        let material_identifier: u32 = material_identifiers[cell_index];
+        if material_identifier != 0u && material_identifier >> 30u == 0u {
+            let ambient_gas_amount: f32 = f32(
+                edit_cellular_tiles[edit_cellular_tile_index].ambient_gas_amount,
+            );
+            let stored: f32 = f32(bitcast<i32>(gas[cell_index * 2u + 1u].w));
+            let pressure_change: f32 = select(-f32(amount), f32(amount), pressure > 0.0);
+            let updated: f32 = clamp(
+                stored + pressure_change,
+                -ambient_gas_amount,
+                f32(AMOUNT_MAXIMUM) - ambient_gas_amount,
+            );
+            gas[cell_index * 2u + 1u].w = bitcast<u32>(i32(updated));
+        } else {
+            var total: u32 = gas[cell_index * 2u + 1u].x;
+            for (var slot: u32 = 0u; slot < 4u; slot += 1u) {
+                total += gas[cell_index * 2u][slot] & 0xffffffu;
+            }
+            if pressure > 0.0 {
+                gas[cell_index * 2u + 1u].x += min(amount, AMOUNT_MAXIMUM - total);
+            } else if total > 0u {
+                let remaining: u32 = total - min(amount, total);
+                let ratio: f32 = f32(remaining) / f32(total);
+                for (var slot: u32 = 0u; slot < 4u; slot += 1u) {
+                    let word: u32 = gas[cell_index * 2u][slot];
+                    let slot_amount: u32 = word & 0xffffffu;
+                    let updated_amount: u32 = u32(floor(f32(slot_amount) * ratio));
+                    gas[cell_index * 2u][slot] = select(
+                        ((word >> 24u) << 24u) | updated_amount,
+                        0u,
+                        updated_amount == 0u,
+                    );
+                }
+                gas[cell_index * 2u + 1u].x = u32(
+                    floor(f32(gas[cell_index * 2u + 1u].x) * ratio),
+                );
+            }
+        }
         atomicOr(&gas_awake[edit_cellular_tiles[edit_cellular_tile_index].cellular_tile_index], 1u);
     }
 }

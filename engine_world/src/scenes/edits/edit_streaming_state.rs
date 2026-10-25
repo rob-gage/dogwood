@@ -39,8 +39,6 @@ use std::collections::{
 pub struct EditStreamingState {
     /// Edits requested since the last stream in request order
     edits: Vec<Edit>,
-    /// Cellular tiles held by the requested edits
-    cellular_tile_count: usize,
     /// GPU writing of edited cells, absent until edits first stream
     edit_cellular_tile_pass: Option<EditCellularTilePass>,
 }
@@ -49,7 +47,7 @@ impl EditStreamingState {
 
     /// Creates edit streaming without requested edits
     pub fn new() -> Self {
-        Self { edits: Vec::new(), cellular_tile_count: 0, edit_cellular_tile_pass: None }
+        Self { edits: Vec::new(), edit_cellular_tile_pass: None }
     }
 
     /// Requests an edit of resident cells, written before the next stream moves resident tiles,
@@ -61,7 +59,13 @@ impl EditStreamingState {
         active_region: Option<CellularTileRegion>,
     ) -> Result<(), EditError> {
         // the whole edit is rejected unless every tile and material can be written
-        if self.cellular_tile_count + edit.cellular_tiles.len() > EDIT_CELLULAR_TILE_COUNT_MAXIMUM {
+        let mut cellular_tiles: HashSet<CellularTileCoordinates> = self.edits.iter()
+            .flat_map(|queued_edit| queued_edit.cellular_tiles.keys()
+                .chain(queued_edit.pressures.keys()).copied())
+            .collect();
+        cellular_tiles.extend(edit.cellular_tiles.keys().copied());
+        cellular_tiles.extend(edit.pressures.keys().copied());
+        if cellular_tiles.len() > EDIT_CELLULAR_TILE_COUNT_MAXIMUM {
             return Err(EditError::CapacityReached);
         }
         for (coordinates, (cells, material_identifiers, _)) in &edit.cellular_tiles {
@@ -79,6 +83,12 @@ impl EditStreamingState {
                 }
             }
         }
+        // like filled tiles, a pressure tile outside the resident region rejects the whole edit
+        for coordinates in edit.pressures.keys() {
+            if !active_region.is_some_and(|region| region.contains(*coordinates)) {
+                return Err(EditError::CellularTileInactive { coordinates: *coordinates });
+            }
+        }
         for (coordinates, (cells, material_identifiers, colors)) in &mut edit.cellular_tiles {
             for (cell_index, (material_identifier, color)) in
                 material_identifiers.iter().zip(colors.iter_mut()).enumerate()
@@ -93,7 +103,6 @@ impl EditStreamingState {
                 *color = material_table.cellular_color(*material_identifier, cell, *color);
             }
         }
-        self.cellular_tile_count += edit.cellular_tiles.len();
         self.edits.push(edit);
         Ok(())
     }
@@ -122,14 +131,14 @@ impl EditStreamingState {
         // cell, becoming a replacement when an earlier replacement emptied it
         let mut edited_cellular_tiles: BTreeMap<
             CellularTileCoordinates,
-            (u64, u64, [MaterialIdentifier; 64], [u32; 64]),
+            (u64, u64, [MaterialIdentifier; 64], [u32; 64], [f32; 64]),
         > = BTreeMap::new();
         for edit in self.edits.drain(..) {
             for (coordinates, (cells, material_identifiers, colors)) in edit.cellular_tiles {
-                let (inserted_cells, replaced_cells, edited_materials, edited_colors):
-                    &mut (u64, u64, [MaterialIdentifier; 64], [u32; 64]) = edited_cellular_tiles
-                        .entry(coordinates)
-                        .or_insert((0, 0, [MaterialIdentifier::EMPTY; 64], [0; 64]));
+                let (inserted_cells, replaced_cells, edited_materials, edited_colors, _):
+                    &mut (u64, u64, [MaterialIdentifier; 64], [u32; 64], [f32; 64]) =
+                    edited_cellular_tiles.entry(coordinates)
+                        .or_insert((0, 0, [MaterialIdentifier::EMPTY; 64], [0; 64], [0.0; 64]));
                 let blocked_cells: u64 = intersections.get(&coordinates).copied().unwrap_or(0);
                 for cell_index in 0..64 {
                     let cell: u64 = 1 << cell_index;
@@ -163,8 +172,14 @@ impl EditStreamingState {
                     }
                 }
             }
+            for (coordinates, pressures) in edit.pressures {
+                let (_, _, _, _, edited_pressures):
+                    &mut (u64, u64, [MaterialIdentifier; 64], [u32; 64], [f32; 64]) =
+                    edited_cellular_tiles.entry(coordinates)
+                        .or_insert((0, 0, [MaterialIdentifier::EMPTY; 64], [0; 64], [0.0; 64]));
+                for cell_index in 0..64 { edited_pressures[cell_index] += pressures[cell_index]; }
+            }
         }
-        self.cellular_tile_count = 0;
         // validated tiles stay resident because only streaming after this write moves the ring
         let edit_cellular_tiles: Vec<(
             CellularTileIndex,
@@ -172,17 +187,17 @@ impl EditStreamingState {
             u64,
             [MaterialIdentifier; 64],
             [u32; 64],
+            [f32; 64],
         )> = edited_cellular_tiles.into_iter()
-            .filter(|(_, (inserted_cells, replaced_cells, _, _))| {
-                *inserted_cells | *replaced_cells != 0
-            })
-            .filter_map(|(coordinates, (inserted_cells, replaced_cells, materials, colors))| {
+            .filter_map(|(coordinates, (inserted_cells, replaced_cells, materials, colors,
+                pressures))| {
                 Some((
                     cellular_tile_streaming_state.cellular_tile_index(coordinates)?,
                     inserted_cells,
                     replaced_cells,
                     materials,
                     colors,
+                    pressures,
                 ))
             })
             .collect();
