@@ -10,6 +10,7 @@ mod actor_kinematics_position;
 mod actor_kinematics_rotation;
 mod actor_kinematics_velocity;
 mod actor_overlay;
+mod actor_parallax;
 mod actor_pawn_control;
 mod actor_pawn_movement;
 mod actor_pawn_possession;
@@ -27,9 +28,13 @@ pub use actor_kinematics_position::ActorKinematicsPositionComponent;
 pub use actor_kinematics_rotation::ActorKinematicsRotationComponent;
 pub use actor_kinematics_velocity::ActorKinematicsVelocityComponent;
 pub use actor_overlay::{ActorOverlayComponent, ActorOverlayShape};
+pub use actor_parallax::ActorParallaxComponent;
 pub use actor_pawn_control::ActorPawnControlComponent;
 pub use actor_pawn_movement::ActorPawnMovementComponent;
 pub use actor_pawn_possession::ActorPawnPossessionComponent;
 pub use actor_persistence::ActorPersistenceComponent;
 pub use actor_sampler_materials::ActorSamplerMaterialsComponent;
 pub use actor_sprites::ActorSpritesComponent;
+
+// Shared with the graphics representation of parallax planes.
+pub use engine_graphics::world::scenes::ParallaxRepeat;

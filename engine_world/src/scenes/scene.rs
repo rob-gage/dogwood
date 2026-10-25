@@ -48,6 +48,7 @@ use crate::{
             ActorKinematicsPositionComponent,
             ActorOverlayComponent,
             ActorOverlayShape,
+            ActorParallaxComponent,
             ActorPawnControlComponent,
             ActorSpritesComponent,
         },
@@ -64,6 +65,7 @@ use engine_graphics::world::scenes::{
     SceneGraphicsGas,
     SceneGraphicsOverlay,
     SceneGraphicsOverlayShape,
+    SceneGraphicsParallax,
     SceneGraphicsPressure,
     SceneGraphicsSprites,
 };
@@ -558,8 +560,13 @@ impl Scene {
         // place every actor sprite relative to the camera, skipping frames outside their sheet
         // and drawing one sheet pixel per cell at a scale of one
         let mut sprites: SceneGraphicsSprites<'_> = SceneGraphicsSprites::default();
-        for (actor_sprites, position) in self.actor_registry
-            .components::<ActorSpritesComponent, ActorKinematicsPositionComponent>()
+        let mut parallax: Vec<SceneGraphicsParallax<'_>> = Vec::new();
+        for (actor_sprites, position, actor_parallax) in self.actor_registry
+            .components_with_optional::<
+                ActorSpritesComponent,
+                ActorKinematicsPositionComponent,
+                ActorParallaxComponent,
+            >()
         {
             let (actor_x, actor_y): (f64, f64) =
                 position.position.relative_position(camera_position);
@@ -577,6 +584,42 @@ impl Scene {
                 let Some(texture_region): Option<[f32; 4]> =
                     sprite_sheet.frame_texture_region(*frame)
                 else { continue; };
+                if let Some(actor_parallax) = actor_parallax {
+                    if !actor_parallax.depth.is_finite() || actor_parallax.depth < 0.0
+                        || actor_parallax.scroll_factor.iter().chain(actor_parallax.offset.iter())
+                            .any(|value| !value.is_finite())
+                        || [*offset_x, *offset_y, *scale_x, *scale_y, *rotation]
+                            .into_iter().chain(*color).any(|value| !value.is_finite())
+                    { continue; }
+                    let projection: f64 = 1.0 / (1.0 + f64::from(actor_parallax.depth));
+                    let (camera_scroll_x, camera_scroll_y) =
+                        camera_position.relative_position(actor_parallax.scroll_origin);
+                    // Preserve exact nearby subtraction for the default scroll factors.
+                    let scroll_x = camera_scroll_x * (1.0 - f64::from(actor_parallax.scroll_factor[0]));
+                    let scroll_y = camera_scroll_y * (1.0 - f64::from(actor_parallax.scroll_factor[1]));
+                    // Use the same pixel-to-cell scale as ordinary actor sprites.
+                    // Signed scales retain the sprite system's horizontal/vertical flipping.
+                    parallax.push(SceneGraphicsParallax {
+                        texture: sprite_sheet.texture_view(),
+                        center: [
+                            ((actor_x + f64::from(*offset_x) + f64::from(actor_parallax.offset[0]) + scroll_x) * projection) as f32,
+                            ((actor_y + f64::from(*offset_y) + f64::from(actor_parallax.offset[1]) + scroll_y) * projection) as f32,
+                        ],
+                        size: [
+                            (f64::from(sprite_sheet.width()) * f64::from(*scale_x)
+                                / CELLULAR_TILE_SIZE as f64 * projection) as f32,
+                            (f64::from(sprite_sheet.height()) * f64::from(*scale_y)
+                                / CELLULAR_TILE_SIZE as f64 * projection) as f32,
+                        ],
+                        depth: actor_parallax.depth,
+                        repeat: actor_parallax.repeat,
+                        order: *depth,
+                        rotation: *rotation,
+                        texture_region,
+                        color: *color,
+                    });
+                    continue;
+                }
                 sprites.sprites.push((
                     sprite_sheet.texture_view(),
                     (actor_x + f64::from(*offset_x)) as f32,
@@ -602,6 +645,7 @@ impl Scene {
             fluid: self.fluid_graphics(camera_position),
             gas: self.gas_graphics(camera_position),
             pressure: self.pressure_graphics(camera_position),
+            parallax,
             sprites,
             overlays: self.actor_registry
                 .components::<ActorOverlayComponent, ActorKinematicsPositionComponent>()

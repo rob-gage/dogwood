@@ -104,3 +104,54 @@ See the linked rustdoc for variant payloads.
 `fluid_capacity_factor()` returns the configured pool fraction. `set_fluid_capacity_factor(factor)` accepts finite values in `(0, 1]` before the first stream creates the pool; otherwise it returns `InvalidFluidCapacityFactor` or `FluidCapacityFixed`. The default is `0.25`, and capacity is `floor(factor * active-region cell count)`.
 
 The pool is allocated even when no fluid material is registered. A very small positive factor can round to zero particles. The factor sets particle capacity, not all region-sized scratch memory. See [fluid streaming](@/internals/world-streaming/fluid-streaming.md) for capacity reservations and persistence.
+
+## Parallax backgrounds
+
+A parallax layer is an ordinary actor with `ActorKinematicsPositionComponent`, `ActorSpritesComponent`, and `ActorParallaxComponent { depth, ..Default::default() }`. One actor can contain several coplanar sprites; use separate actors for different physical distances. Spawn, despawn, or modify these components through `actor_registry_mutable()` during gameplay. Removing the parallax component routes its sprites back into ordinary gameplay rendering on the next frame.
+
+`depth` is the distance behind gameplay in scene tiles. Projection uses a fixed one-tile focal distance: camera-relative position, sprite offsets, and sprite dimensions are multiplied by `1 / (1 + depth)`. At depth zero, movement and size match gameplay; depth three gives quarter-speed movement and quarter size. Camera zoom applies normally. Exact tile subtraction precedes projection, preserving nearby precision at large scene coordinates.
+
+Sprites retain the existing scale convention: at scale one, each source pixel spans one cell. Unprojected width in tiles is `sheet.width() * scale_x / CELLULAR_TILE_SIZE`, with the same rule for height. Signed scales flip sprites. Set scale to `desired_world_width * CELLULAR_TILE_SIZE / sheet.width()` to author an explicit world width. Offsets are in scene tiles, rotation is counterclockwise radians, and tint is linear RGBA.
+
+All parallax sprites draw behind gameplay, farthest first. At equal physical depth, the sprite tuple's integer depth controls draw order. Equal physical depth and integer order preserve ECS traversal order and sprite vector order; ordering across different actors is not a persistent contract. Nonfinite scroll factors or negative or nonfinite physical depth skip that actor's sprites. Invalid frames or nonfinite offsets, scale, rotation, or tint skip the affected sprite. Zero scale is invisible.
+
+The template creates a separate finite blue sky actor at depth 10,000 tiles and far, middle, and near stone-slope actors with generated transparent PNGs in `template/assets/sprites/` with `parallax_` prefixes. Each landscape actor repeats horizontally with mirroring; the sky is a single large static sprite with no repetition. These are runtime actors, not saved chunk data. Repetition is configured independently on each sprite-local axis. `ActorParallaxComponent` automatically inserts `ActorPersistenceComponent`, so background anchors outside the simulation region remain alive. Removing parallax does not remove that persistence marker. Explicit despawn remains available. Collision and movement retain their ordinary contracts.
+
+```rust
+use engine::actors::components::{
+    ActorKinematicsPositionComponent, ActorParallaxComponent, ActorSpritesComponent,
+};
+// Add alongside the actor's position and existing sprite records:
+let parallax = ActorParallaxComponent {
+    depth: 3.0,
+    scroll_factor: [1.0, 0.2],
+    ..Default::default()
+};
+```
+
+> **Not implemented:** Lighting, radiance textures, parallax light spill, and normal maps. Graphics records retain physical depth separately from integer sprite order for later lighting.
+
+### Independent scroll axes
+
+`scroll_factor: [horizontal, vertical]` defaults to `[1.0, 1.0]`. Each axis multiplies the camera-motion response already derived from depth. For example, `[1.0, 0.1]` gives distant mountains ten times less vertical scrolling than horizontal scrolling for equal camera displacement. Zero follows the camera on that axis, values above one move faster, and negative values reverse scrolling. Sprite dimensions are unaffected by these factors.
+
+`scroll_origin: ScenePosition` defaults to the world origin and anchors camera motion: at this camera position, scroll factors do not change the actor's world placement. With actor coordinate `P`, camera coordinate `C`, origin `O`, factor `F`, layer offset `L`, and depth `D`, projected center is `((P - C) + (C - O) * (1 - F) + L + sprite_offset) / (1 + D)`, independently for each axis. Use a nearby origin in very large worlds when overriding scroll factors. Changing a factor at runtime can reposition the background according to this anchor.
+
+### Placement and tiling
+
+`ActorParallaxComponent::offset: [f32; 2]` sets horizontal and vertical layer placement in unprojected scene tiles, in addition to actor position and each sprite's offset. It defaults to zero and applies to both finite and repeating layers. Nonfinite offsets skip the actor's sprites.
+
+`repeat: [ParallaxRepeat; 2]` controls the sprite-local horizontal and vertical axes independently. `None` draws a finite sprite, `Repeat` repeats its frame, and `Mirror` alternates flipped copies to join nonseamless artwork. Both axes default to `None`. Import `ParallaxRepeat` from `engine::actors::components`. The actor position plus offsets anchors the original copy; repetition continues in both directions on enabled axes. Rotation rotates the repetition axes with the sprite. Each sprite on the actor repeats at its own scaled width and height.
+
+Only viewport-overlapping copy ranges are expanded. Zero-sized sprites and patterns requiring more than 16,384 candidate copies per source sprite are skipped. Zoom, depth, scale, and offsets all affect the visible range. Renderer records retain physical depth and draw order for every source plane.
+
+```rust
+use engine::actors::components::{ActorParallaxComponent, ParallaxRepeat};
+let mountains = ActorParallaxComponent {
+    depth: 24.0,
+    offset: [0.0, 400.0], // World tiles; projects to 16 tiles above the actor
+    repeat: [ParallaxRepeat::Mirror, ParallaxRepeat::None],
+    scroll_factor: [1.0, 0.1],
+    ..Default::default()
+};
+```

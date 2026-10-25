@@ -7,6 +7,8 @@ use engine::{
             ActorCameraComponent,
             ActorCollisionComponent,
             ActorKinematicsPositionComponent,
+            ActorParallaxComponent,
+            ParallaxRepeat,
             ActorPawnMovementComponent,
             ActorPawnPossessionComponent,
             ActorPersistenceComponent,
@@ -25,6 +27,7 @@ use engine::{
         MaterialRegistry,
     },
     scenes::{
+        cellular_tiles::CELLULAR_TILE_SIZE,
         chunks::ChunkData,
         collisions::{
             Collider,
@@ -145,6 +148,42 @@ impl TemplateGame {
             Arc::new(TemplateSceneGenerator { stone }),
             0,
         );
+        // Each background is a normal sprite actor with an independent physical depth.
+        let sky = Arc::new(SpriteSheet::from_color(accelerator, 131, 188, 218, 255)?);
+        scene.actor_registry_mutable().spawn((
+            ActorKinematicsPositionComponent::default(),
+            ActorParallaxComponent {
+                // A separate finite sky plane, reserved for ambient radiance later.
+                depth: 10_000.0, ..Default::default()
+            },
+            ActorSpritesComponent {
+                sprites: vec![(sky, 0, 0.0, 0.0, 16_000_000.0, 16_000_000.0,
+                    0.0, [1.0; 4], 0)],
+            },
+        ))?;
+        for (pixels, depth, elevation, apparent_width, vertical_scroll) in [
+            (include_bytes!("../assets/sprites/parallax_far_slopes.png").as_slice(), 24.0, 2.0, 120.0, 0.1),
+            (include_bytes!("../assets/sprites/parallax_middle_slopes.png").as_slice(), 8.0, 1.0, 112.0, 0.25),
+            (include_bytes!("../assets/sprites/parallax_near_slopes.png").as_slice(), 2.0, 0.5, 80.0, 0.5),
+        ] {
+            let sheet = Arc::new(SpriteSheet::from_png(accelerator, pixels, 1, 1)?);
+            let distance = 1.0 + depth;
+            // Taller textures put their surface near the center and continue stone below it.
+            // Author apparent widths independently of physical distance.
+            let width = apparent_width * distance;
+            let scale = width * CELLULAR_TILE_SIZE as f32 / sheet.width() as f32;
+            scene.actor_registry_mutable().spawn((
+                ActorKinematicsPositionComponent::default(),
+                ActorParallaxComponent {
+                    depth, offset: [0.0, elevation * distance],
+                    repeat: [ParallaxRepeat::Mirror, ParallaxRepeat::None],
+                    scroll_factor: [1.0, vertical_scroll], ..Default::default()
+                },
+                ActorSpritesComponent {
+                    sprites: vec![(sheet, 0, 0.0, 0.0, scale, scale, 0.0, [1.0; 4], 0)],
+                },
+            ))?;
+        }
         // a one-tile white square with a matching circular body
         let player: Actor = scene.actor_registry_mutable().spawn((
             ActorKinematicsPositionComponent {

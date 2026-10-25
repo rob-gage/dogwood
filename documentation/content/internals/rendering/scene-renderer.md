@@ -14,6 +14,7 @@ This page is for engine contributors. It covers how a scene becomes graphics dat
 
 - Derives the visible width and height from the camera.
 - Collects actor sprites relative to the camera position.
+- Projects sprites on actors with `ActorParallaxComponent`, retaining their physical depth in `SceneGraphicsParallax`.
 - Includes cellular, fluid, gas, and pressure buffers only when a streamed active tile region is available; it also includes actor overlays.
 
 Sprite frames outside a sheet are skipped. Sheet pixel dimensions are converted to tile units using `CELLULAR_TILE_SIZE`. Each valid sprite record applies the component's offsets and scales and carries its rotation, depth, and color.
@@ -38,6 +39,7 @@ It rounds the resulting viewport dimensions, caps them at the texture dimensions
 
 The renderer prepares passes only when the viewport has nonzero dimensions. Cellular rendering also requires a present cellular record with nonzero region width, region height, and tile size. Fluid, gas, and pressure rendering require the same nonzero viewport and region dimensions. Pressure rendering is selected by `SceneRendererViewMode::Pressure`. It classifies and shades fluid cells in two compute dispatches before opening one render pass with no depth attachment and draws in this order:
 
+0. Parallax planes, sorted farthest first by physical depth, then by sprite integer order, through a dedicated sprite pass instance.
 1. Sprites with depth `i32::MIN..=-1`.
 2. Fluid raster, when resident fluid data is available.
 3. Gas cells, when resident gas data is available.
@@ -55,3 +57,5 @@ Each pass uses premultiplied-alpha blending. `SceneRenderer` finishes its comman
 - [Sprite render pass](@/internals/rendering/sprite-pass.md): depth sorting, instance packing, and texture batching.
 
 - [Fluid render pass](@/internals/rendering/fluid-pass.md): cell classification, shading, and blending.
+
+Parallax preparation expands visible copy ranges according to each plane's per-axis `ParallaxRepeat`. Layer offsets set the original placement for finite and repeated sprites. Copy placement rotates with each sprite; candidate ranges cover the inverse-rotated viewport. Patterns exceeding 16,384 copies per sprite are skipped to bound CPU expansion.

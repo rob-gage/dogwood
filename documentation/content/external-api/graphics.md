@@ -39,7 +39,7 @@ Game code generally needs only `SpriteSheet`. Integrators providing their own re
 
 ## Scene graphics and renderer
 
-`SceneGraphics`, `SceneGraphicsCellular`, `SceneGraphicsFluid`, `SceneGraphicsGas`, `SceneGraphicsPressure`, `SceneGraphicsOverlay`, `SceneGraphicsOverlayShape`, and `SceneGraphicsSprites` (in `engine_graphics::world::scenes`) are borrowed descriptions of one frame:
+`SceneGraphics`, `SceneGraphicsCellular`, `SceneGraphicsFluid`, `SceneGraphicsGas`, `SceneGraphicsPressure`, `SceneGraphicsOverlay`, `SceneGraphicsOverlayShape`, and `SceneGraphicsSprites`, and `SceneGraphicsParallax` (in `engine_graphics::world::scenes`) are borrowed descriptions of one frame:
 
 - the visible tile dimensions;
 - optional resident cellular buffers and ring placement;
@@ -68,3 +68,5 @@ Each frame is drawn in this order, into a centered letterboxed viewport:
 {{ <rustdoc path="engine_graphics/world/scenes/struct.SceneGraphics.html" text="SceneGraphics" /> }} ·
 {{ <rustdoc path="engine_graphics/renders/struct.SceneRenderer.html" text="SceneRenderer" /> }} ·
 {{ <rustdoc path="engine_graphics/renders/enum.SceneRendererViewMode.html" text="SceneRendererViewMode" /> }}
+
+Parallax records contain projected centers and sizes plus physical depth. `SceneRenderer` draws these planes farthest first through a separate sprite pass before all gameplay content. See [parallax backgrounds](@/external-api/scenes.md#parallax-backgrounds) for authoring and projection.

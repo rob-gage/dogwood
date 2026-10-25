@@ -68,6 +68,15 @@ impl ActorRegistry {
         })
     }
 
+    /// Iterates required component pairs with a third component when present
+    pub(crate) fn components_with_optional<A: Component, B: Component, C: Component>(
+        &self,
+    ) -> impl Iterator<Item = (&A, &B, Option<&C>)> {
+        self.world.iter_entities().filter_map(|entity: EntityRef<'_>| {
+            Some((entity.get::<A>()?, entity.get::<B>()?, entity.get::<C>()))
+        })
+    }
+
     /// Returns a mutable component of a live actor
     pub fn component_mutable<T: Component<Mutability = Mutable>>(
         &mut self,

@@ -15,14 +15,18 @@ See [actors](@/external-api/actors.md) for registry operations and [collisions a
 | Goal | Components |
 |---|---|
 | Camera | `ActorCameraComponent` + `ActorKinematicsPositionComponent` |
+| Parallax layer | `ActorKinematicsPositionComponent` + `ActorSpritesComponent` + `ActorParallaxComponent` |
 | Visible sprite | `ActorKinematicsPositionComponent` + `ActorSpritesComponent` |
 | Controllable pawn | `ActorKinematicsPositionComponent` + `ActorCollisionComponent` (kinematic body) + `ActorPawnMovementComponent` + `ActorPawnPossessionComponent` (`ActorPawnControlComponent` is optional; the game instance supplies it for possessed pawns) |
+
+See [parallax backgrounds](@/external-api/scenes.md#parallax-backgrounds) for physical depth, sprite scale, and gameplay changes.
 
 ## Component reference
 
 | Component | Fields | Defaults | Current engine use |
 |---|---|---|---|
 | `ActorIdentityComponent` | Private `Actor`; `new(actor)`, `actor()` | None | Registry identity, inserted by `spawn`. Do not insert or remove it manually. |
+| `ActorParallaxComponent` | `depth: f32` in tiles, `scroll_factor: [f32; 2]`, `scroll_origin: ScenePosition`, `offset: [f32; 2]`, `repeat: [ParallaxRepeat; 2]` | Depth `0.0`, factors `[1.0, 1.0]`, origin/offset zero, no repetition | Routes existing actor sprites into background rendering and requires `ActorPersistenceComponent`; invalid depth skips sprites. |
 | `ActorCameraComponent` | `width`, `height: u32` in cellular tiles at zoom 1; `zoom: f32` | None | Scene camera size; `visible_width()` and `visible_height()` multiply `width` and `height` by `zoom`. |
 | `ActorKinematicsPositionComponent` | `position: ScenePosition` | Zero position | Position in tiles with fixed-point offsets, used for camera, rendering, collision, and kinematics. See [coordinate spaces](@/architecture/glossary.md). |
 | `ActorCollisionComponent` | `body: CollisionBody`; `collider: Collider`; `memberships`, `filter: u32`; `mass: f32` | None | Read by collision and dynamic-cell kinematics; pressure simulation also reads its shape from the cellular tile actor records to close cells and drag gas. `mass` uses dynamic cellular material mass units; it decides how far dynamic cells push the actor and how much they slow it. |
@@ -69,7 +73,7 @@ Each `sprites` entry is `(Arc<SpriteSheet>, u32, f32, f32, f32, f32, f32, [f32; 
 ## Requirements
 
 - The camera actor needs a position for streaming and drawing. Streaming requests a region twice the camera's unzoomed width and height; zoom changes only the displayed view.
-- Sprites are read only from positioned actors. Negative depths draw behind cellular content, nonnegative depths above it, and out-of-range frames are skipped; see [graphics](@/external-api/graphics.md).
+- Sprites are read only from positioned actors. Ordinary sprite negative integer depths draw behind cellular content, nonnegative integer depths above it. Actors with `ActorParallaxComponent` route sprites into background rendering using physical depth; integer depth orders coplanar sprites. Out-of-range frames are skipped; see [graphics](@/external-api/graphics.md).
 - Pawn movement needs a positioned actor with a kinematic collision body and a physical collider.
 - Kinematic and dynamic actors in cellular kinematics need finite, positive `mass`, or simulation returns `SceneError::InvalidCollider`. Fixed bodies use an engine-assigned kinematics mass.
 

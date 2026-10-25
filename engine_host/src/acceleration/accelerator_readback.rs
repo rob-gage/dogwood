@@ -84,6 +84,11 @@ impl<T> AcceleratorReadback<T> {
     /// Starts mapping every copied slot after the submission containing its copy
     pub fn map(&mut self, submission_index: wgpu::SubmissionIndex) {
         for (slot, readback) in self.slots.iter_mut().enumerate() {
+            // A submission may contain no new copy for a still-mapping slot. Keep its
+            // ownership until read() drops the mapped view and unmaps the buffer.
+            if !matches!(readback.state, AcceleratorReadbackSlotState::Copied { .. }) {
+                continue;
+            }
             let AcceleratorReadbackSlotState::Copied { metadata, size } =
                 std::mem::replace(&mut readback.state, AcceleratorReadbackSlotState::Free)
             else { continue; };

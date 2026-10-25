@@ -75,4 +75,4 @@ Settled grains support bodies only through the settled voxel collider, and movin
 
 ## Drawing
 
-Graphics borrows cellular buffers, fluid raster/materials, and actor sprites. Fluid classification and shading run before the scene render pass; [scene rendering](@/internals/rendering/scene-renderer.md#pass-order) defines compositing order. Rendering does not advance particle simulation, and CPU body reactions can lag the raster shown on screen.
+Graphics borrows cellular buffers, fluid raster/materials, actor sprites, and projected parallax planes. Fluid classification and shading run before the scene render pass; [scene rendering](@/internals/rendering/scene-renderer.md#pass-order) defines compositing order. Rendering does not advance particle simulation, and CPU body reactions can lag the raster shown on screen.

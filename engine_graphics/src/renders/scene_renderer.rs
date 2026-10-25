@@ -14,6 +14,7 @@ use crate::world::scenes::{
     SceneGraphicsFluid,
     SceneGraphicsGas,
     SceneGraphicsPressure,
+    SceneGraphicsSprites,
 };
 use engine_host::acceleration::Accelerator;
 
@@ -31,6 +32,8 @@ pub enum SceneRendererViewMode {
 pub struct SceneRenderer {
     /// Appearance drawn by this renderer
     view_mode: SceneRendererViewMode,
+    /// Separate background rendering, sharing sprite batching and alpha blending
+    parallax_pass: SceneRendererSpritesPass,
     /// Renderer of sprites with negative depth, drawn behind cellular content
     behind_cellular_sprites_pass: SceneRendererSpritesPass,
     /// Renderer of resident fluid particles rasterized at cell resolution
@@ -53,6 +56,7 @@ impl SceneRenderer {
     pub fn new(accelerator: &Accelerator) -> Self {
         Self {
             view_mode: SceneRendererViewMode::Graphics,
+            parallax_pass: SceneRendererSpritesPass::new(accelerator, i32::MIN..=i32::MAX),
             behind_cellular_sprites_pass: SceneRendererSpritesPass::new(accelerator, i32::MIN..=-1),
             fluid_pass: SceneRendererFluidPass::new(accelerator),
             gas_pass: SceneRendererGasPass::new(accelerator),
@@ -161,6 +165,21 @@ impl SceneRenderer {
                     && pressure_graphics.cellular_tile_size > 0
             });
         if is_viewport_visible {
+            // Physical distance sorts first, then sprite order within coplanar backgrounds.
+            let mut layers: Vec<_> = graphics.parallax.iter()
+                .flat_map(|layer| layer.visible_copies(visible_width, visible_height)).collect();
+            layers.sort_by(|a, b| b.depth.total_cmp(&a.depth).then(a.order.cmp(&b.order)));
+            let backgrounds = SceneGraphicsSprites {
+                sprites: layers.iter().map(|layer| (
+                    layer.texture, layer.center[0], layer.center[1],
+                    layer.size[0], layer.size[1], layer.rotation, 0,
+                    layer.texture_region, layer.color,
+                )).collect(),
+            };
+            self.parallax_pass.prepare(
+                accelerator, format, viewport_x, viewport_y,
+                viewport_width, viewport_height, pixels_per_tile, &backgrounds,
+            );
             self.behind_cellular_sprites_pass.prepare(
                 accelerator,
                 format,
@@ -280,6 +299,7 @@ impl SceneRenderer {
                 1.0,
             );
             render_pass.set_scissor_rect(viewport_x, viewport_y, viewport_width, viewport_height);
+            self.parallax_pass.draw(&mut render_pass, format);
             self.behind_cellular_sprites_pass.draw(&mut render_pass, format);
             if fluid_graphics.is_some() {
                 self.fluid_pass.draw(&mut render_pass, format);

@@ -38,6 +38,8 @@ Tile streaming and kinematics do not use a worker pool. They submit GPU work and
 
 `CellularTiles` has three readback slots. If all actor-contact slots are busy, that tick's actor contacts are skipped; rigid-body contacts instead accumulate until a slot is available.
 
+`AcceleratorReadback::map` transitions only slots with newly recorded copies into mapping. Slots already mapping retain their metadata and ownership across subsequent submissions, including submissions with no new copies. A slot becomes reusable only after its result is consumed and its buffer is unmapped.
+
 ## Queue ordering and readback
 
 When shifting the tile ring, the state encodes copies of outgoing tiles, submits those copies, then queues `write_buffer` uploads for incoming tiles that reuse slots. Queue order makes each departing tile's readback capture the old slot contents before the incoming tile replaces them.

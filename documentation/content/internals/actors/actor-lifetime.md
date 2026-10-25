@@ -3,7 +3,7 @@ title = "Actor lifetime in the active region"
 description = "How collision simulation removes actors that leave the active region and how persistence affects despawning."
 weight = 40
 [extra]
-sources = ["engine_world/src/scenes/collisions/collision.rs", "engine_world/src/actors/components/actor_persistence.rs", "engine_world/src/scenes/scene.rs", "engine/src/games/game_instance.rs", "engine_world/src/actors/components/actor_identity.rs", "engine_world/src/actors/actor_registry.rs", "engine_world/src/scenes/chunks", "engine_world/src/actors/components/actor_camera.rs", "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs", "editor/src/editor.rs"]
+sources = ["engine_world/src/actors/components/actor_parallax.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/actors/components/actor_persistence.rs", "engine_world/src/scenes/scene.rs", "engine/src/games/game_instance.rs", "engine_world/src/actors/components/actor_identity.rs", "engine_world/src/actors/actor_registry.rs", "engine_world/src/scenes/chunks", "engine_world/src/actors/components/actor_camera.rs", "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs", "editor/src/editor.rs"]
 +++
 
 This page is for engine contributors. It explains when an actor is despawned because it left the [active region](@/architecture/glossary.md), and how `ActorPersistenceComponent` and camera actors affect that.
@@ -40,3 +40,5 @@ The editor's free camera is spawned with `ActorPersistenceComponent`, so it rema
 - Scene streaming sizes the region to `2 * camera.width` by `2 * camera.height` tiles, using the camera position's tile coordinates. `zoom` does not affect this size.
 
 See [actor registry and identity](@/internals/actors/registry.md) for handle behavior after despawn and [world streaming](@/internals/world-streaming/_index.md) for active-region residency.
+
+Parallax actors automatically receive `ActorPersistenceComponent` when `ActorParallaxComponent` is inserted. Their placement anchors can leave the active simulation region while their repeated sprites remain visible. Removing the parallax component retains the persistence marker; gameplay may remove it separately or explicitly despawn the actor.

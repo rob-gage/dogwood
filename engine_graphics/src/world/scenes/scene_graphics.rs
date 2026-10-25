@@ -28,6 +28,8 @@ pub struct SceneGraphics<'a> {
     pub gas: Option<SceneGraphicsGas<'a>>,
     /// Resident pressure, absent until a cellular region has streamed onto the GPU
     pub pressure: Option<SceneGraphicsPressure<'a>>,
+    /// Background planes with physical depth, drawn before gameplay
+    pub parallax: Vec<super::SceneGraphicsParallax<'a>>,
     /// Sprite content drawn around the cellular content by depth
     pub sprites: SceneGraphicsSprites<'a>,
     /// Cell-aligned areas drawn over the scene
