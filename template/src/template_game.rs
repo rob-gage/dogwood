@@ -129,7 +129,7 @@ impl TemplateGame {
             name: String::from("water vapor"),
             properties: MaterialPropertiesGas {
                 mass: 18.0,
-                diffusivity: 0.01,
+                diffusivity: 0.04,
                 cohesion: 0.1,
                 graphics: MaterialGraphicsGas {
                     color: u32::from_le_bytes([225, 230, 240, 150]),

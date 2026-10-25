@@ -5,7 +5,7 @@ pub mod chunks;
 pub mod collisions;
 pub mod edits;
 pub mod fluids;
-pub mod gases;
+pub mod pressure;
 mod scene;
 mod scene_error;
 mod scene_generator;

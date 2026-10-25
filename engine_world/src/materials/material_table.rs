@@ -196,11 +196,11 @@ impl MaterialTable {
                 return Err(String::from("at most 255 gas materials can be registered"));
             }
             if !properties.mass.is_finite() || properties.mass <= 0.0
-                || !(0.0..=0.1).contains(&properties.diffusivity)
+                || !(0.0..=0.4).contains(&properties.diffusivity)
                 || !(0.0..=1.0).contains(&properties.cohesion)
             {
                 return Err(String::from(
-                    "gas materials need a positive mass, a diffusivity from zero to 0.1, and a \
+                    "gas materials need a positive mass, a diffusivity from zero to 0.4, and a \
                     cohesion from zero to one",
                 ));
             }

@@ -26,8 +26,8 @@ use super::{
         FluidActorContact,
         Fluids,
     },
-    gases::{
-        Gases,
+    pressure::{
+        Pressure,
         GAS_AMOUNT_MAXIMUM,
         GAS_AMOUNT_PER_ATMOSPHERE,
     },
@@ -92,7 +92,7 @@ pub struct Scene {
     /// GPU PBF simulation and fixed-capacity particle pool, absent until the tile ring is created
     fluids: Option<Fluids>,
     /// GPU simulation of the gas in the active cellular tiles, absent until simulated
-    gases: Option<Gases>,
+    pressure: Option<Pressure>,
     /// Requested edits awaiting their write into the GPU-resident cellular tiles
     edit_streaming_state: EditStreamingState,
     /// Whether the next stream advance must start a resident particle save snapshot
@@ -136,7 +136,7 @@ impl Scene {
             collision: None,
             cellular_tiles: None,
             fluids: None,
-            gases: None,
+            pressure: None,
             edit_streaming_state: EditStreamingState::new(),
             is_fluid_save_requested: false,
             fluid_snapshot_chunk_region_index: None,
@@ -409,6 +409,7 @@ impl Scene {
         let Some(active_region): Option<CellularTileRegion> =
             cellular_tile_streaming_state.active_cellular_tile_region()
         else { return Ok(()); };
+        let ambient_gas_amount: u32 = self.ambient_gas_amount();
         // dynamic cells move against actors and rigid bodies where the previous step left them,
         // and push back on them once their contacts are read
         let collision: &mut Collision = self.collision
@@ -493,8 +494,7 @@ impl Scene {
                 self.material_table.fluid_properties_buffer(),
             );
         particle_simulation_result?;
-        // gas moves last, through the cells the other simulations and actors left open
-        let ambient_gas_amount: u32 = self.ambient_gas_amount();
+        // pressure moves last, through the cells the other simulations and actors left open
         let fluid_raster_buffer: &wgpu::Buffer = self.fluids
             .as_ref()
             .expect("fluid storage exists with the tile buffers")
@@ -502,23 +502,24 @@ impl Scene {
         let cellular_tiles: &CellularTiles = self.cellular_tiles
             .as_ref()
             .expect("cellular tile simulation exists after simulation");
-        self.gases
-            .get_or_insert_with(|| Gases::new(
+        let pressure: &mut Pressure = self.pressure
+            .get_or_insert_with(|| Pressure::new(
                 accelerator,
                 cellular_tile_buffers,
                 &self.material_table,
                 fluid_raster_buffer,
                 cellular_tiles.actor_buffer(),
-            ))
-            .simulate_gases(
-                accelerator,
-                active_region,
-                cellular_tile_streaming_state.cellular_tile_ring_offset(),
-                self.gravity,
-                ambient_gas_amount,
-                self.ambient_gas_mass,
-                cellular_tiles.fluid_actors().len() as u32,
-            )?;
+                collision.rigid_body_pass().cellular_tile_buffer(),
+            ));
+        pressure.simulate_pressure(
+            accelerator,
+            active_region,
+            cellular_tile_streaming_state.cellular_tile_ring_offset(),
+            self.gravity,
+            ambient_gas_amount,
+            self.ambient_gas_mass,
+            cellular_tiles.fluid_actors().len() as u32,
+        )?;
         if let Some((streaming_request_identifier, _)) = particle_export_target {
             self.cellular_tile_streaming_state.as_mut()
                 .expect("tile streaming state exists after simulation")

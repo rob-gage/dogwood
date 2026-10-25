@@ -19,10 +19,13 @@ pub struct CellularTileBuffers {
     rigid_body_cell_buffer: wgpu::Buffer,
     /// Tile-major gas of each row-major cell as eight `u32`: four species slots with a gas index in
     /// the top eight bits and an amount below, the phantom air amount, the flows through the cell's
-    /// right and top faces as `f32` bits, and padding
+    /// right and top faces as `f32` bits, and the stored pressure of a static cell as `i32` bits
     gas_buffer: wgpu::Buffer,
-    /// Whether each tile's gas must be simulated, with one `u32` per tile
+    /// Whether each tile's pressure must be simulated, with one `u32` per tile
     gas_awake_buffer: wgpu::Buffer,
+    /// Tile-major pressure of each row-major cell above the ambient pressure in atmospheres as one
+    /// `f32`, published by the pressure simulation's last tick in the cell's tile
+    pressure_buffer: wgpu::Buffer,
 }
 
 impl CellularTileBuffers {
@@ -83,6 +86,13 @@ impl CellularTileBuffers {
                 usage,
                 mapped_at_creation: false,
             });
+        let pressure: wgpu::Buffer = accelerator.device()
+            .create_buffer(&wgpu::BufferDescriptor {
+                label: Some("`CellularTileBuffers.pressure_buffer`"),
+                size,
+                usage,
+                mapped_at_creation: false,
+            });
         Self {
             accelerator: accelerator.clone(),
             material_identifier_buffer: material_identifiers,
@@ -92,6 +102,7 @@ impl CellularTileBuffers {
             rigid_body_cell_buffer: rigid_body_cells,
             gas_buffer: gas,
             gas_awake_buffer: gas_awake,
+            pressure_buffer: pressure,
         }
     }
 
@@ -118,5 +129,8 @@ impl CellularTileBuffers {
 
     /// Returns the tile gas awake buffer
     pub fn gas_awake_buffer(&self) -> &wgpu::Buffer { &self.gas_awake_buffer }
+
+    /// Returns the published pressure buffer
+    pub fn pressure_buffer(&self) -> &wgpu::Buffer { &self.pressure_buffer }
 
 }

@@ -31,7 +31,10 @@ var<storage, read_write> gas: array<vec4<u32>>;
 var<storage, read_write> gas_awake: array<atomic<u32>>;
 
 /// Gas amount in one atmosphere
-const AMOUNT_PER_ATMOSPHERE: u32 = 65536u;
+const AMOUNT_PER_ATMOSPHERE: u32 = 4096u;
+
+/// Largest amount of gas or stored pressure in one cell, `PRESSURE_MAXIMUM` atmospheres
+const AMOUNT_MAXIMUM: u32 = 16773120u;
 
 /// Writes one edited cell per invocation at rest, inserting only into empty cells, and wakes its
 /// tile so dynamic cells and gas around the edit notice it. A gas fills an emptied cell in place
