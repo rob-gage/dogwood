@@ -43,7 +43,7 @@ use crate::{
         SceneError,
     },
 };
-use engine_host::acceleration::Accelerator;
+use engine_host::acceleration::{Accelerator, AcceleratorReadback, AcceleratorReadbackError};
 use std::{
     borrow::Cow,
     collections::HashMap,
@@ -163,14 +163,7 @@ pub struct FluidParticlePass {
     /// Asynchronous count mapping results
     response_receiver: Receiver<(usize, Result<(), wgpu::BufferAsyncError>)>,
     /// Mappable actor contact copies paired with their tick and uploaded actor identities
-    actor_contact_readbacks: Vec<(
-        wgpu::Buffer,
-        Option<(u64, Vec<(Actor, ActorCollisionComponent)>)>,
-    )>,
-    /// Sender for asynchronous actor contact mapping results
-    actor_response_sender: Sender<(usize, Result<(), wgpu::BufferAsyncError>)>,
-    /// Asynchronous actor contact mapping results
-    actor_response_receiver: Receiver<(usize, Result<(), wgpu::BufferAsyncError>)>,
+    actor_contact_readbacks: AcceleratorReadback<(u64, Vec<(Actor, ActorCollisionComponent)>)>,
     /// Import status readbacks paired with source records
     import_readbacks: Vec<(wgpu::Buffer, Option<Vec<FluidParticleImport>>)>,
     /// Sender for imported particle status mappings
@@ -875,21 +868,14 @@ impl FluidParticlePass {
                 ),
                 None,
             )).collect();
-        let (actor_response_sender, actor_response_receiver): (
-            Sender<(usize, Result<(), wgpu::BufferAsyncError>)>,
-            Receiver<(usize, Result<(), wgpu::BufferAsyncError>)>,
-        ) = channel();
-        let actor_contact_readbacks: Vec<(
-            wgpu::Buffer,
-            Option<(u64, Vec<(Actor, ActorCollisionComponent)>)>,
-        )> = (0..READBACK_COUNT).map(|_| (
-            create_buffer(
-                "`FluidParticlePass.actor_contact_readbacks`",
-                actor_contact_buffer.size(),
-                wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            ),
-            None,
-        )).collect();
+        let actor_contact_readbacks: AcceleratorReadback<
+            (u64, Vec<(Actor, ActorCollisionComponent)>),
+        > = AcceleratorReadback::new(
+            accelerator,
+            "`FluidParticlePass.actor_contact_readbacks`",
+            actor_contact_buffer.size(),
+            READBACK_COUNT,
+        );
         let (import_response_sender, import_response_receiver): (
             Sender<(usize, Result<(), wgpu::BufferAsyncError>)>,
             Receiver<(usize, Result<(), wgpu::BufferAsyncError>)>,
@@ -939,8 +925,6 @@ impl FluidParticlePass {
             response_sender,
             response_receiver,
             actor_contact_readbacks,
-            actor_response_sender,
-            actor_response_receiver,
             import_readbacks,
             import_response_sender,
             import_response_receiver,
@@ -1104,24 +1088,12 @@ impl FluidParticlePass {
         &mut self,
         accelerator: &Accelerator,
     ) -> Result<Vec<(u64, Actor, ActorCollisionComponent, FluidActorContact)>, SceneError> {
-        accelerator.device().poll(wgpu::PollType::Poll)
-            .map_err(|_| SceneError::FluidParticlePoll)?;
         let mut contacts: Vec<(u64, Actor, ActorCollisionComponent, FluidActorContact)> =
             Vec::new();
-        let mut first_error: Option<SceneError> = None;
-        while let Ok((readback, result)) = self.actor_response_receiver.try_recv() {
-            let (buffer, submission): &mut (
-                wgpu::Buffer,
-                Option<(u64, Vec<(Actor, ActorCollisionComponent)>)>,
-            ) = &mut self.actor_contact_readbacks[readback];
-            let Some((tick, actors)) = submission.take() else { continue; };
-            if let Err(error) = result {
-                first_error.get_or_insert(SceneError::FluidParticleResponse { error });
-                continue;
-            }
-            {
-                let mapped_bytes: wgpu::BufferView = buffer.get_mapped_range(..)
-                    .expect("mapped fluid actor contact readback should be readable");
+        let read_result: Result<(), AcceleratorReadbackError> = self.actor_contact_readbacks.read(
+            accelerator,
+            true,
+            |(tick, actors), mapped_bytes| {
                 for ((actor, component), contact_bytes) in actors.iter().zip(
                     mapped_bytes.chunks_exact(ACTOR_CONTACT_BYTE_COUNT as usize),
                 ) {
@@ -1141,13 +1113,14 @@ impl FluidParticlePass {
                         fluid_drag: value(6).max(0.0),
                     }));
                 }
-            }
-            buffer.unmap();
-        }
-        match first_error {
-            Some(error) => Err(error),
-            None => Ok(contacts),
-        }
+            },
+        );
+        read_result.map_err(|error| match error {
+            AcceleratorReadbackError::Poll(_) => SceneError::FluidParticlePoll,
+            AcceleratorReadbackError::BufferAsync(error) =>
+                SceneError::FluidParticleResponse { error },
+        })?;
+        Ok(contacts)
     }
 
     /// Rebases and edits particles, runs the PBF substeps, and submits a live-count readback
@@ -1804,9 +1777,15 @@ impl FluidParticlePass {
                 4,
             );
         }
-        let actor_readback: Option<usize> = self.actor_contact_readbacks.iter()
-            .position(|(_, submission)| submission.is_none())
-            .filter(|_| !actors.is_empty());
+        let actor_readback: bool = if actors.is_empty() { false } else {
+            self.actor_contact_readbacks.copy(
+                &mut command_encoder,
+                &self.actor_contact_buffer,
+                0,
+                actors.len() as u64 * ACTOR_CONTACT_BYTE_COUNT,
+                (tick, actors.to_vec()),
+            )
+        };
         let import_readback: Option<usize> = import_readback_slot;
         // erased or rebased particles can leave contact changes in cells no particle clears
         if needs_compaction {
@@ -1831,16 +1810,8 @@ impl FluidParticlePass {
                 u64::from(import_count) * 4,
             );
         }
-        if let Some(actor_readback) = actor_readback {
-            command_encoder.copy_buffer_to_buffer(
-                &self.actor_contact_buffer,
-                0,
-                &self.actor_contact_readbacks[actor_readback].0,
-                0,
-                actors.len() as u64 * ACTOR_CONTACT_BYTE_COUNT,
-            );
-        }
-        accelerator.queue().submit(Some(command_encoder.finish()));
+        let submission_index: wgpu::SubmissionIndex =
+            accelerator.queue().submit(Some(command_encoder.finish()));
         if let Some(import_readback) = import_readback {
             let (buffer, submission): &mut (wgpu::Buffer, Option<Vec<FluidParticleImport>>) =
                 &mut self.import_readbacks[import_readback];
@@ -1865,23 +1836,7 @@ impl FluidParticlePass {
                 },
             );
         }
-        if let Some(actor_readback) = actor_readback {
-            let (buffer, submission): &mut (
-                wgpu::Buffer,
-                Option<(u64, Vec<(Actor, ActorCollisionComponent)>)>,
-            ) = &mut self.actor_contact_readbacks[actor_readback];
-            *submission = Some((tick, actors.to_vec()));
-            let actor_response_sender: Sender<(
-                usize,
-                Result<(), wgpu::BufferAsyncError>,
-            )> = self.actor_response_sender.clone();
-            buffer.slice(..).map_async(
-                wgpu::MapMode::Read,
-                move |result: Result<(), wgpu::BufferAsyncError>| {
-                    let _ = actor_response_sender.send((actor_readback, result));
-                },
-            );
-        }
+        if actor_readback { self.actor_contact_readbacks.map(submission_index); }
         self.state_side = current_state_side;
         Ok((newest_count, rejected_imports, submitted_import_count))
     }

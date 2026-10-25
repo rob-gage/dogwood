@@ -20,15 +20,8 @@ use crate::{
         SceneError,
     },
 };
-use engine_host::acceleration::Accelerator;
-use std::{
-    collections::HashMap,
-    sync::mpsc::{
-        Receiver,
-        Sender,
-        channel,
-    },
-};
+use engine_host::acceleration::{Accelerator, AcceleratorReadback, AcceleratorReadbackError};
+use std::collections::HashMap;
 
 /// Number of invocations in one compute workgroup, one per cell of a tile
 const WORKGROUP_SIZE: u32 = 64;
@@ -54,7 +47,8 @@ const RIGID_BODY_CONTACT_BYTE_COUNT: u64 = 84;
 /// Number of contact and control readbacks that can each be in flight at once
 const READBACK_COUNT: usize = 3;
 
-/// GPU simulation of active dynamic cells and their interactions with actors, rigid bodies, and fluid
+/// GPU simulation of active dynamic cells and their interactions with actors, rigid bodies, and
+/// fluid
 pub struct CellularTilePass {
     /// Pipelines of every simulation step, named by their entry points
     pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
@@ -73,27 +67,15 @@ pub struct CellularTilePass {
     /// Impulses and contacts accumulated for every actor
     contact_buffer: wgpu::Buffer,
     /// Mappable copies of the contacts, each with the actors and masses it was simulated with
-    contact_readbacks: Vec<(wgpu::Buffer, Option<Vec<(Actor, f32)>>)>,
-    /// Sender for contact readback mapping results
-    response_sender: Sender<(usize, Result<(), wgpu::BufferAsyncError>)>,
-    /// Contact readback mapping results
-    response_receiver: Receiver<(usize, Result<(), wgpu::BufferAsyncError>)>,
+    contact_readbacks: AcceleratorReadback<Vec<(Actor, f32)>>,
     /// Number of simulated ticks, varying the order of tied moves
     tick: u32,
     /// Mappable copies of the control counts, each with the resolve count it was simulated with
-    control_readbacks: Vec<(wgpu::Buffer, Option<usize>)>,
-    /// Sender for control readback mapping results
-    control_response_sender: Sender<(usize, Result<(), wgpu::BufferAsyncError>)>,
-    /// Control readback mapping results
-    control_response_receiver: Receiver<(usize, Result<(), wgpu::BufferAsyncError>)>,
+    control_readbacks: AcceleratorReadback<usize>,
     /// Impulses and holding cells accumulated for every rigid body until they are read
     rigid_body_contact_buffer: wgpu::Buffer,
     /// Mappable copies of the rigid body contacts, each with the rigid body of every index
-    rigid_body_contact_readbacks: Vec<(wgpu::Buffer, Option<Vec<u64>>)>,
-    /// Sender for rigid body contact readback mapping results
-    rigid_body_response_sender: Sender<(usize, Result<(), wgpu::BufferAsyncError>)>,
-    /// Rigid body contact readback mapping results
-    rigid_body_response_receiver: Receiver<(usize, Result<(), wgpu::BufferAsyncError>)>,
+    rigid_body_contact_readbacks: AcceleratorReadback<Vec<u64>>,
     /// Rigid body accumulating contacts at every index, zero for none
     rigid_bodies: Vec<u64>,
     /// Substeps encoded per tick, from the substeps recent ticks needed
@@ -289,24 +271,18 @@ impl CellularTilePass {
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
         );
-        let rigid_body_contact_readbacks: Vec<(wgpu::Buffer, Option<Vec<u64>>)> =
-            (0..READBACK_COUNT).map(|_| (
-                create_buffer(
-                    "`CellularTilePass.rigid_body_contact_readbacks`",
-                    rigid_body_contact_buffer.size(),
-                    wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                ),
-                None,
-            )).collect();
-        let contact_readbacks: Vec<(wgpu::Buffer, Option<Vec<(Actor, f32)>>)> =
-            (0..READBACK_COUNT).map(|_| (
-                create_buffer(
-                    "`CellularTilePass.contact_readbacks`",
-                    contact_buffer.size(),
-                    wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                ),
-                None,
-            )).collect();
+        let rigid_body_contact_readbacks: AcceleratorReadback<Vec<u64>> = AcceleratorReadback::new(
+            accelerator,
+            "`CellularTilePass.rigid_body_contact_readbacks`",
+            rigid_body_contact_buffer.size(),
+            READBACK_COUNT,
+        );
+        let contact_readbacks: AcceleratorReadback<Vec<(Actor, f32)>> = AcceleratorReadback::new(
+            accelerator,
+            "`CellularTilePass.contact_readbacks`",
+            contact_buffer.size(),
+            READBACK_COUNT,
+        );
         let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("`CellularTilePass.bind_group`"),
             layout: &bind_group_layout,
@@ -387,27 +363,12 @@ impl CellularTilePass {
                 }],
             },
         );
-        let (response_sender, response_receiver): (
-            Sender<(usize, Result<(), wgpu::BufferAsyncError>)>,
-            Receiver<(usize, Result<(), wgpu::BufferAsyncError>)>,
-        ) = channel();
-        let (control_response_sender, control_response_receiver): (
-            Sender<(usize, Result<(), wgpu::BufferAsyncError>)>,
-            Receiver<(usize, Result<(), wgpu::BufferAsyncError>)>,
-        ) = channel();
-        let (rigid_body_response_sender, rigid_body_response_receiver): (
-            Sender<(usize, Result<(), wgpu::BufferAsyncError>)>,
-            Receiver<(usize, Result<(), wgpu::BufferAsyncError>)>,
-        ) = channel();
-        let control_readbacks: Vec<(wgpu::Buffer, Option<usize>)> =
-            (0..READBACK_COUNT).map(|_| (
-                create_buffer(
-                    "`CellularTilePass.control_readbacks`",
-                    16,
-                    wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                ),
-                None,
-            )).collect();
+        let control_readbacks: AcceleratorReadback<usize> = AcceleratorReadback::new(
+            accelerator,
+            "`CellularTilePass.control_readbacks`",
+            16,
+            READBACK_COUNT,
+        );
         Self {
             pipelines,
             bind_group,
@@ -418,16 +379,10 @@ impl CellularTilePass {
             actor_buffer,
             contact_buffer,
             contact_readbacks,
-            response_sender,
-            response_receiver,
             tick: 0,
             control_readbacks,
-            control_response_sender,
-            control_response_receiver,
             rigid_body_contact_buffer,
             rigid_body_contact_readbacks,
-            rigid_body_response_sender,
-            rigid_body_response_receiver,
             rigid_bodies: vec![0; COLLISION_RIGID_BODY_COUNT_MAXIMUM],
             substep_count: SUBSTEP_COUNT,
             resolve_count: CELLULAR_TILE_RESOLVE_COUNT,
@@ -624,86 +579,43 @@ impl CellularTilePass {
             compute_pass.dispatch_workgroups(tile_count, 1, 1);
         }
         // read the contacts back into a free readback, skipping them while every one is in flight
-        let free_readback: Option<usize> = self.contact_readbacks.iter()
-            .position(|(_, readback_actors)| readback_actors.is_none());
-        let readback: Option<usize> = free_readback.filter(|_| !actors.is_empty());
-        if let Some(readback) = readback {
-            command_encoder.copy_buffer_to_buffer(
+        if !actors.is_empty() {
+            let readback_actors: Vec<(Actor, f32)> =
+                actors.iter().map(|actor| (actor.0, actor.5)).collect();
+            self.contact_readbacks.copy(
+                &mut command_encoder,
                 &self.contact_buffer,
                 0,
-                &self.contact_readbacks[readback].0,
-                0,
                 actors.len() as u64 * CONTACT_BYTE_COUNT,
+                readback_actors,
             );
         }
         // rigid body contacts keep accumulating while every readback is in flight, so none are lost
-        let rigid_body_readback: Option<usize> = self.rigid_body_contact_readbacks.iter()
-            .position(|(_, readback_rigid_bodies)| readback_rigid_bodies.is_none())
-            .filter(|_| !rigid_bodies.is_empty());
-        if let Some(rigid_body_readback) = rigid_body_readback {
-            command_encoder.copy_buffer_to_buffer(
+        let rigid_body_readback: bool = if !rigid_bodies.is_empty() {
+            self.rigid_body_contact_readbacks.copy(
+                &mut command_encoder,
                 &self.rigid_body_contact_buffer,
                 0,
-                &self.rigid_body_contact_readbacks[rigid_body_readback].0,
-                0,
                 self.rigid_body_contact_buffer.size(),
-            );
+                self.rigid_bodies.clone(),
+            )
+        } else { false };
+        if rigid_body_readback {
             command_encoder.clear_buffer(&self.rigid_body_contact_buffer, 0, None);
         }
-        let control_readback: Option<usize> = self.control_readbacks.iter()
-            .position(|(_, resolve_count)| resolve_count.is_none());
-        if let Some(control_readback) = control_readback {
-            command_encoder.copy_buffer_to_buffer(
-                &self.control_buffer,
-                0,
-                &self.control_readbacks[control_readback].0,
-                0,
-                12,
-            );
-        }
-        accelerator.queue().submit(Some(command_encoder.finish()));
-        if let Some(control_readback) = control_readback {
-            let (buffer, resolve_count): &mut (wgpu::Buffer, Option<usize>) =
-                &mut self.control_readbacks[control_readback];
-            *resolve_count = Some(self.resolve_count);
-            let response_sender: Sender<(usize, Result<(), wgpu::BufferAsyncError>)> =
-                self.control_response_sender.clone();
-            buffer.map_async(
-                wgpu::MapMode::Read,
-                ..12,
-                move |result: Result<(), wgpu::BufferAsyncError>| {
-                    let _ = response_sender.send((control_readback, result));
-                },
-            );
-        }
-        if let Some(readback) = readback {
-            let (buffer, readback_actors): &mut (wgpu::Buffer, Option<Vec<(Actor, f32)>>) =
-                &mut self.contact_readbacks[readback];
-            *readback_actors = Some(actors.iter().map(|actor| (actor.0, actor.5)).collect());
-            let response_sender: Sender<(usize, Result<(), wgpu::BufferAsyncError>)> =
-                self.response_sender.clone();
-            buffer.map_async(
-                wgpu::MapMode::Read,
-                ..,
-                move |result: Result<(), wgpu::BufferAsyncError>| {
-                    let _ = response_sender.send((readback, result));
-                },
-            );
-        }
-        if let Some(rigid_body_readback) = rigid_body_readback {
-            let (buffer, readback_rigid_bodies): &mut (wgpu::Buffer, Option<Vec<u64>>) =
-                &mut self.rigid_body_contact_readbacks[rigid_body_readback];
-            *readback_rigid_bodies = Some(self.rigid_bodies.clone());
-            let response_sender: Sender<(usize, Result<(), wgpu::BufferAsyncError>)> =
-                self.rigid_body_response_sender.clone();
-            buffer.map_async(
-                wgpu::MapMode::Read,
-                ..,
-                move |result: Result<(), wgpu::BufferAsyncError>| {
-                    let _ = response_sender.send((rigid_body_readback, result));
-                },
-            );
-        }
+        // control readbacks only size later ticks' work, so reading them never waits
+        self.control_readbacks.copy(
+            &mut command_encoder,
+            &self.control_buffer,
+            0,
+            12,
+            self.resolve_count,
+        );
+        let submission_index: wgpu::SubmissionIndex =
+            accelerator.queue().submit(Some(command_encoder.finish()));
+        self.contact_readbacks.map(submission_index.clone());
+        self.rigid_body_contact_readbacks.map(submission_index.clone());
+        self.control_readbacks.map(submission_index);
         self.tick = self.tick.wrapping_add(1);
         Ok((contacts, rigid_body_contacts))
     }
@@ -717,29 +629,17 @@ impl CellularTilePass {
         &mut self,
         accelerator: &Accelerator,
     ) -> Result<Option<HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2], [f32; 7])>>, SceneError> {
-        accelerator.device().poll(wgpu::PollType::Poll)
-            .map_err(|_| SceneError::CellularTilePoll)?;
         let mut rigid_body_contacts: Option<
             HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2], [f32; 7])>
         > = None;
-        let mut first_error: Option<SceneError> = None;
-        while let Ok((readback, result)) = self.rigid_body_response_receiver.try_recv() {
-            let (buffer, readback_rigid_bodies): &mut (wgpu::Buffer, Option<Vec<u64>>) =
-                &mut self.rigid_body_contact_readbacks[readback];
-            let Some(readback_rigid_bodies) = readback_rigid_bodies.take() else { continue; };
-            if let Err(error) = result {
-                first_error.get_or_insert(SceneError::CellularTileResponse { error });
-                continue;
-            }
-            let contacts: &mut HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2], [f32; 7])> =
-                rigid_body_contacts.get_or_insert_with(HashMap::new);
-            {
-                let mapped_bytes: wgpu::BufferView = buffer.get_mapped_range(..)
-                    .expect("mapped cellular tile rigid body contact readback should be readable");
+        let read_result: Result<(), AcceleratorReadbackError> = self.rigid_body_contact_readbacks
+            .read(accelerator, true, |readback_rigid_bodies, contact_bytes| {
+                let contacts: &mut HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2], [f32; 7])> =
+                    rigid_body_contacts.get_or_insert_with(HashMap::new);
                 for ((readback_rigid_body, rigid_body), contact_bytes) in readback_rigid_bodies
                     .iter()
                     .zip(&self.rigid_bodies)
-                    .zip(mapped_bytes.chunks_exact(RIGID_BODY_CONTACT_BYTE_COUNT as usize))
+                    .zip(contact_bytes.chunks_exact(RIGID_BODY_CONTACT_BYTE_COUNT as usize))
                 {
                     if *readback_rigid_body == 0 || readback_rigid_body != rigid_body { continue; }
                     let value = |field: usize| -> f32 {
@@ -781,13 +681,13 @@ impl CellularTilePass {
                     current[5] += value(19) * cell_size;
                     current[6] += value(20) * cell_size;
                 }
-            }
-            buffer.unmap();
-        }
-        match first_error {
-            Some(error) => Err(error),
-            None => Ok(rigid_body_contacts),
-        }
+            });
+        read_result.map_err(|error| match error {
+            AcceleratorReadbackError::Poll(_) => SceneError::CellularTilePoll,
+            AcceleratorReadbackError::BufferAsync(error) =>
+                SceneError::CellularTileResponse { error },
+        })?;
+        Ok(rigid_body_contacts)
     }
 
     /// Sizes the next ticks' substeps and resolve passes from the newest control readback, with
@@ -796,39 +696,37 @@ impl CellularTilePass {
         &mut self,
         accelerator: &Accelerator,
     ) -> Result<(), SceneError> {
-        accelerator.device().poll(wgpu::PollType::Poll)
-            .map_err(|_| SceneError::CellularTilePoll)?;
-        while let Ok((readback, result)) = self.control_response_receiver.try_recv() {
-            let (buffer, resolve_count): &mut (wgpu::Buffer, Option<usize>) =
-                &mut self.control_readbacks[readback];
-            let Some(resolve_count) = resolve_count.take() else { continue; };
-            result.map_err(|error| SceneError::CellularTileResponse { error })?;
-            let (step_count, pending_resolves): (u32, u32) = {
-                let mapped_bytes: wgpu::BufferView = buffer.get_mapped_range(..12)
-                    .expect("mapped cellular tile control readback should be readable");
-                let value = |field: usize| -> u32 {
-                    u32::from_le_bytes([
-                        mapped_bytes[field * 4],
-                        mapped_bytes[field * 4 + 1],
-                        mapped_bytes[field * 4 + 2],
-                        mapped_bytes[field * 4 + 3],
-                    ])
+        let read_result: Result<(), AcceleratorReadbackError> = self.control_readbacks.read(
+            accelerator,
+            false,
+            |resolve_count, mapped_bytes| {
+                let (step_count, pending_resolves): (u32, u32) = {
+                    let value = |field: usize| -> u32 {
+                        u32::from_le_bytes([
+                            mapped_bytes[field * 4],
+                            mapped_bytes[field * 4 + 1],
+                            mapped_bytes[field * 4 + 2],
+                            mapped_bytes[field * 4 + 3],
+                        ])
+                    };
+                    (value(1), value(2))
                 };
-                (value(1), value(2))
-            };
-            buffer.unmap();
-            self.substep_count = (step_count as usize + 1).clamp(1, SUBSTEP_COUNT);
-            // the last resolve pass still pending means the chains were longer than it could see
-            let needed_resolve_count: usize = match pending_resolves {
-                0 => 1,
-                _ if 32 - pending_resolves.leading_zeros() as usize >= resolve_count =>
-                    CELLULAR_TILE_RESOLVE_COUNT,
-                _ => 32 - pending_resolves.leading_zeros() as usize + 1,
-            };
-            self.resolve_count = (needed_resolve_count + 1).next_multiple_of(2)
-                .clamp(2, CELLULAR_TILE_RESOLVE_COUNT);
-        }
-        Ok(())
+                self.substep_count = (step_count as usize + 1).clamp(1, SUBSTEP_COUNT);
+                // the last resolve pass still pending means the chains were longer than it could see
+                let needed_resolve_count: usize = match pending_resolves {
+                    0 => 1,
+                    _ if 32 - pending_resolves.leading_zeros() as usize >= resolve_count =>
+                        CELLULAR_TILE_RESOLVE_COUNT,
+                    _ => 32 - pending_resolves.leading_zeros() as usize + 1,
+                };
+                self.resolve_count = (needed_resolve_count + 1).next_multiple_of(2)
+                    .clamp(2, CELLULAR_TILE_RESOLVE_COUNT);
+            });
+        read_result.map_err(|error| match error {
+            AcceleratorReadbackError::Poll(_) => SceneError::CellularTilePoll,
+            AcceleratorReadbackError::BufferAsync(error) =>
+                SceneError::CellularTileResponse { error },
+        })
     }
 
     /// Returns the contacts of the newest readback that arrived, releasing every arrived readback
@@ -836,25 +734,16 @@ impl CellularTilePass {
         &mut self,
         accelerator: &Accelerator,
     ) -> Result<Option<HashMap<Actor, ([f32; 2], [f32; 2], f32)>>, SceneError> {
-        accelerator.device().poll(wgpu::PollType::Poll)
-            .map_err(|_| SceneError::CellularTilePoll)?;
         let mut contacts: Option<HashMap<Actor, ([f32; 2], [f32; 2], f32)>> = None;
-        let mut first_error: Option<SceneError> = None;
-        while let Ok((readback, result)) = self.response_receiver.try_recv() {
-            let (buffer, readback_actors): &mut (wgpu::Buffer, Option<Vec<(Actor, f32)>>) =
-                &mut self.contact_readbacks[readback];
-            let Some(actors) = readback_actors.take() else { continue; };
-            if let Err(error) = result {
-                first_error.get_or_insert(SceneError::CellularTileResponse { error });
-                continue;
-            }
-            // readbacks are mapped in submission order, so a later one replaces an earlier one
-            let mut readback_contacts: HashMap<Actor, ([f32; 2], [f32; 2], f32)> = HashMap::new();
-            {
-                let mapped_bytes: wgpu::BufferView = buffer.get_mapped_range(..)
-                    .expect("mapped cellular tile contact readback should be readable");
+        let read_result: Result<(), AcceleratorReadbackError> = self.contact_readbacks.read(
+            accelerator,
+            true,
+            |actors, contact_bytes| {
+                // readbacks are mapped in submission order, so a later one replaces an earlier one
+                let mut readback_contacts: HashMap<Actor, ([f32; 2], [f32; 2], f32)> =
+                    HashMap::new();
                 for ((actor, mass), contact_bytes) in
-                    actors.iter().zip(mapped_bytes.chunks_exact(CONTACT_BYTE_COUNT as usize))
+                    actors.iter().zip(contact_bytes.chunks_exact(CONTACT_BYTE_COUNT as usize))
                 {
                     let value = |field: usize| -> f32 {
                         i32::from_le_bytes([
@@ -878,14 +767,14 @@ impl CellularTilePass {
                         readback_contacts.insert(*actor, (velocity_change, normal, depth));
                     }
                 }
-            }
-            buffer.unmap();
-            contacts = Some(readback_contacts);
-        }
-        match first_error {
-            Some(error) => Err(error),
-            None => Ok(contacts),
-        }
+                contacts = Some(readback_contacts);
+            });
+        read_result.map_err(|error| match error {
+            AcceleratorReadbackError::Poll(_) => SceneError::CellularTilePoll,
+            AcceleratorReadbackError::BufferAsync(error) =>
+                SceneError::CellularTileResponse { error },
+        })?;
+        Ok(contacts)
     }
 
 }

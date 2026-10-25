@@ -11,7 +11,7 @@ use crate::{
         SceneError,
     },
 };
-use engine_host::acceleration::Accelerator;
+use engine_host::acceleration::{Accelerator, AcceleratorReadback, AcceleratorReadbackError};
 use std::sync::mpsc::{
     Receiver,
     Sender,
@@ -46,15 +46,8 @@ pub struct CollisionCellularTilePass {
     response_sender: Sender<Result<(), wgpu::BufferAsyncError>>,
     /// Staging buffer mapping results
     response_receiver: Receiver<Result<(), wgpu::BufferAsyncError>>,
-    /// Staging buffers of settled dynamic snapshots, each with the sequence number, active
-    /// region, and ring offset of its pending or completed copy
-    dynamic_readbacks: Vec<(wgpu::Buffer, Option<(u64, CellularTileRegion, (u32, u32), bool)>)>,
-    /// Sequence number given to the next settled dynamic snapshot
-    next_dynamic_sequence: u64,
-    /// Sends the slot and result of each settled dynamic snapshot mapping
-    dynamic_response_sender: Sender<(usize, Result<(), wgpu::BufferAsyncError>)>,
-    /// Receives the slot and result of each settled dynamic snapshot mapping
-    dynamic_response_receiver: Receiver<(usize, Result<(), wgpu::BufferAsyncError>)>,
+    /// Asynchronous settled dynamic occupancy snapshots
+    dynamic_readbacks: AcceleratorReadback<(CellularTileRegion, (u32, u32))>,
 }
 
 impl CollisionCellularTilePass {
@@ -195,24 +188,13 @@ impl CollisionCellularTilePass {
             Sender<Result<(), wgpu::BufferAsyncError>>,
             Receiver<Result<(), wgpu::BufferAsyncError>>,
         ) = channel();
-        let dynamic_readbacks: Vec<(
-            wgpu::Buffer,
-            Option<(u64, CellularTileRegion, (u32, u32), bool)>,
-        )> = (0..DYNAMIC_READBACK_COUNT)
-            .map(|_| (
-                device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("`CollisionCellularTilePass.dynamic_readbacks`"),
-                    size: cellular_tile_buffer.size(),
-                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                }),
-                None,
-            ))
-            .collect();
-        let (dynamic_response_sender, dynamic_response_receiver): (
-            Sender<(usize, Result<(), wgpu::BufferAsyncError>)>,
-            Receiver<(usize, Result<(), wgpu::BufferAsyncError>)>,
-        ) = channel();
+        let dynamic_readbacks: AcceleratorReadback<(CellularTileRegion, (u32, u32))> =
+            AcceleratorReadback::new(
+                accelerator,
+                "`CollisionCellularTilePass.dynamic_readbacks`",
+                cellular_tile_buffer.size(),
+                DYNAMIC_READBACK_COUNT,
+            );
         Self {
             pipeline,
             bind_group,
@@ -222,9 +204,6 @@ impl CollisionCellularTilePass {
             response_sender,
             response_receiver,
             dynamic_readbacks,
-            next_dynamic_sequence: 0,
-            dynamic_response_sender,
-            dynamic_response_receiver,
         }
     }
 
@@ -237,7 +216,7 @@ impl CollisionCellularTilePass {
         dynamic: bool,
     ) -> Result<Vec<CollisionCellularTile>, SceneError> {
         let byte_count: u64 =
-            self.submit_cellular_tiles(accelerator, active_region, ring_offset, dynamic, None)?;
+            self.submit_cellular_tiles(accelerator, active_region, ring_offset, dynamic, false)?;
         // wait for this tick's occupancy so collision never lags the GPU cells
         let response_sender: Sender<Result<(), wgpu::BufferAsyncError>> =
             self.response_sender.clone();
@@ -266,30 +245,13 @@ impl CollisionCellularTilePass {
         active_region: CellularTileRegion,
         ring_offset: (u32, u32),
     ) -> Result<(), SceneError> {
-        let Some(slot): Option<usize> = self.dynamic_readbacks.iter()
-            .position(|(_, submission)| submission.is_none())
-        else { return Ok(()); };
-        let byte_count: u64 = self.submit_cellular_tiles(
+        self.submit_cellular_tiles(
             accelerator,
             active_region,
             ring_offset,
             true,
-            Some(slot),
+            true,
         )?;
-        let (buffer, submission): &mut (
-            wgpu::Buffer,
-            Option<(u64, CellularTileRegion, (u32, u32), bool)>,
-        ) = &mut self.dynamic_readbacks[slot];
-        *submission = Some((self.next_dynamic_sequence, active_region, ring_offset, false));
-        self.next_dynamic_sequence += 1;
-        let response_sender: Sender<(usize, Result<(), wgpu::BufferAsyncError>)> =
-            self.dynamic_response_sender.clone();
-        buffer.slice(..byte_count).map_async(
-            wgpu::MapMode::Read,
-            move |result: Result<(), wgpu::BufferAsyncError>| {
-                let _ = response_sender.send((slot, result));
-            },
-        );
         Ok(())
     }
 
@@ -301,33 +263,23 @@ impl CollisionCellularTilePass {
         active_region: CellularTileRegion,
         ring_offset: (u32, u32),
     ) -> Result<Option<Vec<CollisionCellularTile>>, SceneError> {
-        accelerator.device().poll(wgpu::PollType::Poll)
-            .map_err(|_| SceneError::CollisionCellularTilePoll)?;
-        while let Ok((slot, result)) = self.dynamic_response_receiver.try_recv() {
-            result.map_err(|error| SceneError::CollisionCellularTileResponse { error })?;
-            if let Some(submission) = self.dynamic_readbacks[slot].1.as_mut() {
-                submission.3 = true;
-            }
-        }
-        let newest: Option<usize> = self.dynamic_readbacks.iter()
-            .enumerate()
-            .filter_map(|(slot, (_, submission))| submission
-                .filter(|(_, region, ring, is_complete)| *is_complete
-                    && *region == active_region
-                    && *ring == ring_offset)
-                .map(|(sequence, _, _, _)| (sequence, slot)))
-            .max()
-            .map(|(_, slot)| slot);
         let byte_count: u64 = active_region.width() as u64 * active_region.height() as u64
             * CELLULAR_TILE_OCCUPANCY_BYTE_COUNT;
-        let cellular_tiles: Option<Vec<CollisionCellularTile>> = newest.map(|slot|
-            Self::decode_cellular_tiles(&self.dynamic_readbacks[slot].0, byte_count));
-        for (buffer, submission) in &mut self.dynamic_readbacks {
-            if submission.is_some_and(|(_, _, _, is_complete)| is_complete) {
-                buffer.unmap();
-                *submission = None;
-            }
-        }
+        let mut cellular_tiles: Option<Vec<CollisionCellularTile>> = None;
+        let result: Result<(), AcceleratorReadbackError> = self.dynamic_readbacks.read(
+            accelerator,
+            true,
+            |(region, ring), bytes| {
+                if region == active_region && ring == ring_offset {
+                    cellular_tiles = Some(Self::decode_cellular_tile_bytes(bytes, byte_count));
+                }
+            },
+        );
+        result.map_err(|error| match error {
+            AcceleratorReadbackError::Poll(_) => SceneError::CollisionCellularTilePoll,
+            AcceleratorReadbackError::BufferAsync(error) =>
+                SceneError::CollisionCellularTileResponse { error },
+        })?;
         Ok(cellular_tiles)
     }
 
@@ -336,7 +288,12 @@ impl CollisionCellularTilePass {
         let mapped_bytes: wgpu::BufferView = buffer
             .get_mapped_range(..byte_count)
             .expect("mapped collision cellular tile buffer should be readable");
-        mapped_bytes.chunks_exact(CELLULAR_TILE_OCCUPANCY_BYTE_COUNT as usize)
+        Self::decode_cellular_tile_bytes(&mapped_bytes, byte_count)
+    }
+
+    /// Decodes packed occupancies from a mapped byte slice
+    fn decode_cellular_tile_bytes(bytes: &[u8], byte_count: u64) -> Vec<CollisionCellularTile> {
+        bytes[..byte_count as usize].chunks_exact(CELLULAR_TILE_OCCUPANCY_BYTE_COUNT as usize)
             .map(|tile_bytes: &[u8]| {
                 CollisionCellularTile::from_u64(u64::from_le_bytes([
                     tile_bytes[0],
@@ -360,7 +317,7 @@ impl CollisionCellularTilePass {
         active_region: CellularTileRegion,
         ring_offset: (u32, u32),
         dynamic: bool,
-        dynamic_slot: Option<usize>,
+        dynamic_readback: bool,
     ) -> Result<u64, SceneError> {
         let width: u32 = active_region.width() as u32;
         let height: u32 = active_region.height() as u32;
@@ -391,18 +348,26 @@ impl CollisionCellularTilePass {
             compute_pass.set_bind_group(0, &self.bind_group, &[]);
             compute_pass.dispatch_workgroups(cellular_tile_count.div_ceil(WORKGROUP_SIZE), 1, 1);
         }
-        let staging_buffer: &wgpu::Buffer = match dynamic_slot {
-            Some(slot) => &self.dynamic_readbacks[slot].0,
-            None => &self.staging_buffer,
-        };
-        command_encoder.copy_buffer_to_buffer(
-            &self.cellular_tile_buffer,
-            0,
-            staging_buffer,
-            0,
-            byte_count,
-        );
-        accelerator.queue().submit(Some(command_encoder.finish()));
+        if dynamic_readback {
+            self.dynamic_readbacks.copy(
+                &mut command_encoder,
+                &self.cellular_tile_buffer,
+                0,
+                byte_count,
+                (active_region, ring_offset),
+            );
+        } else {
+            command_encoder.copy_buffer_to_buffer(
+                &self.cellular_tile_buffer,
+                0,
+                &self.staging_buffer,
+                0,
+                byte_count,
+            );
+        }
+        let submission_index: wgpu::SubmissionIndex =
+            accelerator.queue().submit(Some(command_encoder.finish()));
+        if dynamic_readback { self.dynamic_readbacks.map(submission_index); }
         Ok(byte_count)
     }
 
