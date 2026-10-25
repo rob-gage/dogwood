@@ -453,6 +453,10 @@ impl Scene {
                 &self.actor_registry,
                 &swimming_actors,
                 &collision.rigid_bodies(),
+                &collision.rigid_body_fluid_tiles(
+                    active_region,
+                    cellular_tile_streaming_state.cellular_tile_ring_offset(),
+                ),
             )?;
         let actor_components: &[(Actor, ActorCollisionComponent)] =
             self.cellular_tiles.as_ref()

@@ -74,6 +74,8 @@ pub struct CellularTilePass {
     control_readbacks: AcceleratorReadback<usize>,
     /// Impulses and fluid contacts accumulated for every rigid body until they are read
     rigid_body_contact_buffer: wgpu::Buffer,
+    /// Physical tiles holding rigid body cells or their neighboring fluid cells
+    rigid_fluid_tile_buffer: wgpu::Buffer,
     /// Mappable copies of the rigid body contacts, each with the rigid body of every index
     rigid_body_contact_readbacks: AcceleratorReadback<Vec<u64>>,
     /// Rigid body accumulating contacts at every index, zero for none
@@ -144,6 +146,7 @@ impl CellularTilePass {
                     storage_entry(16, false),
                     storage_entry(17, true),
                     storage_entry(18, true),
+                    storage_entry(19, true),
                 ],
             },
         );
@@ -272,6 +275,11 @@ impl CellularTilePass {
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
         );
+        let rigid_fluid_tile_buffer: wgpu::Buffer = create_buffer(
+            "`CellularTilePass.rigid_fluid_tile_buffer`",
+            tile_count * 4,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        );
         let rigid_body_contact_readbacks: AcceleratorReadback<Vec<u64>> = AcceleratorReadback::new(
             accelerator,
             "`CellularTilePass.rigid_body_contact_readbacks`",
@@ -356,6 +364,10 @@ impl CellularTilePass {
                     binding: 18,
                     resource: cellular_tile_buffers.pressure_buffer().as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 19,
+                    resource: rigid_fluid_tile_buffer.as_entire_binding(),
+                },
             ],
         });
         let dispatch_bind_group: wgpu::BindGroup = device.create_bind_group(
@@ -387,6 +399,7 @@ impl CellularTilePass {
             tick: 0,
             control_readbacks,
             rigid_body_contact_buffer,
+            rigid_fluid_tile_buffer,
             rigid_body_contact_readbacks,
             rigid_bodies: vec![0; COLLISION_RIGID_BODY_COUNT_MAXIMUM],
             substep_count: SUBSTEP_COUNT,
@@ -408,6 +421,7 @@ impl CellularTilePass {
         gravity: f32,
         actors: &[(Actor, ColliderShape, [f32; 2], f32, [f32; 2], f32, bool)],
         rigid_bodies: &[(u32, u64)],
+        rigid_fluid_tiles: &[u32],
     ) -> Result<(
         Option<HashMap<Actor, ([f32; 2], [f32; 2], f32)>>,
         Option<HashMap<u64, ([f32; 2], f32, [f32; 7])>>,
@@ -451,6 +465,16 @@ impl CellularTilePass {
             }
         }
         accelerator.queue().write_buffer(&self.uniform_buffer, 0, &uniform_bytes);
+        if !rigid_fluid_tiles.is_empty() {
+            let rigid_fluid_tile_bytes: Vec<u8> = rigid_fluid_tiles.iter()
+                .flat_map(|tile| tile.to_le_bytes())
+                .collect();
+            accelerator.queue().write_buffer(
+                &self.rigid_fluid_tile_buffer,
+                0,
+                &rigid_fluid_tile_bytes,
+            );
+        }
         // WGSL vec2<f32> center, velocity, rotation, and size, vec4<f32> bounds, u32 shape,
         // f32 mass, and swimming flag at offsets 0, 8, 16, 24, 32, 48, 52, and 56
         let mut actor_bytes: Vec<u8> = Vec::with_capacity(actors.len() * ACTOR_BYTE_COUNT as usize);
@@ -579,9 +603,9 @@ impl CellularTilePass {
             // visit the full physical region so sleeping tiles still receive fluid forces, counting
             // each body's fluid faces first so its contacts share its mass
             compute_pass.set_pipeline(&pipelines["rigid_fluid_faces"]);
-            compute_pass.dispatch_workgroups(tile_count, 1, 1);
+            compute_pass.dispatch_workgroups(rigid_fluid_tiles.len() as u32, 1, 1);
             compute_pass.set_pipeline(&pipelines["rigid_fluid"]);
-            compute_pass.dispatch_workgroups(tile_count, 1, 1);
+            compute_pass.dispatch_workgroups(rigid_fluid_tiles.len() as u32, 1, 1);
         }
         // read the contacts back into a free readback, skipping them while every one is in flight
         if !actors.is_empty() {

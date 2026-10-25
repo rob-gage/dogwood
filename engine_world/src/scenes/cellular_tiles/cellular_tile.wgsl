@@ -715,7 +715,9 @@ fn integrate(
                     min(restitution, contact_material.y),
                 );
                 cell_kinematics.velocity += face_impulse / mass;
-                add_fluid_contact_velocity(fluid_index, -face_impulse * fluid_inverse_mass);
+                // the impulse was solved against a face share, but the raster change reaches every
+                // particle in the cell, so it divides by the cell's full mass
+                add_fluid_contact_velocity(fluid_index, -face_impulse / neighbor_fluid.x);
             }
             if length(cell_kinematics.velocity) >= RESTING_SPEED
                 || length(fluid.zw) >= FLUID_CURRENT_WAKE_SPEED

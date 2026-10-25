@@ -94,6 +94,7 @@ impl CellularTiles {
         actor_registry: &ActorRegistry,
         swimming_actors: &HashSet<Actor>,
         rigid_bodies: &[(u32, u64)],
+        rigid_body_fluid_tiles: &[u32],
     ) -> Result<(
         HashMap<Actor, ([f32; 2], [f32; 2], f32)>,
         HashMap<u64, ([f32; 2], f32, [f32; 7])>,
@@ -160,6 +161,7 @@ impl CellularTiles {
             gravity,
             &actors,
             rigid_bodies,
+            rigid_body_fluid_tiles,
         )?;
         let rigid_body_contacts: HashMap<u64, ([f32; 2], f32, [f32; 7])> =
             rigid_body_contacts.unwrap_or_default();

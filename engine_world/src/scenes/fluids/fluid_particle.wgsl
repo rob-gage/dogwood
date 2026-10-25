@@ -500,6 +500,42 @@ fn fluid_contact_offset() -> u32 {
     return raster_tile_count_offset() + 1u;
 }
 
+/// Returns the first word of the sparse solid-contact tile flags
+fn fluid_contact_tile_flags_offset() -> u32 {
+    return fluid_contact_offset() + uniforms.cell_width * uniforms.cell_height * 2u;
+}
+
+/// Returns the first word of the sparse solid-contact tile list
+fn fluid_contact_tile_list_offset() -> u32 {
+    return fluid_contact_tile_flags_offset() + uniforms.region_width * uniforms.region_height;
+}
+
+/// Returns the word counting tiles with solid-contact velocity changes
+fn fluid_contact_tile_count_offset() -> u32 {
+    return fluid_contact_tile_list_offset() + uniforms.region_width * uniforms.region_height;
+}
+
+/// Adds a physical tile to the solid-contact list once
+fn add_fluid_contact_tile(physical_tile: u32) {
+    let flag_index: u32 = fluid_contact_tile_flags_offset() + physical_tile;
+    if atomicLoad(&fluid_raster[flag_index]) != 0u { return; }
+    loop {
+        let exchange = atomicCompareExchangeWeak(&fluid_raster[flag_index], 0u, 1u);
+        if exchange.exchanged {
+            let list_index: u32 = atomicAdd(
+                &fluid_raster[fluid_contact_tile_count_offset()],
+                1u,
+            );
+            atomicStore(
+                &fluid_raster[fluid_contact_tile_list_offset() + list_index],
+                physical_tile,
+            );
+            break;
+        }
+        if exchange.old_value != 0u { break; }
+    }
+}
+
 /// Clears all fixed-point values for one physical ring cell
 fn clear_raster_cell(index: u32) {
     let base: u32 = index * 4u;
@@ -1222,6 +1258,15 @@ fn prepare_raster() {
     dispatch_arguments[2] = 1u;
 }
 
+/// Writes an indirect dispatch sized from the solid-contact tile list
+@compute @workgroup_size(1)
+fn prepare_fluid_contacts() {
+    let listed_count: u32 = atomicLoad(&fluid_raster[fluid_contact_tile_count_offset()]);
+    dispatch_arguments[0] = max(1u, listed_count);
+    dispatch_arguments[1] = 1u;
+    dispatch_arguments[2] = 1u;
+}
+
 /// Clears raster cells from the prior tick's physical tile list only
 @compute @workgroup_size(64)
 fn clear_fluid_raster_tiles(
@@ -1329,18 +1374,29 @@ fn apply_fluid_contacts(@builtin(global_invocation_id) invocation: vec3<u32>) {
     store_particle(invocation.x, uniforms.state_side, particle);
 }
 
-/// Clears the applied contact velocity changes in the full physical region
+/// Clears contact velocity changes in tiles that received them
 @compute @workgroup_size(64)
-fn clear_fluid_contacts(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    let cell_count: u32 = uniforms.cell_width * uniforms.cell_height;
-    if invocation.x >= cell_count { return; }
-    let cell: vec2<i32> = vec2<i32>(
-        i32(invocation.x % uniforms.cell_width),
-        i32(invocation.x / uniforms.cell_width),
+fn clear_fluid_contacts(
+    @builtin(workgroup_id) workgroup: vec3<u32>,
+    @builtin(local_invocation_index) local_index: u32,
+) {
+    let listed_count: u32 = atomicLoad(&fluid_raster[fluid_contact_tile_count_offset()]);
+    if workgroup.x >= listed_count { return; }
+    let physical_tile: u32 = atomicLoad(
+        &fluid_raster[fluid_contact_tile_list_offset() + workgroup.x],
     );
-    let base: u32 = fluid_contact_offset() + cell_index(cell) * 2u;
+    let base: u32 = fluid_contact_offset() + (physical_tile * 64u + local_index) * 2u;
     atomicStore(&fluid_raster[base], 0u);
     atomicStore(&fluid_raster[base + 1u], 0u);
+    if local_index == 0u {
+        atomicStore(&fluid_raster[fluid_contact_tile_flags_offset() + physical_tile], 0u);
+    }
+}
+
+/// Resets the solid-contact tile list after its old entries have been cleared
+@compute @workgroup_size(1)
+fn reset_fluid_contact_tile_count() {
+    atomicStore(&fluid_raster[fluid_contact_tile_count_offset()], 0u);
 }
 
 /// Returns whether a cell center lies inside an actor's uninflated rotated shape
@@ -1525,6 +1581,7 @@ fn actor_contacts(@builtin(global_invocation_id) invocation: vec3<u32>) {
                     vec2<f32>(1.0e9),
                 )));
                 let delta_base: u32 = fluid_contact_offset() + index * 2u;
+                add_fluid_contact_tile(index / 64u);
                 atomicAdd(&fluid_raster[delta_base], bitcast<u32>(change.x));
                 atomicAdd(&fluid_raster[delta_base + 1u], bitcast<u32>(change.y));
             }

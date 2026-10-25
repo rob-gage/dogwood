@@ -1175,6 +1175,71 @@ impl Collision {
             .collect()
     }
 
+    /// Returns physical tiles around every rigid body's previous and current occupied bounds
+    pub fn rigid_body_fluid_tiles(
+        &self,
+        region: CellularTileRegion,
+        ring_offset: (u32, u32),
+    ) -> Vec<u32> {
+        let region_width: i32 = region.width() as i32;
+        let region_height: i32 = region.height() as i32;
+        let cell_size: f32 = CELLULAR_TILE_SIZE as f32;
+        let (region_x, region_y): (i32, i32) = self.rigid_body_region_origin(region);
+        let mut physical_tiles: HashSet<u32> = HashSet::new();
+        for collision_rigid_body in self.collision_rigid_bodies.values() {
+            let Some(rigid_body) = self.rigid_bodies.get(collision_rigid_body.rigid_body_handle)
+            else { continue; };
+            let current_position: [f32; 2] = [
+                rigid_body.translation().x * cell_size,
+                rigid_body.translation().y * cell_size,
+            ];
+            let current_rotation: [f32; 2] = [
+                rigid_body.rotation().cos(),
+                rigid_body.rotation().sin(),
+            ];
+            let mut transforms: Vec<([f32; 2], [f32; 2])> =
+                vec![(current_position, current_rotation)];
+            if let Some((position, rotation, ..)) = collision_rigid_body.rasterization {
+                transforms.push((position, rotation));
+            }
+            for ((tile_x, tile_y), (cells, ..)) in &collision_rigid_body.cellular_tiles {
+                if *cells == 0 { continue; }
+                for (position, rotation) in &transforms {
+                    let mut minimum: [f32; 2] = [f32::INFINITY; 2];
+                    let mut maximum: [f32; 2] = [f32::NEG_INFINITY; 2];
+                    for (corner_x, corner_y) in [(0.0, 0.0), (8.0, 0.0), (0.0, 8.0), (8.0, 8.0)] {
+                        let local_x: f32 = *tile_x as f32 * 8.0 + corner_x;
+                        let local_y: f32 = *tile_y as f32 * 8.0 + corner_y;
+                        let x: f32 = position[0] + rotation[0] * local_x
+                            - rotation[1] * local_y - region_x as f32;
+                        let y: f32 = position[1] + rotation[1] * local_x
+                            + rotation[0] * local_y - region_y as f32;
+                        minimum[0] = minimum[0].min(x);
+                        minimum[1] = minimum[1].min(y);
+                        maximum[0] = maximum[0].max(x);
+                        maximum[1] = maximum[1].max(y);
+                    }
+                    let minimum_tile_x: i32 = (minimum[0] / cell_size).floor() as i32 - 1;
+                    let minimum_tile_y: i32 = (minimum[1] / cell_size).floor() as i32 - 1;
+                    let maximum_tile_x: i32 = (maximum[0] / cell_size).floor() as i32 + 1;
+                    let maximum_tile_y: i32 = (maximum[1] / cell_size).floor() as i32 + 1;
+                    for tile_y in minimum_tile_y.max(0)..=maximum_tile_y.min(region_height - 1) {
+                        for tile_x in minimum_tile_x.max(0)..=maximum_tile_x.min(region_width - 1) {
+                            let physical_x: u32 =
+                                (tile_x as u32 + ring_offset.0) % region_width as u32;
+                            let physical_y: u32 =
+                                (tile_y as u32 + ring_offset.1) % region_height as u32;
+                            physical_tiles.insert(physical_y * region_width as u32 + physical_x);
+                        }
+                    }
+                }
+            }
+        }
+        let mut physical_tiles: Vec<u32> = physical_tiles.into_iter().collect();
+        physical_tiles.sort_unstable();
+        physical_tiles
+    }
+
     /// Returns the cellular tile whose bottom-left corner is the origin of every Rapier position
     pub fn origin(&self) -> CellularTileCoordinates { self.origin }
 

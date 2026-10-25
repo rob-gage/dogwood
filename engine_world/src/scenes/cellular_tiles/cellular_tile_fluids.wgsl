@@ -6,6 +6,9 @@ var<storage, read_write> fluid_raster: array<atomic<u32>>;
 @group(0) @binding(17)
 var<storage, read> fluid_materials: array<vec4<f32>>;
 
+@group(0) @binding(19)
+var<storage, read> rigid_fluid_tiles: array<u32>;
+
 /// First record word of a rigid body's wet-face fluid mass, momentum, and moments
 const RIGID_BODY_FLUID_CURRENT_WORD: u32 = 4u;
 
@@ -85,6 +88,43 @@ fn fluid_contact_offset() -> u32 {
     return tile_count * 64u * 4u + tile_count * 2u + 1u;
 }
 
+/// Returns the first word of the sparse solid-contact tile flags
+fn fluid_contact_tile_flags_offset() -> u32 {
+    let cell_count: u32 = uniforms.region_width * uniforms.region_height * 64u;
+    return fluid_contact_offset() + cell_count * 2u;
+}
+
+/// Returns the first word of the sparse solid-contact tile list
+fn fluid_contact_tile_list_offset() -> u32 {
+    return fluid_contact_tile_flags_offset() + uniforms.region_width * uniforms.region_height;
+}
+
+/// Returns the word counting tiles with solid-contact velocity changes
+fn fluid_contact_tile_count_offset() -> u32 {
+    return fluid_contact_tile_list_offset() + uniforms.region_width * uniforms.region_height;
+}
+
+/// Adds a physical tile to the solid-contact list once
+fn add_fluid_contact_tile(physical_tile: u32) {
+    let flag_index: u32 = fluid_contact_tile_flags_offset() + physical_tile;
+    if atomicLoad(&fluid_raster[flag_index]) != 0u { return; }
+    loop {
+        let exchange = atomicCompareExchangeWeak(&fluid_raster[flag_index], 0u, 1u);
+        if exchange.exchanged {
+            let list_index: u32 = atomicAdd(
+                &fluid_raster[fluid_contact_tile_count_offset()],
+                1u,
+            );
+            atomicStore(
+                &fluid_raster[fluid_contact_tile_list_offset() + list_index],
+                physical_tile,
+            );
+            break;
+        }
+        if exchange.old_value != 0u { break; }
+    }
+}
+
 /// Returns a fluid raster cell's mass and mass-weighted velocity, with zero mass when it is empty
 fn fluid_raster_cell(index: u32) -> vec3<f32> {
     let raster_index: u32 = index * 4u;
@@ -132,6 +172,7 @@ fn add_fluid_contact_velocity(index: u32, velocity_change: vec2<f32>) {
         vec2<f32>(1.0e9),
     )));
     let base: u32 = fluid_contact_offset() + index * 2u;
+    add_fluid_contact_tile(index / 64u);
     atomicAdd(&fluid_raster[base], bitcast<u32>(fixed.x));
     atomicAdd(&fluid_raster[base + 1u], bitcast<u32>(fixed.y));
 }
@@ -212,9 +253,9 @@ fn rigid_fluid_sum_word(sum: u32) -> u32 {
     return RIGID_BODY_FLUID_CURRENT_WORD + sum - 3u;
 }
 
-/// Returns the logical cell of one invocation of a dispatch over every physical tile
+/// Returns the logical cell of one invocation of a dispatch over listed physical tiles
 fn rigid_fluid_cell(invocation: u32) -> vec2<i32> {
-    let physical_tile: u32 = invocation / 64u;
+    let physical_tile: u32 = rigid_fluid_tiles[invocation / 64u];
     let local: u32 = invocation % 64u;
     let physical_x: u32 = physical_tile % uniforms.region_width;
     let physical_y: u32 = physical_tile / uniforms.region_width;
@@ -355,7 +396,9 @@ fn rigid_fluid(
                 contact_material.x,
                 contact_material.y,
             );
-            add_fluid_contact_velocity(fluid_index, -face_impulse * fluid_inverse_mass);
+            // the impulse was solved against a face share, but the raster change reaches every
+            // particle in the cell, so it divides by the cell's full mass
+            add_fluid_contact_velocity(fluid_index, -face_impulse / fluid.x);
             // the body relaxes toward the wet faces' current on the CPU with its own newest
             // velocity, because an impulse from this tick's velocity would arrive late and
             // overshoot

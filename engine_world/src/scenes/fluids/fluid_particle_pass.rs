@@ -402,6 +402,7 @@ impl FluidParticlePass {
             "prepare",
             "prepare_boundary",
             "prepare_raster",
+            "prepare_fluid_contacts",
             "compact",
             "finish_compaction",
             "begin_occupancy",
@@ -423,6 +424,7 @@ impl FluidParticlePass {
             "boundary_nodes",
             "apply_fluid_contacts",
             "clear_fluid_contacts",
+            "reset_fluid_contact_tile_count",
             "predict",
             "project_actors",
             "prepare_sleep",
@@ -454,7 +456,7 @@ impl FluidParticlePass {
                 &actor_sample_pipeline_layout
             } else if entry_point == "commit_actor_velocity" {
                 &actor_commit_pipeline_layout
-            } else if entry_point == "prepare_raster" {
+            } else if entry_point == "prepare_raster" || entry_point == "prepare_fluid_contacts" {
                 &prepare_raster_pipeline_layout
             } else if entry_point == "prepare"
                 || entry_point == "prepare_boundary"
@@ -574,7 +576,7 @@ impl FluidParticlePass {
         );
         let fluid_raster_buffer: wgpu::Buffer = create_buffer(
             "`FluidParticlePass.fluid_raster_buffer`",
-            cell_count * 24 + (tile_count * 2 + 1) * 4,
+            cell_count * 24 + (tile_count * 4 + 2) * 4,
             wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
@@ -1652,8 +1654,21 @@ impl FluidParticlePass {
             set_slot(&mut compute_pass, SUBSTEP_UNIFORM_START);
             compute_pass.set_pipeline(&pipelines["apply_fluid_contacts"]);
             compute_pass.dispatch_workgroups_indirect(&self.dispatch_buffer, 0);
+            set_prepare_raster_slot(&mut compute_pass, SUBSTEP_UNIFORM_START);
+            compute_pass.set_pipeline(&pipelines["prepare_fluid_contacts"]);
+            compute_pass.set_bind_group(1, &self.dispatch_bind_group, &[]);
+            compute_pass.dispatch_workgroups(1, 1, 1);
+            set_slot(&mut compute_pass, SUBSTEP_UNIFORM_START);
             compute_pass.set_pipeline(&pipelines["clear_fluid_contacts"]);
-            compute_pass.dispatch_workgroups(cell_width * cell_height / 64, 1, 1);
+            compute_pass.dispatch_workgroups_indirect(&self.dispatch_buffer, 0);
+            compute_pass.set_pipeline(&pipelines["reset_fluid_contact_tile_count"]);
+            compute_pass.dispatch_workgroups(1, 1, 1);
+            // contact clearing sized the shared indirect dispatch for tiles, so it is sized for the
+            // live particles again before prediction, sorting, and every solver substep reuse it
+            set_prepare_slot(&mut compute_pass, SUBSTEP_UNIFORM_START);
+            compute_pass.set_pipeline(&pipelines["prepare"]);
+            compute_pass.set_bind_group(1, &self.dispatch_bind_group, &[]);
+            compute_pass.dispatch_workgroups(1, 1, 1);
             for substep in 0..FLUID_SUBSTEP_COUNT {
                 let predict_slot: usize = SUBSTEP_UNIFORM_START
                     + substep * SUBSTEP_UNIFORM_COUNT;
