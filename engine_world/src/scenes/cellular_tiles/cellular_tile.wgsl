@@ -173,11 +173,8 @@ const CONTACT_SCALE: f32 = 1024.0;
 /// Number of `i32` accumulated per actor: impulse, normal, contact count, depth, and padding
 const CONTACT_STRIDE: u32 = 8u;
 
-/// Number of `f32` accumulated per rigid body: impulse, angular impulse, then for each side of
-/// its center of mass along its own x axis, the count, summed normals, and summed arms of the
-/// dynamic cells holding it back, then the count of its fluid contact faces, then its wet faces'
-/// fluid mass, momentum, and moments
-const RIGID_BODY_CONTACT_STRIDE: u32 = 21u;
+/// Number of `f32` accumulated per rigid body: impulse, angular impulse, and wet face fluid data
+const RIGID_BODY_CONTACT_STRIDE: u32 = 11u;
 
 /// Speed in cells per tick below which a rigid body pushes covered cells away from its center
 const RIGID_BODY_RESTING_SPEED: f32 = 0.01;
@@ -611,19 +608,6 @@ fn integrate(
             // a cell with nowhere to go holds the actor or rigid body back instead
             cell_kinematics.velocity = vec2<f32>(0.0);
             cell_kinematics.progress = vec2<f32>(0.0);
-            if rigid_body != 0u {
-                // each side holds separately, so holding cells can resist the body turning
-                let arm: vec2<f32> = rigid_body_arm(rigid_body - 1u, cell);
-                let axis: vec2<f32> = rigid_bodies[rigid_body - 1u].rotation;
-                let side: u32 = select(0u, 5u, dot(arm, axis) >= 0.0);
-                let contact_index: u32 = (rigid_body - 1u) * RIGID_BODY_CONTACT_STRIDE + side;
-                let held_normal: vec2<f32> = -normalize(normal);
-                add_rigid_body_contact(contact_index + 3u, 1.0);
-                add_rigid_body_contact(contact_index + 4u, held_normal.x);
-                add_rigid_body_contact(contact_index + 5u, held_normal.y);
-                add_rigid_body_contact(contact_index + 6u, arm.x);
-                add_rigid_body_contact(contact_index + 7u, arm.y);
-            }
         } else {
             // collide inelastically with the pusher along the escape, so heavier pushers shove
             // cells harder and lose less speed doing it
@@ -668,7 +652,7 @@ fn integrate(
         // removes up to its share of speed, so cells only start sliding where the slope is
         // steeper than their friction holds
         cell_kinematics.velocity.y = max(cell_kinematics.velocity.y - gravity, 0.0);
-        // a rigid body holding the cell up carries its weight
+        // a rigid body holding the cell up carries its weight, which its voxel support cannot
         push_wall(cell + vec2<i32>(0, -1), vec2<f32>(0.0, -mass * gravity));
         cell_kinematics.progress.y = max(cell_kinematics.progress.y, 0.0);
         let downhill: i32 = i32(sign(normal.x));
@@ -1143,10 +1127,14 @@ fn commit(
         cell_kinematics.velocity.x -= sign(sliding) * min(abs(sliding), friction_speed);
     }
     let impulse: vec2<f32> = material.x * (initial_velocity - cell_kinematics.velocity);
-    if is_blocked.x && !(is_target_collided && is_target_blocking.x) {
+    if is_blocked.x && !(is_target_collided && is_target_blocking.x)
+        && (cell_kinematics.flags & CELL_RESTING) == 0u
+    {
         push_wall(blockers[0], vec2<f32>(impulse.x, select(0.0, impulse.y, !is_blocked.y)));
     }
-    if is_blocked.y && !(is_target_collided && is_target_blocking.y) {
+    if is_blocked.y && !(is_target_collided && is_target_blocking.y)
+        && (cell_kinematics.flags & CELL_RESTING) == 0u
+    {
         push_wall(blockers[1], vec2<f32>(select(0.0, impulse.x, !is_blocked.x), impulse.y));
     }
     kinematics[index] = pack_kinematics(cell_kinematics);

@@ -38,9 +38,6 @@ const COLLISION_RIGID_BODY_CCD_PREDICTION: f32 = 1.0;
 /// Additional solver substeps for contact islands containing cellular rigid bodies
 const COLLISION_RIGID_BODY_SOLVER_ITERATION_COUNT: usize = 8;
 
-/// Passes stopping a rigid body against the dynamic cells holding it on both sides
-const COLLISION_RIGID_BODY_HOLDING_ITERATION_COUNT: usize = 4;
-
 /// Maximum number of rigid bodies simulated at once
 pub const COLLISION_RIGID_BODY_COUNT_MAXIMUM: usize = 1024;
 

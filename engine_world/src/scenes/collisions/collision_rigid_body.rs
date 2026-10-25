@@ -31,9 +31,6 @@ pub struct CollisionRigidBody {
     /// collision origin, velocity in cells per tick, and angular velocity in radians per tick
     /// where this body was last rasterized, absent before its first rasterization
     pub rasterization: Option<([f32; 2], [f32; 2], [f32; 2], f32)>,
-    /// Normal and arm from the center of mass in tiles of the dynamic cells holding this body
-    /// back on each side of its center of mass, kept until newer contacts arrive
-    pub holding: [Option<([f32; 2], [f32; 2])>; 2],
 }
 
 impl CollisionRigidBody {

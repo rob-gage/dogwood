@@ -435,7 +435,7 @@ impl Scene {
             .collect();
         let (cellular_contacts, rigid_body_contacts): (
             HashMap<Actor, ([f32; 2], [f32; 2], f32)>,
-            HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2], [f32; 7])>,
+            HashMap<u64, ([f32; 2], f32, [f32; 7])>,
         ) = self.cellular_tiles
             .get_or_insert_with(|| CellularTiles::new(
                 accelerator,

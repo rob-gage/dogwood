@@ -82,8 +82,8 @@ impl CellularTiles {
     /// tiles and every rigid body at its record index, returning each actor's velocity change in
     /// tiles per second from the cells it pushed, and the normal and depth in tiles of the cells
     /// holding it back, read from an earlier tick, then each rigid body's impulse, angular impulse,
-    /// and holding cells read since the last tick, with the region's bottom-left corner placed in
-    /// cells from the rigid bodies' origin
+    /// and fluid current with the region's bottom-left corner placed in cells from the rigid
+    /// bodies' origin
     pub fn simulate_cellular_tiles(
         &mut self,
         accelerator: &Accelerator,
@@ -96,7 +96,7 @@ impl CellularTiles {
         rigid_bodies: &[(u32, u64)],
     ) -> Result<(
         HashMap<Actor, ([f32; 2], [f32; 2], f32)>,
-        HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2], [f32; 7])>,
+        HashMap<u64, ([f32; 2], f32, [f32; 7])>,
     ), SceneError> {
         let region_position: ScenePosition = ScenePosition {
             tile_x: active_region.bottom_left.x,
@@ -151,7 +151,7 @@ impl CellularTiles {
         self.actor_positions = actor_positions;
         let (contacts, rigid_body_contacts): (
             Option<HashMap<Actor, ([f32; 2], [f32; 2], f32)>>,
-            Option<HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2], [f32; 7])>>,
+            Option<HashMap<u64, ([f32; 2], f32, [f32; 7])>>,
         ) = self.pass.simulate_cellular_tiles(
             accelerator,
             active_region,
@@ -161,7 +161,7 @@ impl CellularTiles {
             &actors,
             rigid_bodies,
         )?;
-        let rigid_body_contacts: HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2], [f32; 7])> =
+        let rigid_body_contacts: HashMap<u64, ([f32; 2], f32, [f32; 7])> =
             rigid_body_contacts.unwrap_or_default();
         // velocity changes apply once, while normals and depths last until the next readback
         if let Some(contacts) = contacts {

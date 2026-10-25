@@ -7,7 +7,7 @@ var<storage, read_write> fluid_raster: array<atomic<u32>>;
 var<storage, read> fluid_materials: array<vec4<f32>>;
 
 /// First record word of a rigid body's wet-face fluid mass, momentum, and moments
-const RIGID_BODY_FLUID_CURRENT_WORD: u32 = 14u;
+const RIGID_BODY_FLUID_CURRENT_WORD: u32 = 4u;
 
 /// Fixed-point units per fluid mass and momentum value in the shared raster
 const FLUID_RASTER_SCALE: f32 = 4096.0;
@@ -19,7 +19,7 @@ const FLUID_CURRENT_WAKE_SPEED: f32 = 0.1;
 const FLUID_CONTACT_APPROACH_MINIMUM: f32 = 0.0001;
 
 /// Record word counting a rigid body's fluid contact faces during the current tick
-const RIGID_BODY_FLUID_FACE_WORD: u32 = 13u;
+const RIGID_BODY_FLUID_FACE_WORD: u32 = 3u;
 
 /// Cells past a rigid body's edge searched for the fluid that submerges a row or column
 const FLUID_RIGID_BODY_SURFACE_REACH: u32 = 3u;

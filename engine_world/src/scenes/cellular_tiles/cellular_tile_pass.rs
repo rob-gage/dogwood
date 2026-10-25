@@ -42,7 +42,7 @@ const CONTACT_BYTE_COUNT: u64 = 32;
 const CONTACT_SCALE: f32 = 1024.0;
 
 /// Bytes of the contacts accumulated for one rigid body
-const RIGID_BODY_CONTACT_BYTE_COUNT: u64 = 84;
+const RIGID_BODY_CONTACT_BYTE_COUNT: u64 = 44;
 
 /// Number of contact and control readbacks that can each be in flight at once
 const READBACK_COUNT: usize = 3;
@@ -72,7 +72,7 @@ pub struct CellularTilePass {
     tick: u32,
     /// Mappable copies of the control counts, each with the resolve count it was simulated with
     control_readbacks: AcceleratorReadback<usize>,
-    /// Impulses and holding cells accumulated for every rigid body until they are read
+    /// Impulses and fluid contacts accumulated for every rigid body until they are read
     rigid_body_contact_buffer: wgpu::Buffer,
     /// Mappable copies of the rigid body contacts, each with the rigid body of every index
     rigid_body_contact_readbacks: AcceleratorReadback<Vec<u64>>,
@@ -410,11 +410,11 @@ impl CellularTilePass {
         rigid_bodies: &[(u32, u64)],
     ) -> Result<(
         Option<HashMap<Actor, ([f32; 2], [f32; 2], f32)>>,
-        Option<HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2], [f32; 7])>>,
+        Option<HashMap<u64, ([f32; 2], f32, [f32; 7])>>,
     ), SceneError> {
         let contacts: Option<HashMap<Actor, ([f32; 2], [f32; 2], f32)>> =
             self.simulate_cellular_tiles_read_contacts(accelerator)?;
-        let rigid_body_contacts: Option<HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2], [f32; 7])>> =
+        let rigid_body_contacts: Option<HashMap<u64, ([f32; 2], f32, [f32; 7])>> =
             self.simulate_cellular_tiles_read_rigid_body_contacts(accelerator)?;
         let width: u32 = active_region.width() as u32;
         let height: u32 = active_region.height() as u32;
@@ -627,19 +627,17 @@ impl CellularTilePass {
 
     /// Returns the contacts of every rigid body summed over every readback that arrived since the
     /// last tick: impulse in mass tiles per second, angular impulse in mass tiles squared per
-    /// second, then for each side of its center of mass the count, summed normals, and summed arms
-    /// in tiles of the dynamic cells holding it back in the newest readback, skipping rigid
-    /// bodies replaced since
+    /// second, then fluid currents in the newest readback, skipping rigid bodies replaced since
     fn simulate_cellular_tiles_read_rigid_body_contacts(
         &mut self,
         accelerator: &Accelerator,
-    ) -> Result<Option<HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2], [f32; 7])>>, SceneError> {
+    ) -> Result<Option<HashMap<u64, ([f32; 2], f32, [f32; 7])>>, SceneError> {
         let mut rigid_body_contacts: Option<
-            HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2], [f32; 7])>
+            HashMap<u64, ([f32; 2], f32, [f32; 7])>
         > = None;
         let read_result: Result<(), AcceleratorReadbackError> = self.rigid_body_contact_readbacks
             .read(accelerator, true, |readback_rigid_bodies, contact_bytes| {
-                let contacts: &mut HashMap<u64, ([f32; 2], f32, [[f32; 5]; 2], [f32; 7])> =
+                let contacts: &mut HashMap<u64, ([f32; 2], f32, [f32; 7])> =
                     rigid_body_contacts.get_or_insert_with(HashMap::new);
                 for ((readback_rigid_body, rigid_body), contact_bytes) in readback_rigid_bodies
                     .iter()
@@ -658,33 +656,19 @@ impl CellularTilePass {
                     // convert impulses in mass cells per tick and arms in cells to tile units
                     let cell_size: f32 = 1.0 / CELLULAR_TILE_SIZE as f32;
                     let tiles_per_second: f32 = cell_size / CELLULAR_TILE_TIME_STEP;
-                    let (impulse, angular_impulse, holding, current): &mut (
-                        [f32; 2],
-                        f32,
-                        [[f32; 5]; 2],
-                        [f32; 7],
-                    ) = contacts.entry(*rigid_body)
-                        .or_insert(([0.0; 2], 0.0, [[0.0; 5]; 2], [0.0; 7]));
+                    let (impulse, angular_impulse, current): &mut ([f32; 2], f32, [f32; 7]) =
+                        contacts.entry(*rigid_body).or_insert(([0.0; 2], 0.0, [0.0; 7]));
                     impulse[0] += value(0) * tiles_per_second;
                     impulse[1] += value(1) * tiles_per_second;
                     *angular_impulse += value(2) * cell_size * tiles_per_second;
-                    for (side, side_holding) in holding.iter_mut().enumerate() {
-                        *side_holding = [
-                            value(3 + side * 5),
-                            value(4 + side * 5),
-                            value(5 + side * 5),
-                            value(6 + side * 5) * cell_size,
-                            value(7 + side * 5) * cell_size,
-                        ];
-                    }
                     // wet-face fluid mass, momentum in tile units, and arm moments in tiles
-                    current[0] += value(14);
-                    current[1] += value(15) * tiles_per_second;
-                    current[2] += value(16) * tiles_per_second;
-                    current[3] += value(17) * cell_size * tiles_per_second;
-                    current[4] += value(18) * cell_size * cell_size;
-                    current[5] += value(19) * cell_size;
-                    current[6] += value(20) * cell_size;
+                    current[0] += value(4);
+                    current[1] += value(5) * tiles_per_second;
+                    current[2] += value(6) * tiles_per_second;
+                    current[3] += value(7) * cell_size * tiles_per_second;
+                    current[4] += value(8) * cell_size * cell_size;
+                    current[5] += value(9) * cell_size;
+                    current[6] += value(10) * cell_size;
                 }
             });
         read_result.map_err(|error| match error {
