@@ -105,6 +105,8 @@ impl TemplateGame {
                 mass: 2.0,
                 friction: 0.6,
                 restitution: 0.1,
+                strength: 10.0,
+                absorption: 0.1,
                 debris: Some(gravel),
             },
         })?;

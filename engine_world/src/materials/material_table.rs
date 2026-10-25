@@ -24,8 +24,9 @@ use std::sync::mpsc::{
 pub struct MaterialTable {
     /// Sole owned material definitions with registration inaccessible after compilation
     material_registry: MaterialRegistry,
-    /// Absent until static cellular properties have meaningful GPU records
-    cellular_static_properties_buffer: Option<wgpu::Buffer>,
+    /// Mass, absorption, strength, and debris material identifier bits as four 32-bit words per
+    /// static cellular index
+    cellular_static_properties_buffer: wgpu::Buffer,
     /// Mass, friction, restitution, and padding as four `f32` per dynamic cellular index
     cellular_dynamic_properties_buffer: wgpu::Buffer,
     /// Density, XSPH viscosity, cohesion, artificial pressure, drag, friction, restitution, and
@@ -54,6 +55,7 @@ impl MaterialTable {
             }))
             .collect();
         let cellular_static_count: usize = albedo_frames.len();
+        let mut static_property_bytes: Vec<u8> = vec![0; 16];
         let mut property_bytes: Vec<u8> = Vec::new();
         for index in 1.. {
             let Ok(identifier) = MaterialIdentifier::new(MaterialForm::CellularStatic, index)
@@ -63,11 +65,22 @@ impl MaterialTable {
             if !properties.mass.is_finite() || properties.mass <= 0.0
                 || !properties.friction.is_finite() || properties.friction < 0.0
                 || !(0.0..=1.0).contains(&properties.restitution)
+                || properties.strength.is_nan() || properties.strength <= 0.0
+                || !properties.absorption.is_finite()
+                || !(0.0..=1.0).contains(&properties.absorption)
             {
                 return Err(String::from(
                     "static cellular materials need a positive mass, a nonnegative friction, \
-                    and a restitution from zero to one",
+                    a restitution from zero to one, a positive strength, and a finite absorption \
+                    from zero to one",
                 ));
+            }
+            // the debris material identifier rides in the last component's bits, zero for none
+            let debris_bits: f32 = f32::from_bits(
+                properties.debris.map_or(0, |debris| debris.as_u32()),
+            );
+            for value in [properties.mass, properties.absorption, properties.strength, debris_bits] {
+                static_property_bytes.extend_from_slice(&value.to_le_bytes());
             }
             if let Some(debris) = properties.debris
                 && (debris.form() != MaterialForm::CellularDynamic
@@ -79,6 +92,19 @@ impl MaterialTable {
                 ));
             }
         }
+        let cellular_static_properties_buffer: wgpu::Buffer = device.create_buffer(
+            &wgpu::BufferDescriptor {
+                label: Some("`MaterialTable.cellular_static_properties_buffer`"),
+                size: static_property_bytes.len() as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
+        accelerator.queue().write_buffer(
+            &cellular_static_properties_buffer,
+            0,
+            &static_property_bytes,
+        );
         for index in 0.. {
             let Ok(identifier) = MaterialIdentifier::new(MaterialForm::CellularDynamic, index)
             else { break; };
@@ -304,7 +330,7 @@ impl MaterialTable {
             albedos.split_off(cellular_static_count);
         Ok(Self {
             material_registry,
-            cellular_static_properties_buffer: None,
+            cellular_static_properties_buffer,
             cellular_dynamic_properties_buffer,
             fluid_properties_buffer,
             gas_properties_buffer,
@@ -404,9 +430,10 @@ impl MaterialTable {
         self.material_registry.gas_properties(identifier)
     }
 
-    /// Returns static cellular GPU properties when defined
-    pub fn cellular_static_properties_buffer(&self) -> Option<&wgpu::Buffer> {
-        self.cellular_static_properties_buffer.as_ref()
+    /// Returns static cellular GPU properties as mass, absorption, strength, and debris material
+    /// identifier bits, zero for none
+    pub fn cellular_static_properties_buffer(&self) -> &wgpu::Buffer {
+        &self.cellular_static_properties_buffer
     }
 
     /// Returns dynamic cellular GPU properties as mass, friction, restitution, and padding
