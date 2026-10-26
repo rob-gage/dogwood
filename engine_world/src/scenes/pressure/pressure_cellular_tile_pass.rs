@@ -166,6 +166,8 @@ impl PressureCellularTilePass {
             "clear",
             "prepare",
             "step",
+            "prepare_gas",
+            "step_gas",
             "publish",
             "damage",
         ] {
@@ -180,7 +182,12 @@ impl PressureCellularTilePass {
                     layout: Some(layout),
                     module: &shader_module,
                     entry_point: Some(entry_point),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    // the step writes all its workgroup memory before reading it, so it skips
+                    // clearing it for every workgroup of every substep
+                    compilation_options: wgpu::PipelineCompilationOptions {
+                        zero_initialize_workgroup_memory: !entry_point.starts_with("step"),
+                        ..Default::default()
+                    },
                     cache: None,
                 },
             ));
@@ -213,7 +220,7 @@ impl PressureCellularTilePass {
         );
         let control_buffer: wgpu::Buffer = create_buffer(
             "`PressureCellularTilePass.control_buffer`",
-            8 + tile_count * 8,
+            12 + tile_count * 12,
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         );
         // the count of tiles where cellular tile cells broke this tick, then each tile's buffer
@@ -231,7 +238,7 @@ impl PressureCellularTilePass {
         );
         let dispatch_buffer: wgpu::Buffer = create_buffer(
             "`PressureCellularTilePass.dispatch_buffer`",
-            24,
+            36,
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
         );
         let create_bind_group = |gas_in: &wgpu::Buffer, gas_out: &wgpu::Buffer| {
@@ -362,7 +369,7 @@ impl PressureCellularTilePass {
         let width: u32 = active_region.width() as u32;
         let height: u32 = active_region.height() as u32;
         let tile_count: u32 = width * height;
-        if u64::from(tile_count) * 8 + 8 > self.control_buffer.size() {
+        if u64::from(tile_count) * 12 + 12 > self.control_buffer.size() {
             return Err(SceneError::InvalidCellularTileRegion);
         }
         // every tile is measured when the region or ring moves, and afterward only tiles that may
@@ -415,7 +422,7 @@ impl PressureCellularTilePass {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Scene pressure cellular tiles"),
             });
-        command_encoder.clear_buffer(&self.control_buffer, 0, Some(8));
+        command_encoder.clear_buffer(&self.control_buffer, 0, Some(12));
         command_encoder.clear_buffer(&self.broken_cellular_tile_buffer, 0, Some(4));
         command_encoder.clear_buffer(&self.broken_rigid_body_cell_buffer, 0, Some(4));
         {
@@ -451,6 +458,11 @@ impl PressureCellularTilePass {
                 compute_pass.set_bind_group(0, &self.bind_groups[substep % 2], &[]);
                 compute_pass.set_pipeline(&pipelines["step"]);
                 compute_pass.dispatch_workgroups_indirect(&self.dispatch_buffer, 0);
+                // tiles whose halo holds gas run the full step after the others
+                compute_pass.set_pipeline(&pipelines["prepare_gas"]);
+                compute_pass.dispatch_workgroups(1, 1, 1);
+                compute_pass.set_pipeline(&pipelines["step_gas"]);
+                compute_pass.dispatch_workgroups_indirect(&self.dispatch_buffer, 24);
             }
             // the even substep count leaves the newest cells in the cellular tile gas buffer
             compute_pass.set_bind_group(0, &self.bind_groups[0], &[]);

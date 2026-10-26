@@ -57,11 +57,13 @@ struct PressureActor {
     padding: vec2<u32>,
 };
 
-/// Active tile count, the count of tiles whose open volumes are measured, then the active tiles
-/// followed, after room for every tile of the region, by the measured tiles
+/// Active tile count, the count of tiles whose open volumes are measured, and the count of tiles
+/// whose halo holds gas this substep, then the active tiles followed, each after room for every
+/// tile of the region, by the measured tiles and the tiles holding gas
 struct PressureControl {
     active_tile_count: atomic<u32>,
     volume_tile_count: atomic<u32>,
+    gas_tile_count: atomic<u32>,
     active_tiles: array<u32>,
 };
 
@@ -188,6 +190,19 @@ var<workgroup> halo_admissions: array<u32, 100>;
 
 /// Cell position of the halo's bottom-left cell
 var<private> halo_origin: vec2<i32>;
+
+/// Whether each tile of the 3x3 tiles around the workgroup's tile is simulated this tick, which
+/// stays fixed through the tick's substeps
+var<workgroup> halo_tile_active: array<u32, 9>;
+
+/// Whether any halo cell holds gas in a species slot
+var<workgroup> halo_gas: atomic<u32>;
+
+/// Whether any halo cell holds gas, read uniformly by the whole workgroup
+var<workgroup> halo_gas_uniform: u32;
+
+/// Whether no halo cell holds gas, so nothing is admitted and no species slot moves
+var<private> is_halo_gas_free: bool;
 
 /// Largest change of a cell's phantom air in one substep that still lets its tile sleep, so faint
 /// residual pressure stops diffusing once it is too weak to matter instead of keeping wide areas
@@ -344,6 +359,11 @@ fn solid_capacity(mass: f32) -> f32 {
 /// Reads one cell's gas and stored pressure and derives its pressure and density, treating cells
 /// outside the active region as closed and empty
 fn load_cell(cell: vec2<i32>) -> PressureCell {
+    return load_cell_with_activity(cell, is_cell_active(cell));
+}
+
+/// Reads one cell like `load_cell`, given whether it lies in a tile simulated this tick
+fn load_cell_with_activity(cell: vec2<i32>, is_active: bool) -> PressureCell {
     var pressure_cell: PressureCell;
     if !is_cell_inside(cell) { return pressure_cell; }
     let index: u32 = cell_index(cell);
@@ -356,7 +376,7 @@ fn load_cell(cell: vec2<i32>) -> PressureCell {
     pressure_cell.is_dragged = (volume_word.x & VOLUME_DRAGGED) != 0u;
     pressure_cell.drag = unpack2x16snorm(volume_word.y) * ACTOR_VELOCITY_MAXIMUM
         * uniforms.actor_velocity_scale;
-    pressure_cell.is_active = is_cell_active(cell);
+    pressure_cell.is_active = is_active;
     var mass: f32 = f32(pressure_cell.phantom) * uniforms.ambient_mass;
     var total: f32 = f32(pressure_cell.phantom);
     for (var slot: u32 = 0u; slot < 4u; slot++) {
@@ -390,14 +410,32 @@ fn load_cell(cell: vec2<i32>) -> PressureCell {
 
 /// Reads the cells of a workgroup's active tile and the rings around it into the halo once, so
 /// every neighbor read after it is local, and returns the invocation's cell position
-fn load_halo(workgroup: u32, local_cell: u32) -> vec2<i32> {
-    let tile: u32 = control.active_tiles[workgroup];
+fn load_halo(tile: u32, local_cell: u32) -> vec2<i32> {
     let tile_position: vec2<u32> =
         vec2<u32>(tile % uniforms.region_width, tile / uniforms.region_width);
     halo_origin = vec2<i32>(tile_position * 8u) - 3;
+    // the halo reaches three cells into the tiles around, whose activity each tile reads once
+    if local_cell < 9u {
+        let neighbor_tile: vec2<i32> = vec2<i32>(tile_position)
+            + vec2<i32>(i32(local_cell % 3u), i32(local_cell / 3u)) - 1;
+        halo_tile_active[local_cell] = select(
+            0u,
+            atomicLoad(&pressure_awake[tile_index(vec2<u32>(max(neighbor_tile, vec2<i32>(0))))])
+                & TILE_ACTIVE,
+            all(neighbor_tile >= vec2<i32>(0))
+                && all(neighbor_tile < vec2<i32>(i32(uniforms.region_width), i32(uniforms.region_height))),
+        );
+    }
+    if local_cell == 0u { atomicStore(&halo_gas, 0u); }
+    workgroupBarrier();
     for (var halo_index: u32 = local_cell; halo_index < 196u; halo_index += 64u) {
-        let pressure_cell: PressureCell =
-            load_cell(halo_origin + vec2<i32>(i32(halo_index % 14u), i32(halo_index / 14u)));
+        let halo_position: vec2<u32> = vec2<u32>(halo_index % 14u, halo_index / 14u);
+        let tile_offset: vec2<u32> = (halo_position + 5u) / 8u;
+        let pressure_cell: PressureCell = load_cell_with_activity(
+            halo_origin + vec2<i32>(halo_position),
+            halo_tile_active[tile_offset.y * 3u + tile_offset.x] != 0u,
+        );
+        if any(pressure_cell.slots != vec4<u32>(0u)) { atomicOr(&halo_gas, 1u); }
         halo_slots[halo_index] = pressure_cell.slots;
         halo_words[halo_index] = vec4<u32>(
             pressure_cell.phantom,
@@ -1002,6 +1040,7 @@ fn cell_transfers(cell: vec2<i32>) -> vec4<u32> {
 /// Returns the gases an active cell admits into its free slots: the largest new gases its
 /// neighbors could give it by flow or diffusion, packed as gas index plus one per byte
 fn cell_admission(cell: vec2<i32>) -> u32 {
+    if is_halo_gas_free { return 0u; }
     let center: PressureCell = halo_cell(cell);
     if !center.is_active || center.volume <= 0.0 { return 0u; }
     var free_count: u32 = 0u;
@@ -1084,13 +1123,54 @@ fn cell_admission(cell: vec2<i32>) -> u32 {
 /// cell's new species slots, phantom air, stored pressure, and the flows its faces actually
 /// carried. Each workgroup recomputes the flows and transfers of the rings around its tile
 /// instead of waiting for its neighbors, which is exact because every workgroup computes them
-/// from the same previous substep
+/// from the same previous substep. This entry point simulates the active tiles whose halo holds
+/// no gas, compiled without the species slot work, and lists the others for `step_gas`
 @compute @workgroup_size(64)
 fn step(
     @builtin(workgroup_id) workgroup: vec3<u32>,
     @builtin(local_invocation_index) local_cell: u32,
 ) {
-    let cell: vec2<i32> = load_halo(workgroup.x, local_cell);
+    let tile: u32 = control.active_tiles[workgroup.x];
+    let cell: vec2<i32> = load_halo(tile, local_cell);
+    if local_cell == 0u { halo_gas_uniform = atomicLoad(&halo_gas); }
+    if workgroupUniformLoad(&halo_gas_uniform) != 0u {
+        if local_cell == 0u {
+            let gas_tile: u32 = atomicAdd(&control.gas_tile_count, 1u);
+            control.active_tiles[uniforms.region_width * uniforms.region_height * 2u + gas_tile] =
+                tile;
+        }
+        return;
+    }
+    is_halo_gas_free = true;
+    simulate_substep(cell, local_cell);
+}
+
+/// Simulates one substep of the active tiles whose halo holds gas, listed by `step`
+@compute @workgroup_size(64)
+fn step_gas(
+    @builtin(workgroup_id) workgroup: vec3<u32>,
+    @builtin(local_invocation_index) local_cell: u32,
+) {
+    let cell: vec2<i32> = load_halo(
+        control.active_tiles[uniforms.region_width * uniforms.region_height * 2u + workgroup.x],
+        local_cell,
+    );
+    is_halo_gas_free = false;
+    simulate_substep(cell, local_cell);
+}
+
+/// Writes the indirect dispatch of one workgroup per tile `step` listed as holding gas, and
+/// clears the list for the next substep
+@compute @workgroup_size(1)
+fn prepare_gas() {
+    dispatches[6] = atomicLoad(&control.gas_tile_count);
+    dispatches[7] = 1u;
+    dispatches[8] = 1u;
+    atomicStore(&control.gas_tile_count, 0u);
+}
+
+/// Simulates one substep of the workgroup's tile from its loaded halo, as `step` describes
+fn simulate_substep(cell: vec2<i32>, local_cell: u32) {
     for (var flow_index: u32 = local_cell; flow_index < 144u; flow_index += 64u) {
         halo_flows[flow_index] = cell_flows(
             halo_origin + 1 + vec2<i32>(i32(flow_index % 12u), i32(flow_index / 12u)),
@@ -1148,6 +1228,17 @@ fn step(
         }
         // record the flow this cell's right and top faces carried, positive toward the neighbor
         if face == 1u || face == 3u { flows[face / 2u] = carried; }
+        // without gas in the halo only phantom air and stored pressure move
+        if is_halo_gas_free {
+            if neighbor.volume > 0.0 {
+                phantom -= transfer(center.phantom, giving + ambient_diffusion(center, neighbor));
+            }
+            if center.volume > 0.0 {
+                phantom +=
+                    transfer(neighbor.phantom, receiving + ambient_diffusion(neighbor, center));
+            }
+            continue;
+        }
         for (var slot: u32 = 0u; slot < 4u; slot++) {
             let center_slot: u32 = center.slots[slot];
             if slot_amount(center_slot) > 0u
