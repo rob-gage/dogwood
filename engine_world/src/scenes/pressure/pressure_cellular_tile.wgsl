@@ -192,11 +192,11 @@ var<private> halo_origin: vec2<i32>;
 /// Largest change of a cell's phantom air in one substep that still lets its tile sleep, so faint
 /// residual pressure stops diffusing once it is too weak to matter instead of keeping wide areas
 /// of open air awake
-const SLEEP_PHANTOM_CHANGE_MAXIMUM: u32 = 4u;
+const SLEEP_PHANTOM_CHANGE_MAXIMUM: u32 = 8u;
 
 /// Smallest face flow that keeps a tile awake or wakes a sleeping neighbor, below which a flow
 /// moves no whole amount unit through its face
-const SLEEP_FLOW_MINIMUM: f32 = 1.0;
+const SLEEP_FLOW_MINIMUM: f32 = 2.0;
 
 /// Tile flag: the tile's gas, stored pressure, or open volume changed, so it and its neighbors
 /// are simulated

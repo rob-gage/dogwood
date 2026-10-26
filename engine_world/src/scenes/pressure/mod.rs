@@ -19,7 +19,7 @@ const PRESSURE_TIME_STEP: f32 = 1.0 / 60.0;
 
 /// Substeps of each tick, even so the cells alternate between their two buffers and end in the
 /// cellular tile buffers
-const PRESSURE_SUBSTEP_COUNT: usize = 12;
+const PRESSURE_SUBSTEP_COUNT: usize = 6;
 
 /// Fraction of scene gravity that lifts and sinks gases, keeping buoyant flows well below the
 /// speed of pressure waves so gas columns stay close to the ambient pressure
@@ -30,7 +30,7 @@ const PRESSURE_GAS_SPEED: f32 = 18.0;
 
 /// Speed of pressure waves through solid cells in tiles per second, below the stability limit of
 /// 0.7 cells per substep
-const PRESSURE_SOLID_SPEED: f32 = 54.0;
+const PRESSURE_SOLID_SPEED: f32 = 30.0;
 
 /// Impedance of a solid cell of unit mass relative to gas, so that heavier solids reflect more of
 /// the pressure reaching them
