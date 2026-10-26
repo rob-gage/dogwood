@@ -59,6 +59,7 @@ Registered static materials start at index 1. Dynamic, fluid, and gas indices st
 
 - `MaterialRegistry::new()` creates an empty registry.
 - `register(material)` checks that the trimmed name is nonempty, assigns the next index for that form, and returns the identifier.
+- `get_by_name(name)` returns `Option<MaterialIdentifier>` using the exact, case-sensitive registered name, without trimming. Duplicate names resolve to the latest successful registration; earlier identifiers remain valid.
 - `get`, `material_count`, and the form-specific property methods query registered entries. `material_count()` counts registrations across all forms.
 - `cellular_static_graphics()` yields `None` for the empty identifier, then each registered static material's graphics in identifier order.
 - `compile(self, accelerator)` consumes the registry and returns an immutable `MaterialTable`. Compilation validates the properties above and reads sprite-sheet albedo frames.

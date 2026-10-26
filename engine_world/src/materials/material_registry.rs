@@ -11,9 +11,12 @@ use super::{
     MaterialPropertiesGas,
 };
 use engine_graphics::world::materials::MaterialGraphicsCellularStatic;
+use std::collections::HashMap;
 
 /// Owns registered materials and their identifiers
 pub struct MaterialRegistry {
+    /// Identifiers indexed by exact material name; later registrations replace earlier entries
+    materials_by_name: HashMap<String, MaterialIdentifier>,
     /// The `Material::CellularStatic`s in this `MaterialRegistry`
     cellular_statics: Vec<Material>,
     /// The `Material::CellularDynamic`s in this `MaterialRegistry`
@@ -27,8 +30,9 @@ pub struct MaterialRegistry {
 impl MaterialRegistry {
 
     /// Creates an empty material registry
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
+            materials_by_name: HashMap::new(),
             cellular_statics: Vec::new(),
             cellular_dynamics: Vec::new(),
             fluids: Vec::new(),
@@ -57,6 +61,7 @@ impl MaterialRegistry {
             .try_into()
             .map_err(|_| MaterialError::CapacityExceeded)?;
         let identifier: MaterialIdentifier = MaterialIdentifier::new(form, material_index)?;
+        self.materials_by_name.insert(material.name().to_owned(), identifier);
         match material {
             material @ Material::CellularStatic { .. } => self.cellular_statics.push(material),
             material @ Material::CellularDynamic { .. } => self.cellular_dynamics.push(material),
@@ -64,20 +69,6 @@ impl MaterialRegistry {
             material @ Material::Gas { .. } => self.gases.push(material),
         }
         Ok(identifier)
-    }
-
-    /// Iterates over the graphics of every cellular static material index, starting with empty
-    pub fn cellular_static_graphics(
-        &self,
-    ) -> impl Iterator<Item = Option<&MaterialGraphicsCellularStatic>> {
-        std::iter::once(None).chain(self.cellular_statics.iter().map(
-            |material: &Material| match material {
-                Material::CellularStatic { properties, .. } => Some(&properties.graphics),
-                Material::CellularDynamic { .. }
-                | Material::Fluid { .. }
-                | Material::Gas { .. } => None,
-            },
-        ))
     }
 
     /// Returns the material represented by a valid registered identifier
@@ -92,6 +83,25 @@ impl MaterialRegistry {
             MaterialForm::Fluid => self.fluids.get(material_form_index),
             MaterialForm::Gas => self.gases.get(material_form_index),
         }
+    }
+
+    /// Returns the latest registered identifier with this exact, case-sensitive name
+    pub fn lookup(&self, name: &str) -> Option<MaterialIdentifier> {
+        self.materials_by_name.get(name).copied()
+    }
+
+    /// Iterates over the graphics of every cellular static material index, starting with empty
+    pub fn cellular_static_graphics(
+        &self,
+    ) -> impl Iterator<Item = Option<&MaterialGraphicsCellularStatic>> {
+        std::iter::once(None).chain(self.cellular_statics.iter().map(
+            |material: &Material| match material {
+                Material::CellularStatic { properties, .. } => Some(&properties.graphics),
+                Material::CellularDynamic { .. }
+                | Material::Fluid { .. }
+                | Material::Gas { .. } => None,
+            },
+        ))
     }
 
     /// Returns the properties of a registered cellular static material
