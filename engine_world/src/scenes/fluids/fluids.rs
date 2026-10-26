@@ -75,6 +75,8 @@ pub struct Fluids {
     previous_region_origin: Option<(i64, i64)>,
     /// Number of simulation submissions used to order asynchronous count readbacks
     tick: u64,
+    /// Submission number of the newest simulation that edited, erased, or imported particles
+    change_tick: u64,
     /// Latest actor contacts whose collision settings still match the current actor records
     actor_contacts: BTreeMap<Actor, (ActorCollisionComponent, FluidActorContact, u64)>,
 }
@@ -112,6 +114,7 @@ impl Fluids {
             particle_count_tick: 0,
             previous_region_origin: None,
             tick: 0,
+            change_tick: 0,
             actor_contacts: BTreeMap::new(),
         }
     }
@@ -314,7 +317,7 @@ impl Fluids {
     }
 
     /// Simulates one fixed tick using the actor records uploaded by the cellular tile simulation and queues a
-    /// live-particle count readback
+    /// live-particle count readback, or skips a tick that would change nothing
     pub(crate) fn simulate(
         &mut self,
         accelerator: &Accelerator,
@@ -333,6 +336,21 @@ impl Fluids {
             active_region.bottom_left.x * CELLULAR_TILE_SIZE,
             active_region.bottom_left.y * CELLULAR_TILE_SIZE,
         );
+        // a tick with no particles, none on their way, and an unmoved region changes nothing, so
+        // it is skipped once a count readback newer than every particle change and spawn says the
+        // pool is empty
+        if self.particle_count == Some(0)
+            && self.particle_count_tick >= self.change_tick
+            && self.particle_count_revision == self.spawn_revision
+            && self.queued_edits.is_empty()
+            && self.queued_erasures.is_empty()
+            && self.queued_imports.is_empty()
+            && self.rejected_imports.is_empty()
+            && export_target.is_none()
+            && self.previous_region_origin == Some(origin)
+        {
+            return Ok(());
+        }
         let previous_origin: (i64, i64) = self.previous_region_origin.unwrap_or(origin);
         let rebase: [f32; 2] = [
             (previous_origin.0 as i128 - origin.0 as i128) as f32,
@@ -375,6 +393,9 @@ impl Fluids {
             self.spawn_revision,
         )?;
         let (count_result, rejected_imports, submitted_import_count) = result;
+        if !edits.is_empty() || !erasures.is_empty() || submitted_import_count > 0 {
+            self.change_tick = self.tick;
+        }
         if submitted_import_count > 0 {
             self.queued_imports.drain(..submitted_import_count);
         }
