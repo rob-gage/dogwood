@@ -54,6 +54,14 @@ const PRESSURE_ACTOR_DRAG: f32 = 53.5;
 /// Rate per second at which stored pressure relaxes toward the ambient pressure
 const PRESSURE_SOLID_RELAXATION: f32 = 2.0;
 
+/// Rate per second at which open pressure relaxes toward the ambient pressure, so sealed pockets
+/// and the wake of a wave never hold it
+const PRESSURE_OPEN_RELAXATION: f32 = 3.0;
+
+/// Smallest pressure in atmospheres per second that open pressure relaxes by, so it always
+/// settles near the ambient pressure and the tile sleeps
+const PRESSURE_OPEN_RELAXATION_MINIMUM: f32 = 0.5;
+
 /// Rate per second at which a solid cell pushes the gas trapped in it out through its open faces
 const PRESSURE_TRAPPED_EXPULSION: f32 = 8.0;
 

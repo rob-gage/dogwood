@@ -44,6 +44,13 @@ struct PressureUniforms {
     is_volume_listed: u32,
     /// Factor of the gas diffusivities for the size of a pressure cell
     diffusion_scale: f32,
+    /// Fraction of a cell's gas pressure beyond `RELAXATION_TOLERANCE` that relaxes away per
+    /// substep
+    open_relaxation: f32,
+    /// Smallest gas pressure a cell relaxes per substep, in amount units per open volume
+    open_relaxation_minimum: f32,
+    padding_0: u32,
+    padding_1: u32,
 };
 
 /// An actor displacing gas, laid out like the cellular tile actor records
@@ -335,6 +342,10 @@ const SOLID_TERRAIN: u32 = 1u;
 
 /// Cellular tile flag waking the tile's dynamic cells, matching `CELLULAR_TILE_AWAKE`
 const CELLULAR_TILE_AWAKE: u32 = 1u;
+
+/// Pressure in atmospheres above or below the ambient pressure within which gas stops relaxing,
+/// well below what pushes dynamic cells, so the faint exchange of air with solid surfaces sleeps
+const RELAXATION_TOLERANCE: f32 = 0.01;
 
 /// Pressure in atmospheres above or below the ambient pressure that pushes dynamic cells, so
 /// pressure at rest never wakes them
@@ -1501,6 +1512,38 @@ fn simulate_substep(cell: vec2<i32>, local_cell: u32) {
             i32(AMOUNT_MAXIMUM - uniforms.ambient_amount),
         );
     }
+    // gas pressure relaxes toward the ambient pressure, taking phantom air before gas, so sealed
+    // pockets and the wake of a wave never hold it, and closed cells only lose the gas they trap
+    var is_relaxing: bool = false;
+    var gas_total: u32 = 0u;
+    for (var slot: u32 = 0u; slot < 4u; slot++) { gas_total += amounts[slot]; }
+    let volume: f32 = max(center.volume, VOLUME_MINIMUM);
+    let excess: f32 = f32(phantom + gas_total) / volume - f32(uniforms.ambient_amount);
+    if center.solid == 0u && (center.volume > 0.0 || excess > 0.0) {
+        let beyond: f32 =
+            abs(excess) - RELAXATION_TOLERANCE * AMOUNT_PER_ATMOSPHERE / uniforms.diffusion_scale;
+        var change: u32 = u32(volume * clamp(
+            max(beyond * uniforms.open_relaxation, uniforms.open_relaxation_minimum),
+            0.0,
+            beyond,
+        ));
+        if change > 0u {
+            if excess > 0.0 {
+                let from_phantom: u32 = min(change, phantom);
+                phantom -= from_phantom;
+                change -= from_phantom;
+                if change > 0u && gas_total > 0u {
+                    let kept: f32 = max(1.0 - f32(change) / f32(gas_total), 0.0);
+                    for (var slot: u32 = 0u; slot < 4u; slot++) {
+                        amounts[slot] = u32(f32(amounts[slot]) * kept);
+                    }
+                }
+            } else {
+                phantom = min(phantom + change, AMOUNT_MAXIMUM - min(gas_total, AMOUNT_MAXIMUM));
+            }
+            is_relaxing = true;
+        }
+    }
     // static cells absorb the load beyond their strength, a solid pressure cell's from its own
     // stored pressure or the gas pressing on its open faces and an open one's from its gas,
     // losing integrity until they break
@@ -1528,6 +1571,7 @@ fn simulate_substep(cell: vec2<i32>, local_cell: u32) {
     if any(slots != center.slots)
         || u32(abs(i32(phantom) - i32(center.phantom))) > SLEEP_PHANTOM_CHANGE_MAXIMUM
         || stored != center.stored
+        || is_relaxing
         || any(abs(flows) >= vec2<f32>(SLEEP_FLOW_MINIMUM))
     {
         atomicOr(&pressure_awake[tile_index(coarse_tile(cell))], TILE_AWAKE);
@@ -1752,7 +1796,8 @@ fn share(
 
 /// Returns a pressure cell's pressure above the ambient pressure in amount units of a cell, and
 /// whether it is open: its gas per open volume, its stored pressure when solid, or for another
-/// closed pressure cell its trapped gas as if it filled it
+/// closed pressure cell its trapped gas beyond the ambient pressure as if it filled it, since a
+/// cell full of matter holds no vacuum
 fn coarse_gauge(cell: vec2<i32>) -> vec2<f32> {
     if !is_coarse_inside(cell) { return vec2<f32>(0.0); }
     let index: u32 = coarse_index(cell);
@@ -1764,7 +1809,7 @@ fn coarse_gauge(cell: vec2<i32>) -> vec2<f32> {
     var total: f32 = f32(words.x);
     for (var slot: u32 = 0u; slot < 4u; slot++) { total += f32(slot_amount(slots[slot])); }
     let volume: f32 = f32(constants.x & 0x1ffffu) / VOLUME_SCALE;
-    if volume <= 0.0 { return vec2<f32>(0.25 * (total - ambient), 0.0); }
+    if volume <= 0.0 { return vec2<f32>(0.25 * max(total - ambient, 0.0), 0.0); }
     return vec2<f32>(0.25 * (total / max(volume, VOLUME_MINIMUM) - ambient), 1.0);
 }
 

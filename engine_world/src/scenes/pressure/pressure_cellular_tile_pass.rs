@@ -1,6 +1,7 @@
 // Copyright Rob Gage 2026
 
 use super::{
+    GAS_AMOUNT_PER_ATMOSPHERE,
     PRESSURE_ACTOR_DRAG,
     PRESSURE_AMBIENT_DIFFUSIVITY,
     PRESSURE_BROKEN_CELLULAR_TILE_COUNT_MAXIMUM,
@@ -10,6 +11,8 @@ use super::{
     PRESSURE_FLOW_DAMPING,
     PRESSURE_FLOW_MINIMUM,
     PRESSURE_GAS_SPEED,
+    PRESSURE_OPEN_RELAXATION,
+    PRESSURE_OPEN_RELAXATION_MINIMUM,
     PRESSURE_SOLID_IMPEDANCE,
     PRESSURE_SOLID_RELAXATION,
     PRESSURE_SOLID_SPEED,
@@ -36,7 +39,7 @@ use std::collections::HashMap;
 const WORKGROUP_SIZE: u32 = 64;
 
 /// Bytes of the uniforms
-const UNIFORM_BYTE_COUNT: u64 = 96;
+const UNIFORM_BYTE_COUNT: u64 = 112;
 
 /// GPU simulation of the pressure in the active tiles on pressure cells of 2x2 cells, rebuilt from
 /// the cellular tile gas every tick, simulated alternating between two pressure cell buffers, and
@@ -453,6 +456,11 @@ impl PressureCellularTilePass {
                 (PRESSURE_DAMAGE_RATE * substep_time * 65535.0).to_bits(),
                 u32::from(is_volume_listed),
                 (1.0 / area).to_bits(),
+                fraction_per_substep(PRESSURE_OPEN_RELAXATION).to_bits(),
+                (PRESSURE_OPEN_RELAXATION_MINIMUM * GAS_AMOUNT_PER_ATMOSPHERE * area * substep_time)
+                    .to_bits(),
+                0,
+                0,
             ] {
                 uniform_bytes.extend_from_slice(&value.to_le_bytes());
             }
