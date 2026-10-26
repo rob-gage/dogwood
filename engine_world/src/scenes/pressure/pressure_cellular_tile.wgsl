@@ -189,6 +189,15 @@ var<workgroup> halo_admissions: array<u32, 100>;
 /// Cell position of the halo's bottom-left cell
 var<private> halo_origin: vec2<i32>;
 
+/// Largest change of a cell's phantom air in one substep that still lets its tile sleep, so faint
+/// residual pressure stops diffusing once it is too weak to matter instead of keeping wide areas
+/// of open air awake
+const SLEEP_PHANTOM_CHANGE_MAXIMUM: u32 = 4u;
+
+/// Smallest face flow that keeps a tile awake or wakes a sleeping neighbor, below which a flow
+/// moves no whole amount unit through its face
+const SLEEP_FLOW_MINIMUM: f32 = 1.0;
+
 /// Tile flag: the tile's gas, stored pressure, or open volume changed, so it and its neighbors
 /// are simulated
 const TILE_AWAKE: u32 = 1u;
@@ -928,7 +937,7 @@ fn cell_flows(cell: vec2<i32>) -> vec2<f32> {
         }
         // a sleeping neighbor wakes for the next tick instead of exchanging this tick
         if !neighbor.is_active {
-            if flow != 0.0 {
+            if abs(flow) >= SLEEP_FLOW_MINIMUM {
                 atomicOr(&pressure_awake[tile_index(vec2<u32>(neighbor_cell) / 8u)], TILE_AWAKE);
             }
             continue;
@@ -1000,6 +1009,18 @@ fn cell_admission(cell: vec2<i32>) -> u32 {
         if slot_amount(center.slots[slot]) == 0u { free_count += 1u; }
     }
     if free_count == 0u { return 0u; }
+    // No species can be admitted if the center and its four neighbors hold no gas.
+    var has_gas: bool = false;
+    for (var slot: u32 = 0u; slot < 4u; slot++) {
+        if slot_amount(center.slots[slot]) > 0u { has_gas = true; }
+    }
+    for (var face: u32 = 0u; face < 4u; face++) {
+        let neighbor_slots: vec4<u32> = halo_slots[halo_index(cell + face_offset(face))];
+        for (var slot: u32 = 0u; slot < 4u; slot++) {
+            if slot_amount(neighbor_slots[slot]) > 0u { has_gas = true; }
+        }
+    }
+    if !has_gas { return 0u; }
     let signed_outgoing: vec4<f32> = cell_outgoing_flows(cell);
     var candidate_gases: array<u32, 16>;
     var candidate_amounts: array<u32, 16>;
@@ -1224,8 +1245,12 @@ fn step(
     for (var slot: u32 = 0u; slot < 4u; slot++) {
         if amounts[slot] > 0u { slots[slot] = (gases[slot] << 24u) | amounts[slot]; }
     }
-    if any(slots != center.slots) || phantom != center.phantom || stored != center.stored
-        || any(flows != vec2<f32>(0.0))
+    // faint residual pressure that diffuses by a few units, or flows too small to carry a whole
+    // unit through a face, let the tile sleep
+    if any(slots != center.slots)
+        || u32(abs(i32(phantom) - i32(center.phantom))) > SLEEP_PHANTOM_CHANGE_MAXIMUM
+        || stored != center.stored
+        || any(abs(flows) >= vec2<f32>(SLEEP_FLOW_MINIMUM))
     {
         atomicOr(&pressure_awake[tile_index(vec2<u32>(cell) / 8u)], TILE_AWAKE);
     }
