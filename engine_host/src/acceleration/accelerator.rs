@@ -53,6 +53,8 @@ impl Accelerator {
         // maxima: 20 storage + 12 uniform + 8 vertex would exceed Metal's 29 slots.
         let required_limits = wgpu::Limits {
             max_storage_buffers_per_shader_stage: 20,
+            // the pressure step keeps the halo of a block of 2x2 cellular tiles per workgroup
+            max_compute_workgroup_storage_size: 32768,
             ..wgpu::Limits::default()
         };
         let mut unsupported_limit = None;

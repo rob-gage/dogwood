@@ -57,13 +57,16 @@ struct PressureActor {
     padding: vec2<u32>,
 };
 
-/// Active tile count, the count of tiles whose open volumes are measured, and the count of tiles
-/// whose halo holds gas this substep, then the active tiles followed, each after room for every
-/// tile of the region, by the measured tiles and the tiles holding gas
+/// Active tile count, the count of tiles whose open volumes are measured, the count of blocks
+/// whose halo holds gas this substep, and the count of blocks of 2x2 tiles holding an active
+/// tile, then the active tiles followed, each after room for every tile of the region, by the
+/// measured tiles, which the blocks replace once measured, and the blocks holding gas. Blocks
+/// are listed by their bottom-left tile
 struct PressureControl {
     active_tile_count: atomic<u32>,
     volume_tile_count: atomic<u32>,
-    gas_tile_count: atomic<u32>,
+    gas_block_count: atomic<u32>,
+    block_count: atomic<u32>,
     active_tiles: array<u32>,
 };
 
@@ -162,36 +165,51 @@ var<storage, read_write> broken_rigid_body_cells: array<atomic<u32>>;
 @group(1) @binding(0)
 var<storage, read_write> dispatches: array<u32>;
 
-// The halo keeps little per cell and derives the rest when read, because the workgroup memory
-// of each workgroup limits how many run at once
+// A step workgroup simulates a block of 2x2 tiles, so fewer cells around it are loaded and
+// computed again by its neighbors, and its halo keeps little per cell and derives the rest when
+// read, because the workgroup memory of each workgroup limits how many run at once
 
-/// Phantom air, flow bits, and open volume words with the activity flag of the workgroup's tile
-/// and the three rings of cells around it, which every face and transfer the tile depends on
-/// reads, fourteen cells across
-var<workgroup> halo_words: array<vec4<u32>, 196>;
+/// Cells across a step workgroup's block of 2x2 tiles
+const BLOCK_SIZE: u32 = 16u;
+
+/// Cells across the block and the three rings of cells around it, which every face and transfer
+/// the block depends on reads
+const HALO_SIZE: u32 = 22u;
+
+/// Cells across the block and the two rings around it, whose new flows the transfers read
+const HALO_FLOW_SIZE: u32 = 20u;
+
+/// Cells across the block and the ring around it, whose transfers the block's cells read
+const HALO_TRANSFER_SIZE: u32 = 18u;
+
+/// Invocations of a step workgroup, one per cell of its block
+const STEP_WORKGROUP_SIZE: u32 = 256u;
+
+/// Phantom air, flow bits, and open volume words with the activity flag of the cells in the halo
+var<workgroup> halo_words: array<vec4<u32>, 484>;
 
 /// Solid owner and absorption, then stored pressure bits, of the cells in the halo
-var<workgroup> halo_solids: array<vec2<u32>, 196>;
+var<workgroup> halo_solids: array<vec2<u32>, 484>;
 
 /// Density of the cells in the halo
-var<workgroup> halo_densities: array<f32, 196>;
+var<workgroup> halo_densities: array<f32, 484>;
 
-/// New right and top face flows of the tile and the two rings around it, twelve cells across
-var<workgroup> halo_flows: array<vec2<f32>, 144>;
+/// New right and top face flows of the block and the two rings around it
+var<workgroup> halo_flows: array<vec2<f32>, 400>;
 
-/// Limited fractions given through the left, right, bottom, and top faces of the tile and the
-/// ring around it, ten cells across, sixteen bits each since no fraction reaches one
-var<workgroup> halo_transfers: array<vec2<u32>, 100>;
+/// Limited fractions given through the left, right, bottom, and top faces of the block and the
+/// ring around it, sixteen bits each since no fraction reaches one
+var<workgroup> halo_transfers: array<vec2<u32>, 324>;
 
-/// Gases admitted into free slots by the tile and the ring around it
-var<workgroup> halo_admissions: array<u32, 100>;
+/// Gases admitted into free slots by the block and the ring around it
+var<workgroup> halo_admissions: array<u32, 324>;
 
 /// Cell position of the halo's bottom-left cell
 var<private> halo_origin: vec2<i32>;
 
-/// Whether each tile of the 3x3 tiles around the workgroup's tile is simulated this tick, which
+/// Whether each tile of the 4x4 tiles around the workgroup's block is simulated this tick, which
 /// stays fixed through the tick's substeps
-var<workgroup> halo_tile_active: array<u32, 9>;
+var<workgroup> halo_tile_active: array<u32, 16>;
 
 /// Whether any halo cell holds gas in a species slot
 var<workgroup> halo_gas: atomic<u32>;
@@ -201,11 +219,6 @@ var<workgroup> halo_gas_uniform: u32;
 
 /// Whether no halo cell holds gas, so nothing is admitted and no species slot moves
 var<private> is_halo_gas_free: bool;
-
-/// Invocations of a step workgroup: one per cell of its tile and forty more that only help load
-/// the halo and compute the flows and transfers around the tile, so the 196 halo cells and the
-/// 144 flows take two rounds and the 100 transfers one
-const STEP_WORKGROUP_SIZE: u32 = 104u;
 
 /// Largest change of a cell's phantom air in one substep that still lets its tile sleep, so faint
 /// residual pressure stops diffusing once it is too weak to matter instead of keeping wide areas
@@ -414,16 +427,17 @@ fn load_cell_with_activity(cell: vec2<i32>, is_active: bool) -> PressureCell {
     return pressure_cell;
 }
 
-/// Reads the cells of a workgroup's active tile and the rings around it into the halo once, so
-/// every neighbor read after it is local, and returns the invocation's cell position
+/// Reads the cells of a workgroup's block, listed by its bottom-left tile, and the rings around
+/// it into the halo once, so every neighbor read after it is local, and returns the invocation's
+/// cell position
 fn load_halo(tile: u32, local_cell: u32) -> vec2<i32> {
     let tile_position: vec2<u32> =
         vec2<u32>(tile % uniforms.region_width, tile / uniforms.region_width);
     halo_origin = vec2<i32>(tile_position * 8u) - 3;
-    // the halo reaches three cells into the tiles around, whose activity each tile reads once
-    if local_cell < 9u {
+    // the halo reaches three cells into the tiles around, whose activity each block reads once
+    if local_cell < 16u {
         let neighbor_tile: vec2<i32> = vec2<i32>(tile_position)
-            + vec2<i32>(i32(local_cell % 3u), i32(local_cell / 3u)) - 1;
+            + vec2<i32>(i32(local_cell % 4u), i32(local_cell / 4u)) - 1;
         halo_tile_active[local_cell] = select(
             0u,
             atomicLoad(&pressure_awake[tile_index(vec2<u32>(max(neighbor_tile, vec2<i32>(0))))])
@@ -434,12 +448,14 @@ fn load_halo(tile: u32, local_cell: u32) -> vec2<i32> {
     }
     if local_cell == 0u { atomicStore(&halo_gas, 0u); }
     workgroupBarrier();
-    for (var halo_index: u32 = local_cell; halo_index < 196u; halo_index += STEP_WORKGROUP_SIZE) {
-        let halo_position: vec2<u32> = vec2<u32>(halo_index % 14u, halo_index / 14u);
+    for (var halo_index: u32 = local_cell; halo_index < HALO_SIZE * HALO_SIZE;
+        halo_index += STEP_WORKGROUP_SIZE)
+    {
+        let halo_position: vec2<u32> = vec2<u32>(halo_index % HALO_SIZE, halo_index / HALO_SIZE);
         let tile_offset: vec2<u32> = (halo_position + 5u) / 8u;
         let pressure_cell: PressureCell = load_cell_with_activity(
             halo_origin + vec2<i32>(halo_position),
-            halo_tile_active[tile_offset.y * 3u + tile_offset.x] != 0u,
+            halo_tile_active[tile_offset.y * 4u + tile_offset.x] != 0u,
         );
         if any(pressure_cell.slots != vec4<u32>(0u)) { atomicOr(&halo_gas, 1u); }
         halo_words[halo_index] = vec4<u32>(
@@ -455,25 +471,26 @@ fn load_halo(tile: u32, local_cell: u32) -> vec2<i32> {
             vec2<u32>(pressure_cell.solid, bitcast<u32>(pressure_cell.stored));
     }
     workgroupBarrier();
-    return halo_origin + 3 + vec2<i32>(i32(local_cell % 8u), i32(local_cell / 8u));
+    return halo_origin + 3
+        + vec2<i32>(i32(local_cell % BLOCK_SIZE), i32(local_cell / BLOCK_SIZE));
 }
 
-/// Returns the halo index of a cell within three cells of the workgroup's tile
+/// Returns the halo index of a cell within three cells of the workgroup's block
 fn halo_index(cell: vec2<i32>) -> u32 {
     let local: vec2<u32> = vec2<u32>(cell - halo_origin);
-    return local.y * 14u + local.x;
+    return local.y * HALO_SIZE + local.x;
 }
 
-/// Returns the index of a cell within two cells of the workgroup's tile in the new flows
+/// Returns the index of a cell within two cells of the workgroup's block in the new flows
 fn halo_flow_index(cell: vec2<i32>) -> u32 {
     let local: vec2<u32> = vec2<u32>(cell - halo_origin - 1);
-    return local.y * 12u + local.x;
+    return local.y * HALO_FLOW_SIZE + local.x;
 }
 
-/// Returns the index of a cell within one cell of the workgroup's tile in the transfers
+/// Returns the index of a cell within one cell of the workgroup's block in the transfers
 fn halo_transfer_index(cell: vec2<i32>) -> u32 {
     let local: vec2<u32> = vec2<u32>(cell - halo_origin - 2);
-    return local.y * 10u + local.x;
+    return local.y * HALO_TRANSFER_SIZE + local.x;
 }
 
 /// Returns the species slots of a halo cell, read from the gas buffer since a halo without gas
@@ -483,7 +500,7 @@ fn halo_slots(cell: vec2<i32>) -> vec4<u32> {
     return gas_in[cell_index(cell) * 2u];
 }
 
-/// Returns the limited fractions a cell within one cell of the tile gives through each face
+/// Returns the limited fractions a cell within one cell of the block gives through each face
 fn halo_transfer_fractions(cell: vec2<i32>) -> vec4<u32> {
     let packed: vec2<u32> = halo_transfers[halo_transfer_index(cell)];
     return vec4<u32>(packed.x & 0xffffu, packed.x >> 16u, packed.y & 0xffffu, packed.y >> 16u);
@@ -949,12 +966,39 @@ fn clear(@builtin(global_invocation_id) invocation: vec3<u32>) {
     atomicAnd(&pressure_awake[invocation.x], TILE_ACTIVE | TILE_VOLUME_DEPENDENT);
 }
 
-/// Writes the indirect dispatch of one workgroup per active tile
+/// Lists the blocks of 2x2 tiles holding an active tile, by their bottom-left tile, after the
+/// measured tiles are no longer needed
+@compute @workgroup_size(64)
+fn collect_blocks(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let block_columns: u32 = (uniforms.region_width + 1u) / 2u;
+    if invocation.x >= block_columns * ((uniforms.region_height + 1u) / 2u) { return; }
+    let tile: vec2<u32> = 2u * vec2<u32>(invocation.x % block_columns, invocation.x / block_columns);
+    var is_active: bool = false;
+    for (var offset: u32 = 0u; offset < 4u; offset++) {
+        let block_tile: vec2<u32> = tile + vec2<u32>(offset % 2u, offset / 2u);
+        if block_tile.x >= uniforms.region_width || block_tile.y >= uniforms.region_height {
+            continue;
+        }
+        if (atomicLoad(&pressure_awake[tile_index(block_tile)]) & TILE_ACTIVE) != 0u {
+            is_active = true;
+        }
+    }
+    if is_active {
+        let block: u32 = atomicAdd(&control.block_count, 1u);
+        control.active_tiles[uniforms.region_width * uniforms.region_height + block] =
+            tile.y * uniforms.region_width + tile.x;
+    }
+}
+
+/// Writes the indirect dispatches of one workgroup per active tile and per listed block
 @compute @workgroup_size(1)
 fn prepare() {
     dispatches[0] = atomicLoad(&control.active_tile_count);
     dispatches[1] = 1u;
     dispatches[2] = 1u;
+    dispatches[9] = atomicLoad(&control.block_count);
+    dispatches[10] = 1u;
+    dispatches[11] = 1u;
 }
 
 /// Returns a halo cell's net outflow through its faces from the previous substep
@@ -1012,7 +1056,7 @@ fn cell_flows(cell: vec2<i32>) -> vec2<f32> {
     return flows;
 }
 
-/// Returns the new flows of each face of a cell within one cell of the tile, positive out of it
+/// Returns the new flows of each face of a cell within one cell of the block, positive out of it
 fn cell_outgoing_flows(cell: vec2<i32>) -> vec4<f32> {
     let flows: vec2<f32> = halo_flows[halo_flow_index(cell)];
     return vec4<f32>(
@@ -1144,27 +1188,28 @@ fn cell_admission(cell: vec2<i32>) -> u32 {
     return admission;
 }
 
-/// Simulates one substep of each active tile: updates the face flows, limits the gas they give,
+/// Simulates one substep of each block holding an active tile: updates the face flows, limits the gas they give,
 /// chooses the gases free slots admit, then moves gas through every face by the limited flows
 /// and diffusion and stored pressure through every face touching a solid cell, writing each
 /// cell's new species slots, phantom air, stored pressure, and the flows its faces actually
-/// carried. Each workgroup recomputes the flows and transfers of the rings around its tile
-/// instead of waiting for its neighbors, which is exact because every workgroup computes them
-/// from the same previous substep. This entry point simulates the active tiles whose halo holds
-/// no gas, compiled without the species slot work, and lists the others for `step_gas`
+/// carried, in the cells of its active tiles. Each workgroup recomputes the flows and transfers of
+/// the rings around its block instead of waiting for its neighbors, which is exact because every
+/// workgroup computes them from the same previous substep. This entry point simulates the blocks
+/// whose halo holds no gas, compiled without the species slot work, and lists the others for
+/// `step_gas`
 @compute @workgroup_size(STEP_WORKGROUP_SIZE)
 fn step(
     @builtin(workgroup_id) workgroup: vec3<u32>,
     @builtin(local_invocation_index) local_cell: u32,
 ) {
-    let tile: u32 = control.active_tiles[workgroup.x];
-    let cell: vec2<i32> = load_halo(tile, local_cell);
+    let tile_count: u32 = uniforms.region_width * uniforms.region_height;
+    let block: u32 = control.active_tiles[tile_count + workgroup.x];
+    let cell: vec2<i32> = load_halo(block, local_cell);
     if local_cell == 0u { halo_gas_uniform = atomicLoad(&halo_gas); }
     if workgroupUniformLoad(&halo_gas_uniform) != 0u {
         if local_cell == 0u {
-            let gas_tile: u32 = atomicAdd(&control.gas_tile_count, 1u);
-            control.active_tiles[uniforms.region_width * uniforms.region_height * 2u + gas_tile] =
-                tile;
+            let gas_block: u32 = atomicAdd(&control.gas_block_count, 1u);
+            control.active_tiles[tile_count * 2u + gas_block] = block;
         }
         return;
     }
@@ -1172,7 +1217,7 @@ fn step(
     simulate_substep(cell, local_cell);
 }
 
-/// Simulates one substep of the active tiles whose halo holds gas, listed by `step`
+/// Simulates one substep of the blocks whose halo holds gas, listed by `step`
 @compute @workgroup_size(STEP_WORKGROUP_SIZE)
 fn step_gas(
     @builtin(workgroup_id) workgroup: vec3<u32>,
@@ -1186,37 +1231,41 @@ fn step_gas(
     simulate_substep(cell, local_cell);
 }
 
-/// Writes the indirect dispatch of one workgroup per tile `step` listed as holding gas, and
+/// Writes the indirect dispatch of one workgroup per block `step` listed as holding gas, and
 /// clears the list for the next substep
 @compute @workgroup_size(1)
 fn prepare_gas() {
-    dispatches[6] = atomicLoad(&control.gas_tile_count);
+    dispatches[6] = atomicLoad(&control.gas_block_count);
     dispatches[7] = 1u;
     dispatches[8] = 1u;
-    atomicStore(&control.gas_tile_count, 0u);
+    atomicStore(&control.gas_block_count, 0u);
 }
 
-/// Simulates one substep of the workgroup's tile from its loaded halo, as `step` describes
+/// Simulates one substep of the workgroup's block from its loaded halo, as `step` describes
 fn simulate_substep(cell: vec2<i32>, local_cell: u32) {
-    for (var flow_index: u32 = local_cell; flow_index < 144u; flow_index += STEP_WORKGROUP_SIZE) {
-        halo_flows[flow_index] = cell_flows(
-            halo_origin + 1 + vec2<i32>(i32(flow_index % 12u), i32(flow_index / 12u)),
-        );
+    for (var flow_index: u32 = local_cell; flow_index < HALO_FLOW_SIZE * HALO_FLOW_SIZE;
+        flow_index += STEP_WORKGROUP_SIZE)
+    {
+        halo_flows[flow_index] = cell_flows(halo_origin + 1
+            + vec2<i32>(i32(flow_index % HALO_FLOW_SIZE), i32(flow_index / HALO_FLOW_SIZE)));
     }
     workgroupBarrier();
-    for (var transfer_index: u32 = local_cell; transfer_index < 100u;
+    for (var transfer_index: u32 = local_cell;
+        transfer_index < HALO_TRANSFER_SIZE * HALO_TRANSFER_SIZE;
         transfer_index += STEP_WORKGROUP_SIZE)
     {
-        let transfer_cell: vec2<i32> =
-            halo_origin + 2 + vec2<i32>(i32(transfer_index % 10u), i32(transfer_index / 10u));
+        let transfer_cell: vec2<i32> = halo_origin + 2 + vec2<i32>(
+            i32(transfer_index % HALO_TRANSFER_SIZE),
+            i32(transfer_index / HALO_TRANSFER_SIZE),
+        );
         let transfers: vec4<u32> = cell_transfers(transfer_cell);
         halo_transfers[transfer_index] =
             vec2<u32>(transfers.x | (transfers.y << 16u), transfers.z | (transfers.w << 16u));
         halo_admissions[transfer_index] = cell_admission(transfer_cell);
     }
     workgroupBarrier();
-    // the helper invocations have no cell of their own
-    if local_cell >= 64u { return; }
+    // only the cells of the block's active tiles change
+    if (halo_words[halo_index(cell)].w & VOLUME_ACTIVE) == 0u { return; }
     let index: u32 = cell_index(cell);
     let center: PressureCell = halo_cell(cell);
     let center_transfers: vec4<u32> = halo_transfer_fractions(cell);
