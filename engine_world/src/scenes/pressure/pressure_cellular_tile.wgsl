@@ -162,28 +162,26 @@ var<storage, read_write> broken_rigid_body_cells: array<atomic<u32>>;
 @group(1) @binding(0)
 var<storage, read_write> dispatches: array<u32>;
 
-/// Species slots of the workgroup's tile and the three rings of cells around it, which every
-/// face and transfer the tile depends on reads, fourteen cells across
-var<workgroup> halo_slots: array<vec4<u32>, 196>;
+// The halo keeps little per cell and derives the rest when read, because the workgroup memory
+// of each workgroup limits how many run at once
 
-/// Phantom air, flow bits, and open volume words of the cells in the halo
+/// Phantom air, flow bits, and open volume words with the activity flag of the workgroup's tile
+/// and the three rings of cells around it, which every face and transfer the tile depends on
+/// reads, fourteen cells across
 var<workgroup> halo_words: array<vec4<u32>, 196>;
-
-/// Packed velocities of the actors dragging the cells in the halo
-var<workgroup> halo_drags: array<u32, 196>;
-
-/// Pressure, density, total amount, and whether active of the cells in the halo
-var<workgroup> halo_properties: array<vec4<f32>, 196>;
 
 /// Solid owner and absorption, then stored pressure bits, of the cells in the halo
 var<workgroup> halo_solids: array<vec2<u32>, 196>;
+
+/// Density of the cells in the halo
+var<workgroup> halo_densities: array<f32, 196>;
 
 /// New right and top face flows of the tile and the two rings around it, twelve cells across
 var<workgroup> halo_flows: array<vec2<f32>, 144>;
 
 /// Limited fractions given through the left, right, bottom, and top faces of the tile and the
-/// ring around it, ten cells across
-var<workgroup> halo_transfers: array<vec4<u32>, 100>;
+/// ring around it, ten cells across, sixteen bits each since no fraction reaches one
+var<workgroup> halo_transfers: array<vec2<u32>, 100>;
 
 /// Gases admitted into free slots by the tile and the ring around it
 var<workgroup> halo_admissions: array<u32, 100>;
@@ -203,6 +201,11 @@ var<workgroup> halo_gas_uniform: u32;
 
 /// Whether no halo cell holds gas, so nothing is admitted and no species slot moves
 var<private> is_halo_gas_free: bool;
+
+/// Invocations of a step workgroup: one per cell of its tile and forty more that only help load
+/// the halo and compute the flows and transfers around the tile, so the 196 halo cells and the
+/// 144 flows take two rounds and the 100 transfers one
+const STEP_WORKGROUP_SIZE: u32 = 104u;
 
 /// Largest change of a cell's phantom air in one substep that still lets its tile sleep, so faint
 /// residual pressure stops diffusing once it is too weak to matter instead of keeping wide areas
@@ -262,6 +265,9 @@ const VOLUME_SCALE: f32 = 65536.0;
 
 /// Open volume word flag: the cell is inside or next to an actor dragging its gas
 const VOLUME_DRAGGED: u32 = 0x80000000u;
+
+/// Flag of a halo cell's open volume word for a cell in a tile simulated this tick
+const VOLUME_ACTIVE: u32 = 0x40000000u;
 
 /// Distance from an actor's core, in multiples of its radius, within which it drags gas
 const ACTOR_DRAG_RANGE: f32 = 6.0;
@@ -428,7 +434,7 @@ fn load_halo(tile: u32, local_cell: u32) -> vec2<i32> {
     }
     if local_cell == 0u { atomicStore(&halo_gas, 0u); }
     workgroupBarrier();
-    for (var halo_index: u32 = local_cell; halo_index < 196u; halo_index += 64u) {
+    for (var halo_index: u32 = local_cell; halo_index < 196u; halo_index += STEP_WORKGROUP_SIZE) {
         let halo_position: vec2<u32> = vec2<u32>(halo_index % 14u, halo_index / 14u);
         let tile_offset: vec2<u32> = (halo_position + 5u) / 8u;
         let pressure_cell: PressureCell = load_cell_with_activity(
@@ -436,21 +442,15 @@ fn load_halo(tile: u32, local_cell: u32) -> vec2<i32> {
             halo_tile_active[tile_offset.y * 3u + tile_offset.x] != 0u,
         );
         if any(pressure_cell.slots != vec4<u32>(0u)) { atomicOr(&halo_gas, 1u); }
-        halo_slots[halo_index] = pressure_cell.slots;
         halo_words[halo_index] = vec4<u32>(
             pressure_cell.phantom,
             bitcast<u32>(pressure_cell.flow.x),
             bitcast<u32>(pressure_cell.flow.y),
             u32(pressure_cell.volume * VOLUME_SCALE)
-                | select(0u, VOLUME_DRAGGED, pressure_cell.is_dragged),
+                | select(0u, VOLUME_DRAGGED, pressure_cell.is_dragged)
+                | select(0u, VOLUME_ACTIVE, pressure_cell.is_active),
         );
-        halo_drags[halo_index] = pack2x16float(pressure_cell.drag);
-        halo_properties[halo_index] = vec4<f32>(
-            pressure_cell.pressure,
-            pressure_cell.density,
-            pressure_cell.total,
-            select(0.0, 1.0, pressure_cell.is_active),
-        );
+        halo_densities[halo_index] = pressure_cell.density;
         halo_solids[halo_index] =
             vec2<u32>(pressure_cell.solid, bitcast<u32>(pressure_cell.stored));
     }
@@ -476,25 +476,52 @@ fn halo_transfer_index(cell: vec2<i32>) -> u32 {
     return local.y * 10u + local.x;
 }
 
-/// Returns one cell of the halo
+/// Returns the species slots of a halo cell, read from the gas buffer since a halo without gas
+/// has none
+fn halo_slots(cell: vec2<i32>) -> vec4<u32> {
+    if is_halo_gas_free || !is_cell_inside(cell) { return vec4<u32>(0u); }
+    return gas_in[cell_index(cell) * 2u];
+}
+
+/// Returns the limited fractions a cell within one cell of the tile gives through each face
+fn halo_transfer_fractions(cell: vec2<i32>) -> vec4<u32> {
+    let packed: vec2<u32> = halo_transfers[halo_transfer_index(cell)];
+    return vec4<u32>(packed.x & 0xffffu, packed.x >> 16u, packed.y & 0xffffu, packed.y >> 16u);
+}
+
+/// Returns one cell of the halo, deriving its total amount and pressure as `load_cell` does
 fn halo_cell(cell: vec2<i32>) -> PressureCell {
     let index: u32 = halo_index(cell);
     let words: vec4<u32> = halo_words[index];
-    let properties: vec4<f32> = halo_properties[index];
     let solids: vec2<u32> = halo_solids[index];
     var pressure_cell: PressureCell;
-    pressure_cell.slots = halo_slots[index];
+    pressure_cell.slots = halo_slots(cell);
     pressure_cell.phantom = words.x;
     pressure_cell.flow = vec2<f32>(bitcast<f32>(words.y), bitcast<f32>(words.z));
-    pressure_cell.volume = f32(words.w & ~VOLUME_DRAGGED) / VOLUME_SCALE;
+    pressure_cell.volume = f32(words.w & ~(VOLUME_DRAGGED | VOLUME_ACTIVE)) / VOLUME_SCALE;
     pressure_cell.is_dragged = (words.w & VOLUME_DRAGGED) != 0u;
-    pressure_cell.drag = unpack2x16float(halo_drags[index]);
-    pressure_cell.is_active = properties.w != 0.0;
-    pressure_cell.pressure = properties.x;
-    pressure_cell.density = properties.y;
-    pressure_cell.total = properties.z;
+    // only dragged cells use their drag, rounded to half precision as the halo once kept it
+    if pressure_cell.is_dragged {
+        pressure_cell.drag = unpack2x16float(pack2x16float(
+            unpack2x16snorm(volumes[cell_index(cell)].y) * ACTOR_VELOCITY_MAXIMUM
+                * uniforms.actor_velocity_scale,
+        ));
+    }
+    pressure_cell.is_active = (words.w & VOLUME_ACTIVE) != 0u;
+    pressure_cell.density = halo_densities[index];
     pressure_cell.solid = solids.x;
     pressure_cell.stored = bitcast<i32>(solids.y);
+    var total: f32 = f32(pressure_cell.phantom);
+    for (var slot: u32 = 0u; slot < 4u; slot++) {
+        let amount: f32 = f32(slot_amount(pressure_cell.slots[slot]));
+        if amount <= 0.0 { continue; }
+        total += amount;
+    }
+    pressure_cell.total = total;
+    pressure_cell.pressure = total / max(pressure_cell.volume, VOLUME_MINIMUM);
+    if pressure_cell.solid != 0u {
+        pressure_cell.pressure = f32(uniforms.ambient_amount) + f32(pressure_cell.stored);
+    }
     return pressure_cell;
 }
 
@@ -1054,7 +1081,7 @@ fn cell_admission(cell: vec2<i32>) -> u32 {
         if slot_amount(center.slots[slot]) > 0u { has_gas = true; }
     }
     for (var face: u32 = 0u; face < 4u; face++) {
-        let neighbor_slots: vec4<u32> = halo_slots[halo_index(cell + face_offset(face))];
+        let neighbor_slots: vec4<u32> = halo_slots(cell + face_offset(face));
         for (var slot: u32 = 0u; slot < 4u; slot++) {
             if slot_amount(neighbor_slots[slot]) > 0u { has_gas = true; }
         }
@@ -1125,7 +1152,7 @@ fn cell_admission(cell: vec2<i32>) -> u32 {
 /// instead of waiting for its neighbors, which is exact because every workgroup computes them
 /// from the same previous substep. This entry point simulates the active tiles whose halo holds
 /// no gas, compiled without the species slot work, and lists the others for `step_gas`
-@compute @workgroup_size(64)
+@compute @workgroup_size(STEP_WORKGROUP_SIZE)
 fn step(
     @builtin(workgroup_id) workgroup: vec3<u32>,
     @builtin(local_invocation_index) local_cell: u32,
@@ -1146,7 +1173,7 @@ fn step(
 }
 
 /// Simulates one substep of the active tiles whose halo holds gas, listed by `step`
-@compute @workgroup_size(64)
+@compute @workgroup_size(STEP_WORKGROUP_SIZE)
 fn step_gas(
     @builtin(workgroup_id) workgroup: vec3<u32>,
     @builtin(local_invocation_index) local_cell: u32,
@@ -1171,22 +1198,28 @@ fn prepare_gas() {
 
 /// Simulates one substep of the workgroup's tile from its loaded halo, as `step` describes
 fn simulate_substep(cell: vec2<i32>, local_cell: u32) {
-    for (var flow_index: u32 = local_cell; flow_index < 144u; flow_index += 64u) {
+    for (var flow_index: u32 = local_cell; flow_index < 144u; flow_index += STEP_WORKGROUP_SIZE) {
         halo_flows[flow_index] = cell_flows(
             halo_origin + 1 + vec2<i32>(i32(flow_index % 12u), i32(flow_index / 12u)),
         );
     }
     workgroupBarrier();
-    for (var transfer_index: u32 = local_cell; transfer_index < 100u; transfer_index += 64u) {
+    for (var transfer_index: u32 = local_cell; transfer_index < 100u;
+        transfer_index += STEP_WORKGROUP_SIZE)
+    {
         let transfer_cell: vec2<i32> =
             halo_origin + 2 + vec2<i32>(i32(transfer_index % 10u), i32(transfer_index / 10u));
-        halo_transfers[transfer_index] = cell_transfers(transfer_cell);
+        let transfers: vec4<u32> = cell_transfers(transfer_cell);
+        halo_transfers[transfer_index] =
+            vec2<u32>(transfers.x | (transfers.y << 16u), transfers.z | (transfers.w << 16u));
         halo_admissions[transfer_index] = cell_admission(transfer_cell);
     }
     workgroupBarrier();
+    // the helper invocations have no cell of their own
+    if local_cell >= 64u { return; }
     let index: u32 = cell_index(cell);
     let center: PressureCell = halo_cell(cell);
-    let center_transfers: vec4<u32> = halo_transfers[halo_transfer_index(cell)];
+    let center_transfers: vec4<u32> = halo_transfer_fractions(cell);
     let center_admission: u32 = halo_admissions[halo_transfer_index(cell)];
     let center_flows: vec4<f32> = cell_outgoing_flows(cell);
     var amounts: array<u32, 4>;
@@ -1202,7 +1235,7 @@ fn simulate_substep(cell: vec2<i32>, local_cell: u32) {
         let neighbor_cell: vec2<i32> = cell + face_offset(face);
         let neighbor: PressureCell = halo_cell(neighbor_cell);
         if !neighbor.is_active { continue; }
-        let neighbor_transfers: vec4<u32> = halo_transfers[halo_transfer_index(neighbor_cell)];
+        let neighbor_transfers: vec4<u32> = halo_transfer_fractions(neighbor_cell);
         let neighbor_admission: u32 = halo_admissions[halo_transfer_index(neighbor_cell)];
         let giving: u32 = center_transfers[face];
         let receiving: u32 = neighbor_transfers[opposite_face(face)];
