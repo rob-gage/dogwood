@@ -23,6 +23,15 @@ compact / rebase / erase -> spawn edits and imports -> prepare boundaries and sl
   -> rasterize mass and momentum -> sample actors -> queue readbacks / exports
 ```
 
+A tick is skipped entirely when nothing could change. That requires all of the following:
+
+- A count readback newer than every particle edit, erasure, import, and spawn reports an empty pool.
+- No edits, erasures, or imports are queued, including rejected imports.
+- No export is requested.
+- The active region has not moved.
+
+The skipped tick submits no work, so the fluid raster stays as the last tick left it, empty.
+
 The tick is 1/60 second. Positions use cells relative to the active region; velocities use cells per tick, including during substeps. Gravity in tiles/s² converts to a substep velocity increment as `gravity * CELLULAR_TILE_SIZE * dt² / FLUID_SUBSTEP_COUNT`. Prediction divides velocity by the substep count to obtain displacement.
 
 ## Neighbors

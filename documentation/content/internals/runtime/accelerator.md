@@ -36,7 +36,7 @@ The host initializer returns `UnsupportedPlatform` outside Linux, Windows, and m
 
 ### Device request
 
-Device creation requests `max_storage_buffers_per_shader_stage = 20`. All other limits and device descriptor fields use WGPU defaults. The combined buffer budget remains 28; Metal exposes 29 usable slots shared by storage, uniform, and vertex buffers. Individual buffer maxima are not added together. Before requesting a device, the initializer checks all requested limits against the adapter and reports the first unsupported limit with the adapter name, backend, required value, and supported value. The fluid particle bind group requires twenty storage buffers per compute stage.
+Device creation requests `max_storage_buffers_per_shader_stage = 20` and `max_compute_workgroup_storage_size = 32768`, which the pressure step's halo needs. All other limits and device descriptor fields use WGPU defaults. The combined buffer budget remains 28; Metal exposes 29 usable slots shared by storage, uniform, and vertex buffers. Individual buffer maxima are not added together. Before requesting a device, the initializer checks all requested limits against the adapter and reports the first unsupported limit with the adapter name, backend, required value, and supported value. The fluid particle bind group requires twenty storage buffers per compute stage.
 
 ## Initialization and errors
 

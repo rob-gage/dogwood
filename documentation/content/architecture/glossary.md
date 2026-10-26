@@ -14,6 +14,7 @@ This page defines Dogwood's world terms and coordinate spaces, with the conversi
 - **Fluid particle:** a continuous-position sample stored separately from cellular cells; see [fluid simulation](@/internals/simulation/fluids.md).
 - **Gas cell:** a cell's gas state in the tile ring: four species slots of a gas index and an amount, phantom air, and face flows. `GAS_AMOUNT_PER_ATMOSPHERE` (4096) amount units make one atmosphere; see [pressure simulation](@/internals/simulation/pressure.md).
 - **Phantom air:** the ambient gas held as a separate amount in each cell's gas, filling empty cells at the scene's ambient gas pressure; see [tile ring](@/internals/world-streaming/tile-ring.md).
+- **Pressure cell:** a 2 × 2 group of cells on which pressure is simulated each tick, rebuilt from and written back to their gas cells; see [pressure simulation](@/internals/simulation/pressure.md#pressure-cells).
 - **Fluid raster:** per-physical-ring-cell mass, momentum, and selected material derived from particles, shared by simulation and rendering.
 - **Dormant particle:** a chunk-owned record awaiting admission to the live GPU pool; a resident-save copy is distinct from dormant state.
 - **Cellular tile (tile):** an 8 × 8 group of cells (`CELLULAR_TILE_SIZE = 8`).
