@@ -42,7 +42,8 @@ struct PressureUniforms {
     damage_rate: f32,
     /// Whether the open volume pass measures only the listed tiles instead of every tile
     is_volume_listed: u32,
-    padding_2: u32,
+    /// Factor of the gas diffusivities for the size of a pressure cell
+    diffusion_scale: f32,
 };
 
 /// An actor displacing gas, laid out like the cellular tile actor records
@@ -60,8 +61,8 @@ struct PressureActor {
 /// Active tile count, the count of tiles whose open volumes are measured, the count of blocks
 /// whose halo holds gas this substep, and the count of blocks of 2x2 tiles holding an active
 /// tile, then the active tiles followed, each after room for every tile of the region, by the
-/// measured tiles, which the blocks replace once measured, and the blocks holding gas. Blocks
-/// are listed by their bottom-left tile
+/// measured tiles, which the blocks replace once measured, and the blocks holding gas, then four
+/// words per pressure cell, `COARSE_CONSTANT_START`. Blocks are listed by their bottom-left tile
 struct PressureControl {
     active_tile_count: atomic<u32>,
     volume_tile_count: atomic<u32>,
@@ -165,44 +166,59 @@ var<storage, read_write> broken_rigid_body_cells: array<atomic<u32>>;
 @group(1) @binding(0)
 var<storage, read_write> dispatches: array<u32>;
 
-// A step workgroup simulates a block of 2x2 tiles, so fewer cells around it are loaded and
-// computed again by its neighbors, and its halo keeps little per cell and derives the rest when
-// read, because the workgroup memory of each workgroup limits how many run at once
+// Pressure is simulated on pressure cells of 2x2 cells, rebuilt from the cells at the start of
+// each tick by `coarsen` and spread back over them by `refine`. A pressure tile of 8x8 pressure
+// cells covers a block of 2x2 tiles, and a step workgroup simulates one, keeping little per cell
+// in its halo and deriving the rest when read, because the workgroup memory of each workgroup
+// limits how many run at once
 
-/// Cells across a step workgroup's block of 2x2 tiles
-const BLOCK_SIZE: u32 = 16u;
+/// Pressure cells across a tile
+const PRESSURE_CELLS_PER_TILE: u32 = 4u;
 
-/// Cells across the block and the three rings of cells around it, which every face and transfer
-/// the block depends on reads
-const HALO_SIZE: u32 = 22u;
+/// Pressure cells across a pressure tile
+const BLOCK_SIZE: u32 = 8u;
 
-/// Cells across the block and the two rings around it, whose new flows the transfers read
-const HALO_FLOW_SIZE: u32 = 20u;
+/// Pressure cells across the pressure tile and the three rings around it, which every face and
+/// transfer the pressure tile depends on reads
+const HALO_SIZE: u32 = 14u;
 
-/// Cells across the block and the ring around it, whose transfers the block's cells read
-const HALO_TRANSFER_SIZE: u32 = 18u;
+/// Pressure cells across the pressure tile and the two rings around it, whose new flows the
+/// transfers read
+const HALO_FLOW_SIZE: u32 = 12u;
 
-/// Invocations of a step workgroup, one per cell of its block
-const STEP_WORKGROUP_SIZE: u32 = 256u;
+/// Pressure cells across the pressure tile and the ring around it, whose transfers its cells read
+const HALO_TRANSFER_SIZE: u32 = 10u;
+
+/// Invocations of a step workgroup: one per pressure cell of its pressure tile and forty more
+/// that only help load the halo and compute the flows and transfers around it
+const STEP_WORKGROUP_SIZE: u32 = 104u;
+
+/// Lists in the control words before the four words of each pressure cell that stay fixed through
+/// a tick's substeps: its volume word, packed drag, solid word, and density bits
+const COARSE_CONSTANT_START: u32 = 3u;
+
+/// Flag of a pressure cell's volume word for an open pressure cell holding static cells, whose
+/// gas presses on them
+const VOLUME_PARTIAL: u32 = 0x20000000u;
 
 /// Phantom air, flow bits, and open volume words with the activity flag of the cells in the halo
-var<workgroup> halo_words: array<vec4<u32>, 484>;
+var<workgroup> halo_words: array<vec4<u32>, 196>;
 
 /// Solid owner and absorption, then stored pressure bits, of the cells in the halo
-var<workgroup> halo_solids: array<vec2<u32>, 484>;
+var<workgroup> halo_solids: array<vec2<u32>, 196>;
 
 /// Density of the cells in the halo
-var<workgroup> halo_densities: array<f32, 484>;
+var<workgroup> halo_densities: array<f32, 196>;
 
-/// New right and top face flows of the block and the two rings around it
-var<workgroup> halo_flows: array<vec2<f32>, 400>;
+/// New right and top face flows of the pressure tile and the two rings around it
+var<workgroup> halo_flows: array<vec2<f32>, 144>;
 
-/// Limited fractions given through the left, right, bottom, and top faces of the block and the
-/// ring around it, sixteen bits each since no fraction reaches one
-var<workgroup> halo_transfers: array<vec2<u32>, 324>;
+/// Limited fractions given through the left, right, bottom, and top faces of the pressure tile and
+/// the ring around it, sixteen bits each since no fraction reaches one
+var<workgroup> halo_transfers: array<vec2<u32>, 100>;
 
-/// Gases admitted into free slots by the block and the ring around it
-var<workgroup> halo_admissions: array<u32, 324>;
+/// Gases admitted into free slots by the pressure tile and the ring around it
+var<workgroup> halo_admissions: array<u32, 100>;
 
 /// Cell position of the halo's bottom-left cell
 var<private> halo_origin: vec2<i32>;
@@ -223,11 +239,11 @@ var<private> is_halo_gas_free: bool;
 /// Largest change of a cell's phantom air in one substep that still lets its tile sleep, so faint
 /// residual pressure stops diffusing once it is too weak to matter instead of keeping wide areas
 /// of open air awake
-const SLEEP_PHANTOM_CHANGE_MAXIMUM: u32 = 8u;
+const SLEEP_PHANTOM_CHANGE_MAXIMUM: u32 = 64u;
 
 /// Smallest face flow that keeps a tile awake or wakes a sleeping neighbor, below which a flow
 /// moves no whole amount unit through its face
-const SLEEP_FLOW_MINIMUM: f32 = 2.0;
+const SLEEP_FLOW_MINIMUM: f32 = 16.0;
 
 /// Tile flag: the tile's gas, stored pressure, or open volume changed, so it and its neighbors
 /// are simulated
@@ -242,6 +258,10 @@ const TILE_BROKEN: u32 = 8u;
 /// Tile flag: fluid or a dragging actor reached the tile or a neighbor when open volumes were
 /// last measured, so they are measured again next tick
 const TILE_VOLUME_DEPENDENT: u32 = 16u;
+
+/// Tile flag: the halo of a listed block's pressure tile reaches the tile, so its pressure cells
+/// are rebuilt this tick
+const TILE_HALO: u32 = 32u;
 
 /// Cellular tile flags of tiles whose cells may have changed this tick: awake, disturbed, or
 /// simulated, matching the cellular tiles
@@ -346,6 +366,77 @@ fn is_cell_active(cell: vec2<i32>) -> bool {
     return (atomicLoad(&pressure_awake[tile_index(vec2<u32>(cell) / 8u)]) & TILE_ACTIVE) != 0u;
 }
 
+/// Returns whether a pressure cell position lies inside the active region
+fn is_coarse_inside(cell: vec2<i32>) -> bool {
+    return cell.x >= 0 && cell.y >= 0
+        && cell.x < i32(uniforms.region_width * PRESSURE_CELLS_PER_TILE)
+        && cell.y < i32(uniforms.region_height * PRESSURE_CELLS_PER_TILE);
+}
+
+/// Returns the buffer index of a pressure cell inside the active region, laid out by position in
+/// the region since pressure cells are rebuilt every tick
+fn coarse_index(cell: vec2<i32>) -> u32 {
+    return u32(cell.y) * uniforms.region_width * PRESSURE_CELLS_PER_TILE + u32(cell.x);
+}
+
+/// Returns the tile holding a pressure cell
+fn coarse_tile(cell: vec2<i32>) -> vec2<u32> { return vec2<u32>(cell) / PRESSURE_CELLS_PER_TILE; }
+
+/// Returns the index in the control words of a pressure cell's fixed words
+fn coarse_constant_index(index: u32) -> u32 {
+    return uniforms.region_width * uniforms.region_height * COARSE_CONSTANT_START + index * 4u;
+}
+
+/// Returns a pressure cell's fixed words: its volume word, packed drag, solid word, and density
+fn coarse_constants(index: u32) -> vec4<u32> {
+    let base: u32 = coarse_constant_index(index);
+    return vec4<u32>(
+        control.active_tiles[base],
+        control.active_tiles[base + 1u],
+        control.active_tiles[base + 2u],
+        control.active_tiles[base + 3u],
+    );
+}
+
+/// Reads one pressure cell's gas and stored pressure with its fixed words and derives its
+/// pressure and density, treating pressure cells outside the active region as closed and empty
+fn load_coarse_cell(cell: vec2<i32>, is_active: bool) -> PressureCell {
+    var pressure_cell: PressureCell;
+    if !is_coarse_inside(cell) { return pressure_cell; }
+    let index: u32 = coarse_index(cell);
+    let words: vec4<u32> = gas_in[index * 2u + 1u];
+    pressure_cell.slots = gas_in[index * 2u];
+    pressure_cell.phantom = words.x;
+    pressure_cell.flow = vec2<f32>(bitcast<f32>(words.y), bitcast<f32>(words.z));
+    let constants: vec4<u32> = coarse_constants(index);
+    pressure_cell.volume = f32(constants.x & 0x1ffffu) / VOLUME_SCALE;
+    pressure_cell.is_dragged = (constants.x & VOLUME_DRAGGED) != 0u;
+    pressure_cell.drag = unpack2x16snorm(constants.y) * ACTOR_VELOCITY_MAXIMUM
+        * uniforms.actor_velocity_scale;
+    pressure_cell.is_active = is_active;
+    var mass: f32 = f32(pressure_cell.phantom) * uniforms.ambient_mass;
+    var total: f32 = f32(pressure_cell.phantom);
+    for (var slot: u32 = 0u; slot < 4u; slot++) {
+        let amount: f32 = f32(slot_amount(pressure_cell.slots[slot]));
+        if amount <= 0.0 { continue; }
+        mass += amount * gas_materials[slot_gas(pressure_cell.slots[slot])].x;
+        total += amount;
+    }
+    let volume: f32 = max(pressure_cell.volume, VOLUME_MINIMUM);
+    pressure_cell.total = total;
+    pressure_cell.pressure = total / volume;
+    pressure_cell.density = mass / volume;
+    // a pressure cell of only static cells carries stored pressure instead
+    if constants.z != 0u {
+        pressure_cell.solid = constants.z;
+        pressure_cell.volume = 0.0;
+        pressure_cell.stored = bitcast<i32>(words.w);
+        pressure_cell.pressure = f32(uniforms.ambient_amount) + f32(pressure_cell.stored);
+        pressure_cell.density = bitcast<f32>(constants.w);
+    }
+    return pressure_cell;
+}
+
 /// Returns the gas index held by a species slot
 fn slot_gas(slot: u32) -> u32 { return slot >> 24u; }
 
@@ -379,6 +470,16 @@ fn solid_capacity(mass: f32) -> f32 {
 /// outside the active region as closed and empty
 fn load_cell(cell: vec2<i32>) -> PressureCell {
     return load_cell_with_activity(cell, is_cell_active(cell));
+}
+
+/// Returns a static cell's solid owner and absorption, as `PressureCell.solid` holds them
+fn static_solid(index: u32, material: vec4<f32>) -> u32 {
+    let rigid_body_cell: u32 = rigid_body_cells[index];
+    var owner: u32 = SOLID_TERRAIN;
+    if rigid_body_cell != 0u {
+        owner = atomicLoad(&rigid_body_cellular_tiles[(rigid_body_cell - 1u) / 64u * 8u]) + 2u;
+    }
+    return (owner << 8u) | u32(round(saturate(material.y) * 255.0));
 }
 
 /// Reads one cell like `load_cell`, given whether it lies in a tile simulated this tick
@@ -427,13 +528,13 @@ fn load_cell_with_activity(cell: vec2<i32>, is_active: bool) -> PressureCell {
     return pressure_cell;
 }
 
-/// Reads the cells of a workgroup's block, listed by its bottom-left tile, and the rings around
-/// it into the halo once, so every neighbor read after it is local, and returns the invocation's
-/// cell position
+/// Reads the pressure cells of a workgroup's pressure tile, listed by the bottom-left tile of its
+/// block, and the rings around it into the halo once, so every neighbor read after it is local,
+/// and returns the invocation's pressure cell position
 fn load_halo(tile: u32, local_cell: u32) -> vec2<i32> {
     let tile_position: vec2<u32> =
         vec2<u32>(tile % uniforms.region_width, tile / uniforms.region_width);
-    halo_origin = vec2<i32>(tile_position * 8u) - 3;
+    halo_origin = vec2<i32>(tile_position * PRESSURE_CELLS_PER_TILE) - 3;
     // the halo reaches three cells into the tiles around, whose activity each block reads once
     if local_cell < 16u {
         let neighbor_tile: vec2<i32> = vec2<i32>(tile_position)
@@ -452,8 +553,9 @@ fn load_halo(tile: u32, local_cell: u32) -> vec2<i32> {
         halo_index += STEP_WORKGROUP_SIZE)
     {
         let halo_position: vec2<u32> = vec2<u32>(halo_index % HALO_SIZE, halo_index / HALO_SIZE);
-        let tile_offset: vec2<u32> = (halo_position + 5u) / 8u;
-        let pressure_cell: PressureCell = load_cell_with_activity(
+        // three pressure cells into the tile before the block's first
+        let tile_offset: vec2<u32> = (halo_position + 1u) / PRESSURE_CELLS_PER_TILE;
+        let pressure_cell: PressureCell = load_coarse_cell(
             halo_origin + vec2<i32>(halo_position),
             halo_tile_active[tile_offset.y * 4u + tile_offset.x] != 0u,
         );
@@ -496,8 +598,8 @@ fn halo_transfer_index(cell: vec2<i32>) -> u32 {
 /// Returns the species slots of a halo cell, read from the gas buffer since a halo without gas
 /// has none
 fn halo_slots(cell: vec2<i32>) -> vec4<u32> {
-    if is_halo_gas_free || !is_cell_inside(cell) { return vec4<u32>(0u); }
-    return gas_in[cell_index(cell) * 2u];
+    if is_halo_gas_free || !is_coarse_inside(cell) { return vec4<u32>(0u); }
+    return gas_in[coarse_index(cell) * 2u];
 }
 
 /// Returns the limited fractions a cell within one cell of the block gives through each face
@@ -517,12 +619,10 @@ fn halo_cell(cell: vec2<i32>) -> PressureCell {
     pressure_cell.flow = vec2<f32>(bitcast<f32>(words.y), bitcast<f32>(words.z));
     pressure_cell.volume = f32(words.w & ~(VOLUME_DRAGGED | VOLUME_ACTIVE)) / VOLUME_SCALE;
     pressure_cell.is_dragged = (words.w & VOLUME_DRAGGED) != 0u;
-    // only dragged cells use their drag, rounded to half precision as the halo once kept it
+    // only dragged cells use their drag
     if pressure_cell.is_dragged {
-        pressure_cell.drag = unpack2x16float(pack2x16float(
-            unpack2x16snorm(volumes[cell_index(cell)].y) * ACTOR_VELOCITY_MAXIMUM
-                * uniforms.actor_velocity_scale,
-        ));
+        pressure_cell.drag = unpack2x16snorm(coarse_constants(coarse_index(cell)).y)
+            * ACTOR_VELOCITY_MAXIMUM * uniforms.actor_velocity_scale;
     }
     pressure_cell.is_active = (words.w & VOLUME_ACTIVE) != 0u;
     pressure_cell.density = halo_densities[index];
@@ -711,7 +811,10 @@ fn is_transfer_allowed(
 /// Returns the fraction a gas slot exchanges with a neighbor by diffusion, only between open cells
 fn diffusion(giver: PressureCell, receiver: PressureCell, slot: u32) -> u32 {
     if giver.volume <= 0.0 || receiver.volume <= 0.0 { return 0u; }
-    return u32(gas_materials[slot_gas(slot)].y / uniforms.substep_count * TRANSFER_SCALE);
+    return u32(
+        gas_materials[slot_gas(slot)].y / uniforms.substep_count * uniforms.diffusion_scale
+            * TRANSFER_SCALE,
+    );
 }
 
 /// Returns the fraction of phantom air exchanged with a neighbor by diffusion
@@ -987,6 +1090,17 @@ fn collect_blocks(@builtin(global_invocation_id) invocation: vec3<u32>) {
         let block: u32 = atomicAdd(&control.block_count, 1u);
         control.active_tiles[uniforms.region_width * uniforms.region_height + block] =
             tile.y * uniforms.region_width + tile.x;
+        // the halo of the block's pressure tile reaches the ring of blocks around it, whose
+        // pressure cells are rebuilt
+        for (var offset: u32 = 0u; offset < 36u; offset++) {
+            let halo_tile: vec2<i32> =
+                vec2<i32>(tile) + vec2<i32>(i32(offset % 6u), i32(offset / 6u)) - 2;
+            if any(halo_tile < vec2<i32>(0))
+                || halo_tile.x >= i32(uniforms.region_width)
+                || halo_tile.y >= i32(uniforms.region_height)
+            { continue; }
+            atomicOr(&pressure_awake[tile_index(vec2<u32>(halo_tile))], TILE_HALO);
+        }
     }
 }
 
@@ -1016,7 +1130,7 @@ fn cell_flows(cell: vec2<i32>) -> vec2<f32> {
     for (var axis: u32 = 0u; axis < 2u; axis++) {
         let is_vertical: bool = axis == 1u;
         let neighbor_cell: vec2<i32> = cell + select(vec2<i32>(1, 0), vec2<i32>(0, 1), is_vertical);
-        if !is_cell_inside(neighbor_cell) { continue; }
+        if !is_coarse_inside(neighbor_cell) { continue; }
         let neighbor: PressureCell = halo_cell(neighbor_cell);
         let previous: f32 = select(center.flow.x, center.flow.y, is_vertical);
         var flow: f32 = 0.0;
@@ -1047,7 +1161,7 @@ fn cell_flows(cell: vec2<i32>) -> vec2<f32> {
         // a sleeping neighbor wakes for the next tick instead of exchanging this tick
         if !neighbor.is_active {
             if abs(flow) >= SLEEP_FLOW_MINIMUM {
-                atomicOr(&pressure_awake[tile_index(vec2<u32>(neighbor_cell) / 8u)], TILE_AWAKE);
+                atomicOr(&pressure_awake[tile_index(coarse_tile(neighbor_cell))], TILE_AWAKE);
             }
             continue;
         }
@@ -1264,9 +1378,9 @@ fn simulate_substep(cell: vec2<i32>, local_cell: u32) {
         halo_admissions[transfer_index] = cell_admission(transfer_cell);
     }
     workgroupBarrier();
-    // only the cells of the block's active tiles change
-    if (halo_words[halo_index(cell)].w & VOLUME_ACTIVE) == 0u { return; }
-    let index: u32 = cell_index(cell);
+    // only the pressure cells in active tiles change, and the helpers have none of their own
+    if local_cell >= 64u || (halo_words[halo_index(cell)].w & VOLUME_ACTIVE) == 0u { return; }
+    let index: u32 = coarse_index(cell);
     let center: PressureCell = halo_cell(cell);
     let center_transfers: vec4<u32> = halo_transfer_fractions(cell);
     let center_admission: u32 = halo_admissions[halo_transfer_index(cell)];
@@ -1387,32 +1501,23 @@ fn simulate_substep(cell: vec2<i32>, local_cell: u32) {
             i32(AMOUNT_MAXIMUM - uniforms.ambient_amount),
         );
     }
-    // a solid cell absorbs the load beyond its strength, from its own stored pressure or the gas
-    // pressing on its open faces, losing integrity until it breaks
-    if center.solid != 0u && center.is_active {
-        var load: f32 = abs(f32(center.stored));
-        for (var face: u32 = 0u; face < 4u; face++) {
-            let neighbor: PressureCell = halo_cell(cell + face_offset(face));
-            if neighbor.volume > 0.0 {
-                load = max(load, abs(neighbor.pressure - f32(uniforms.ambient_amount)));
+    // static cells absorb the load beyond their strength, a solid pressure cell's from its own
+    // stored pressure or the gas pressing on its open faces and an open one's from its gas,
+    // losing integrity until they break
+    let is_partial: bool = (coarse_constants(index).x & VOLUME_PARTIAL) != 0u;
+    if center.solid != 0u || is_partial {
+        var load: f32 = abs(center.pressure - f32(uniforms.ambient_amount));
+        if center.solid != 0u {
+            load = abs(f32(center.stored));
+            for (var face: u32 = 0u; face < 4u; face++) {
+                let neighbor: PressureCell = halo_cell(cell + face_offset(face));
+                if neighbor.volume > 0.0 {
+                    load = max(load, abs(neighbor.pressure - f32(uniforms.ambient_amount)));
+                }
             }
         }
-        let material: vec4<f32> =
-            static_materials[material_identifiers[index] & 0x3fffffffu];
-        let overload: f32 = load / AMOUNT_PER_ATMOSPHERE - material.z;
-        if overload > 0.0 {
-            let damage: u32 = kinematics[index].y & INTEGRITY_BROKEN;
-            let next: u32 = min(
-                damage + u32(ceil(overload * material.y * uniforms.damage_rate)),
-                INTEGRITY_BROKEN,
-            );
-            if next != damage {
-                kinematics[index].y = (kinematics[index].y & ~INTEGRITY_BROKEN) | next;
-            }
-            if next == INTEGRITY_BROKEN {
-                atomicOr(&pressure_awake[tile_index(vec2<u32>(cell) / 8u)], TILE_BROKEN);
-            }
-        }
+        // a pressure cell holds the gas of four cells, so each cell bears a quarter
+        damage_static_cells(cell, 0.25 * load);
     }
     var slots: vec4<u32> = vec4<u32>(0u);
     for (var slot: u32 = 0u; slot < 4u; slot++) {
@@ -1425,17 +1530,249 @@ fn simulate_substep(cell: vec2<i32>, local_cell: u32) {
         || stored != center.stored
         || any(abs(flows) >= vec2<f32>(SLEEP_FLOW_MINIMUM))
     {
-        atomicOr(&pressure_awake[tile_index(vec2<u32>(cell) / 8u)], TILE_AWAKE);
+        atomicOr(&pressure_awake[tile_index(coarse_tile(cell))], TILE_AWAKE);
     }
     gas_out[index * 2u] = slots;
     gas_out[index * 2u + 1u] =
         vec4<u32>(phantom, bitcast<u32>(flows.x), bitcast<u32>(flows.y), bitcast<u32>(stored));
 }
 
+/// Damages the static cells under a pressure cell by a load in amount units of a cell
+fn damage_static_cells(cell: vec2<i32>, load: f32) {
+    for (var offset: u32 = 0u; offset < 4u; offset++) {
+        let fine_cell: vec2<i32> = cell * 2 + vec2<i32>(i32(offset % 2u), i32(offset / 2u));
+        let index: u32 = cell_index(fine_cell);
+        let material_identifier: u32 = material_identifiers[index];
+        if !is_static(material_identifier) { continue; }
+        let material: vec4<f32> = static_materials[material_identifier & 0x3fffffffu];
+        let overload: f32 = load / AMOUNT_PER_ATMOSPHERE - material.z;
+        if overload <= 0.0 { continue; }
+        let damage: u32 = kinematics[index].y & INTEGRITY_BROKEN;
+        let next: u32 = min(
+            damage + u32(ceil(overload * material.y * uniforms.damage_rate)),
+            INTEGRITY_BROKEN,
+        );
+        if next != damage {
+            kinematics[index].y = (kinematics[index].y & ~INTEGRITY_BROKEN) | next;
+        }
+        if next == INTEGRITY_BROKEN {
+            atomicOr(&pressure_awake[tile_index(vec2<u32>(fine_cell) / 8u)], TILE_BROKEN);
+        }
+    }
+}
+
+/// Flags of the tile a `coarsen` workgroup rebuilds
+var<workgroup> coarsened_tile_flags: u32;
+
+/// Rebuilds the pressure cells of every tile a listed block's halo reaches from the cells under
+/// them, one workgroup per tile of the region and one invocation per pressure cell, and clears
+/// their flags: a pressure cell holds its cells' phantom air and gases, merged into at most four
+/// species, the flows its first cell keeps, their mean open volume and drag, and, when all its
+/// cells are static, their summed stored pressure, mean density, and the first one's solid word
+@compute @workgroup_size(16)
+fn coarsen(
+    @builtin(workgroup_id) workgroup: vec3<u32>,
+    @builtin(local_invocation_index) local_cell: u32,
+) {
+    let tile_position: vec2<u32> =
+        vec2<u32>(workgroup.x % uniforms.region_width, workgroup.x / uniforms.region_width);
+    let physical_tile: u32 = tile_index(tile_position);
+    if local_cell == 0u { coarsened_tile_flags = atomicLoad(&pressure_awake[physical_tile]); }
+    if (workgroupUniformLoad(&coarsened_tile_flags) & TILE_HALO) == 0u { return; }
+    if local_cell == 0u { atomicAnd(&pressure_awake[physical_tile], ~TILE_HALO); }
+    let cell: vec2<i32> = vec2<i32>(
+        tile_position * PRESSURE_CELLS_PER_TILE + vec2<u32>(local_cell % 4u, local_cell / 4u),
+    );
+    var phantom: u32 = 0u;
+    var flows: vec2<u32> = vec2<u32>(0u);
+    var stored: i32 = 0;
+    var open_volume: u32 = 0u;
+    var static_count: u32 = 0u;
+    var solid: u32 = 0u;
+    var density: f32 = 0.0;
+    var drag: vec2<f32> = vec2<f32>(0.0);
+    var drag_count: u32 = 0u;
+    var gases: array<u32, 4>;
+    var amounts: array<u32, 4>;
+    var species_count: u32 = 0u;
+    for (var offset: u32 = 0u; offset < 4u; offset++) {
+        let index: u32 =
+            cell_index(cell * 2 + vec2<i32>(i32(offset % 2u), i32(offset / 2u)));
+        let slots: vec4<u32> = gas_in[index * 2u];
+        let words: vec4<u32> = gas_in[index * 2u + 1u];
+        phantom = min(phantom + words.x, AMOUNT_MAXIMUM);
+        if offset == 0u { flows = words.yz; }
+        for (var slot: u32 = 0u; slot < 4u; slot++) {
+            let amount: u32 = slot_amount(slots[slot]);
+            if amount == 0u { continue; }
+            let gas: u32 = slot_gas(slots[slot]);
+            var held: u32 = 4u;
+            for (var species: u32 = 0u; species < species_count; species++) {
+                if gases[species] == gas { held = species; }
+            }
+            // a fifth species in one pressure cell is lost
+            if held == 4u && species_count < 4u {
+                held = species_count;
+                gases[held] = gas;
+                amounts[held] = 0u;
+                species_count += 1u;
+            }
+            if held < 4u { amounts[held] = min(amounts[held] + amount, AMOUNT_MAXIMUM); }
+        }
+        let volume_word: vec2<u32> = volumes[index];
+        let material_identifier: u32 = material_identifiers[index];
+        if is_static(material_identifier) {
+            let material: vec4<f32> = static_materials[material_identifier & 0x3fffffffu];
+            static_count += 1u;
+            stored += bitcast<i32>(words.w);
+            density += material.x;
+            if solid == 0u { solid = static_solid(index, material); }
+        } else {
+            open_volume += volume_word.x & ~VOLUME_DRAGGED;
+            if (volume_word.x & VOLUME_DRAGGED) != 0u {
+                drag += unpack2x16snorm(volume_word.y);
+                drag_count += 1u;
+            }
+        }
+    }
+    var slots: vec4<u32> = vec4<u32>(0u);
+    for (var species: u32 = 0u; species < species_count; species++) {
+        slots[species] = (gases[species] << 24u) | amounts[species];
+    }
+    let is_solid: bool = static_count == 4u;
+    let index: u32 = coarse_index(cell);
+    gas_out[index * 2u] = slots;
+    gas_out[index * 2u + 1u] =
+        vec4<u32>(phantom, flows, bitcast<u32>(select(0, stored, is_solid)));
+    // drags are velocities in cells per tick, halved in pressure cells
+    let base: u32 = coarse_constant_index(index);
+    control.active_tiles[base] = open_volume / 4u
+        | select(0u, VOLUME_DRAGGED, drag_count > 0u)
+        | select(0u, VOLUME_PARTIAL, static_count > 0u && !is_solid);
+    control.active_tiles[base + 1u] =
+        pack2x16snorm(0.5 * drag / f32(max(drag_count, 1u)));
+    control.active_tiles[base + 2u] = select(0u, solid, is_solid);
+    control.active_tiles[base + 3u] = bitcast<u32>(density / 4.0);
+}
+
+/// Spreads the pressure cells of a listed block's active tiles back over the cells under them,
+/// one invocation per cell: phantom air and each gas go to the open cells by open volume, or
+/// evenly to closed ones, with the remainder to the most open cell so nothing is lost, every
+/// cell keeps its pressure cell's flows, and static cells of a solid pressure cell a quarter of
+/// its stored pressure
+@compute @workgroup_size(256)
+fn refine(
+    @builtin(workgroup_id) workgroup: vec3<u32>,
+    @builtin(local_invocation_index) local_cell: u32,
+) {
+    let block: u32 =
+        control.active_tiles[uniforms.region_width * uniforms.region_height + workgroup.x];
+    let block_position: vec2<u32> =
+        vec2<u32>(block % uniforms.region_width, block / uniforms.region_width);
+    let fine_cell: vec2<u32> = block_position * 8u + vec2<u32>(local_cell % 16u, local_cell / 16u);
+    if fine_cell.x >= uniforms.region_width * 8u || fine_cell.y >= uniforms.region_height * 8u {
+        return;
+    }
+    if (atomicLoad(&pressure_awake[tile_index(fine_cell / 8u)]) & TILE_ACTIVE) == 0u { return; }
+    let cell: vec2<i32> = vec2<i32>(fine_cell / 2u);
+    let own: u32 = (fine_cell.x % 2u) + 2u * (fine_cell.y % 2u);
+    // the open volume of each cell under the pressure cell weighs its share
+    var weights: array<u32, 4>;
+    var weight_sum: u32 = 0u;
+    var heaviest: u32 = 0u;
+    for (var offset: u32 = 0u; offset < 4u; offset++) {
+        let index: u32 =
+            cell_index(cell * 2 + vec2<i32>(i32(offset % 2u), i32(offset / 2u)));
+        var weight: u32 = 0u;
+        if !is_static(material_identifiers[index]) { weight = volumes[index].x & ~VOLUME_DRAGGED; }
+        weights[offset] = weight;
+        weight_sum += weight;
+        if weight > weights[heaviest] { heaviest = offset; }
+    }
+    if weight_sum == 0u {
+        for (var offset: u32 = 0u; offset < 4u; offset++) { weights[offset] = 1u; }
+        weight_sum = 4u;
+    }
+    let index: u32 = coarse_index(cell);
+    let coarse_slots: vec4<u32> = gas_in[index * 2u];
+    let words: vec4<u32> = gas_in[index * 2u + 1u];
+    var slots: vec4<u32> = vec4<u32>(0u);
+    for (var slot: u32 = 0u; slot < 4u; slot++) {
+        let amount: u32 = share(slot_amount(coarse_slots[slot]), &weights, weight_sum, heaviest, own);
+        if amount > 0u { slots[slot] = (coarse_slots[slot] & 0xff000000u) | amount; }
+    }
+    let fine_index: u32 = cell_index(vec2<i32>(fine_cell));
+    // a static cell takes its share of a solid pressure cell's stored pressure, or bears the gas
+    // pressure of an open one, so broken cells and the pressure view see the load on it
+    var stored: i32 = 0;
+    let constants: vec4<u32> = coarse_constants(index);
+    if is_static(material_identifiers[fine_index]) {
+        if constants.z != 0u {
+            stored = bitcast<i32>(words.w) / 4;
+        } else {
+            var total: f32 = f32(words.x);
+            for (var slot: u32 = 0u; slot < 4u; slot++) {
+                total += f32(slot_amount(coarse_slots[slot]));
+            }
+            let pressure: f32 =
+                total / max(f32(constants.x & 0x1ffffu) / VOLUME_SCALE, VOLUME_MINIMUM);
+            stored = i32(round(0.25 * (pressure - f32(uniforms.ambient_amount))));
+        }
+    }
+    gas_out[fine_index * 2u] = slots;
+    gas_out[fine_index * 2u + 1u] = vec4<u32>(
+        share(words.x, &weights, weight_sum, heaviest, own),
+        words.y,
+        words.z,
+        bitcast<u32>(stored),
+    );
+}
+
+/// Returns one cell's share of an amount split by weights, rounded down with the remainder going
+/// to the heaviest cell so the shares add up to the amount
+fn share(
+    amount: u32,
+    weights: ptr<function, array<u32, 4>>,
+    weight_sum: u32,
+    heaviest: u32,
+    own: u32,
+) -> u32 {
+    var shares: array<u32, 4>;
+    var given: u32 = 0u;
+    for (var offset: u32 = 0u; offset < 4u; offset++) {
+        shares[offset] = min(
+            u32(floor(f32(amount) * f32((*weights)[offset]) / f32(weight_sum))),
+            amount - given,
+        );
+        given += shares[offset];
+    }
+    shares[heaviest] += amount - given;
+    return shares[own];
+}
+
+/// Returns a pressure cell's pressure above the ambient pressure in amount units of a cell, and
+/// whether it is open: its gas per open volume, its stored pressure when solid, or for another
+/// closed pressure cell its trapped gas as if it filled it
+fn coarse_gauge(cell: vec2<i32>) -> vec2<f32> {
+    if !is_coarse_inside(cell) { return vec2<f32>(0.0); }
+    let index: u32 = coarse_index(cell);
+    let slots: vec4<u32> = gas_in[index * 2u];
+    let words: vec4<u32> = gas_in[index * 2u + 1u];
+    let constants: vec4<u32> = coarse_constants(index);
+    let ambient: f32 = f32(uniforms.ambient_amount);
+    if constants.z != 0u { return vec2<f32>(0.25 * f32(bitcast<i32>(words.w)), 0.0); }
+    var total: f32 = f32(words.x);
+    for (var slot: u32 = 0u; slot < 4u; slot++) { total += f32(slot_amount(slots[slot])); }
+    let volume: f32 = f32(constants.x & 0x1ffffu) / VOLUME_SCALE;
+    if volume <= 0.0 { return vec2<f32>(0.25 * (total - ambient), 0.0); }
+    return vec2<f32>(0.25 * (total / max(volume, VOLUME_MINIMUM) - ambient), 1.0);
+}
+
 /// Publishes the pressure above the ambient pressure of every cell of the active tiles, in
-/// atmospheres: an open cell's gas per open volume, a solid cell's stored pressure, and the gas
-/// trapped in another closed cell as if it filled the cell; waking the dynamic cells beside
-/// cells whose pressure pushes them
+/// atmospheres, from the newest pressure cells: a static cell's stored pressure, an open cell's
+/// pressure interpolated between the open pressure cells around it so pressure pushes evenly
+/// across them, or its own pressure cell's; waking the dynamic cells beside cells whose pressure
+/// pushes them
 @compute @workgroup_size(64)
 fn publish(
     @builtin(workgroup_id) workgroup: vec3<u32>,
@@ -1446,11 +1783,29 @@ fn publish(
         vec2<u32>(tile % uniforms.region_width, tile / uniforms.region_width);
     let cell: vec2<i32> =
         vec2<i32>(tile_position * 8u + vec2<u32>(local_cell % 8u, local_cell / 8u));
-    let pressure_cell: PressureCell = load_cell(cell);
-    var pressure: f32 = pressure_cell.total;
-    if pressure_cell.solid != 0u || pressure_cell.volume > 0.0 { pressure = pressure_cell.pressure; }
-    let gauge: f32 = (pressure - f32(uniforms.ambient_amount)) / AMOUNT_PER_ATMOSPHERE;
-    pressures[cell_index(cell)] = gauge;
+    let index: u32 = cell_index(cell);
+    var pressure: f32;
+    if is_static(material_identifiers[index]) {
+        pressure = f32(bitcast<i32>(gas_out[index * 2u + 1u].w));
+    } else {
+        // the cell's center among the pressure cell centers around it
+        let position: vec2<f32> = (vec2<f32>(cell) + 0.5) * 0.5 - 0.5;
+        let base: vec2<i32> = vec2<i32>(floor(position));
+        let fraction: vec2<f32> = position - floor(position);
+        var weighted: f32 = 0.0;
+        var weight_sum: f32 = 0.0;
+        for (var corner: u32 = 0u; corner < 4u; corner++) {
+            let offset: vec2<i32> = vec2<i32>(i32(corner % 2u), i32(corner / 2u));
+            let gauge: vec2<f32> = coarse_gauge(base + offset);
+            let weight: f32 = gauge.y * select(1.0 - fraction.x, fraction.x, offset.x == 1)
+                * select(1.0 - fraction.y, fraction.y, offset.y == 1);
+            weighted += weight * gauge.x;
+            weight_sum += weight;
+        }
+        pressure = select(coarse_gauge(cell / 2).x, weighted / weight_sum, weight_sum > 0.0);
+    }
+    let gauge: f32 = pressure / AMOUNT_PER_ATMOSPHERE;
+    pressures[index] = gauge;
     if abs(gauge) < PRESSURE_PUSH_MINIMUM { return; }
     for (var face: u32 = 0u; face < 4u; face++) {
         let neighbor: vec2<i32> = cell + face_offset(face);

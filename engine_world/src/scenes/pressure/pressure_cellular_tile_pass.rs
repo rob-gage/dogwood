@@ -38,13 +38,19 @@ const WORKGROUP_SIZE: u32 = 64;
 /// Bytes of the uniforms
 const UNIFORM_BYTE_COUNT: u64 = 96;
 
-/// GPU simulation of the pressure in the active tiles, alternating between the cellular tile gas
-/// buffer and a scratch buffer every substep
+/// GPU simulation of the pressure in the active tiles on pressure cells of 2x2 cells, rebuilt from
+/// the cellular tile gas every tick, simulated alternating between two pressure cell buffers, and
+/// spread back over the cells
 pub struct PressureCellularTilePass {
     /// Pipelines of every simulation step, named by their entry points
     pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
-    /// Bind groups reading the cellular tile gas and writing the scratch gas, then the reverse
+    /// Bind groups of the cell passes reading the cellular tile gas, then writing it
     bind_groups: [wgpu::BindGroup; 2],
+    /// Bind groups rebuilding the pressure cells from the cellular tile gas, stepping from the
+    /// first pressure cell buffer to the second and back, then spreading either over the cells
+    coarse_bind_groups: [wgpu::BindGroup; 5],
+    /// Uniforms of the pressure cell steps, measured in pressure cells
+    coarse_uniform_buffer: wgpu::Buffer,
     /// Bind group of the indirect dispatch written by the prepare step
     dispatch_bind_group: wgpu::BindGroup,
     /// Uniforms of every step
@@ -165,6 +171,8 @@ impl PressureCellularTilePass {
             "collect",
             "clear",
             "collect_blocks",
+            "coarsen",
+            "refine",
             "prepare",
             "step",
             "prepare_gas",
@@ -206,12 +214,24 @@ impl PressureCellularTilePass {
             UNIFORM_BYTE_COUNT,
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         );
-        // the gas of odd substeps, laid out like the cellular tile gas
-        let scratch_buffer: wgpu::Buffer = create_buffer(
-            "`PressureCellularTilePass.scratch_buffer`",
-            cellular_tile_buffers.gas_buffer().size(),
-            wgpu::BufferUsages::STORAGE,
+        let coarse_uniform_buffer: wgpu::Buffer = create_buffer(
+            "`PressureCellularTilePass.coarse_uniform_buffer`",
+            UNIFORM_BYTE_COUNT,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         );
+        // the pressure cells, laid out like the cellular tile gas with one entry per 2x2 cells
+        let coarse_buffers: [wgpu::Buffer; 2] = [
+            create_buffer(
+                "`PressureCellularTilePass.coarse_buffers`",
+                cellular_tile_buffers.gas_buffer().size() / 4,
+                wgpu::BufferUsages::STORAGE,
+            ),
+            create_buffer(
+                "`PressureCellularTilePass.coarse_buffers`",
+                cellular_tile_buffers.gas_buffer().size() / 4,
+                wgpu::BufferUsages::STORAGE,
+            ),
+        ];
         // each cell's open volume and the velocity of the actor dragging its gas, measured once
         // per tick
         let volume_buffer: wgpu::Buffer = create_buffer(
@@ -221,7 +241,8 @@ impl PressureCellularTilePass {
         );
         let control_buffer: wgpu::Buffer = create_buffer(
             "`PressureCellularTilePass.control_buffer`",
-            16 + tile_count * 12,
+            // four counts, three lists of tiles, and four words per pressure cell
+            16 + tile_count * 268,
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         );
         // the count of tiles where cellular tile cells broke this tick, then each tile's buffer
@@ -242,7 +263,7 @@ impl PressureCellularTilePass {
             48,
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
         );
-        let create_bind_group = |gas_in: &wgpu::Buffer, gas_out: &wgpu::Buffer| {
+        let create_bind_group = |uniform_buffer: &wgpu::Buffer, gas_in: &wgpu::Buffer, gas_out: &wgpu::Buffer| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("`PressureCellularTilePass.bind_groups`"),
                 layout: &bind_group_layout,
@@ -327,9 +348,17 @@ impl PressureCellularTilePass {
                 ],
             })
         };
+        let gas_buffer: &wgpu::Buffer = cellular_tile_buffers.gas_buffer();
         let bind_groups: [wgpu::BindGroup; 2] = [
-            create_bind_group(cellular_tile_buffers.gas_buffer(), &scratch_buffer),
-            create_bind_group(&scratch_buffer, cellular_tile_buffers.gas_buffer()),
+            create_bind_group(&uniform_buffer, gas_buffer, &coarse_buffers[0]),
+            create_bind_group(&uniform_buffer, &coarse_buffers[1], gas_buffer),
+        ];
+        let coarse_bind_groups: [wgpu::BindGroup; 5] = [
+            create_bind_group(&coarse_uniform_buffer, gas_buffer, &coarse_buffers[0]),
+            create_bind_group(&coarse_uniform_buffer, &coarse_buffers[0], &coarse_buffers[1]),
+            create_bind_group(&coarse_uniform_buffer, &coarse_buffers[1], &coarse_buffers[0]),
+            create_bind_group(&coarse_uniform_buffer, &coarse_buffers[0], gas_buffer),
+            create_bind_group(&coarse_uniform_buffer, &coarse_buffers[1], gas_buffer),
         ];
         let dispatch_bind_group: wgpu::BindGroup = device.create_bind_group(
             &wgpu::BindGroupDescriptor {
@@ -344,6 +373,8 @@ impl PressureCellularTilePass {
         Self {
             pipelines,
             bind_groups,
+            coarse_bind_groups,
+            coarse_uniform_buffer,
             dispatch_bind_group,
             uniform_buffer,
             control_buffer,
@@ -370,55 +401,65 @@ impl PressureCellularTilePass {
         let width: u32 = active_region.width() as u32;
         let height: u32 = active_region.height() as u32;
         let tile_count: u32 = width * height;
-        if u64::from(tile_count) * 12 + 16 > self.control_buffer.size() {
+        if u64::from(tile_count) * 268 + 16 > self.control_buffer.size() {
             return Err(SceneError::InvalidCellularTileRegion);
         }
         // every tile is measured when the region or ring moves, and afterward only tiles that may
         // have changed
         let is_volume_listed: bool = self.volume_region == Some((active_region, ring_offset));
         self.volume_region = Some((active_region, ring_offset));
-        // the shader measures everything in cells, amount units, and substeps
+        // the shaders measure everything in cells, or pressure cells of 2x2 cells, amount units of
+        // a cell or of a pressure cell, and substeps
         let substep_count: f32 = PRESSURE_SUBSTEP_COUNT as f32;
         let substep_time: f32 = PRESSURE_TIME_STEP / substep_count;
-        let cells_per_substep = |tiles_per_second: f32| -> f32 {
-            tiles_per_second * CELLULAR_TILE_SIZE as f32 * substep_time
+        let uniforms = |cell_size: f32| -> Vec<u8> {
+            let cells_per_tile: f32 = CELLULAR_TILE_SIZE as f32 / cell_size;
+            let cells_per_substep = |tiles_per_second: f32| -> f32 {
+                tiles_per_second * cells_per_tile * substep_time
+            };
+            let fraction_per_substep = |rate: f32| -> f32 { 1.0 - (-rate * substep_time).exp() };
+            let gas_speed: f32 = cells_per_substep(PRESSURE_GAS_SPEED);
+            let solid_speed: f32 = cells_per_substep(PRESSURE_SOLID_SPEED);
+            // a solid's impedance, its mass times its wave speed over its response, is its mass
+            // times the solid impedance times the impedance of gas, the inverse of the gas wave
+            // speed
+            let solid_response: f32 = gas_speed * solid_speed / PRESSURE_SOLID_IMPEDANCE;
+            // a pressure cell holds the amount of its cells, and diffusion across wider cells
+            // exchanges a smaller fraction
+            let area: f32 = cell_size * cell_size;
+            let mut uniform_bytes: Vec<u8> = Vec::with_capacity(UNIFORM_BYTE_COUNT as usize);
+            for value in [
+                width,
+                height,
+                ring_offset.0,
+                ring_offset.1,
+                (ambient_amount as f32 * area) as u32,
+                ambient_mass.to_bits(),
+                (gravity / cell_size).to_bits(),
+                FLUID_RASTER_SCALE.to_bits(),
+                actor_count,
+                (1.0 / substep_count / cell_size).to_bits(),
+                (gas_speed * gas_speed).to_bits(),
+                fraction_per_substep(PRESSURE_FLOW_DAMPING).to_bits(),
+                (PRESSURE_BULK_VISCOSITY * substep_time / area).to_bits(),
+                (PRESSURE_FLOW_MINIMUM * substep_time * area).to_bits(),
+                (PRESSURE_AMBIENT_DIFFUSIVITY * substep_time / area).to_bits(),
+                substep_count.to_bits(),
+                fraction_per_substep(PRESSURE_ACTOR_DRAG).to_bits(),
+                solid_response.to_bits(),
+                solid_speed.to_bits(),
+                fraction_per_substep(PRESSURE_SOLID_RELAXATION).to_bits(),
+                fraction_per_substep(PRESSURE_TRAPPED_EXPULSION).to_bits(),
+                (PRESSURE_DAMAGE_RATE * substep_time * 65535.0).to_bits(),
+                u32::from(is_volume_listed),
+                (1.0 / area).to_bits(),
+            ] {
+                uniform_bytes.extend_from_slice(&value.to_le_bytes());
+            }
+            uniform_bytes
         };
-        let fraction_per_substep = |rate: f32| -> f32 { 1.0 - (-rate * substep_time).exp() };
-        let gas_speed: f32 = cells_per_substep(PRESSURE_GAS_SPEED);
-        let solid_speed: f32 = cells_per_substep(PRESSURE_SOLID_SPEED);
-        // a solid's impedance, its mass times its wave speed over its response, is its mass times
-        // the solid impedance times the impedance of gas, the inverse of the gas wave speed
-        let solid_response: f32 = gas_speed * solid_speed / PRESSURE_SOLID_IMPEDANCE;
-        let mut uniform_bytes: Vec<u8> = Vec::with_capacity(UNIFORM_BYTE_COUNT as usize);
-        for value in [
-            width,
-            height,
-            ring_offset.0,
-            ring_offset.1,
-            ambient_amount,
-            ambient_mass.to_bits(),
-            gravity.to_bits(),
-            FLUID_RASTER_SCALE.to_bits(),
-            actor_count,
-            (1.0 / substep_count).to_bits(),
-            (gas_speed * gas_speed).to_bits(),
-            fraction_per_substep(PRESSURE_FLOW_DAMPING).to_bits(),
-            (PRESSURE_BULK_VISCOSITY * substep_time).to_bits(),
-            (PRESSURE_FLOW_MINIMUM * substep_time).to_bits(),
-            (PRESSURE_AMBIENT_DIFFUSIVITY * substep_time).to_bits(),
-            substep_count.to_bits(),
-            fraction_per_substep(PRESSURE_ACTOR_DRAG).to_bits(),
-            solid_response.to_bits(),
-            solid_speed.to_bits(),
-            fraction_per_substep(PRESSURE_SOLID_RELAXATION).to_bits(),
-            fraction_per_substep(PRESSURE_TRAPPED_EXPULSION).to_bits(),
-            (PRESSURE_DAMAGE_RATE * substep_time * 65535.0).to_bits(),
-            u32::from(is_volume_listed),
-            0,
-        ] {
-            uniform_bytes.extend_from_slice(&value.to_le_bytes());
-        }
-        accelerator.queue().write_buffer(&self.uniform_buffer, 0, &uniform_bytes);
+        accelerator.queue().write_buffer(&self.uniform_buffer, 0, &uniforms(1.0));
+        accelerator.queue().write_buffer(&self.coarse_uniform_buffer, 0, &uniforms(2.0));
         let mut command_encoder: wgpu::CommandEncoder = accelerator.device()
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Scene pressure cellular tiles"),
@@ -459,8 +500,12 @@ impl PressureCellularTilePass {
             compute_pass.set_pipeline(&pipelines["prepare"]);
             compute_pass.set_bind_group(1, &self.dispatch_bind_group, &[]);
             compute_pass.dispatch_workgroups(1, 1, 1);
+            // rebuild the pressure cells the listed blocks' halos reach
+            compute_pass.set_bind_group(0, &self.coarse_bind_groups[0], &[]);
+            compute_pass.set_pipeline(&pipelines["coarsen"]);
+            compute_pass.dispatch_workgroups(tile_count, 1, 1);
             for substep in 0..PRESSURE_SUBSTEP_COUNT {
-                compute_pass.set_bind_group(0, &self.bind_groups[substep % 2], &[]);
+                compute_pass.set_bind_group(0, &self.coarse_bind_groups[1 + substep % 2], &[]);
                 compute_pass.set_pipeline(&pipelines["step"]);
                 compute_pass.dispatch_workgroups_indirect(&self.dispatch_buffer, 36);
                 // blocks whose halo holds gas run the full step after the others
@@ -469,12 +514,24 @@ impl PressureCellularTilePass {
                 compute_pass.set_pipeline(&pipelines["step_gas"]);
                 compute_pass.dispatch_workgroups_indirect(&self.dispatch_buffer, 24);
             }
-            // the even substep count leaves the newest cells in the cellular tile gas buffer
-            compute_pass.set_bind_group(0, &self.bind_groups[0], &[]);
+            // spread the newest pressure cells over the cells of the active tiles
+            compute_pass.set_bind_group(
+                0,
+                &self.coarse_bind_groups[3 + PRESSURE_SUBSTEP_COUNT % 2],
+                &[],
+            );
+            compute_pass.set_pipeline(&pipelines["refine"]);
+            compute_pass.dispatch_workgroups_indirect(&self.dispatch_buffer, 36);
+            // the published pressure is interpolated from the newest pressure cells
+            compute_pass.set_bind_group(
+                0,
+                &self.coarse_bind_groups[3 + PRESSURE_SUBSTEP_COUNT % 2],
+                &[],
+            );
             compute_pass.set_pipeline(&pipelines["publish"]);
             compute_pass.dispatch_workgroups_indirect(&self.dispatch_buffer, 0);
-            // broken cells change in the buffer the last substep wrote, read with the published
-            // pressure around them
+            // broken cells change in the cellular tile gas, read with the published pressure
+            // around them
             compute_pass.set_bind_group(0, &self.bind_groups[1], &[]);
             compute_pass.set_pipeline(&pipelines["damage"]);
             compute_pass.dispatch_workgroups_indirect(&self.dispatch_buffer, 0);

@@ -17,9 +17,8 @@ pub const PRESSURE_MAXIMUM: f32 = 4095.0;
 /// Duration of one fixed tick in seconds, matching the collision step
 const PRESSURE_TIME_STEP: f32 = 1.0 / 60.0;
 
-/// Substeps of each tick, even so the cells alternate between their two buffers and end in the
-/// cellular tile buffers
-const PRESSURE_SUBSTEP_COUNT: usize = 6;
+/// Substeps of each tick, on pressure cells of 2x2 cells
+const PRESSURE_SUBSTEP_COUNT: usize = 3;
 
 /// Fraction of scene gravity that lifts and sinks gases, keeping buoyant flows well below the
 /// speed of pressure waves so gas columns stay close to the ambient pressure
