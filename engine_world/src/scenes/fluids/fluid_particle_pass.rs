@@ -159,6 +159,9 @@ pub struct FluidParticlePass {
     erasure_mask_buffer: wgpu::Buffer,
     /// Physical cell raster followed by sparse tile flags, list, and count
     fluid_raster_buffer: wgpu::Buffer,
+    /// Packed sRGB red, green, blue, and alpha of the particles in each physical cell, each summed
+    /// weighted by the particles' fixed-point raster mass
+    fluid_color_buffer: wgpu::Buffer,
     /// Fixed-point heat capacity, heat, and heat capacity times conduction of the particles in each
     /// physical cell, then the temperature change in kelvin the thermal step leaves them
     fluid_heat_buffer: wgpu::Buffer,
@@ -278,6 +281,7 @@ impl FluidParticlePass {
                     storage_entry(28, false),
                     storage_entry(29, true),
                     storage_entry(30, false),
+                    storage_entry(31, false),
                 ],
             },
         );
@@ -659,6 +663,11 @@ impl FluidParticlePass {
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
         );
+        let fluid_color_buffer: wgpu::Buffer = create_buffer(
+            "`FluidParticlePass.fluid_color_buffer`",
+            cell_count * 16,
+            wgpu::BufferUsages::STORAGE,
+        );
         let fluid_heat_buffer: wgpu::Buffer = create_buffer(
             "`FluidParticlePass.fluid_heat_buffer`",
             cell_count * 16,
@@ -761,6 +770,10 @@ impl FluidParticlePass {
                 wgpu::BindGroupEntry {
                     binding: 30,
                     resource: cellular_tile_buffers.thermal_awake_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 31,
+                    resource: fluid_color_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -1019,6 +1032,7 @@ impl FluidParticlePass {
             particle_state_b,
             erasure_mask_buffer,
             fluid_raster_buffer,
+            fluid_color_buffer,
             fluid_heat_buffer,
             boundary_psi_buffer,
             boundary_tile_data_buffer,
@@ -1212,6 +1226,9 @@ impl FluidParticlePass {
         }
         accelerator.queue().submit(Some(command_encoder.finish()));
     }
+
+    /// Returns the colors of the particles in each physical cell, summed weighted by raster mass
+    pub fn fluid_color_buffer(&self) -> &wgpu::Buffer { &self.fluid_color_buffer }
 
     /// Returns the fluid heat the particles in each physical cell deposit
     pub fn fluid_heat_buffer(&self) -> &wgpu::Buffer { &self.fluid_heat_buffer }

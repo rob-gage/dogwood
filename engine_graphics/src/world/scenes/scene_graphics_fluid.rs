@@ -5,6 +5,8 @@
 pub struct SceneGraphicsFluid<'a> {
     /// Fixed-point mass, momentum, and dominant material for each physical ring cell
     pub raster_buffer: &'a wgpu::Buffer,
+    /// Summed sRGB particle color channels weighted by raster mass for each physical ring cell
+    pub color_buffer: &'a wgpu::Buffer,
     /// Seven physics values followed by packed sRGB color per 32-byte fluid material record
     pub material_properties_buffer: &'a wgpu::Buffer,
     /// Horizontal offset of the region's bottom-left corner from the camera in tiles

@@ -2,8 +2,10 @@
 
 /// Graphics properties for a gas material
 pub struct MaterialGraphicsGas {
-    /// Packed sRGB RGBA color; alpha is the opacity of one atmosphere of the gas
+    /// Packed sRGB RGBA color of cells where this gas is the most plentiful; alpha is the opacity
+    /// of one atmosphere of the gas
     pub color: u32,
-    /// Multiplier stored with the gas material properties for atmosphere opacity
+    /// Multiplier of the atmospheres that build up the gas's opacity, so denser or thinner looking
+    /// gases share one color alpha
     pub opacity: f32,
 }

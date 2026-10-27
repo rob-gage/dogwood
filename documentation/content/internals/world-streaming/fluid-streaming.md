@@ -24,7 +24,7 @@ The cellular edit path substitutes empty material/zero color for written fluid c
 
 The cellular part of fluid Insert uses ordinary edit collision rules. Its independently queued particle spawn checks nonempty cellular matter and an occupancy-generation stamp for existing particles on the GPU; it does not receive the cellular collider mask. Actor overlap is resolved later by particle projection. It creates at most one new particle per occupied cell stamp. GPU capacity is checked again atomically. Imported records may share the same cell to preserve compressed saves; they do not use Insert's one-per-cell rejection.
 
-> **Limitation:** Particle erasures are queued separately from the cellular Insert acceptance test. A non-fluid Insert's particle erasure is not conditioned on the eventual cellular write succeeding. Per-edit particle colors are retained for persistence and thermal transitions; rendering uses the fluid material's color.
+> **Limitation:** Particle erasures are queued separately from the cellular Insert acceptance test. A non-fluid Insert's particle erasure is not conditioned on the eventual cellular write succeeding. Per-edit fluid color is not persisted per particle; rendering uses the fluid material's color.
 
 ## Dormant imports
 

@@ -43,7 +43,7 @@ Game code generally needs only `SpriteSheet`. Integrators providing their own re
 
 - the visible tile dimensions;
 - optional resident cellular buffers and ring placement;
-- optional fluid raster and material-property buffers with ring placement;
+- optional fluid raster, material-property, and per-particle color buffers with ring placement;
 - optional gas cell, material identifier, and gas material-property buffers with ring placement;
 - optional published pressure buffer with ambient pressure and ring placement;
 - actor and host overlays aligned to scene cells, each a circle radius or a rectangle width and height in tiles with a packed RGBA8 color;

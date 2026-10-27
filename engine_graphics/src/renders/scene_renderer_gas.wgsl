@@ -89,29 +89,28 @@ fn cell_gas_color(cell: vec2<i32>) -> vec4<f32> {
     if material_identifiers[cell_index] != 0u {
         return vec4<f32>(0.0);
     }
+    // the cell takes the color and opacity of its most plentiful gas, its density counting all
     let slots: vec4<u32> = gas_cells[cell_index * 2u];
-    var accumulated_rgb: vec3<f32> = vec3<f32>(0.0);
-    var accumulated_alpha: f32 = 0.0;
+    var dominant_slot: u32 = 0u;
+    var total_amount: u32 = 0u;
     for (var slot_index: u32 = 0u; slot_index < 4u; slot_index = slot_index + 1u) {
-        let packed_slot: u32 = slots[slot_index];
-        let amount: u32 = packed_slot & 0x00ffffffu;
-        if amount > 0u {
-            let gas_index: u32 = packed_slot >> 24u;
-            let properties: vec4<f32> = gas_materials[gas_index * 2u];
-            let srgb_color: vec4<f32> = unpack4x8unorm(bitcast<u32>(properties.w));
-            let linear_rgb: vec3<f32> = vec3<f32>(
-                srgb_to_linear(srgb_color.r),
-                srgb_to_linear(srgb_color.g),
-                srgb_to_linear(srgb_color.b),
-            );
-            let density: f32 = f32(amount) / uniforms.amount_per_atmosphere;
-            let alpha: f32 = clamp(1.0 - pow(1.0 - srgb_color.a, density), 0.0, 1.0);
-            let remaining: f32 = 1.0 - accumulated_alpha;
-            accumulated_rgb = accumulated_rgb + linear_rgb * alpha * remaining;
-            accumulated_alpha = accumulated_alpha + alpha * remaining;
-        }
+        let amount: u32 = slots[slot_index] & 0x00ffffffu;
+        total_amount = total_amount + amount;
+        if amount > (slots[dominant_slot] & 0x00ffffffu) { dominant_slot = slot_index; }
     }
-    return vec4<f32>(accumulated_rgb, accumulated_alpha);
+    if total_amount == 0u { return vec4<f32>(0.0); }
+    let gas_index: u32 = slots[dominant_slot] >> 24u;
+    let properties: vec4<f32> = gas_materials[gas_index * 2u];
+    let opacity: f32 = gas_materials[gas_index * 2u + 1u].x;
+    let srgb_color: vec4<f32> = unpack4x8unorm(bitcast<u32>(properties.w));
+    let linear_rgb: vec3<f32> = vec3<f32>(
+        srgb_to_linear(srgb_color.r),
+        srgb_to_linear(srgb_color.g),
+        srgb_to_linear(srgb_color.b),
+    );
+    let density: f32 = f32(total_amount) / uniforms.amount_per_atmosphere * opacity;
+    let alpha: f32 = clamp(1.0 - pow(1.0 - srgb_color.a, density), 0.0, 1.0);
+    return vec4<f32>(linear_rgb * alpha, alpha);
 }
 
 /// Draws one gas framebuffer pixel: only inside cells holding visible gas, so cloud edges follow

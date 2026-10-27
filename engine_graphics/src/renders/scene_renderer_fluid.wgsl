@@ -52,9 +52,12 @@ var<storage, read> fluid_raster: array<i32>;
 var<storage, read> fluid_materials: array<vec4<f32>>;
 
 @group(0) @binding(3)
-var<storage, read_write> water_cells: array<u32>;
+var<storage, read> fluid_colors: array<u32>;
 
 @group(0) @binding(4)
+var<storage, read_write> water_cells: array<u32>;
+
+@group(0) @binding(5)
 var<storage, read_write> shaded_cells: array<vec2<u32>>;
 
 /// Rows classified above the shaded rectangle for the depth search
@@ -168,9 +171,44 @@ fn shade(@builtin(global_invocation_id) invocation: vec3<u32>) {
         depth++;
     }
     let surface: bool = water_cell(invocation.xy + vec2<u32>(0u, 1u)) == 0u;
-    let material_index: u32 = material_identifier & 0x3fffffffu;
-    let packed_color: u32 = bitcast<u32>(fluid_materials[material_index * 2u + 1u].w);
-    let srgb_color: vec4<f32> = unpack4x8unorm(packed_color);
+    let cell: vec2<i32> = uniforms.shaded_origin + vec2<i32>(invocation.xy);
+    let region_cell_width: i32 = i32(uniforms.region_width * uniforms.cellular_tile_size);
+    let region_cell_height: i32 = i32(uniforms.region_height * uniforms.cellular_tile_size);
+    var color_mass: f32 = 0.0;
+    var weighted_color: vec4<f32> = vec4<f32>(0.0);
+    for (var offset_y: i32 = -1; offset_y <= 1; offset_y++) {
+        for (var offset_x: i32 = -1; offset_x <= 1; offset_x++) {
+            let neighbor: vec2<i32> = cell + vec2<i32>(offset_x, offset_y);
+            if neighbor.x < 0 || neighbor.y < 0
+                || neighbor.x >= region_cell_width || neighbor.y >= region_cell_height
+            { continue; }
+            let neighbor_index: u32 = physical_cell_index(neighbor);
+            let neighbor_base: u32 = neighbor_index * 4u;
+            let mass: f32 = f32(max(fluid_raster[neighbor_base], 0));
+            if mass <= 0.0 { continue; }
+            color_mass += mass;
+            let color_base: u32 = neighbor_index * 4u;
+            weighted_color += vec4<f32>(
+                f32(fluid_colors[color_base]),
+                f32(fluid_colors[color_base + 1u]),
+                f32(fluid_colors[color_base + 2u]),
+                f32(fluid_colors[color_base + 3u]),
+            );
+        }
+    }
+    var srgb_color: vec4<f32>;
+    if color_mass > 0.0 {
+        srgb_color = weighted_color / color_mass / 255.0;
+    } else {
+        let material_index: u32 = material_identifier & 0x3fffffffu;
+        let packed_color: u32 = bitcast<u32>(fluid_materials[material_index * 2u + 1u].w);
+        srgb_color = vec4<f32>(
+            f32(packed_color & 0xffu),
+            f32((packed_color >> 8u) & 0xffu),
+            f32((packed_color >> 16u) & 0xffu),
+            f32((packed_color >> 24u) & 0xffu),
+        ) / 255.0;
+    }
     let linear_rgb: vec3<f32> = vec3<f32>(
         srgb_to_linear(srgb_color.r),
         srgb_to_linear(srgb_color.g),

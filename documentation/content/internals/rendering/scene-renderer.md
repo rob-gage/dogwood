@@ -25,7 +25,7 @@ Sprite frames outside a sheet are skipped. Sheet pixel dimensions are converted 
 - the active region's camera-relative origin and dimensions in tiles;
 - the ring offsets and cells per tile.
 
-The fluid record borrows the mass/momentum raster and material properties with the same region/ring placement; see [fluid rendering](@/internals/rendering/fluid-pass.md). The gas record borrows the gas cells, material identifiers, and gas material properties with the same placement; see [gas rendering](@/internals/rendering/gas-pass.md). Pressure records borrow their cell buffers with the same placement and ambient value.
+The fluid record borrows the mass/momentum raster, material properties, and particle color sums with the same region/ring placement; see [fluid rendering](@/internals/rendering/fluid-pass.md). The gas record borrows the gas cells, material identifiers, and gas material properties with the same placement; see [gas rendering](@/internals/rendering/gas-pass.md). Pressure records borrow their cell buffers with the same placement and ambient value.
 
 See {{ <rustdoc path="engine_graphics/world/scenes/struct.SceneGraphics.html" text="the scene graphics API" /> }} and the {{ <rustdoc path="engine/scenes/struct.Scene.html" text="Scene API" /> }}.
 

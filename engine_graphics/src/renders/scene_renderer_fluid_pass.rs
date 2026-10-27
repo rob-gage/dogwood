@@ -9,7 +9,7 @@ const FLUID_DEPTH_SEARCH_ROWS: u32 = 8;
 
 /// Renderer for the cell-resolution fluid raster
 pub struct SceneRendererFluidPass {
-    /// Layout for fluid uniforms, raster data, and material properties
+    /// Layout for fluid uniforms, raster, material properties, and particle colors
     bind_group_layout: wgpu::BindGroupLayout,
     /// Pipeline layout for fluid rendering
     pipeline_layout: wgpu::PipelineLayout,
@@ -35,6 +35,8 @@ pub struct SceneRendererFluidPass {
     raster_buffer: Option<wgpu::Buffer>,
     /// Material properties buffer used by the cached fluid bind group
     material_properties_buffer: Option<wgpu::Buffer>,
+    /// Particle color buffer used by the cached fluid bind group
+    color_buffer: Option<wgpu::Buffer>,
 }
 
 impl SceneRendererFluidPass {
@@ -80,7 +82,7 @@ impl SceneRendererFluidPass {
                         binding: 3,
                         visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,
                             min_binding_size: None,
                         },
@@ -88,6 +90,16 @@ impl SceneRendererFluidPass {
                     },
                     wgpu::BindGroupLayoutEntry {
                         binding: 4,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 5,
                         visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -149,6 +161,7 @@ impl SceneRendererFluidPass {
             bind_group: None,
             raster_buffer: None,
             material_properties_buffer: None,
+            color_buffer: None,
         }
     }
 
@@ -281,8 +294,10 @@ impl SceneRendererFluidPass {
             != Some(fluid_graphics.raster_buffer);
         let materials_buffer_differs: bool = self.material_properties_buffer.as_ref()
             != Some(fluid_graphics.material_properties_buffer);
+        let color_buffer_differs: bool =
+            self.color_buffer.as_ref() != Some(fluid_graphics.color_buffer);
         if self.bind_group.is_none() || raster_buffer_differs || materials_buffer_differs
-            || cell_buffers_differ
+            || color_buffer_differs || cell_buffers_differ
         {
             let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("`SceneRendererFluidPass.bind_group`"),
@@ -310,10 +325,18 @@ impl SceneRendererFluidPass {
                     },
                     wgpu::BindGroupEntry {
                         binding: 3,
-                        resource: self.water_cell_buffer.as_entire_binding(),
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: fluid_graphics.color_buffer,
+                            offset: 0,
+                            size: None,
+                        }),
                     },
                     wgpu::BindGroupEntry {
                         binding: 4,
+                        resource: self.water_cell_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
                         resource: self.shaded_cell_buffer.as_entire_binding(),
                     },
                 ],
@@ -322,6 +345,7 @@ impl SceneRendererFluidPass {
             self.raster_buffer = Some(fluid_graphics.raster_buffer.clone());
             self.material_properties_buffer =
                 Some(fluid_graphics.material_properties_buffer.clone());
+            self.color_buffer = Some(fluid_graphics.color_buffer.clone());
         }
     }
 

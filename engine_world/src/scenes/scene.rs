@@ -816,6 +816,7 @@ impl Scene {
         let (region_x, region_y): (f64, f64) = region_position.relative_position(camera_position);
         Some(SceneGraphicsFluid {
             raster_buffer: fluids.fluid_raster_buffer(),
+            color_buffer: fluids.fluid_color_buffer(),
             material_properties_buffer: self.material_table.fluid_properties_buffer(),
             region_x: region_x as f32,
             region_y: region_y as f32,

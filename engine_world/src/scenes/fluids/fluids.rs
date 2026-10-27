@@ -482,6 +482,12 @@ impl Fluids {
         self.particle_pass.fluid_heat_buffer()
     }
 
+    /// Returns the packed sRGB red, green, blue, and alpha of the particles in each physical cell,
+    /// each summed weighted by the particles' fixed-point raster mass
+    pub fn fluid_color_buffer(&self) -> &wgpu::Buffer {
+        self.particle_pass.fluid_color_buffer()
+    }
+
     /// Returns the fixed byte size of one compaction export readback
     pub(crate) fn particle_export_buffer_size(&self) -> u64 {
         self.particle_pass.particle_export_buffer_size()

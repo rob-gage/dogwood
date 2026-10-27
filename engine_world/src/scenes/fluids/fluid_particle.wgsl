@@ -174,6 +174,9 @@ var<storage, read> thermal_materials: array<vec4<u32>>;
 @group(0) @binding(30)
 var<storage, read_write> thermal_awake: array<atomic<u32>>;
 
+@group(0) @binding(31)
+var<storage, read_write> fluid_colors: array<atomic<u32>>;
+
 @group(0) @binding(40)
 var<storage, read_write> conversion_material_identifiers: array<atomic<u32>>;
 
@@ -623,7 +626,7 @@ fn add_fluid_contact_tile(physical_tile: u32) {
     }
 }
 
-/// Clears all fixed-point values and the fluid heat for one physical ring cell
+/// Clears all fixed-point values, the colors, and the fluid heat for one physical ring cell
 fn clear_raster_cell(index: u32) {
     let base: u32 = index * 4u;
     atomicStore(&fluid_raster[base], 0u);
@@ -634,6 +637,10 @@ fn clear_raster_cell(index: u32) {
     atomicStore(&fluid_heat[base + 1u], 0);
     atomicStore(&fluid_heat[base + 2u], 0);
     atomicStore(&fluid_heat[base + 3u], 0);
+    atomicStore(&fluid_colors[base], 0u);
+    atomicStore(&fluid_colors[base + 1u], 0u);
+    atomicStore(&fluid_colors[base + 2u], 0u);
+    atomicStore(&fluid_colors[base + 3u], 0u);
 }
 
 /// Adds a signed fixed-point value while clamping to the i32 range
@@ -1473,7 +1480,7 @@ fn clear_fluid_current_tiles(
     clear_raster_cell(physical_tile * 64u + local_index);
 }
 
-/// Rasterizes each live particle and its heat into its nearest physical ring cell,
+/// Rasterizes each live particle, its color, and its heat into its nearest physical ring cell,
 /// waking the cell's tile for the thermal step
 @compute @workgroup_size(PARTICLE_WORKGROUP_SIZE)
 fn rasterize_fluid(@builtin(global_invocation_id) invocation: vec3<u32>) {
@@ -1505,6 +1512,13 @@ fn rasterize_fluid(@builtin(global_invocation_id) invocation: vec3<u32>) {
     atomic_saturating_add(base + 1u, momentum_fixed.x);
     atomic_saturating_add(base + 2u, momentum_fixed.y);
     atomicMax(&fluid_raster[base + 3u], particle.material_identifier);
+    // each particle's color counts as much as its mass toward the cell's color
+    let color: vec4<u32> =
+        (vec4<u32>(particle.color) >> vec4<u32>(0u, 8u, 16u, 24u)) & vec4<u32>(0xffu);
+    atomicAdd(&fluid_colors[base], color.x * u32(mass_fixed));
+    atomicAdd(&fluid_colors[base + 1u], color.y * u32(mass_fixed));
+    atomicAdd(&fluid_colors[base + 2u], color.z * u32(mass_fixed));
+    atomicAdd(&fluid_colors[base + 3u], color.w * u32(mass_fixed));
     // the thermal step reads the particles' heat capacity, heat, and conduction in each cell
     let thermal_index: u32 = THERMAL_OFFSETS.z + material_index;
     let properties: vec4<u32> = thermal_materials[thermal_index * 4u];
