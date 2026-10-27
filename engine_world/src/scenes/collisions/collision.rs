@@ -1566,11 +1566,15 @@ impl Collision {
                 Vec<((u32, u32), (MaterialIdentifier, u32, [u32; 4]))>,
             > = Vec::new();
             for group in groups {
-                let is_unchanged: bool = group.iter().all(|((x, y), _)| {
-                    cellular_tiles[(*y as usize / 8) * width + *x as usize / 8].as_u64()
-                        >> ((*y % 8) * 8 + *x % 8) & 1 == 1
-                });
-                if is_unchanged { verified_groups.push(group); }
+                // A group can change between its GPU read and this occupancy snapshot. Keep
+                // the cells that are still static instead of dropping the whole group when
+                // just one member changed; the GPU write still checks each cell's material.
+                let current_group: Vec<((u32, u32), (MaterialIdentifier, u32, [u32; 4]))> =
+                    group.into_iter().filter(|((x, y), _)| {
+                        cellular_tiles[(*y as usize / 8) * width + *x as usize / 8].as_u64()
+                            >> ((*y % 8) * 8 + *x % 8) & 1 == 1
+                    }).collect();
+                if !current_group.is_empty() { verified_groups.push(current_group); }
             }
             self.simulate_collisions_apply_detached_cells(
                 accelerator,

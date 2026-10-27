@@ -26,7 +26,7 @@ Rapier positions use a local tile origin to retain sub-cell precision in `f32`. 
 
 Each call to `simulate_collisions` runs these steps in order:
 
-1. Reads collision-owned changed-cell data copied during the preceding tick and applies changed tile masks and rigid-body cell removals, including thermal transitions. Detached group material reads are verified asynchronously; groups with changed occupancy are discarded before resulting bodies are created on a later tick.
+1. Reads collision-owned changed-cell data copied during the preceding tick and applies changed tile masks and rigid-body cell removals, including thermal transitions. Detached group material reads are verified asynchronously; resulting bodies are created on a later tick.
 2. Refreshes static occupancy when region, ring, or edit state requires it. Edit changed-cell reads can block. Applies changed occupancy to the static voxel collider and checks both added and removed occupancy cells for floating groups; tiles entering the region are not checked.
 3. Consumes the newest completed settled dynamic-cell occupancy snapshot, falling back to a blocking read only when no matching region/ring snapshot exists; requests another snapshot.
 4. Releases bodies outside the active region and applies cellular kinematics impulses and fluid moments from prior GPU contact feedback.

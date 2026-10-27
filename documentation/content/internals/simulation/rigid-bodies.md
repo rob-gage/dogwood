@@ -30,7 +30,7 @@ These checks avoid detaching groups that may continue beyond the available regio
 
 ## Creation
 
-Detached groups are read from GPU cell storage to retain each cell's material identifier, color, stored pressure, and integrity. The read is copied at the end of the collision tick and applied in the next one. At apply time, a group is discarded if any of its cells are no longer static; otherwise it is processed as a group.
+Detached groups are read from GPU cell storage to retain each cell's material identifier, color, stored pressure, and integrity. The read is copied at the end of the collision tick and applied in the next one. At apply time, cells no longer static are removed from the candidate; the remaining static cells are processed as a group.
 
 - Groups with fewer than 12 cells become debris. Each cell is replaced by its static material's configured debris material (a registered cellular dynamic material), or by empty if none is configured. Cells converted to a debris material keep their color; cells replaced by empty have their color cleared.
 - Thermal and fluid conversions apply the same isolated-cell debris rule before collision detection, so those products do not first enter static occupancy when all four side-neighbors are non-static.
