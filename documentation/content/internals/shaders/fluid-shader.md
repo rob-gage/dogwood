@@ -6,7 +6,7 @@ weight = 35
 sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/thermal/thermal_transition.wgsl"]
 +++
 
-`fluid_particle.wgsl` is driven by `FluidParticlePass`. This page owns the GPU layout and dispatch reference; [fluid simulation](@/internals/simulation/fluids.md) explains the numerical algorithm. Rust substitutes `FLUID_BIN_SIZE` for the WGSL source placeholder when creating the module.
+`fluid_particle.wgsl` is driven by `FluidParticlePass`. This page owns the GPU layout and dispatch reference; [fluid simulation](@/internals/simulation/fluids.md) explains the numerical algorithm. Rust substitutes `FLUID_BIN_SIZE` and `FLUID_POSITION_RELAXATION / FLUID_ITERATION_COUNT` for WGSL source placeholders when creating the module; the latter scales the complete Jacobi displacement before its length cap.
 
 ## Dispatch sequence
 
@@ -23,8 +23,8 @@ The pass records the following work in one command encoder, using one compute pa
 | Sleep preparation | `prepare_sleep`, `wake_actor_neighbors`, `wake_solid_neighbors` |
 | Raster momentum cleanup | `prepare_boundary`, `clear_fluid_current_tiles` |
 | Contact consumption | `prepare`, `apply_fluid_contacts`, `clear_fluid_contacts` |
-| Each substep | `predict`, optional first-substep wake/re-prediction, optional `project_actors`, neighbor sort, two `lambda`/`correct` rounds with optional actor projection, `commit`, optional `commit_actor_velocity` |
-| After substeps | `xsph`, `apply_xsph`, `finish_sleep`, `prepare`, `rasterize_fluid`, optional `actor_contacts` |
+| Each substep | `predict`, optional first-substep wake/re-prediction, optional `project_actors`, neighbor sort, two `lambda`/`correct` rounds with optional actor projection, `commit`, optional `commit_actor_velocity`, `xsph`, `apply_xsph` |
+| After substeps | `finish_sleep`, `prepare`, `rasterize_fluid`, optional `actor_contacts` |
 
 The neighbor sort is `clear_bins`, `count_bins`, `scan_bins`, `scan_blocks`, `scan_block_prefix`, `add_block_prefix`, `scatter`. First-substep wake handling uses `reset_wake_count`, `apply_pending_wakes`, and `prepare_wake_dispatch` around prediction. Copies for count, import status, actor feedback, and outgoing exports follow compute before submission.
 
@@ -81,7 +81,7 @@ Exports have a leading `u32` count. Resident snapshots instead hold a leading li
 
 ### Uniforms
 
-The binding uses 152 bytes at each 256-byte dynamic stride. Four setup slots precede nine slots per substep (40 slots at current settings).
+The binding uses 152 bytes at each 256-byte dynamic stride. Four setup slots precede nine slots per substep (40 slots at current settings); one slot per substep holds the post-commit XSPH uniforms.
 
 | Byte offsets | Fields |
 | --- | --- |

@@ -16,6 +16,7 @@ use super::{
     FLUID_VELOCITY_MAXIMUM,
     FLUID_WORKGROUP_SIZE,
     FLUID_RELAXATION,
+    FLUID_POSITION_RELAXATION,
 };
 use crate::{
     actors::{
@@ -95,7 +96,7 @@ const READBACK_COUNT: usize = 3;
 /// First uniform slot after the edit, occupancy, and boundary preparation slots
 const SUBSTEP_UNIFORM_START: usize = 4;
 
-/// Number of per-substep uniform slots for prediction, iterations, and commit
+/// Number of per-substep uniform slots for prediction, iterations, viscosity, and commit
 const SUBSTEP_UNIFORM_COUNT: usize = 5 + FLUID_ITERATION_COUNT * 2;
 
 /// Total number of dynamic uniform records
@@ -451,6 +452,10 @@ impl FluidParticlePass {
             include_str!("../thermal/thermal_transition.wgsl"),
         ].join("\n")
             .replace("__FLUID_BIN_SIZE__", &FLUID_BIN_SIZE.to_string())
+            .replace(
+                "__FLUID_POSITION_RELAXATION__",
+                &format!("{:?}", FLUID_POSITION_RELAXATION / FLUID_ITERATION_COUNT as f32),
+            )
             .replace("__THERMAL_OFFSETS__", &format!(
                 "vec4<u32>({}u, {}u, {}u, {}u)",
                 thermal_offsets[0], thermal_offsets[1], thermal_offsets[2], thermal_offsets[3],
@@ -1636,6 +1641,13 @@ impl FluidParticlePass {
             );
             // commit writes the half the last sort did not, whatever the number of sorts
             current_state_side = 1 - sorted_state_side;
+            write_uniform(
+                commit_slot - 1,
+                current_state_side,
+                0,
+                actor_time,
+                substep_index,
+            );
             next_slot = commit_slot + 1;
         }
         let world_origin_x: u64 = region_origin.0 as u64;
@@ -2029,12 +2041,13 @@ impl FluidParticlePass {
                     compute_pass.set_pipeline(&pipelines["commit_actor_velocity"]);
                     compute_pass.dispatch_workgroups_indirect(&self.dispatch_buffer, 0);
                 }
+                let viscosity_slot: usize = commit_slot - 1;
+                set_slot(&mut compute_pass, viscosity_slot);
+                compute_pass.set_pipeline(&pipelines["xsph"]);
+                compute_pass.dispatch_workgroups_indirect(&self.dispatch_buffer, 0);
+                compute_pass.set_pipeline(&pipelines["apply_xsph"]);
+                compute_pass.dispatch_workgroups_indirect(&self.dispatch_buffer, 0);
             }
-            set_slot(&mut compute_pass, 3);
-            compute_pass.set_pipeline(&pipelines["xsph"]);
-            compute_pass.dispatch_workgroups_indirect(&self.dispatch_buffer, 0);
-            compute_pass.set_pipeline(&pipelines["apply_xsph"]);
-            compute_pass.dispatch_workgroups_indirect(&self.dispatch_buffer, 0);
             set_slot(&mut compute_pass, 3);
             compute_pass.set_pipeline(&pipelines["finish_sleep"]);
             compute_pass.dispatch_workgroups(width * height, 1, 1);

@@ -20,7 +20,8 @@ prepare / convert due particles and listed cells -> compact / rebase / erase
        predict -> project actors -> bin and scatter particles
        -> two rounds of density lambda / position correction / actor projection
        -> commit position and velocity -> restore actor-normal velocity
-  -> XSPH velocity smoothing -> velocity decay -> finish sleeping
+       -> XSPH velocity smoothing
+  -> velocity decay -> finish sleeping
   -> rasterize mass and momentum -> sample actors -> queue readbacks / exports
 ```
 
@@ -65,6 +66,8 @@ W(r)       = 4 / (pi * h^8) * (h² - r²)^3                  for r < h
 
 For each awake particle, density includes its self kernel, neighboring particle kernels, and sampled boundary density. The constraint is `C = density / rho0 - 1`. Lambda is `-C / (|sum gradients|² + sum neighbor gradient norms² + relaxation)`, with `relaxation = 0.01`. Boundary gradients contribute to the summed gradient. Sleeping neighbors contribute density but no movable-neighbor gradient norm and have lambda zero.
 
+Each Jacobi pass computes one complete correction for a particle by summing its pairwise pressure and cohesion terms and its boundary-gradient term. Before the length cap and solid projection, the solver scales this accumulated displacement by `FLUID_POSITION_RELAXATION / FLUID_ITERATION_COUNT`. `FLUID_POSITION_RELAXATION = 0.5` is the total correction budget across one substep, divided evenly across its Jacobi passes. This global under-relaxation suits the already accumulated per-particle PBF constraint; dividing by neighbor count would count pair contributions again and change the relative effect of the density solve and cohesion. `FLUID_RELAXATION` remains the separate epsilon in the lambda denominator.
+
 The implementation uses signed `C`: it does not clamp under-density to zero. The sleep reduction records only positive density error.
 
 ## Pressure correction and cohesion
@@ -78,15 +81,15 @@ Each correction combines:
 
 Artificial pressure uses the receiving particle's coefficient. Cohesion uses the average of the pair's coefficients, multiplied by `FLUID_COHESION_SCALE`. For `p = r³ * (h - r)³ / h^6`, the spline uses `2p - 1/64` through `h/2` and `p` above it, scaled by `FLUID_COHESION_NORMALIZATION_2D / h²`. It is zero at effectively coincident points and outside kernel support. These controls are distinct: one is the short-range artificial-pressure term, the other the cohesion term.
 
-Nonfinite corrections become zero. Each correction vector is capped to length `0.25` cell, then projected out of solid squares and actors. [Boundary handling](@/internals/simulation/fluid-boundaries.md) describes these projections.
+Nonfinite corrections become zero. After under-relaxation, each correction vector is capped to length `0.25` cell, then projected out of solid squares and actors. [Boundary handling](@/internals/simulation/fluid-boundaries.md) describes these projections.
 
 ## Velocity and viscosity
 
 Commit reconstructs velocity as `(corrected_position - old_position) * substep_count`. It caps vector length to four cells/tick and replaces nonfinite values with a valid prior position or zero velocity. Actor-normal velocity can subsequently be restored to keep a moving actor from sweeping through particles after that cap.
 
-After all four substeps, XSPH smooths velocity once per tick. It adds `viscosity_i` times the kernel-weighted mean of neighboring velocity differences, normalized by the neighbor weight sum. A separate apply dispatch prevents readers seeing partially smoothed neighbors. It caps speed again and multiplies velocity by `0.998` before [sleep testing](@/internals/simulation/fluid-boundaries.md#sleeping-and-waking).
+After each substep's position and velocity commit, XSPH smooths velocities toward the kernel-weighted neighbor mean. A separate apply dispatch prevents readers seeing partially smoothed neighbors. `viscosity` is a nonlinear control in `[0, 1]`: its per-tick relaxation fraction is `1 - (1 - viscosity)^(1 + 4 * viscosity^3)`, then divided evenly across substeps in exponential form. This keeps the same material control's per-tick effect stable if the substep count changes. Low values remain close to their former linear meaning, while high values approach rigid local motion. The pass caps speed again and multiplies velocity by `0.998` after all substeps, before [sleep testing](@/internals/simulation/fluid-boundaries.md#sleeping-and-waking).
 
-`viscosity` is this smoothing fraction. Material `drag` is a separate swimming/current-coupling control; it is not the coefficient of the XSPH calculation.
+Material `drag` is a separate swimming/current-coupling control; it is not the coefficient of the XSPH calculation. Fluid `friction` and viscosity also increase tangential damping when a particle contacts a solid boundary; see [boundary handling](@/internals/simulation/fluid-boundaries.md#solid-projection).
 
 > **Limitation:** This solver uses fixed iteration counts, bounded corrections, velocity decay, approximate boundaries, and delayed body feedback. It does not enforce exact incompressibility or exact momentum conservation across all systems. There is no material-specific rest spacing or immiscible-fluid separation rule.
 

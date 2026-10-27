@@ -55,6 +55,9 @@ pub const FLUID_BIN_SIZE: f32 = 3.0;
 /// Small denominator added to the PBF constraint gradient norm for numerical stability
 pub const FLUID_RELAXATION: f32 = 0.01;
 
+/// Total under-relaxation budget divided across Jacobi iterations in each substep
+pub const FLUID_POSITION_RELAXATION: f32 = 0.5;
+
 /// Position-correction scale for material cohesion, in cells cubed per strength unit
 pub const FLUID_COHESION_SCALE: f32 = 0.5;
 

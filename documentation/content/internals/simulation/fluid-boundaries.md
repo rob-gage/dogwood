@@ -20,9 +20,9 @@ Boundary velocity comes from packed cellular velocity for a dynamic grain, linea
 
 `project_from_solids` clamps centers to an active-region border inset of `0.4501` cell. It makes at most two passes over the surrounding 3×3 solid squares. Near a square, it uses the closest point and outward normal; inside a square it prefers the nearest face opening onto free space, falling back to the nearest face if all sides are solid.
 
-Prediction sweeps each substep in pieces no longer than approximately half a cell, capped to eight pieces. On contact it removes relative velocity into the wall and retains `0.95` of tangential relative speed, using the sampled wall velocity. Constraint corrections project again after each iteration.
+Prediction sweeps each substep in pieces no longer than approximately half a cell, capped to eight pieces. On contact it removes relative velocity into the wall and damps tangential relative speed using the sampled wall velocity. Damping starts at `FLUID_BOUNDARY_FRICTION = 0.05` and increases with the material's `friction` and nonlinear `viscosity` controls, so thick fluids stick more strongly to solids. Constraint corrections project again after each iteration.
 
-> **Limitation:** This particle-wall projection uses the fixed `FLUID_BOUNDARY_FRICTION = 0.05`, not material contact friction or restitution. Those material coefficients are used by the separate [cell/raster contact solver](@/internals/simulation/fluid-coupling.md#dynamic-cell-contacts). Active-region edges act as walls until streaming rebases the pool; particles do not freely flow into unloaded space.
+> **Limitation:** The boundary response is tangential velocity damping, not a Coulomb impulse or static-friction solve. `restitution` does not affect particle-wall projection. Active-region edges act as walls until streaming rebases the pool; particles do not freely flow into unloaded space.
 
 ## Actor projection
 

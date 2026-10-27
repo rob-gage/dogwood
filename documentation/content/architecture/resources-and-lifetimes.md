@@ -113,6 +113,7 @@ Public solver constants in `engine_world/src/scenes/fluids/mod.rs`:
 | `FLUID_KERNEL_RADIUS` | 2.5 cells |
 | `FLUID_BIN_SIZE` | 3 cells |
 | `FLUID_RELAXATION` | 0.01 |
+| `FLUID_POSITION_RELAXATION` | 0.5 total correction budget across Jacobi iterations per substep |
 | `FLUID_COHESION_SCALE` | 0.5 |
 | `FLUID_COHESION_NORMALIZATION_2D` | 54.584815 |
 | `FLUID_VELOCITY_MAXIMUM` | 4 cells/tick (vector-length cap in the particle solver) |

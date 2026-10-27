@@ -52,7 +52,7 @@ pub struct MaterialTable {
     cellular_static_properties_buffer: wgpu::Buffer,
     /// Mass, friction, restitution, and padding as four `f32` per dynamic cellular index
     cellular_dynamic_properties_buffer: wgpu::Buffer,
-    /// Density, XSPH viscosity, cohesion, artificial pressure, drag, friction,
+    /// Density, nonlinear XSPH viscosity control, cohesion, artificial pressure, drag, friction,
     /// restitution, and
     /// color as eight 32-bit words per fluid index
     fluid_properties_buffer: wgpu::Buffer,

@@ -355,6 +355,13 @@ const BOUNDARY_TILE_MARGIN: u32 = 2u;
 /// Fraction of relative tangential speed removed by one swept boundary contact
 const FLUID_BOUNDARY_FRICTION: f32 = 0.05;
 
+/// Returns the per-tick relaxation fraction represented by a material viscosity
+fn viscosity_tick_fraction(viscosity: f32) -> f32 {
+    let bounded: f32 = clamp(viscosity, 0.0, 1.0);
+    let exponent: f32 = 1.0 + 4.0 * bounded * bounded * bounded;
+    return 1.0 - pow(1.0 - bounded, exponent);
+}
+
 @group(1) @binding(0)
 var<storage, read_write> dispatch_arguments: array<u32>;
 
@@ -2521,8 +2528,16 @@ fn predict(@builtin(global_invocation_id) invocation: vec3<u32>) {
             if into_wall < 0.0 { relative_velocity -= into_wall * wall_normal; }
             let normal_velocity: vec2<f32> = dot(relative_velocity, wall_normal) * wall_normal;
             let tangent_velocity: vec2<f32> = relative_velocity - normal_velocity;
+            let material_index: u32 = particle.material_identifier & 0x3fffffffu;
+            let material: vec4<f32> = fluid_materials[material_index * 2u];
+            let boundary_properties: vec4<f32> =
+                fluid_materials[material_index * 2u + 1u];
+            let friction: f32 = clamp(boundary_properties.y, 0.0, 1.0);
+            let viscosity: f32 = viscosity_tick_fraction(material.y);
+            let boundary_friction: f32 = 1.0
+                - (1.0 - FLUID_BOUNDARY_FRICTION) * (1.0 - friction) * (1.0 - viscosity);
             predicted_velocity = projection.wall_velocity + normal_velocity
-                + tangent_velocity * (1.0 - FLUID_BOUNDARY_FRICTION);
+                + tangent_velocity * (1.0 - boundary_friction);
         }
         position = projection.position;
     }
@@ -2814,6 +2829,7 @@ fn correct(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if !fluid_vector_is_finite(correction) {
         correction = vec2<f32>(0.0);
     }
+    correction *= __FLUID_POSITION_RELAXATION__;
     let correction_length: f32 = length(correction);
     if correction_length > MAX_POSITION_CORRECTION {
         let scale: f32 = MAX_POSITION_CORRECTION / correction_length;
@@ -2892,8 +2908,13 @@ fn xsph(@builtin(global_invocation_id) invocation: vec3<u32>) {
     }
     let material: vec4<f32> =
         fluid_materials[(particle.material_identifier & 0x3fffffffu) * 2u];
+    let tick_fraction: f32 = viscosity_tick_fraction(material.y);
+    let substep_fraction: f32 = 1.0 - pow(
+        1.0 - tick_fraction,
+        1.0 / uniforms.substep_count,
+    );
     predicted_a[invocation.x] = particle.state.zw
-        + material.y * velocity_change / max(weight_sum, 0.000001);
+        + substep_fraction * velocity_change / max(weight_sum, 0.000001);
 }
 
 /// Applies the calculated XSPH velocities after every neighbor read is complete
@@ -2910,7 +2931,9 @@ fn apply_xsph(@builtin(global_invocation_id) invocation: vec3<u32>) {
         velocity *= uniforms.velocity_maximum / velocity_length;
     }
     // a small loss every tick drains leftover motion until its tile is calm enough to sleep
-    velocity *= VELOCITY_DECAY;
+    if f32(uniforms.substep_index + 1u) == uniforms.substep_count {
+        velocity *= VELOCITY_DECAY;
+    }
     particle.state = vec4<f32>(particle.state.xy, velocity);
     store_particle(invocation.x, output_side, particle);
     // sleep and wake measure net displacement over the tick, which ignores the gravity kick

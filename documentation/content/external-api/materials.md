@@ -40,8 +40,10 @@ in [the material table page](@/internals/simulation/material-table.md).
 - Static strength must be positive and not NaN (positive infinity is allowed), and absorption must
   be finite in `[0, 1]`.
 - Fluid density must be finite and positive; viscosity and restitution in `[0, 1]`; cohesion,
-  artificial pressure, drag, and friction finite and nonnegative. Viscosity controls XSPH velocity
-  smoothing. Fluid friction also controls dynamic-cell contacts.
+  artificial pressure, drag, and friction finite and nonnegative. Viscosity is a nonlinear control
+  for per-substep XSPH relaxation toward the neighbor-weighted mean velocity. Fluid friction also
+  controls dynamic-cell contacts and, with viscosity, tangential damping against solid boundaries;
+  the boundary response clamps friction to one.
 - Gas mass must be finite and positive; diffusivity in `[0, 0.4]`; cohesion in `[0, 1]`; at most
   255 gas materials may be registered.
 - Thermal heat capacity must be finite and positive; conduction and edit temperature finite and
