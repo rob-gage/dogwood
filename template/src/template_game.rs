@@ -26,6 +26,7 @@ use engine::{
         MaterialPropertiesThermal,
         MaterialRegistry,
         MaterialTable,
+        MaterialTemperatureColor,
         MaterialTransition,
     },
     scenes::{
@@ -54,6 +55,7 @@ use engine::{
     MaterialGraphicsCellularStatic,
     MaterialGraphicsGas,
     SpriteSheet,
+    pack_radiance,
 };
 use std::{
     path::PathBuf,
@@ -77,6 +79,11 @@ impl TemplateGame {
         let water_color: [f32; 4] = [0.021, 0.147, 0.578, 0.78];
         let lava_color: [f32; 4] = [1.0, 0.127, 0.007, 1.0];
         let ice_color: [f32; 4] = [0.491, 0.716, 0.888, 1.0];
+        // radiances as linear emission and occlusion per tile
+        let stone_radiance: [f32; 4] = [0.0, 0.0, 0.0, 0.9];
+        let water_radiance: [f32; 4] = [0.0, 0.0, 0.0, 0.1];
+        let lava_radiance: [f32; 4] = [1.2, 0.35, 0.05, 0.95];
+        let ice_radiance: [f32; 4] = [0.0, 0.0, 0.0, 0.15];
         // a transformation keeping a fraction of the carried color and adding the rest of another
         let blend = |kept: f32, color: [f32; 4], channel_variance: f32|
             -> MaterialColorTransformation {
@@ -92,13 +99,46 @@ impl TemplateGame {
                 channel_variance: [channel_variance, channel_variance, channel_variance, 0.0],
             }
         };
+        // a transformation replacing the carried radiance with a product's
+        let radiance = |product_radiance: [f32; 4]| -> MaterialColorTransformation {
+            MaterialColorTransformation {
+                matrix: [[0.0; 4]; 4],
+                offset: product_radiance,
+                intensity_variance: 0.0,
+                channel_variance: [0.0; 4],
+            }
+        };
         let melting = |product: &str| -> Option<MaterialTransition> {
             Some(MaterialTransition::new(1400.0, 300.0, product)
-                .with_color(blend(0.2, lava_color, 0.0)))
+                .with_color(blend(0.2, lava_color, 0.0))
+                .with_radiance(radiance(lava_radiance)))
         };
         let thawing = |product: &str| -> Option<MaterialTransition> {
             Some(MaterialTransition::new(273.0, 330.0, product)
-                .with_color(blend(0.0, water_color, 0.0)))
+                .with_color(blend(0.0, water_color, 0.0))
+                .with_radiance(radiance(water_radiance)))
+        };
+        // rock darkens to a red glow while hot, fading as it cools
+        let glowing = || -> Vec<MaterialTemperatureColor> {
+            vec![
+                MaterialTemperatureColor::new(800.0),
+                MaterialTemperatureColor::new(1300.0)
+                    .with_color(MaterialColorTransformation {
+                        matrix: [
+                            [0.25, 0.0, 0.0, 0.0],
+                            [0.0, 0.25, 0.0, 0.0],
+                            [0.0, 0.0, 0.25, 0.0],
+                            [0.0, 0.0, 0.0, 1.0],
+                        ],
+                        offset: [0.18, 0.035, 0.006, 0.0],
+                        intensity_variance: 0.0,
+                        channel_variance: [0.0; 4],
+                    })
+                    .with_radiance(MaterialColorTransformation {
+                        offset: [1.0, 0.25, 0.03, 0.0],
+                        ..MaterialColorTransformation::IDENTITY
+                    }),
+            ]
         };
         // cellular dynamic debris that piles at its angle of repose and that players wade through
         material_registry.register_cellular_dynamic("gravel", MaterialPropertiesCellularDynamic {
@@ -113,6 +153,13 @@ impl TemplateGame {
                 width: 1.0,
                 height: 1.0,
             },
+            edit_radiance: MaterialGraphicsCellularDynamic {
+                sprite_sheet: Arc::new(SpriteSheet::from_color(accelerator, 0, 0, 0, 217)?),
+                frame: 0,
+                width: 1.0,
+                height: 1.0,
+            },
+            edit_radiance_intensity: 1.0,
             mass: 1.0,
             friction: 0.8,
             restitution: 0.1,
@@ -121,6 +168,7 @@ impl TemplateGame {
                 conduction: 0.3,
                 edit_temperature: 293.0,
                 hot_transition: melting("lava"),
+                temperature_colors: glowing(),
                 ..Default::default()
             },
         })?;
@@ -137,6 +185,13 @@ impl TemplateGame {
                 width: 1.0,
                 height: 1.0,
             },
+            edit_radiance: MaterialGraphicsCellularDynamic {
+                sprite_sheet: Arc::new(SpriteSheet::from_color(accelerator, 0, 0, 0, 128)?),
+                frame: 0,
+                width: 1.0,
+                height: 1.0,
+            },
+            edit_radiance_intensity: 1.0,
             mass: 0.5,
             friction: 0.9,
             restitution: 0.0,
@@ -160,6 +215,13 @@ impl TemplateGame {
                 width: 1.0,
                 height: 1.0,
             },
+            edit_radiance: MaterialGraphicsCellularStatic {
+                sprite_sheet: Arc::new(SpriteSheet::from_color(accelerator, 0, 0, 0, 230)?),
+                frame: 0,
+                width: 1.0,
+                height: 1.0,
+            },
+            edit_radiance_intensity: 1.0,
             mass: 2.0,
             friction: 0.6,
             restitution: 0.1,
@@ -171,6 +233,7 @@ impl TemplateGame {
                 conduction: 0.5,
                 edit_temperature: 293.0,
                 hot_transition: melting("lava"),
+                temperature_colors: glowing(),
                 ..Default::default()
             },
         })?;
@@ -186,6 +249,13 @@ impl TemplateGame {
                 width: 1.0,
                 height: 1.0,
             },
+            edit_radiance: MaterialGraphicsCellularStatic {
+                sprite_sheet: Arc::new(SpriteSheet::from_color(accelerator, 0, 0, 0, 38)?),
+                frame: 0,
+                width: 1.0,
+                height: 1.0,
+            },
+            edit_radiance_intensity: 1.0,
             mass: 0.9,
             friction: 0.05,
             restitution: 0.1,
@@ -209,6 +279,7 @@ impl TemplateGame {
             friction: 0.0,
             restitution: 0.0,
             edit_color: u32::from_le_bytes([40, 110, 200, 200]),
+            edit_radiance: pack_radiance(water_radiance),
             thermal: MaterialPropertiesThermal {
                 heat_capacity: 4.0,
                 conduction: 0.6,
@@ -217,8 +288,10 @@ impl TemplateGame {
                 hot_transition: Some(MaterialTransition::new(373.0, 1000.0, "water vapor")),
                 cold_transition: Some(
                     MaterialTransition::new(273.0, 330.0, "ice")
-                        .with_color(blend(0.1, ice_color, 0.03)),
+                        .with_color(blend(0.1, ice_color, 0.03))
+                        .with_radiance(radiance(ice_radiance)),
                 ),
+                temperature_colors: Vec::new(),
             },
         })?;
         // molten rock that cools into stone, or into gravel where too little of it freezes
@@ -232,6 +305,7 @@ impl TemplateGame {
             friction: 0.8,
             restitution: 0.0,
             edit_color: u32::from_le_bytes([255, 100, 20, 255]),
+            edit_radiance: pack_radiance(lava_radiance),
             thermal: MaterialPropertiesThermal {
                 heat_capacity: 1.0,
                 conduction: 0.4,
@@ -248,7 +322,8 @@ impl TemplateGame {
                             offset: [0.06, 0.055, 0.05, 0.0],
                             intensity_variance: 0.2,
                             channel_variance: [0.0; 4],
-                        }),
+                        })
+                        .with_radiance(radiance(stone_radiance)),
                 ),
                 ..Default::default()
             },
@@ -259,6 +334,7 @@ impl TemplateGame {
             cohesion: 0.1,
             graphics: MaterialGraphicsGas {
                 color: u32::from_le_bytes([225, 230, 240, 150]),
+                radiance: pack_radiance([0.0, 0.0, 0.0, 0.02]),
                 opacity: 1.0,
             },
             thermal: MaterialPropertiesThermal {
@@ -268,11 +344,140 @@ impl TemplateGame {
                 // an atmosphere of vapor in one cell condenses into one particle
                 cold_transition: Some(
                     MaterialTransition::new(373.0, 1000.0, "water")
-                        .with_color(blend(0.0, water_color, 0.0)),
+                        .with_color(blend(0.0, water_color, 0.0))
+                        .with_radiance(radiance(water_radiance)),
                 ),
                 ..Default::default()
             },
         })?;
+        // glowing crystal of each color, its dimmer debris, and its brighter gas, which melts
+        // well below rock and condenses back as easily
+        for (color_name, color, stone_png, gravel_png) in [
+            (
+                "red",
+                [1.0, 0.0, 0.0],
+                include_bytes!("../assets/sprites/glowstone_red.png").as_slice(),
+                include_bytes!("../assets/sprites/glowstone_gravel_red.png").as_slice(),
+            ),
+            (
+                "green",
+                [0.0, 1.0, 0.0],
+                include_bytes!("../assets/sprites/glowstone_green.png").as_slice(),
+                include_bytes!("../assets/sprites/glowstone_gravel_green.png").as_slice(),
+            ),
+            (
+                "blue",
+                [0.0, 0.0, 1.0],
+                include_bytes!("../assets/sprites/glowstone_blue.png").as_slice(),
+                include_bytes!("../assets/sprites/glowstone_gravel_blue.png").as_slice(),
+            ),
+            (
+                "cyan",
+                [0.0, 1.0, 1.0],
+                include_bytes!("../assets/sprites/glowstone_cyan.png").as_slice(),
+                include_bytes!("../assets/sprites/glowstone_gravel_cyan.png").as_slice(),
+            ),
+            (
+                "magenta",
+                [1.0, 0.0, 1.0],
+                include_bytes!("../assets/sprites/glowstone_magenta.png").as_slice(),
+                include_bytes!("../assets/sprites/glowstone_gravel_magenta.png").as_slice(),
+            ),
+            (
+                "yellow",
+                [1.0, 1.0, 0.0],
+                include_bytes!("../assets/sprites/glowstone_yellow.png").as_slice(),
+                include_bytes!("../assets/sprites/glowstone_gravel_yellow.png").as_slice(),
+            ),
+        ] {
+            let glowstone: String = format!("glowstone_{color_name}");
+            let glowstone_gravel: String = format!("glowstone_gravel_{color_name}");
+            let glowstone_gas: String = format!("glowstone_gas_{color_name}");
+            let glowstone_radiance: [f32; 4] = [2.0 * color[0], 2.0 * color[1], 2.0 * color[2], 0.4];
+            let radiance_color: [u8; 3] = color.map(|channel: f32| (channel * 255.0).round() as u8);
+            let gas_radiance: [f32; 4] = [2.5 * color[0], 2.5 * color[1], 2.5 * color[2], 0.01];
+            let gas_color: [u8; 3] = color.map(|channel: f32| if channel > 0.5 { 255 } else { 48 });
+            material_registry.register_cellular_static(&glowstone, MaterialPropertiesCellularStatic {
+                edit_color: MaterialGraphicsCellularStatic {
+                    sprite_sheet: Arc::new(SpriteSheet::from_png(accelerator, stone_png, 1, 1)?),
+                    frame: 0,
+                    width: 1.0,
+                    height: 1.0,
+                },
+                edit_radiance: MaterialGraphicsCellularStatic {
+                    sprite_sheet: Arc::new(SpriteSheet::from_color(
+                        accelerator, radiance_color[0], radiance_color[1], radiance_color[2], 102,
+                    )?),
+                    frame: 0,
+                    width: 1.0,
+                    height: 1.0,
+                },
+                edit_radiance_intensity: 2.0,
+                mass: 2.0,
+                friction: 0.6,
+                restitution: 0.1,
+                strength: 10.0,
+                absorption: 0.1,
+                debris: Some(glowstone_gravel.clone()),
+                thermal: MaterialPropertiesThermal {
+                    heat_capacity: 1.0,
+                    conduction: 0.5,
+                    edit_temperature: 293.0,
+                    hot_transition: Some(MaterialTransition::new(1100.0, 200.0, &glowstone_gas)),
+                    ..Default::default()
+                },
+            })?;
+            material_registry.register_cellular_dynamic(
+                &glowstone_gravel,
+                MaterialPropertiesCellularDynamic {
+                    edit_color: MaterialGraphicsCellularDynamic {
+                        sprite_sheet: Arc::new(SpriteSheet::from_png(accelerator, gravel_png, 1, 1)?),
+                        frame: 0,
+                        width: 1.0,
+                        height: 1.0,
+                    },
+                    edit_radiance: MaterialGraphicsCellularDynamic {
+                        sprite_sheet: Arc::new(SpriteSheet::from_color(
+                            accelerator, radiance_color[0], radiance_color[1], radiance_color[2], 102,
+                        )?),
+                        frame: 0,
+                        width: 1.0,
+                        height: 1.0,
+                    },
+                    edit_radiance_intensity: 0.5,
+                    mass: 1.0,
+                    friction: 0.8,
+                    restitution: 0.1,
+                    thermal: MaterialPropertiesThermal {
+                        heat_capacity: 1.0,
+                        conduction: 0.3,
+                        edit_temperature: 293.0,
+                        hot_transition: Some(MaterialTransition::new(1100.0, 200.0, &glowstone_gas)),
+                        ..Default::default()
+                    },
+                },
+            )?;
+            material_registry.register_gas(&glowstone_gas, MaterialPropertiesGas {
+                mass: 18.0,
+                diffusivity: 0.04,
+                cohesion: 0.1,
+                graphics: MaterialGraphicsGas {
+                    color: u32::from_le_bytes([gas_color[0], gas_color[1], gas_color[2], 72]),
+                    radiance: pack_radiance(gas_radiance),
+                    opacity: 1.0,
+                },
+                thermal: MaterialPropertiesThermal {
+                    heat_capacity: 1.0,
+                    conduction: 0.05,
+                    edit_temperature: 1150.0,
+                    cold_transition: Some(
+                        MaterialTransition::new(1050.0, 200.0, &glowstone)
+                            .with_radiance(radiance(glowstone_radiance)),
+                    ),
+                    ..Default::default()
+                },
+            })?;
+        }
         // the template starts from its generated world on every launch
         let world_path: PathBuf = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("world");
         let _ = std::fs::remove_dir_all(&world_path);
@@ -285,6 +490,11 @@ impl TemplateGame {
             Arc::new(TemplateSceneGenerator { stone }),
             0,
         );
+        // gentle daylight everywhere, which emitted light adds to
+        scene.set_ambient_light([0.75, 0.78, 0.85])
+            .expect("template ambient light should be valid");
+        let black_radiance: Arc<SpriteSheet> =
+            Arc::new(SpriteSheet::from_color(accelerator, 0, 0, 0, 0)?);
         // Each background is a normal sprite actor with an independent physical depth.
         let sky = Arc::new(SpriteSheet::from_color(accelerator, 131, 188, 218, 255)?);
         scene.actor_registry_mutable().spawn((
@@ -294,8 +504,8 @@ impl TemplateGame {
                 depth: 10_000.0, ..Default::default()
             },
             ActorSpritesComponent {
-                sprites: vec![(sky, 0, 0.0, 0.0, 16_000_000.0, 16_000_000.0,
-                    0.0, [1.0; 4], 0)],
+                sprites: vec![(sky, Arc::clone(&black_radiance), 0, 0.0, 0.0,
+                    16_000_000.0, 16_000_000.0, 0.0, [1.0; 4], 1.0, 0)],
             },
         ))?;
         for (pixels, depth, elevation, apparent_width, vertical_scroll) in [
@@ -317,7 +527,8 @@ impl TemplateGame {
                     scroll_factor: [1.0, vertical_scroll], ..Default::default()
                 },
                 ActorSpritesComponent {
-                    sprites: vec![(sheet, 0, 0.0, 0.0, scale, scale, 0.0, [1.0; 4], 0)],
+                    sprites: vec![(sheet, Arc::clone(&black_radiance), 0, 0.0, 0.0,
+                        scale, scale, 0.0, [1.0; 4], 1.0, 0)],
                 },
             ))?;
         }
@@ -329,6 +540,7 @@ impl TemplateGame {
             ActorSpritesComponent {
                 sprites: vec![(
                     Arc::new(SpriteSheet::from_rgba(accelerator, &[255; 8 * 8 * 4], 8, 8, 1, 1)?),
+                    Arc::clone(&black_radiance),
                     0,
                     0.0,
                     0.0,
@@ -336,6 +548,7 @@ impl TemplateGame {
                     1.0,
                     0.0,
                     [1.0; 4],
+                    1.0,
                     0,
                 )],
             },

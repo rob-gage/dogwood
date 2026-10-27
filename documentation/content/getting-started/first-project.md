@@ -74,3 +74,5 @@ To use registry dependencies instead, set `DOGWOOD_ENGINE_VERSION` to a valid se
 To try the canonical sample without creating a project in the current directory, use `dogwood run-template` or `dogwood edit-template`. All flags are in the [CLI reference](@/external-api/cli.md).
 
 Next, read [core concepts](@/getting-started/core-concepts.md) for the mental model, then the [template walkthrough](@/getting-started/template-walkthrough.md).
+
+The generated template includes daylight ambient and six colored glowstone families; see its [lighting overview](@/getting-started/template-walkthrough.md#materials).

@@ -27,7 +27,7 @@ impl SceneGenerator for TemplateSceneGenerator {
     ) -> Result<Chunk, Box<dyn Error + Send + Sync>> {
         let mut chunk: Chunk = Chunk::new(coordinates);
         if coordinates.y < 0 {
-            chunk.fill(self.stone, u32::from_le_bytes([255, 255, 255, 255]));
+            chunk.fill(self.stone, u32::from_le_bytes([255, 255, 255, 255]), u32::MAX);
         }
         Ok(chunk)
     }
