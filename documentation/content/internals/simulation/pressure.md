@@ -97,7 +97,7 @@ Each face push uses `PRESSURE_IMPULSE` and the 0.02-atmosphere minimum. See [cel
 
 Active-region edges act as walls: gas never leaves the region, so pressure from explosions and pressure edits stays and builds up inside it, and waves reflect at the edges.
 
-Pressure transport is isothermal: it does not carry heat, and gas temperature changes only during thermal conduction.
+Gas pressure carries heat: gas amount and material heat capacity determine its thermal contribution, and pressure transport moves gas heat between cells.
 
 > **Limitation:** Pressure flow is not temperature-dependent. Momentum is not exactly conserved across the substrate and its consumers. Faces between terrain and a body, or between different bodies, reflect. Contact impulses do not yet load the pressure substrate.
 

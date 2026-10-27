@@ -37,7 +37,7 @@ use std::collections::HashMap;
 const WORKGROUP_SIZE: u32 = 64;
 
 /// Bytes of the uniforms
-const UNIFORM_BYTE_COUNT: u64 = 112;
+const UNIFORM_BYTE_COUNT: u64 = 128;
 
 /// GPU simulation of the pressure in the active tiles on pressure cells of 2x2 cells, rebuilt from
 /// the cellular tile gas every tick, simulated alternating between two pressure cell buffers, and
@@ -65,6 +65,8 @@ pub struct PressureCellularTilePass {
     /// Region and ring offset whose open volumes were last measured everywhere, after which only
     /// tiles that may have changed are measured
     volume_region: Option<(CellularTileRegion, (u32, u32))>,
+    /// First thermal index of the gas materials
+    gas_thermal_offset: u32,
 }
 
 impl PressureCellularTilePass {
@@ -130,6 +132,8 @@ impl PressureCellularTilePass {
                     storage_entry(17, false),
                     storage_entry(18, false),
                     storage_entry(19, false),
+                    storage_entry(20, false),
+                    storage_entry(21, true),
                 ],
             },
         );
@@ -328,6 +332,14 @@ impl PressureCellularTilePass {
                         binding: 19,
                         resource: changed_rigid_body_cell_buffer.as_entire_binding(),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 20,
+                        resource: cellular_tile_buffers.matter_buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 21,
+                        resource: material_table.thermal_properties_buffer().as_entire_binding(),
+                    },
 
                 ],
             })
@@ -364,12 +376,14 @@ impl PressureCellularTilePass {
             control_buffer,
             dispatch_buffer,
             volume_region: None,
+            gas_thermal_offset: material_table.thermal_offsets()[3],
         }
     }
 
     /// Simulates one tick of the pressure in the active tiles without waiting for the GPU, with
     /// gravity in cells per substep squared, the first actor records displacing gas, and phantom
-    /// air, then publishes the pressure of the active tiles
+    /// air of an ambient temperature and heat capacity per amount unit, then publishes the
+    /// pressure of the active tiles
     pub fn simulate_cellular_tiles(
         &mut self,
         accelerator: &Accelerator,
@@ -378,6 +392,8 @@ impl PressureCellularTilePass {
         gravity: f32,
         ambient_amount: u32,
         ambient_mass: f32,
+        ambient_temperature: f32,
+        ambient_heat_capacity: f32,
         actor_count: u32,
     ) -> Result<(), SceneError> {
         let width: u32 = active_region.width() as u32;
@@ -438,6 +454,9 @@ impl PressureCellularTilePass {
                 fraction_per_substep(PRESSURE_OPEN_RELAXATION).to_bits(),
                 (PRESSURE_OPEN_RELAXATION_MINIMUM * GAS_AMOUNT_PER_ATMOSPHERE * area * substep_time)
                     .to_bits(),
+                ambient_temperature.to_bits(),
+                ambient_heat_capacity.to_bits(),
+                self.gas_thermal_offset,
                 0,
                 0,
                 0,

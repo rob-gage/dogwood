@@ -12,6 +12,6 @@ Each thermal step processes awake tiles. Heat transfer is accumulated in fixed-p
 
 Material thermal properties include hot and cold transition temperatures, latent heat, product
 material, amount, and color transform. The material table retains these properties, but transitions
-are not simulated. Gas temperature changes through thermal conduction; pressure transport does not carry heat.
+are not simulated. Pressure transport carries gas heat with moved gas.
 
 The [scene pipeline](@/architecture/scene-pipeline.md) gives the exact tick order. GPU bindings and records are in the [thermal shader reference](@/internals/shaders/thermal-shader.md).

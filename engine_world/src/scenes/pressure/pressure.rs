@@ -2,6 +2,7 @@
 
 use super::{
     pressure_cellular_tile_pass::PressureCellularTilePass,
+    GAS_AMOUNT_PER_ATMOSPHERE,
     PRESSURE_BUOYANCY_SCALE,
     PRESSURE_SUBSTEP_COUNT,
     PRESSURE_TIME_STEP,
@@ -57,8 +58,8 @@ impl Pressure {
     }
 
     /// Simulates one tick of the pressure in the active tiles without waiting for the GPU, against
-    /// phantom air of an ambient amount and mass per cell and gravity in tiles per second squared,
-    /// displaced by the first actor records
+    /// phantom air of an ambient amount and mass per cell, temperature, and heat capacity per
+    /// atmosphere and gravity in tiles per second squared, displaced by the first actor records
     pub fn simulate_pressure(
         &mut self,
         accelerator: &Accelerator,
@@ -67,6 +68,8 @@ impl Pressure {
         gravity: f32,
         ambient_amount: u32,
         ambient_mass: f32,
+        ambient_temperature: f32,
+        ambient_heat_capacity: f32,
         actor_count: u32,
     ) -> Result<(), SceneError> {
         // the shader measures everything in cells and substeps
@@ -81,6 +84,8 @@ impl Pressure {
             gravity,
             ambient_amount,
             ambient_mass,
+            ambient_temperature,
+            ambient_heat_capacity / GAS_AMOUNT_PER_ATMOSPHERE,
             actor_count,
         )
     }

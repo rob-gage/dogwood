@@ -49,10 +49,15 @@ struct PressureUniforms {
     open_relaxation: f32,
     /// Smallest gas pressure a cell relaxes per substep, in amount units per open volume
     open_relaxation_minimum: f32,
+    /// Temperature in kelvin of the phantom air relaxation adds
+    ambient_temperature: f32,
+    /// Heat capacity of one amount unit of phantom air
+    ambient_heat_capacity: f32,
+    /// First thermal index of the gas materials
+    gas_thermal_offset: u32,
     padding_0: u32,
     padding_1: u32,
     padding_2: u32,
-    padding_3: u32,
 };
 
 /// An actor displacing gas, laid out like the cellular tile actor records
@@ -107,6 +112,9 @@ struct PressureCell {
     solid: u32,
     /// Stored pressure of a solid cell above the ambient pressure, in amount units per atmosphere
     stored: i32,
+    /// Temperature in kelvin of an open pressure cell's gas and phantom air, which the word of a
+    /// solid one's stored pressure holds instead
+    temperature: f32,
 };
 
 @group(0) @binding(0)
@@ -171,6 +179,12 @@ var<storage, read_write> colors: array<u32>;
 
 @group(0) @binding(19)
 var<storage, read_write> changed_rigid_body_cells: array<atomic<u32>>;
+
+@group(0) @binding(20)
+var<storage, read_write> matter: array<vec2<u32>>;
+
+@group(0) @binding(21)
+var<storage, read> thermal_materials: array<vec4<u32>>;
 
 @group(1) @binding(0)
 var<storage, read_write> dispatches: array<u32>;
@@ -439,6 +453,7 @@ fn load_coarse_cell(cell: vec2<i32>, is_active: bool) -> PressureCell {
     pressure_cell.total = total;
     pressure_cell.pressure = total / volume;
     pressure_cell.density = mass / volume;
+    pressure_cell.temperature = bitcast<f32>(words.w);
     // a pressure cell of only static cells carries stored pressure instead
     if constants.z != 0u {
         pressure_cell.solid = constants.z;
@@ -455,6 +470,22 @@ fn slot_gas(slot: u32) -> u32 { return slot >> 24u; }
 
 /// Returns the amount held by a species slot, zero for a free slot
 fn slot_amount(slot: u32) -> u32 { return slot & 0xffffffu; }
+
+/// Returns the heat capacity of one amount unit of a gas
+fn gas_heat_capacity(gas: u32) -> f32 {
+    return bitcast<f32>(thermal_materials[(uniforms.gas_thermal_offset + gas) * 4u].x)
+        / AMOUNT_PER_ATMOSPHERE;
+}
+
+/// Returns the heat capacity of the gas in species slots and of an amount of phantom air
+fn gas_slots_heat_capacity(slots: vec4<u32>, phantom: u32) -> f32 {
+    var heat_capacity: f32 = f32(phantom) * uniforms.ambient_heat_capacity;
+    for (var slot: u32 = 0u; slot < 4u; slot++) {
+        let amount: u32 = slot_amount(slots[slot]);
+        if amount > 0u { heat_capacity += f32(amount) * gas_heat_capacity(slot_gas(slots[slot])); }
+    }
+    return heat_capacity;
+}
 
 /// Returns the amount moved by a transfer fraction, rounded down exactly so both cells of a face
 /// agree and no cell gives more than it holds
@@ -582,8 +613,14 @@ fn load_halo(tile: u32, local_cell: u32) -> vec2<i32> {
                 | select(0u, VOLUME_ACTIVE, pressure_cell.is_active),
         );
         halo_densities[halo_index] = pressure_cell.density;
-        halo_solids[halo_index] =
-            vec2<u32>(pressure_cell.solid, bitcast<u32>(pressure_cell.stored));
+        halo_solids[halo_index] = vec2<u32>(
+            pressure_cell.solid,
+            select(
+                bitcast<u32>(pressure_cell.temperature),
+                bitcast<u32>(pressure_cell.stored),
+                pressure_cell.solid != 0u,
+            ),
+        );
     }
     workgroupBarrier();
     return halo_origin + 3
@@ -640,7 +677,11 @@ fn halo_cell(cell: vec2<i32>) -> PressureCell {
     pressure_cell.is_active = (words.w & VOLUME_ACTIVE) != 0u;
     pressure_cell.density = halo_densities[index];
     pressure_cell.solid = solids.x;
-    pressure_cell.stored = bitcast<i32>(solids.y);
+    if pressure_cell.solid != 0u {
+        pressure_cell.stored = bitcast<i32>(solids.y);
+    } else {
+        pressure_cell.temperature = bitcast<f32>(solids.y);
+    }
     var total: f32 = f32(pressure_cell.phantom);
     for (var slot: u32 = 0u; slot < 4u; slot++) {
         let amount: f32 = f32(slot_amount(pressure_cell.slots[slot]));
@@ -1397,10 +1438,17 @@ fn simulate_substep(cell: vec2<i32>, local_cell: u32) {
     var phantom: u32 = center.phantom;
     var stored: i32 = center.stored;
     var flows: vec2<f32> = vec2<f32>(0.0);
+    // gas carries its heat: what stays keeps the cell's temperature, and what arrives brings the
+    // temperature of the cell it left, or of this cell when it leaves a solid cell
+    var kept_heat_capacity: f32 = gas_slots_heat_capacity(center.slots, center.phantom);
+    var arrived_heat_capacity: f32 = 0.0;
+    var arrived_heat: f32 = 0.0;
     for (var face: u32 = 0u; face < 4u; face++) {
         let neighbor_cell: vec2<i32> = cell + face_offset(face);
         let neighbor: PressureCell = halo_cell(neighbor_cell);
         if !neighbor.is_active { continue; }
+        let neighbor_temperature: f32 =
+            select(center.temperature, neighbor.temperature, neighbor.solid == 0u);
         let neighbor_transfers: vec4<u32> = halo_transfer_fractions(neighbor_cell);
         let neighbor_admission: u32 = halo_admissions[halo_transfer_index(neighbor_cell)];
         let giving: u32 = center_transfers[face];
@@ -1423,6 +1471,10 @@ fn simulate_substep(cell: vec2<i32>, local_cell: u32) {
                 stored += stored_change(center, received + phantom_received - given);
             } else {
                 phantom = u32(i32(phantom) + received - phantom_given);
+                kept_heat_capacity -= f32(phantom_given) * uniforms.ambient_heat_capacity;
+                arrived_heat_capacity += f32(received) * uniforms.ambient_heat_capacity;
+                arrived_heat +=
+                    f32(received) * uniforms.ambient_heat_capacity * center.temperature;
             }
         }
         // record the flow this cell's right and top faces carried, positive toward the neighbor
@@ -1430,11 +1482,18 @@ fn simulate_substep(cell: vec2<i32>, local_cell: u32) {
         // without gas in the halo only phantom air and stored pressure move
         if is_halo_gas_free {
             if neighbor.volume > 0.0 {
-                phantom -= transfer(center.phantom, giving + ambient_diffusion(center, neighbor));
+                let given: u32 =
+                    transfer(center.phantom, giving + ambient_diffusion(center, neighbor));
+                phantom -= given;
+                kept_heat_capacity -= f32(given) * uniforms.ambient_heat_capacity;
             }
             if center.volume > 0.0 {
-                phantom +=
+                let received: u32 =
                     transfer(neighbor.phantom, receiving + ambient_diffusion(neighbor, center));
+                phantom += received;
+                arrived_heat_capacity += f32(received) * uniforms.ambient_heat_capacity;
+                arrived_heat +=
+                    f32(received) * uniforms.ambient_heat_capacity * neighbor_temperature;
             }
             continue;
         }
@@ -1443,15 +1502,20 @@ fn simulate_substep(cell: vec2<i32>, local_cell: u32) {
             if slot_amount(center_slot) > 0u
                 && is_transfer_allowed(center, neighbor, neighbor_admission, center_slot)
             {
-                amounts[slot] -= transfer(
+                let given: u32 = transfer(
                     slot_amount(center_slot),
                     giving + diffusion(center, neighbor, center_slot),
                 );
+                amounts[slot] -= given;
+                kept_heat_capacity -= f32(given) * gas_heat_capacity(slot_gas(center_slot));
             }
         }
         // phantom air given into a solid cell left above as stored pressure
         if neighbor.volume > 0.0 {
-            phantom -= transfer(center.phantom, giving + ambient_diffusion(center, neighbor));
+            let given: u32 =
+                transfer(center.phantom, giving + ambient_diffusion(center, neighbor));
+            phantom -= given;
+            kept_heat_capacity -= f32(given) * uniforms.ambient_heat_capacity;
         }
         for (var slot: u32 = 0u; slot < 4u; slot++) {
             let neighbor_slot: u32 = neighbor.slots[slot];
@@ -1490,10 +1554,16 @@ fn simulate_substep(cell: vec2<i32>, local_cell: u32) {
             }
             // givers leave room for every face, so the amount always fits
             amounts[target_slot] += amount;
+            let heat_capacity: f32 = f32(amount) * gas_heat_capacity(gas);
+            arrived_heat_capacity += heat_capacity;
+            arrived_heat += heat_capacity * neighbor_temperature;
         }
         if center.volume > 0.0 {
-            phantom +=
+            let received: u32 =
                 transfer(neighbor.phantom, receiving + ambient_diffusion(neighbor, center));
+            phantom += received;
+            arrived_heat_capacity += f32(received) * uniforms.ambient_heat_capacity;
+            arrived_heat += f32(received) * uniforms.ambient_heat_capacity * neighbor_temperature;
         }
     }
     // stored pressure slowly relaxes toward the ambient pressure
@@ -1532,7 +1602,14 @@ fn simulate_substep(cell: vec2<i32>, local_cell: u32) {
                     }
                 }
             } else {
-                phantom = min(phantom + change, AMOUNT_MAXIMUM - min(gas_total, AMOUNT_MAXIMUM));
+                // phantom air arrives from the surroundings at the ambient temperature
+                let relaxed: u32 =
+                    min(phantom + change, AMOUNT_MAXIMUM - min(gas_total, AMOUNT_MAXIMUM));
+                let added: f32 = f32(max(relaxed, phantom) - phantom);
+                phantom = relaxed;
+                arrived_heat_capacity += added * uniforms.ambient_heat_capacity;
+                arrived_heat +=
+                    added * uniforms.ambient_heat_capacity * uniforms.ambient_temperature;
             }
             is_relaxing = true;
         }
@@ -1569,9 +1646,19 @@ fn simulate_substep(cell: vec2<i32>, local_cell: u32) {
     {
         atomicOr(&pressure_awake[tile_index(coarse_tile(cell))], TILE_AWAKE);
     }
+    var heat_word: u32 = bitcast<u32>(stored);
+    if center.solid == 0u {
+        let heat_capacity: f32 = max(kept_heat_capacity, 0.0) + arrived_heat_capacity;
+        var temperature: f32 = center.temperature;
+        if heat_capacity > 0.0 {
+            temperature = (max(kept_heat_capacity, 0.0) * center.temperature + arrived_heat)
+                / heat_capacity;
+        }
+        heat_word = bitcast<u32>(temperature);
+    }
     gas_out[index * 2u] = slots;
     gas_out[index * 2u + 1u] =
-        vec4<u32>(phantom, bitcast<u32>(flows.x), bitcast<u32>(flows.y), bitcast<u32>(stored));
+        vec4<u32>(phantom, bitcast<u32>(flows.x), bitcast<u32>(flows.y), heat_word);
 }
 
 /// Damages the static cells under a pressure cell by a load in amount units of a cell
@@ -1632,11 +1719,24 @@ fn coarsen(
     var gases: array<u32, 4>;
     var amounts: array<u32, 4>;
     var species_count: u32 = 0u;
+    // the gas of the empty cells gives the pressure cell its temperature, weighed by heat capacity
+    var heat: f32 = 0.0;
+    var heat_capacity: f32 = 0.0;
+    var empty_temperature: f32 = 0.0;
+    var empty_count: f32 = 0.0;
     for (var offset: u32 = 0u; offset < 4u; offset++) {
         let index: u32 =
             cell_index(cell * 2 + vec2<i32>(i32(offset % 2u), i32(offset / 2u)));
         let slots: vec4<u32> = gas_in[index * 2u];
         let words: vec4<u32> = gas_in[index * 2u + 1u];
+        if material_identifiers[index] == 0u {
+            let temperature: f32 = bitcast<f32>(matter[index].x);
+            let cell_heat_capacity: f32 = gas_slots_heat_capacity(slots, words.x);
+            heat += cell_heat_capacity * temperature;
+            heat_capacity += cell_heat_capacity;
+            empty_temperature += temperature;
+            empty_count += 1.0;
+        }
         phantom = min(phantom + words.x, AMOUNT_MAXIMUM);
         if offset == 0u { flows = words.yz; }
         for (var slot: u32 = 0u; slot < 4u; slot++) {
@@ -1677,10 +1777,19 @@ fn coarsen(
         slots[species] = (gases[species] << 24u) | amounts[species];
     }
     let is_solid: bool = static_count == 4u;
+    var temperature: f32 = uniforms.ambient_temperature;
+    if heat_capacity > 0.0 {
+        temperature = heat / heat_capacity;
+    } else if empty_count > 0.0 {
+        temperature = empty_temperature / empty_count;
+    }
     let index: u32 = coarse_index(cell);
     gas_out[index * 2u] = slots;
-    gas_out[index * 2u + 1u] =
-        vec4<u32>(phantom, flows, bitcast<u32>(select(0, stored, is_solid)));
+    gas_out[index * 2u + 1u] = vec4<u32>(
+        phantom,
+        flows,
+        select(bitcast<u32>(temperature), bitcast<u32>(stored), is_solid),
+    );
     // drags are velocities in cells per tick, halved in pressure cells
     let base: u32 = coarse_constant_index(index);
     control.active_tiles[base] = open_volume / 4u
@@ -1695,8 +1804,8 @@ fn coarsen(
 /// Spreads the pressure cells of a listed block's active tiles back over the cells under them,
 /// one invocation per cell: phantom air and each gas go to the open cells by open volume, or
 /// evenly to closed ones, with the remainder to the most open cell so nothing is lost, every
-/// cell keeps its pressure cell's flows, and static cells of a solid pressure cell a quarter of
-/// its stored pressure
+/// cell keeps its pressure cell's flows, static cells of a solid pressure cell a quarter of its
+/// stored pressure, and empty cells of an open one its gas temperature
 @compute @workgroup_size(256)
 fn refine(
     @builtin(workgroup_id) workgroup: vec3<u32>,
@@ -1756,13 +1865,15 @@ fn refine(
             stored = i32(round(0.25 * (pressure - f32(uniforms.ambient_amount))));
         }
     }
+    let phantom: u32 = share(words.x, &weights, weight_sum, heaviest, own);
     gas_out[fine_index * 2u] = slots;
-    gas_out[fine_index * 2u + 1u] = vec4<u32>(
-        share(words.x, &weights, weight_sum, heaviest, own),
-        words.y,
-        words.z,
-        bitcast<u32>(stored),
-    );
+    gas_out[fine_index * 2u + 1u] = vec4<u32>(phantom, words.y, words.z, bitcast<u32>(stored));
+    // an empty cell's gas takes its open pressure cell's temperature
+    if constants.z == 0u && material_identifiers[fine_index] == 0u
+        && gas_slots_heat_capacity(coarse_slots, words.x) > 0.0
+    {
+        matter[fine_index].x = words.w;
+    }
 }
 
 /// Returns one cell's share of an amount split by weights, rounded down with the remainder going
@@ -1905,7 +2016,11 @@ fn damage(
         ) * VELOCITY_SCALE));
         material_identifier = debris;
         material_identifiers[index] = debris;
-        if debris == 0u { colors[index] = 0u; }
+        // an emptied cell keeps its temperature for the gas that fills it
+        if debris == 0u {
+            colors[index] = 0u;
+            matter[index].y = 0u;
+        }
         kinematics[index] = select(
             vec2<u32>(0u),
             vec2<u32>((bitcast<u32>(velocity.x) & 0xffffu) | (bitcast<u32>(velocity.y) << 16u), 0u),

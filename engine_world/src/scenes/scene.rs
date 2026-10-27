@@ -601,6 +601,8 @@ impl Scene {
             self.gravity,
             ambient_gas_amount,
             self.ambient_gas_mass,
+            self.ambient_gas_temperature,
+            self.ambient_gas_heat_capacity,
             cellular_tiles.fluid_actors().len() as u32,
         )?;
         // heat moves through every cell after the matter carrying it has moved
