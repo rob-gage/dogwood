@@ -45,8 +45,236 @@ struct LightingLevel {
     interval_end: f32,
 }
 
+/// Exact optical/backlight cache. Indirect zero dispatches retain the previous light field, and
+/// with no light source the light is zero.
+struct LightingCache {
+    params: wgpu::Buffer,
+    sources: wgpu::Buffer,
+    arguments: wgpu::Buffer,
+    dirty: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
+    compare: wgpu::ComputePipeline,
+    build_arguments: wgpu::ComputePipeline,
+    clear_fluence: wgpu::ComputePipeline,
+    clear_light: wgpu::ComputePipeline,
+    clear_bind_group: wgpu::BindGroup,
+    key: Option<[i64; 4]>,
+    count: u32,
+}
+impl LightingCache {
+    fn new(
+        a: &Accelerator,
+        width: u32,
+        height: u32,
+        optical: &wgpu::TextureView,
+        backlight: &wgpu::TextureView,
+        fluence: &wgpu::Buffer,
+        light: &wgpu::TextureView,
+    ) -> Self {
+        let d = a.device();
+        let buffer = |size, usage| {
+            d.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("lighting cache"),
+                size,
+                usage,
+                mapped_at_creation: false,
+            })
+        };
+        let params = buffer(
+            16,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
+        let sources = buffer(
+            64 * 16,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        );
+        let arguments = buffer(
+            64 * 12,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
+        );
+        let dirty = buffer(
+            40,
+            wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
+        );
+        let previous = buffer(
+            (u64::from(width) * u64::from(height)
+                + u64::from(width.div_ceil(4)) * u64::from(height.div_ceil(4)))
+                * 8,
+            wgpu::BufferUsages::STORAGE,
+        );
+        let c = wgpu::ShaderStages::COMPUTE;
+        let rw = wgpu::BufferBindingType::Storage { read_only: false };
+        let layout = d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("lighting cache"),
+            entries: &[
+                buffer_entry(0, c, wgpu::BufferBindingType::Uniform, false),
+                texture_entry(1, c),
+                texture_entry(2, c),
+                buffer_entry(3, c, rw, false),
+                buffer_entry(4, c, rw, false),
+                buffer_entry(
+                    5,
+                    c,
+                    wgpu::BufferBindingType::Storage { read_only: true },
+                    false,
+                ),
+                buffer_entry(6, c, rw, false),
+            ],
+        });
+        let bind_group = d.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("lighting cache"),
+            layout: &layout,
+            entries: &[
+                buffer_binding(0, &params),
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(optical),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(backlight),
+                },
+                buffer_binding(3, &previous),
+                buffer_binding(4, &dirty),
+                buffer_binding(5, &sources),
+                buffer_binding(6, &arguments),
+            ],
+        });
+        let module = d.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("lighting cache"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("scene_renderer_lighting_cache.wgsl").into(),
+            ),
+        });
+        let pipeline_layout = d.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("lighting cache"),
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
+        });
+        let pipeline = |entry| {
+            d.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(entry),
+                layout: Some(&pipeline_layout),
+                module: &module,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        let clear_layout = d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("zero fluence"),
+            entries: &[
+                buffer_entry(0, c, wgpu::BufferBindingType::Uniform, false),
+                buffer_entry(1, c, rw, false),
+                storage_texture_entry(2),
+            ],
+        });
+        let clear_bind_group = d.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("zero fluence"),
+            layout: &clear_layout,
+            entries: &[
+                buffer_binding(0, &params),
+                buffer_binding(1, fluence),
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(light),
+                },
+            ],
+        });
+        let clear_module = d.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("zero fluence"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("scene_renderer_lighting_clear.wgsl").into(),
+            ),
+        });
+        let clear_pipeline_layout = d.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("zero fluence"),
+            bind_group_layouts: &[Some(&clear_layout)],
+            immediate_size: 0,
+        });
+        let clear_fluence = d.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("zero fluence"),
+            layout: Some(&clear_pipeline_layout),
+            module: &clear_module,
+            entry_point: Some("clear_fluence"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let clear_light = d.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("zero light"),
+            layout: Some(&clear_pipeline_layout),
+            module: &clear_module,
+            entry_point: Some("clear_light"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        Self {
+            params,
+            sources,
+            arguments,
+            dirty,
+            bind_group,
+            compare: pipeline("compare"),
+            build_arguments: pipeline("arguments"),
+            clear_fluence,
+            clear_light,
+            clear_bind_group,
+            key: None,
+            count: 0,
+        }
+    }
+    fn prepare(
+        &mut self,
+        a: &Accelerator,
+        width: u32,
+        height: u32,
+        levels: &[LightingLevel],
+        mips: &[[u32; 2]],
+        key: [i64; 4],
+    ) {
+        // bit 0: the inputs or placement changed, bit 1: the domain is fresh
+        let force: u32 = u32::from(self.key != Some(key)) | (u32::from(self.key.is_none()) << 1);
+        self.key = Some(key);
+        let mut counts = vec![[width.div_ceil(8), height.div_ceil(8), 1, 1]];
+        for l in levels.iter().skip(1).rev() {
+            let (x, y) =
+                workgroup_counts(l.probe_count[0] * l.probe_count[1] * l.direction_count, 64);
+            counts.push([x, y, 1, 1]);
+        }
+        if let Some(l) = levels.get(1) {
+            let (x, y) = workgroup_counts(l.probe_count[0] * l.probe_count[1], 64);
+            counts.push([x, y, 1, 1]);
+        }
+        counts.push([width.div_ceil(8), height.div_ceil(8), 1, 1]);
+        let (x, y) = workgroup_counts(width * height, 64);
+        counts.push([x, y, 1, 2]);
+        counts.push([width.div_ceil(8), height.div_ceil(8), 1, 3]);
+        counts.extend([[height, 1, 1, 0], [width, 1, 1, 0], [height, 1, 1, 0]]);
+        counts.extend(
+            mips.iter()
+                .map(|s| [s[0].div_ceil(8), s[1].div_ceil(8), 1, 4]),
+        );
+        assert!(counts.len() <= 64);
+        self.count = counts.len() as u32;
+        let bytes: Vec<u8> = counts
+            .iter()
+            .flatten()
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
+        a.queue().write_buffer(&self.sources, 0, &bytes);
+        let bytes: Vec<u8> = [width, height, self.count, force]
+            .iter()
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
+        a.queue().write_buffer(&self.params, 0, &bytes);
+    }
+}
 /// Resources sized to one lighting domain
 struct LightingDomain {
+    /// Cache of the optical and backlight inputs
+    cache: LightingCache,
     /// Domain width in cells
     width: u32,
     /// Domain height in cells
@@ -67,8 +295,8 @@ struct LightingDomain {
     mip_bind_groups: Vec<wgpu::BindGroup>,
     /// Light texture mip sizes, from the second level
     mip_sizes: Vec<[u32; 2]>,
-    /// Cascade bind groups writing the first and the second interval buffer
-    cascade_bind_groups: [wgpu::BindGroup; 2],
+    /// Cascade bind groups of every level, each writing its own interval buffer
+    cascade_bind_groups: Vec<wgpu::BindGroup>,
     /// Spread bind groups of the row, column, and final row passes
     spread_bind_groups: [wgpu::BindGroup; 3],
 }
@@ -127,6 +355,8 @@ pub struct SceneRendererLightingPass {
     trace_pipeline: wgpu::ComputePipeline,
     /// Cascade integration pipeline
     integrate_pipeline: wgpu::ComputePipeline,
+    /// Pipeline summarizing the change flags of the second cascade level
+    summarize_pipeline: wgpu::ComputePipeline,
     /// Cascade level uniforms at `LIGHTING_UNIFORM_STRIDE`
     cascade_buffer: wgpu::Buffer,
     /// Prepared cascade levels, the finest first
@@ -134,7 +364,7 @@ pub struct SceneRendererLightingPass {
     /// Layout of the spread passes
     spread_bind_group_layout: wgpu::BindGroupLayout,
     /// Spread pipeline
-    spread_pipeline: wgpu::ComputePipeline,
+    spread_pipelines: Vec<wgpu::ComputePipeline>,
     /// Spread pass uniforms at `LIGHTING_UNIFORM_STRIDE`
     spread_buffer: wgpu::Buffer,
     /// Layout of the uniform block classification
@@ -528,6 +758,7 @@ impl SceneRendererLightingPass {
                     buffer_entry(3, wgpu::ShaderStages::COMPUTE, read_write_storage, false),
                     buffer_entry(4, wgpu::ShaderStages::COMPUTE, read_write_storage, false),
                     texture_entry(5, wgpu::ShaderStages::COMPUTE),
+                    buffer_entry(6, wgpu::ShaderStages::COMPUTE, read_storage, false),
                 ],
             },
         );
@@ -557,6 +788,12 @@ impl SceneRendererLightingPass {
             &cascade_pipeline_layout,
             &cascade_module,
             "integrate",
+        );
+        let summarize_pipeline: wgpu::ComputePipeline = compute_pipeline(
+            "`SceneRendererLightingPass.summarize_pipeline`",
+            &cascade_pipeline_layout,
+            &cascade_module,
+            "summarize",
         );
         let cascade_buffer: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("`SceneRendererLightingPass.cascade_buffer`"),
@@ -591,20 +828,10 @@ impl SceneRendererLightingPass {
                 immediate_size: 0,
             },
         );
-        let spread_module: wgpu::ShaderModule = device.create_shader_module(
-            wgpu::ShaderModuleDescriptor {
-                label: Some("`SceneRendererLightingPass.spread_module`"),
-                source: wgpu::ShaderSource::Wgsl(
-                    include_str!("scene_renderer_lighting_spread.wgsl").into(),
-                ),
-            },
-        );
-        let spread_pipeline: wgpu::ComputePipeline = compute_pipeline(
-            "`SceneRendererLightingPass.spread_pipeline`",
-            &spread_pipeline_layout,
-            &spread_module,
-            "spread_lines",
-        );
+        let spread_module=device.create_shader_module(wgpu::ShaderModuleDescriptor{label:Some("spread module"),source:wgpu::ShaderSource::Wgsl(include_str!("scene_renderer_lighting_spread.wgsl").into())});
+        let spread_pipelines:Vec<wgpu::ComputePipeline>=[32u32,64,128,256].into_iter().map(|size|{
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor{label:Some("spread pipeline"),layout:Some(&spread_pipeline_layout),module:&spread_module,entry_point:Some("spread_lines"),compilation_options:wgpu::PipelineCompilationOptions{constants:&[("WORKGROUP_SIZE",f64::from(size))],..Default::default()},cache:None})
+        }).collect();
         let spread_buffer: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("`SceneRendererLightingPass.spread_buffer`"),
             size: LIGHTING_UNIFORM_STRIDE * 3,
@@ -690,10 +917,11 @@ impl SceneRendererLightingPass {
             cascade_bind_group_layout,
             trace_pipeline,
             integrate_pipeline,
+            summarize_pipeline,
             cascade_buffer,
             levels: Vec::new(),
             spread_bind_group_layout,
-            spread_pipeline,
+            spread_pipelines,
             spread_buffer,
             block_bind_group_layout,
             block_pipeline,
@@ -722,7 +950,7 @@ impl SceneRendererLightingPass {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Rgba16Float,
-                usage,
+                usage: usage | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
             })
         };
@@ -804,40 +1032,63 @@ impl SceneRendererLightingPass {
             })
         };
         let light_buffers: [wgpu::Buffer; 3] = [light_buffer(), light_buffer(), light_buffer()];
-        // the second level has the most intervals, and each later level about half as many
-        let interval_count: u64 = (u64::from(width) / 2 + 4) * (u64::from(height) / 2 + 4)
-            * u64::from(LIGHTING_DIRECTIONS * 2);
-        let interval_buffer = || -> wgpu::Buffer {
-            device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("`LightingDomain.interval_buffers`"),
-                size: interval_count * 8,
-                usage: wgpu::BufferUsages::STORAGE,
-                mapped_at_creation: false,
-            })
-        };
-        let interval_buffers: [wgpu::Buffer; 2] = [interval_buffer(), interval_buffer()];
-        let cascade_bind_group = |output: usize| -> wgpu::BindGroup {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("`LightingDomain.cascade_bind_groups`"),
-                layout: &self.cascade_bind_group_layout,
-                entries: &[
-                    uniform_record_binding(0, &self.cascade_buffer),
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&optical_view),
-                    },
-                    buffer_binding(2, &interval_buffers[1 - output]),
-                    buffer_binding(3, &interval_buffers[output]),
-                    buffer_binding(4, &light_buffers[0]),
-                    wgpu::BindGroupEntry {
-                        binding: 5,
-                        resource: wgpu::BindingResource::TextureView(&block_view),
-                    },
-                ],
-            })
-        };
-        let cascade_bind_groups: [wgpu::BindGroup; 2] = [cascade_bind_group(0), cascade_bind_group(1)];
         let light_storage_view: wgpu::TextureView = mip_view(0);
+        let cache: LightingCache = LightingCache::new(
+            accelerator,
+            width,
+            height,
+            &optical_view,
+            &backlight_view,
+            &light_buffers[0],
+            &light_storage_view,
+        );
+        // every level keeps its intervals between frames, and the finest level, which integrates
+        // into the fluence, keeps none
+        let interval_buffers: Vec<wgpu::Buffer> = Self::domain_levels(width, height, [0, 0])
+            .iter()
+            .enumerate()
+            .map(|(level, shape)| {
+                let spacing: u64 = 1 << level;
+                let interval_count: u64 = if level == 0 {
+                    1
+                } else {
+                    (u64::from(width) / spacing + 4) * (u64::from(height) / spacing + 4)
+                        * u64::from(shape.direction_count)
+                };
+                device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("`LightingDomain.interval_buffers`"),
+                    size: interval_count * 8,
+                    usage: wgpu::BufferUsages::STORAGE,
+                    mapped_at_creation: false,
+                })
+            })
+            .collect();
+        let cascade_bind_groups: Vec<wgpu::BindGroup> = (0..interval_buffers.len())
+            .map(|level| {
+                // the coarsest level has nothing to merge with
+                let upper: &wgpu::Buffer =
+                    interval_buffers.get(level + 1).unwrap_or(&self.empty_buffer);
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("`LightingDomain.cascade_bind_groups`"),
+                    layout: &self.cascade_bind_group_layout,
+                    entries: &[
+                        uniform_record_binding(0, &self.cascade_buffer),
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(&optical_view),
+                        },
+                        buffer_binding(2, upper),
+                        buffer_binding(3, &interval_buffers[level]),
+                        buffer_binding(4, &light_buffers[0]),
+                        wgpu::BindGroupEntry {
+                            binding: 5,
+                            resource: wgpu::BindingResource::TextureView(&block_view),
+                        },
+                        buffer_binding(6, &cache.dirty),
+                    ],
+                })
+            })
+            .collect();
         let spread_bind_group = |input: usize, output: usize| -> wgpu::BindGroup {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("`LightingDomain.spread_bind_groups`"),
@@ -868,6 +1119,7 @@ impl SceneRendererLightingPass {
         let spread_bind_groups: [wgpu::BindGroup; 3] =
             [spread_bind_group(0, 1), spread_bind_group(1, 2), spread_bind_group(2, 1)];
         LightingDomain {
+            cache,
             width,
             height,
             actor_optics_view,
@@ -992,7 +1244,7 @@ impl SceneRendererLightingPass {
             self.optical_bind_group = None;
             return;
         };
-        let Some(domain) = self.domain.as_ref() else { return; };
+        let Some(domain) = self.domain.as_mut() else { return; };
         // sprite rasterization
         let mut sprite_bytes: [u8; 32] = [0; 32];
         sprite_bytes[0..4].copy_from_slice(&domain_origin[0].to_le_bytes());
@@ -1187,6 +1439,19 @@ impl SceneRendererLightingPass {
             }
         }
         queue.write_buffer(&self.spread_buffer, 0, &spread_bytes);
+        domain.cache.prepare(
+            accelerator,
+            width,
+            height,
+            &self.levels,
+            &domain.mip_sizes,
+            [
+                world_origin[0],
+                world_origin[1],
+                i64::from(lighting.penetration.max(1.0).to_bits()),
+                i64::from(graphics.cellular_tile_size),
+            ],
+        );
     }
 
     /// Records the prepared lighting computation
@@ -1199,6 +1464,9 @@ impl SceneRendererLightingPass {
         ) else {
             return;
         };
+        // the force word and the history words persist between frames
+        command_encoder.clear_buffer(&domain.cache.dirty, 0, Some(8));
+        command_encoder.clear_buffer(&domain.cache.dirty, 16, Some(20));
         {
             let mut render_pass: wgpu::RenderPass<'_> =
                 command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1272,8 +1540,19 @@ impl SceneRendererLightingPass {
             compute_pass.set_pipeline(&self.optical_pipeline);
             compute_pass.set_bind_group(0, optical_bind_group, &[]);
             compute_pass.set_bind_group(1, lighting_bind_group, &[]);
-            compute_pass.dispatch_workgroups(domain.width.div_ceil(8), domain.height.div_ceil(8), 1);
+        compute_pass.dispatch_workgroups(domain.width.div_ceil(8), domain.height.div_ceil(8), 1);
         }
+        {
+            let cache: &LightingCache = &domain.cache;
+            let mut p=command_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{label:Some("lighting cache compare"),timestamp_writes:None});
+            p.set_bind_group(0,&cache.bind_group,&[]);p.set_pipeline(&cache.compare);p.dispatch_workgroups(domain.width.div_ceil(8),domain.height.div_ceil(8),1);
+            p.set_pipeline(&cache.build_arguments);p.dispatch_workgroups(1,1,1);
+        }
+        let mut dispatch_index=0u64;
+        let mut dispatch=|p:&mut wgpu::ComputePass<'_>,_x:u32,_y:u32,_z:u32|{
+            p.dispatch_workgroups_indirect(&domain.cache.arguments,dispatch_index*12);
+            dispatch_index+=1;
+        };
         let mut compute_pass: wgpu::ComputePass<'_> =
             command_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("`SceneRendererLightingPass.compute`"),
@@ -1283,30 +1562,55 @@ impl SceneRendererLightingPass {
         // uniform blocks let the rays cross them at once
         compute_pass.set_pipeline(&self.block_pipeline);
         compute_pass.set_bind_group(0, &domain.block_bind_group, &[]);
-        compute_pass.dispatch_workgroups(domain.width.div_ceil(8), domain.height.div_ceil(8), 1);
+        dispatch(&mut compute_pass,domain.width.div_ceil(8), domain.height.div_ceil(8), 1);
         compute_pass.set_pipeline(&self.trace_pipeline);
         for index in (1..self.levels.len()).rev() {
             let level: &LightingLevel = &self.levels[index];
             let offset: u32 = (index as u64 * LIGHTING_UNIFORM_STRIDE) as u32;
-            compute_pass.set_bind_group(0, &domain.cascade_bind_groups[index % 2], &[offset]);
+            compute_pass.set_bind_group(0, &domain.cascade_bind_groups[index], &[offset]);
             let count: u32 = level.probe_count[0] * level.probe_count[1] * level.direction_count;
             let (x, y): (u32, u32) = workgroup_counts(count, 64);
-            compute_pass.dispatch_workgroups(x, y, 1);
+            dispatch(&mut compute_pass,x, y, 1);
+        }
+        if self.levels.len() > 1 {
+            // the finest level merges with the second, so one flag per probe of it suffices
+            compute_pass.set_pipeline(&self.summarize_pipeline);
+            compute_pass.set_bind_group(
+                0,
+                &domain.cascade_bind_groups[1],
+                &[LIGHTING_UNIFORM_STRIDE as u32],
+            );
+            let (x, y): (u32, u32) = workgroup_counts(
+                self.levels[1].probe_count[0] * self.levels[1].probe_count[1],
+                64,
+            );
+            dispatch(&mut compute_pass,x, y, 1);
         }
         compute_pass.set_pipeline(&self.integrate_pipeline);
         compute_pass.set_bind_group(0, &domain.cascade_bind_groups[0], &[0]);
-        compute_pass.dispatch_workgroups(domain.width.div_ceil(8), domain.height.div_ceil(8), 1);
-        compute_pass.set_pipeline(&self.spread_pipeline);
+        dispatch(&mut compute_pass,domain.width.div_ceil(8), domain.height.div_ceil(8), 1);
+        {
+            let cache: &LightingCache = &domain.cache;
+            compute_pass.set_pipeline(&cache.clear_fluence);compute_pass.set_bind_group(0,&cache.clear_bind_group,&[]);
+            let (x,y)=workgroup_counts(domain.width*domain.height,64);dispatch(&mut compute_pass,x,y,1);
+            compute_pass.set_pipeline(&cache.clear_light);
+            dispatch(&mut compute_pass,domain.width.div_ceil(8), domain.height.div_ceil(8), 1);
+        }
+
         for (pass, bind_group) in domain.spread_bind_groups.iter().enumerate() {
+            let length=if pass==1 {domain.height}else{domain.width};
+            let size=if length<=2048 {length.div_ceil(8).next_power_of_two().clamp(32,256)}else{256};
+            let pipeline=(size.trailing_zeros()-5) as usize;
+            compute_pass.set_pipeline(&self.spread_pipelines[pipeline]);
             let offset: u32 = (pass as u64 * LIGHTING_UNIFORM_STRIDE) as u32;
             compute_pass.set_bind_group(0, bind_group, &[offset]);
             let lines: u32 = if pass == 1 { domain.width } else { domain.height };
-            compute_pass.dispatch_workgroups(lines, 1, 1);
+            dispatch(&mut compute_pass,lines, 1, 1);
         }
         compute_pass.set_pipeline(&self.mip_pipeline);
         for (bind_group, size) in domain.mip_bind_groups.iter().zip(&domain.mip_sizes) {
             compute_pass.set_bind_group(0, bind_group, &[]);
-            compute_pass.dispatch_workgroups(size[0].div_ceil(8), size[1].div_ceil(8), 1);
+            dispatch(&mut compute_pass,size[0].div_ceil(8), size[1].div_ceil(8), 1);
         }
     }
 

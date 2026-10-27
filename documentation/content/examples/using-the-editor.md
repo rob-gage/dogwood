@@ -16,7 +16,7 @@ sources = [
     "engine/src/lib.rs",
     "engine_graphics/src/world/materials/material_radiance.rs",
     "engine_world/src/materials/material_temperature_color.rs",
-    "engine_graphics/src/renders/scene_renderer_lighting_pass.rs",
+    "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting_clear.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cache.wgsl",
     "engine_graphics/src/renders/scene_renderer_lighting.wgsl",
     "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl",
     "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl",

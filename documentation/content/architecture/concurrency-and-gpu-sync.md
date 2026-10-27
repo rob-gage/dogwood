@@ -3,7 +3,7 @@ title = "Concurrency and GPU synchronization"
 description = "How chunk workers and GPU submissions exchange data without stale or overwritten tiles."
 weight = 40
 [extra]
-sources = ["engine_host/src/acceleration/accelerator_readback.rs", "engine_host/src/acceleration/accelerator_readback_error.rs", "engine_host/src/processors", "engine_world/src/scenes", "engine/src/games/game_instance.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl"]
+sources = ["engine_host/src/acceleration/accelerator_readback.rs", "engine_host/src/acceleration/accelerator_readback_error.rs", "engine_host/src/processors", "engine_world/src/scenes", "engine/src/games/game_instance.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting_clear.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cache.wgsl", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl"]
 +++
 
 This page explains which work runs on which thread, how GPU results come back, and where the runtime blocks. It is for contributors changing streaming, kinematics, or collision code.
@@ -42,7 +42,7 @@ Tile streaming and kinematics do not use a worker pool. They submit GPU work and
 
 ## Queue ordering and readback
 
-When shifting the tile ring, the state encodes copies of outgoing tiles, submits those copies, then queues `write_buffer` uploads for incoming tiles that reuse slots. Queue order makes each departing tile's readback capture the old slot contents before the incoming tile replaces them.
+When shifting the tile ring, the state encodes a gather and copy of outgoing tiles, submits them, then queues one packed `write_buffer` upload and submits a scatter that writes incoming tiles into the slots they reuse. Queue order makes each departing tile's readback capture the old slot contents before the incoming tile replaces them.
 
 The map callback sends its result over a channel. A later stream call consumes it, marks successful requests ready, and applies ready responses in request-ID order. Retained chunk regions keep destinations available until their responses are applied.
 

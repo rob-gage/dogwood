@@ -35,6 +35,8 @@ thermal sample listing a conversion into fluid:
 
 The skipped tick submits no work, so the fluid raster stays as the last tick left it, empty.
 
+A region move or a pending export target does not by itself require a particle pass when the pool is provably empty. If every other condition above holds, every fluid actor already holds a zero contact for its current collision, and any export target is the size of the export buffer, the tick also skips the pass. It clears the export target's count word with a one-word clear submission, records the new region origin, and advances the tick, which is all a full pass over an empty pool changes.
+
 The tick is 1/60 second. Positions use cells relative to the active region; velocities use cells per tick, including during substeps. Gravity in tiles/s² converts to a substep velocity increment as `gravity * CELLULAR_TILE_SIZE * dt² / FLUID_SUBSTEP_COUNT`. Prediction divides velocity by the substep count to obtain displacement.
 
 When a material transition starts or ends in a fluid, the pass converts due live particles and

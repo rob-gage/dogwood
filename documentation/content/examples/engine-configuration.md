@@ -16,7 +16,7 @@ sources = [
     "engine_host/src/windows/mod.rs",
     "engine_world/src/scenes/mod.rs",
     "engine_world/src/scenes/scene.rs",
-    "engine_graphics/src/renders/scene_renderer_lighting_pass.rs",
+    "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting_clear.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cache.wgsl",
     "engine_graphics/src/renders/scene_renderer_lighting.wgsl",
     "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl",
     "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl",

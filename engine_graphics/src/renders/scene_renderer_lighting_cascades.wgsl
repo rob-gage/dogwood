@@ -38,11 +38,12 @@ var optical: texture_2d<f32>;
 @group(0) @binding(5)
 var blocks: texture_2d<f32>;
 
-/// Merged radiance of the coarser level, packed as two `pack2x16float` words per interval
+/// Merged radiance of the coarser level, packed as two `pack2x16float` words per interval. The
+/// spare upper half of an interval's second word flags that its radiance changed this frame.
 @group(0) @binding(2)
 var<storage, read> upper_intervals: array<vec2<u32>>;
 
-/// Merged radiance of this level, packed like `upper_intervals`
+/// Merged radiance of this level, packed like `upper_intervals`, kept between frames
 @group(0) @binding(3)
 var<storage, read_write> intervals: array<vec2<u32>>;
 
@@ -50,6 +51,21 @@ var<storage, read_write> intervals: array<vec2<u32>>;
 /// blue
 @group(0) @binding(4)
 var<storage, read_write> fluence: array<vec2<u32>>;
+
+/// Cache words built by the cache pass: 2 is nonzero when every interval must be recomputed, and
+/// 4 to 7 hold the bounds of the changed optical cells as the domain width minus their minimum
+/// x, their exclusive maximum x, the domain height minus their minimum y and their exclusive
+/// maximum y, zero when none changed
+@group(0) @binding(6)
+var<storage, read> cache_state: array<u32>;
+
+/// Bits of an interval's second word holding its change flag
+const CHANGED: u32 = 0xffff0000u;
+
+/// Extra cells around the changed optical cells. A changed cell can change the classification
+/// of its whole block of 8x8 cells, and with it how a ray crossing the block is grouped, and one
+/// more cell covers the rounding of block boundary crossings.
+const CHANGE_MARGIN: f32 = 9.0;
 
 const TAU: f32 = 6.283185307179586;
 
@@ -157,7 +173,114 @@ fn merged_radiance(position: vec2<f32>, direction: u32) -> vec3<f32> {
     return radiance;
 }
 
-/// Traces one probe interval of a level and merges it with the coarser level
+/// Returns whether anything one interval depends on changed: the forced flag, the changed optical
+/// cells near the interval or the coarser intervals it merges with, or any of those intervals
+fn interval_inputs_changed(position: vec2<f32>, direction: u32) -> bool {
+    if cache_state[2] != 0u {
+        return true;
+    }
+    let angle: f32 = (f32(direction) + 0.5) * TAU / f32(level.direction_count);
+    let ray: vec2<f32> = vec2<f32>(cos(angle), sin(angle));
+    let start: vec2<f32> = position + ray * level.interval_start;
+    let end: vec2<f32> = position + ray * level.interval_end;
+    var low: vec2<f32> = min(start, end);
+    var high: vec2<f32> = max(start, end);
+    var base: vec2<i32> = vec2<i32>(0);
+    if level.has_upper != 0u {
+        let lattice: vec2<f32> = (position - level.upper_probe_origin) / level.upper_spacing;
+        let maximum: vec2<i32> = max(vec2<i32>(level.upper_probe_count) - vec2<i32>(2), vec2<i32>(0));
+        base = clamp(vec2<i32>(floor(lattice)), vec2<i32>(0), maximum);
+        let upper_low: vec2<f32> = level.upper_probe_origin
+            + vec2<f32>(base) * level.upper_spacing + ray * level.interval_end;
+        let upper_high: vec2<f32> = level.upper_probe_origin
+            + vec2<f32>(min(base + vec2<i32>(1), vec2<i32>(level.upper_probe_count) - vec2<i32>(1)))
+                * level.upper_spacing
+            + ray * level.interval_end;
+        low = min(low, upper_low);
+        high = max(high, upper_high);
+    }
+    if cache_state[5] != 0u && cache_state[7] != 0u {
+        let dirty_low: vec2<f32> = vec2<f32>(level.domain_size - vec2<u32>(cache_state[4], cache_state[6]));
+        let dirty_high: vec2<f32> = vec2<f32>(vec2<u32>(cache_state[5], cache_state[7]));
+        if all(high + vec2<f32>(CHANGE_MARGIN) >= dirty_low)
+            && all(low - vec2<f32>(CHANGE_MARGIN) <= dirty_high) {
+            return true;
+        }
+    }
+    if level.has_upper != 0u {
+        for (var corner: u32 = 0u; corner < 4u; corner++) {
+            let offset: vec2<i32> = vec2<i32>(i32(corner & 1u), i32(corner >> 1u));
+            let probe: vec2<u32> = vec2<u32>(min(base + offset, vec2<i32>(level.upper_probe_count) - vec2<i32>(1)));
+            let first: u32 = (probe.y * level.upper_probe_count.x + probe.x) * level.direction_count * 2u
+                + direction * 2u;
+            if ((upper_intervals[first].y | upper_intervals[first + 1u].y) & CHANGED) != 0u {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+/// Returns whether anything one cell's fluence depends on changed. The finest level integrates
+/// every direction, so the first interval of each coarser probe summarizes its changes.
+fn cell_inputs_changed(position: vec2<f32>) -> bool {
+    if cache_state[2] != 0u {
+        return true;
+    }
+    var low: vec2<f32> = position;
+    var high: vec2<f32> = position;
+    var base: vec2<i32> = vec2<i32>(0);
+    if level.has_upper != 0u {
+        let lattice: vec2<f32> = (position - level.upper_probe_origin) / level.upper_spacing;
+        let maximum: vec2<i32> = max(vec2<i32>(level.upper_probe_count) - vec2<i32>(2), vec2<i32>(0));
+        base = clamp(vec2<i32>(floor(lattice)), vec2<i32>(0), maximum);
+        low = min(low, level.upper_probe_origin + vec2<f32>(base) * level.upper_spacing);
+        high = max(high, level.upper_probe_origin
+            + vec2<f32>(min(base + vec2<i32>(1), vec2<i32>(level.upper_probe_count) - vec2<i32>(1)))
+                * level.upper_spacing);
+    }
+    let margin: vec2<f32> = vec2<f32>(level.interval_end + CHANGE_MARGIN);
+    if cache_state[5] != 0u && cache_state[7] != 0u {
+        let dirty_low: vec2<f32> = vec2<f32>(level.domain_size - vec2<u32>(cache_state[4], cache_state[6]));
+        let dirty_high: vec2<f32> = vec2<f32>(vec2<u32>(cache_state[5], cache_state[7]));
+        if all(high + margin >= dirty_low) && all(low - margin <= dirty_high) {
+            return true;
+        }
+    }
+    if level.has_upper != 0u {
+        for (var corner: u32 = 0u; corner < 4u; corner++) {
+            let offset: vec2<i32> = vec2<i32>(i32(corner & 1u), i32(corner >> 1u));
+            let probe: vec2<u32> = vec2<u32>(min(base + offset, vec2<i32>(level.upper_probe_count) - vec2<i32>(1)));
+            let first: u32 = (probe.y * level.upper_probe_count.x + probe.x) * level.direction_count * 2u;
+            if (upper_intervals[first].y & CHANGED) != 0u {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+/// Reduces the change flags of each probe's intervals to its first interval's spare bits, run
+/// for the level the finest level merges with
+@compute @workgroup_size(64, 1, 1)
+fn summarize(
+    @builtin(global_invocation_id) invocation: vec3<u32>,
+    @builtin(num_workgroups) workgroups: vec3<u32>,
+) {
+    let probe_index: u32 = invocation.x + invocation.y * workgroups.x * 64u;
+    if probe_index >= level.probe_count.x * level.probe_count.y {
+        return;
+    }
+    let first: u32 = probe_index * level.direction_count;
+    var changed: u32 = 0u;
+    for (var direction: u32 = 0u; direction < level.direction_count; direction++) {
+        changed |= intervals[first + direction].y & CHANGED;
+    }
+    intervals[first].y = (intervals[first].y & ~CHANGED) | changed;
+}
+
+/// Traces one probe interval of a level and merges it with the coarser level, unless nothing it
+/// depends on changed, and flags whether its radiance changed
 @compute @workgroup_size(64, 1, 1)
 fn trace_merge(
     @builtin(global_invocation_id) invocation: vec3<u32>,
@@ -172,17 +295,27 @@ fn trace_merge(
     let probe_index: u32 = index / level.direction_count;
     let probe: vec2<u32> = vec2<u32>(probe_index % level.probe_count.x, probe_index / level.probe_count.x);
     let position: vec2<f32> = level.probe_origin + vec2<f32>(probe) * level.spacing;
+    if !interval_inputs_changed(position, direction) {
+        intervals[index].y = intervals[index].y & ~CHANGED;
+        return;
+    }
     let radiance: vec3<f32> = merged_radiance(position, direction);
-    intervals[index] = vec2<u32>(pack2x16float(radiance.rg), pack2x16float(vec2<f32>(radiance.b, 0.0)));
+    let packed: vec2<u32> = vec2<u32>(pack2x16float(radiance.rg), pack2x16float(vec2<f32>(radiance.b, 0.0)));
+    let previous: vec2<u32> = vec2<u32>(intervals[index].x, intervals[index].y & ~CHANGED);
+    intervals[index] = vec2<u32>(packed.x, packed.y | select(0u, 0x10000u, any(packed != previous)));
 }
 
-/// Gathers the fluence of every cell from its finest intervals merged with the stored levels
+/// Gathers the fluence of every cell from its finest intervals merged with the stored levels,
+/// keeping the previous fluence of cells where nothing changed
 @compute @workgroup_size(8, 8, 1)
 fn integrate(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if any(invocation.xy >= level.domain_size) {
         return;
     }
     let position: vec2<f32> = vec2<f32>(invocation.xy) + 0.5;
+    if !cell_inputs_changed(position) {
+        return;
+    }
     var radiance: vec3<f32> = vec3<f32>(0.0);
     for (var direction: u32 = 0u; direction < level.direction_count; direction++) {
         radiance += merged_radiance(position, direction);

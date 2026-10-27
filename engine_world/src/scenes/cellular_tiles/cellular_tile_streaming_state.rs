@@ -3,15 +3,17 @@
 use super::{
     cellular_tile_streaming_request::CellularTileStreamingRequest,
     cellular_tile_streaming_response::CellularTileStreamingResponse,
+    cellular_tile_streaming_transfer::{
+        ABSENT_TILE_INDEX,
+        CellularTileStreamingTransfer,
+        RECORD_WORD_COUNT,
+    },
     CellularTileBuffers,
     CellularTileCoordinates,
     CellularTileIndex,
     CellularTileRegion,
     CELLULAR_TILE_AMOUNT_PER_UNIT,
-    CELLULAR_TILE_AWAKE,
-    CELLULAR_TILE_GAS_AWAKE,
     CELLULAR_TILE_SIZE,
-    CELLULAR_TILE_THERMAL_AWAKE,
 };
 use crate::{
     materials::{
@@ -98,6 +100,10 @@ pub struct CellularTileStreamingState {
     save_streaming_request_identifier: Option<u64>,
     /// Whether tile return completed while the resident particle snapshot is still pending
     is_save_waiting_for_particles: bool,
+    /// GPU passes moving whole tiles to and from the ring, created on first use
+    transfer: Option<CellularTileStreamingTransfer>,
+    /// Unmapped staging buffers awaiting reuse by a request of exactly their size
+    staging_buffer_pool: Vec<wgpu::Buffer>,
     /// Sender for staging buffer mapping responses
     response_sender: Sender<CellularTileStreamingResponse>,
     /// Mapping responses incorporated during tile streaming
@@ -140,6 +146,8 @@ impl CellularTileStreamingState {
             is_save_requested: false,
             save_streaming_request_identifier: None,
             is_save_waiting_for_particles: false,
+            transfer: None,
+            staging_buffer_pool: Vec::new(),
             response_sender,
             response_receiver,
         };
@@ -520,6 +528,16 @@ impl CellularTileStreamingState {
             if let Some(chunk_region_index) = streaming_request.chunk_region_index {
                 chunk_streaming_state.release_chunk_region_request(chunk_region_index)?;
             }
+            self.staging_buffer_pool.push(streaming_request.buffer);
+            if let Some(buffer) = streaming_request.fluid_particle_buffer {
+                self.staging_buffer_pool.push(buffer);
+            }
+            // keep the pool bounded, dropping the oldest buffers
+            let pool_maximum: usize = SCENE_CELLULAR_TILE_STREAMING_REQUEST_COUNT_MAXIMUM * 3;
+            if self.staging_buffer_pool.len() > pool_maximum {
+                let excess: usize = self.staging_buffer_pool.len() - pool_maximum;
+                self.staging_buffer_pool.drain(..excess);
+            }
         }
         // request another mapping for staging buffers whose previous mapping failed
         for (streaming_request_identifier, streaming_request) in &mut self.streaming_requests {
@@ -678,81 +696,35 @@ impl CellularTileStreamingState {
         self.chunk_region_index = self.requested_chunk_region_index.take();
         // queued writes execute after the submitted request copies of the same slots, waking each
         // entering tile so its moving cells continue and its neighbors notice it
+        let mut records: Vec<u8> = Vec::with_capacity(
+            incoming_cells.len() * RECORD_WORD_COUNT as usize * 4,
+        );
+        let mut tile_indices: Vec<u32> = Vec::with_capacity(incoming_cells.len());
         for (coordinates, (material_identifiers, colors, radiances, kinematics, gas, matter)) in
             incoming_coordinates.into_iter().zip(incoming_cells)
         {
             let Some(cellular_tile_index) = self.cellular_tile_index(coordinates)
             else { continue; };
-            let mut material_identifier_bytes: [u8; CELLULAR_TILE_BYTE_COUNT as usize] =
-                [0; CELLULAR_TILE_BYTE_COUNT as usize];
-            let mut color_bytes: [u8; CELLULAR_TILE_COLOR_BYTE_COUNT as usize] =
-                [0; CELLULAR_TILE_COLOR_BYTE_COUNT as usize];
-            let mut kinematics_bytes: [u8; CELLULAR_TILE_KINEMATICS_BYTE_COUNT as usize] =
-                [0; CELLULAR_TILE_KINEMATICS_BYTE_COUNT as usize];
-            for (cell_index, (((material_identifier, color), radiance), cell_kinematics)) in
-                material_identifiers.iter().zip(colors.iter()).zip(radiances.iter()).zip(kinematics.iter()).enumerate()
-            {
-                material_identifier_bytes[cell_index * 4..cell_index * 4 + 4]
-                    .copy_from_slice(&material_identifier.as_u32().to_le_bytes());
-                color_bytes[cell_index * 8..cell_index * 8 + 4].copy_from_slice(&color.to_le_bytes());
-                color_bytes[cell_index * 8 + 4..cell_index * 8 + 8]
-                    .copy_from_slice(&radiance.to_le_bytes());
-                kinematics_bytes[cell_index * 8..cell_index * 8 + 8]
-                    .copy_from_slice(&cell_kinematics.to_le_bytes());
+            tile_indices.push(cellular_tile_index.into());
+            // record layout: material identifiers, interleaved colors and radiances, kinematics,
+            // gas, then matter
+            for material_identifier in material_identifiers.iter() {
+                records.extend_from_slice(&material_identifier.as_u32().to_le_bytes());
             }
-            let physical_tile_index: u32 = cellular_tile_index.into();
-            let tile_offset: u64 = u64::from(physical_tile_index) * CELLULAR_TILE_BYTE_COUNT;
-            let color_tile_offset: u64 = u64::from(physical_tile_index) * CELLULAR_TILE_COLOR_BYTE_COUNT;
-            accelerator.queue().write_buffer(
-                cellular_tile_buffers.material_identifier_buffer(),
-                tile_offset,
-                &material_identifier_bytes,
-            );
-            accelerator.queue().write_buffer(
-                cellular_tile_buffers.color_buffer(),
-                color_tile_offset,
-                &color_bytes,
-            );
-            accelerator.queue().write_buffer(
-                cellular_tile_buffers.kinematics_buffer(),
-                tile_offset * 2,
-                &kinematics_bytes,
-            );
-            accelerator.queue().write_buffer(
-                cellular_tile_buffers.awake_buffer(),
-                u64::from(physical_tile_index) * 4,
-                &CELLULAR_TILE_AWAKE.to_le_bytes(),
-            );
-            let gas_bytes: Vec<u8> = gas.iter().flat_map(|word| word.to_le_bytes()).collect();
-            accelerator.queue().write_buffer(
-                cellular_tile_buffers.gas_buffer(),
-                tile_offset * 8,
-                &gas_bytes,
-            );
-            accelerator.queue().write_buffer(
-                cellular_tile_buffers.gas_awake_buffer(),
-                u64::from(physical_tile_index) * 4,
-                &CELLULAR_TILE_GAS_AWAKE.to_le_bytes(),
-            );
-            let matter_bytes: Vec<u8> =
-                matter.iter().flat_map(|word| word.to_le_bytes()).collect();
-            accelerator.queue().write_buffer(
-                cellular_tile_buffers.matter_buffer(),
-                tile_offset * 2,
-                &matter_bytes,
-            );
-            accelerator.queue().write_buffer(
-                cellular_tile_buffers.thermal_awake_buffer(),
-                u64::from(physical_tile_index) * 4,
-                &CELLULAR_TILE_THERMAL_AWAKE.to_le_bytes(),
-            );
-            // entering tiles hold no rigid body cells until rigid bodies rasterize into them
-            accelerator.queue().write_buffer(
-                cellular_tile_buffers.rigid_body_cell_buffer(),
-                tile_offset,
-                &[0; CELLULAR_TILE_BYTE_COUNT as usize],
-            );
+            for (color, radiance) in colors.iter().zip(radiances.iter()) {
+                records.extend_from_slice(&color.to_le_bytes());
+                records.extend_from_slice(&radiance.to_le_bytes());
+            }
+            for cell_kinematics in kinematics.iter() {
+                records.extend_from_slice(&cell_kinematics.to_le_bytes());
+            }
+            for word in gas.iter() { records.extend_from_slice(&word.to_le_bytes()); }
+            for word in matter.iter() { records.extend_from_slice(&word.to_le_bytes()); }
         }
+        // one scatter submit wakes each entering tile and clears its rigid body cells
+        self.transfer
+            .get_or_insert_with(|| CellularTileStreamingTransfer::new(accelerator, cellular_tile_buffers))
+            .upload(accelerator, cellular_tile_buffers, &records, &tile_indices);
         Ok(())
     }
 
@@ -765,71 +737,31 @@ impl CellularTileStreamingState {
         chunk_region_index: Option<ChunkRegionIndex>,
         is_fluid_particle_export_required: bool,
     ) -> u64 {
-        let buffer: wgpu::Buffer = accelerator.device().create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Scene cellular tile streaming request"),
-            size: coordinates.len() as u64 * CELLULAR_TILE_STREAMING_BYTE_COUNT,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let buffer: wgpu::Buffer = self.take_staging_buffer(
+            accelerator,
+            "Scene cellular tile streaming request",
+            coordinates.len() as u64 * CELLULAR_TILE_STREAMING_BYTE_COUNT,
+        );
         let fluid_particle_buffer: Option<wgpu::Buffer> =
-            is_fluid_particle_export_required.then(|| {
-                accelerator.device().create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("Scene fluid particle streaming request"),
-                    size: self.fluid_particle_export_buffer_size,
-                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                })
-            });
-        // copy each tile's material identifiers, colors, kinematics, gas, then matter from its
-        // physical slot
+            is_fluid_particle_export_required.then(|| self.take_staging_buffer(
+                accelerator,
+                "Scene fluid particle streaming request",
+                self.fluid_particle_export_buffer_size,
+            ));
+        // gather each tile's material identifiers, colors, kinematics, gas, then matter from its
+        // physical slot into one packed buffer and copy it to the staging buffer; absent tiles
+        // stay zero
         let mut command_encoder: wgpu::CommandEncoder = accelerator.device()
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Scene cellular tile streaming request"),
             });
-        for (staging_index, tile_coordinates) in coordinates.iter().enumerate() {
-            let Some(cellular_tile_index) = self.cellular_tile_index(*tile_coordinates)
-            else { continue; };
-            let physical_tile_index: u32 = cellular_tile_index.into();
-            let tile_offset: u64 = u64::from(physical_tile_index) * CELLULAR_TILE_BYTE_COUNT;
-            let color_tile_offset: u64 = u64::from(physical_tile_index) * CELLULAR_TILE_COLOR_BYTE_COUNT;
-            let staging_offset: u64 = staging_index as u64 * CELLULAR_TILE_STREAMING_BYTE_COUNT;
-            command_encoder.copy_buffer_to_buffer(
-                cellular_tile_buffers.material_identifier_buffer(),
-                tile_offset,
-                &buffer,
-                staging_offset,
-                CELLULAR_TILE_BYTE_COUNT,
-            );
-            command_encoder.copy_buffer_to_buffer(
-                cellular_tile_buffers.color_buffer(),
-                color_tile_offset,
-                &buffer,
-                staging_offset + CELLULAR_TILE_BYTE_COUNT,
-                CELLULAR_TILE_COLOR_BYTE_COUNT,
-            );
-            command_encoder.copy_buffer_to_buffer(
-                cellular_tile_buffers.kinematics_buffer(),
-                tile_offset * 2,
-                &buffer,
-                staging_offset + CELLULAR_TILE_BYTE_COUNT + CELLULAR_TILE_COLOR_BYTE_COUNT,
-                CELLULAR_TILE_KINEMATICS_BYTE_COUNT,
-            );
-            command_encoder.copy_buffer_to_buffer(
-                cellular_tile_buffers.gas_buffer(),
-                tile_offset * 8,
-                &buffer,
-                staging_offset + CELLULAR_TILE_BYTE_COUNT + CELLULAR_TILE_COLOR_BYTE_COUNT + CELLULAR_TILE_KINEMATICS_BYTE_COUNT,
-                CELLULAR_TILE_GAS_BYTE_COUNT,
-            );
-            command_encoder.copy_buffer_to_buffer(
-                cellular_tile_buffers.matter_buffer(),
-                tile_offset * 2,
-                &buffer,
-                staging_offset + CELLULAR_TILE_BYTE_COUNT + CELLULAR_TILE_COLOR_BYTE_COUNT + CELLULAR_TILE_KINEMATICS_BYTE_COUNT
-                    + CELLULAR_TILE_GAS_BYTE_COUNT,
-                CELLULAR_TILE_MATTER_BYTE_COUNT,
-            );
-        }
+        let tile_indices: Vec<u32> = coordinates.iter().map(|tile_coordinates|
+            self.cellular_tile_index(*tile_coordinates)
+                .map_or(ABSENT_TILE_INDEX, |cellular_tile_index| cellular_tile_index.into())
+        ).collect();
+        self.transfer
+            .get_or_insert_with(|| CellularTileStreamingTransfer::new(accelerator, cellular_tile_buffers))
+            .encode_gather(accelerator, cellular_tile_buffers, &mut command_encoder, &tile_indices, &buffer);
         accelerator.queue().submit(Some(command_encoder.finish()));
         let streaming_request_identifier: u64 = self.next_streaming_request_identifier;
         self.next_streaming_request_identifier = self.next_streaming_request_identifier
@@ -853,6 +785,19 @@ impl CellularTileStreamingState {
         );
         self.streaming_requests.insert(streaming_request_identifier, streaming_request);
         streaming_request_identifier
+    }
+
+    /// Returns a pooled staging buffer of exactly a size, or creates one
+    fn take_staging_buffer(&mut self, accelerator: &Accelerator, label: &str, size: u64) -> wgpu::Buffer {
+        if let Some(position) = self.staging_buffer_pool.iter().position(|buffer| buffer.size() == size) {
+            return self.staging_buffer_pool.swap_remove(position);
+        }
+        accelerator.device().create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
     }
 
     /// Returns the gas of a tile without stored gas: phantom air of an ambient amount in each empty

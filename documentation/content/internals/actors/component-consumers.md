@@ -3,7 +3,7 @@ title = "Who reads each component"
 description = "A map of actor components to the engine systems that currently read or write them."
 weight = 20
 [extra]
-sources = ["engine_world/src/scenes/pressure", "engine_world/src/scenes/fluids", "engine_world/src/actors/components", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine/src/games/game_instance.rs", "editor/src/editor.rs", "engine_world/src/actors/components/actor_light.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs"]
+sources = ["engine_world/src/scenes/pressure", "engine_world/src/scenes/fluids", "engine_world/src/actors/components", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine/src/games/game_instance.rs", "editor/src/editor.rs", "engine_world/src/actors/components/actor_light.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting_clear.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cache.wgsl"]
 +++
 
 This page is for engine contributors. The registry only stores components; scene, graphics, collision, and kinematics code give them behavior. The tables show which system reads or writes each component.

@@ -367,6 +367,46 @@ impl Fluids {
         {
             return Ok(());
         }
+        // an empty pool also passes a region move or a pending export unchanged. A full pass over
+        // zero particles changes only the export count word, the region origin, and the tick:
+        // there are no particles to rebase, solve, compact, or rasterize, and the empty raster is
+        // already current. Each actor's contact is the zero contact an empty pass reports, so
+        // re-sampling would store the same value. The export target still needs its count word
+        // cleared, which `particle_export_buffer_size` guards by matching the full pass's target
+        let is_zero_contact = |contact: &FluidActorContact| -> bool {
+            contact.impulse.iter().chain(contact.fluid_velocity.iter())
+                .chain([contact.immersion, contact.fluid_density, contact.fluid_drag].iter())
+                .all(|value: &f32| value.to_bits() == 0)
+        };
+        if self.particle_count == Some(0)
+            && self.particle_count_tick >= self.change_tick
+            && self.particle_count_revision == self.spawn_revision
+            && self.queued_edits.is_empty()
+            && self.queued_erasures.is_empty()
+            && self.queued_imports.is_empty()
+            && self.rejected_imports.is_empty()
+            && !is_converting
+            && export_target.is_none_or(|target: &wgpu::Buffer| {
+                target.size() == self.particle_pass.particle_export_buffer_size()
+            })
+            && actors.iter().all(|(actor, collision)| {
+                self.actor_contacts.get(actor).is_some_and(|(stored, contact, _)| {
+                    stored == collision && is_zero_contact(contact)
+                })
+            })
+        {
+            if let Some(export_target) = export_target {
+                let mut command_encoder: wgpu::CommandEncoder = accelerator.device()
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("Fluids empty export"),
+                    });
+                command_encoder.clear_buffer(export_target, 0, Some(4));
+                accelerator.queue().submit(Some(command_encoder.finish()));
+            }
+            self.previous_region_origin = Some(origin);
+            self.tick = self.tick.wrapping_add(1);
+            return Ok(());
+        }
         let previous_origin: (i64, i64) = self.previous_region_origin.unwrap_or(origin);
         let rebase: [f32; 2] = [
             (previous_origin.0 as i128 - origin.0 as i128) as f32,

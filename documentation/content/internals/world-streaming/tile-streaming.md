@@ -3,7 +3,7 @@ title = "Tile streaming"
 description = "How the scene moves its GPU tile ring and returns tile data to chunk storage."
 weight = 50
 [extra]
-sources = ["engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_buffers.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_request.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_response.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/scene_error.rs"]
+sources = ["engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_buffers.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_request.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_transfer.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_transfer.wgsl", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_response.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/scene_error.rs"]
 +++
 
 ## Overview
@@ -43,12 +43,12 @@ The overall call may still return a polling or mapping error from response proce
 
 Once incoming data is available, the state does the following in order:
 
-1. Copies departing tiles under the old ring mapping.
+1. Gathers and submits the copy of departing tiles under the old ring mapping.
 2. Shifts the ring offsets so overlapping logical tiles keep their physical slots.
 3. Marks the requested region resident.
-4. Queues writes for entering tiles.
+4. Uploads entering tiles with one packed write and one scatter submission.
 
-The queued writes upload material identifiers, paired color/radiance words, kinematics, and pressure state. The color/radiance buffer uses 8 bytes per cell. A tile without stored gas gets default gas: phantom air at the scene's ambient amount in each empty cell, with no species and no flow. They set the awake value to `CELLULAR_TILE_AWAKE`, set the gas/pressure awake value to `CELLULAR_TILE_GAS_AWAKE`, and clear rigid-body cell data.
+All entering tiles are packed into one record each: material identifiers, paired color/radiance words, kinematics, gas, then matter. The color/radiance buffer uses 8 bytes per cell. A tile without stored gas gets default gas: phantom air at the scene's ambient amount in each empty cell, with no species and no flow. `CellularTileStreamingTransfer` writes the records to a persistent, growable upload buffer with `queue.write_buffer`, along with each tile's physical slot index. Nine `scatter` dispatches then copy each field into its slot, set the awake value to `CELLULAR_TILE_AWAKE`, set the gas and thermal awake values to `CELLULAR_TILE_GAS_AWAKE` and `CELLULAR_TILE_THERMAL_AWAKE`, and clear rigid-body cell data. The scatter is submitted after the departing-tile copy, so the copy reads the old slot contents.
 
 When the ring shifts, the old region's retention moves to the outgoing request. It is released after the departing tiles reach their chunks.
 
@@ -56,7 +56,7 @@ When the ring shifts, the old region's retention moves to the outgoing request. 
 
 ### Readback
 
-Each outgoing request copies the selected tiles' material identifiers, paired color/radiance words, kinematics, gas, and matter into a staging buffer. Each tile's staging record is 3840 bytes: material IDs at 0–255, color/radiance at 256–767, kinematics at 768–1279, gas at 1280–3327, and matter at 3328–3839. It submits the GPU copy and requests a read mapping with `map_async`. A callback sends the mapping result over a channel.
+Each outgoing request gathers the selected tiles' material identifiers, paired color/radiance words, kinematics, gas, and matter into one persistent GPU record buffer with five `gather` dispatches, then copies the records to a staging buffer. A requested tile that is not resident gathers as zeros. Staging buffers are `MAP_READ` buffers; a buffer whose response has been applied returns to a bounded pool and is reused by a later request of exactly its size. Each tile's staging record is 3840 bytes: material IDs at 0–255, color/radiance at 256–767, kinematics at 768–1279, gas at 1280–3327, and matter at 3328–3839. It submits the GPU copy and requests a read mapping with `map_async`. A callback sends the mapping result over a channel.
 
 The regular streaming path polls the device without waiting and incorporates any responses already received. After a mapping failure, response processing immediately requests another mapping. Its result is observed on a later poll.
 

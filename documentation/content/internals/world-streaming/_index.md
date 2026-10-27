@@ -8,7 +8,7 @@ template = "section.html"
 sources = ["engine_world/src/scenes/chunks", "engine_world/src/scenes/cellular_tiles", "engine_world/src/scenes/scene.rs"]
 +++
 
-This subsection is for engine contributors tracing how world data moves between disk, CPU chunks, and the GPU. Chunk streaming keeps CPU chunks available for the scene’s retained chunk regions, while the cellular tile ring keeps the currently simulated cells in GPU buffers. Before their ring slots are reused, outgoing tiles are copied to staging buffers; their contents reach the chunks later, when the asynchronous readback completes. Dirty chunks are saved asynchronously when a save is requested or when they are no longer retained.
+This subsection is for engine contributors tracing how world data moves between disk, CPU chunks, and the GPU. Chunk streaming keeps CPU chunks available for the scene’s retained chunk regions, while the cellular tile ring keeps the currently simulated cells in GPU buffers. Before their ring slots are reused, outgoing tiles are gathered and copied to staging buffers; their contents reach the chunks later, when the asynchronous readback completes. Dirty chunks are saved asynchronously when a save is requested or when they are no longer retained.
 
 ```text
 disk files <----> CPU chunks <----> GPU tile ring

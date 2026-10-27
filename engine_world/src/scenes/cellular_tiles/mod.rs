@@ -9,6 +9,7 @@ mod cellular_tile_region;
 mod cellular_tile_streaming_request;
 mod cellular_tile_streaming_response;
 mod cellular_tile_streaming_state;
+mod cellular_tile_streaming_transfer;
 mod cellular_tiles;
 
 pub use cell_coordinates::CellCoordinates;
