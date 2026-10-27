@@ -44,6 +44,14 @@ pub const COLLISION_RIGID_BODY_COUNT_MAXIMUM: usize = 1024;
 /// Maximum number of tiles of cells held by every simulated rigid body
 const COLLISION_RIGID_BODY_CELLULAR_TILE_COUNT_MAXIMUM: usize = 16384;
 
+/// Largest number of tiles whose static cells one tick reports changed, beyond which collisions
+/// read every tile
+pub const COLLISION_CHANGED_CELLULAR_TILE_COUNT_MAXIMUM: u64 = 1024;
+
+/// Largest number of rigid body cells one tick removes from their bodies, beyond which the rest
+/// stay with their bodies until another tick reports them
+pub const COLLISION_CHANGED_RIGID_BODY_CELL_COUNT_MAXIMUM: u64 = 4096;
+
 /// Collision group of settled dynamic cells, reserved by the engine
 pub const COLLISION_GROUP_CELLULAR_DYNAMIC: u32 = 1 << 27;
 

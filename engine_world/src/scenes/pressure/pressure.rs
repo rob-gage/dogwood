@@ -29,8 +29,9 @@ pub struct Pressure {
 impl Pressure {
 
     /// Creates a simulation of the pressure in the cellular tile buffers, with gas displaced by
-    /// the fluid in the fluid raster and the actors in the cellular tile actor records, and
-    /// rigid body cells told apart by the rigid body tile records
+    /// the fluid in the fluid raster and the actors in the cellular tile actor records, rigid body
+    /// cells told apart by the rigid body tile records, and static tiles and rigid body cells
+    /// changed by damage reported in the collision change lists
     pub fn new(
         accelerator: &Accelerator,
         cellular_tile_buffers: &CellularTileBuffers,
@@ -38,6 +39,8 @@ impl Pressure {
         fluid_raster_buffer: &wgpu::Buffer,
         actor_buffer: &wgpu::Buffer,
         rigid_body_cellular_tile_buffer: &wgpu::Buffer,
+        changed_cellular_tile_buffer: &wgpu::Buffer,
+        changed_rigid_body_cell_buffer: &wgpu::Buffer,
     ) -> Self {
         Self {
             pass: PressureCellularTilePass::new(
@@ -47,6 +50,8 @@ impl Pressure {
                 fluid_raster_buffer,
                 actor_buffer,
                 rigid_body_cellular_tile_buffer,
+                changed_cellular_tile_buffer,
+                changed_rigid_body_cell_buffer,
             ),
         }
     }
@@ -78,18 +83,6 @@ impl Pressure {
             ambient_mass,
             actor_count,
         )
-    }
-
-    /// Returns the count of the tiles whose cellular tile cells broke in the last tick, then each
-    /// tile's buffer index and remaining static cells as two `u32` masks
-    pub fn broken_cellular_tile_buffer(&self) -> &wgpu::Buffer {
-        self.pass.broken_cellular_tile_buffer()
-    }
-
-    /// Returns the count of the rigid body cells that broke in the last tick, then each one's
-    /// rigid body tile index times 64 plus its cell
-    pub fn broken_rigid_body_cell_buffer(&self) -> &wgpu::Buffer {
-        self.pass.broken_rigid_body_cell_buffer()
     }
 
 }

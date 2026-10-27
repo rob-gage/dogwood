@@ -122,14 +122,14 @@ The private `FLUID_ACTOR_CONTACT_SCALE` is `1024`. Count, actor, and import read
 
 ## Pressure resources
 
-Pressure simulation allocates two pressure cell buffers, each a quarter of the tile ring's gas buffer, an eight-byte open-volume record per ring cell, 268 bytes of control storage per tile after a 16-byte header, uniforms for cells and for pressure cells, the published pressure buffer, and buffers for broken cells. The device requests `max_storage_buffers_per_shader_stage = 24`. Its first `simulate` creates them; they live until the scene drops. Public constants in `engine_world/src/scenes/pressure/mod.rs`:
+Pressure simulation allocates two pressure cell buffers, each a quarter of the tile ring's gas buffer, an eight-byte open-volume record per ring cell, 268 bytes of control storage per tile after a 16-byte header, uniforms for cells and for pressure cells, and the published pressure buffer. The device requests `max_storage_buffers_per_shader_stage = 24`. Its first `simulate` creates them; they live until the scene drops. Public shared collision limits in `engine_world/src/scenes/collisions/mod.rs`:
 
 | Constant | Value |
 | --- | --- |
 | `GAS_AMOUNT_PER_ATMOSPHERE` | 4096 |
 | `GAS_AMOUNT_MAXIMUM` | `0xff_ffff` (about 256 atmospheres in one species slot) |
 | `PRESSURE_MAXIMUM` | 4095 atm per cell |
-| `PRESSURE_BROKEN_CELLULAR_TILE_COUNT_MAXIMUM` | 1024 tiles before full occupancy refresh |
-| `PRESSURE_BROKEN_RIGID_BODY_CELL_COUNT_MAXIMUM` | 4096 cells reported per tick |
+| `COLLISION_CHANGED_CELLULAR_TILE_COUNT_MAXIMUM` | 1024 changed tiles reported per tick |
+| `COLLISION_CHANGED_RIGID_BODY_CELL_COUNT_MAXIMUM` | 4096 changed rigid-body cells reported per tick |
 
 Pressure uses a 1/60-second tick and 3 substeps on pressure cells of 2×2 cells; per-second coefficients are listed on the [pressure simulation](@/internals/simulation/pressure.md#flows-volume-and-sleeping) page. See the [pressure shader](@/internals/shaders/pressure-shader.md) for its tuning constants.

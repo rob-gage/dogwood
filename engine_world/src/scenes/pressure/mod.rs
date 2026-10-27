@@ -68,11 +68,3 @@ const PRESSURE_TRAPPED_EXPULSION: f32 = 8.0;
 /// Fraction of a solid cell's integrity lost per second for each atmosphere its load exceeds its
 /// strength, per unit of its material's absorption
 const PRESSURE_DAMAGE_RATE: f32 = 40.0;
-
-/// Largest number of tiles whose broken cells one tick reports to collisions, beyond which
-/// collisions read every tile
-pub const PRESSURE_BROKEN_CELLULAR_TILE_COUNT_MAXIMUM: u64 = 1024;
-
-/// Largest number of rigid body cells one tick breaks, beyond which the rest stay with their
-/// bodies as debris until another tick reports them
-pub const PRESSURE_BROKEN_RIGID_BODY_CELL_COUNT_MAXIMUM: u64 = 4096;

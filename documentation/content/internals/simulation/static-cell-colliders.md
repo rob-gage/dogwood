@@ -47,11 +47,11 @@ Static occupancy is read when any of these holds:
 - the active region or ring offset changes;
 - a reread is pending.
 
-Edits, incomplete changed-cell reports, pressure-breakage overflow, and releasing rigid bodies can set the reread flag. If a changed-cell report is incomplete, unread cells remain attached until the next read. A change in region or ring also changes which tile-buffer positions correspond to logical tiles.
+Edits, incomplete changed-cell reports, changed-cell list overflow, and releasing rigid bodies can set the reread flag. If a changed-cell report is incomplete, unread cells remain attached until the next read. A change in region or ring also changes which tile-buffer positions correspond to logical tiles.
 
 When an edit may have changed cells belonging to cellular rigid bodies, those bodies' changed cells are read and removed or split before static occupancy is read, so the replaced cells can appear in the static result.
 
-> **Limitation:** Static occupancy refresh on region/ring movement and edits, edit changed-cell reads, saves, and streaming still use blocking occupancy reads. Pressure breakage is applied incrementally from one-tick-late asynchronous copies.
+> **Limitation:** Static occupancy refresh on region/ring movement and edits, edit changed-cell reads, saves, and streaming still use blocking occupancy reads. Collision-owned changed cells are applied incrementally from one-tick-late asynchronous copies.
 
 ## Errors
 

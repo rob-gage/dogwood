@@ -548,6 +548,8 @@ impl Scene {
                 fluid_raster_buffer,
                 cellular_tiles.actor_buffer(),
                 collision.rigid_body_pass().cellular_tile_buffer(),
+                collision.changed_cellular_tile_buffer(),
+                collision.changed_rigid_body_cell_buffer(),
             ));
         pressure.simulate_pressure(
             accelerator,
@@ -558,12 +560,10 @@ impl Scene {
             self.ambient_gas_mass,
             cellular_tiles.fluid_actors().len() as u32,
         )?;
-        collision.request_broken_cells(
+        collision.request_changed_cells(
             accelerator,
             active_region,
             cellular_tile_streaming_state.cellular_tile_ring_offset(),
-            pressure.broken_cellular_tile_buffer(),
-            pressure.broken_rigid_body_cell_buffer(),
         );
         if let Some((streaming_request_identifier, _)) = particle_export_target {
             self.cellular_tile_streaming_state.as_mut()

@@ -4,8 +4,6 @@ use super::{
     GAS_AMOUNT_PER_ATMOSPHERE,
     PRESSURE_ACTOR_DRAG,
     PRESSURE_AMBIENT_DIFFUSIVITY,
-    PRESSURE_BROKEN_CELLULAR_TILE_COUNT_MAXIMUM,
-    PRESSURE_BROKEN_RIGID_BODY_CELL_COUNT_MAXIMUM,
     PRESSURE_BULK_VISCOSITY,
     PRESSURE_DAMAGE_RATE,
     PRESSURE_FLOW_DAMPING,
@@ -67,12 +65,6 @@ pub struct PressureCellularTilePass {
     /// Region and ring offset whose open volumes were last measured everywhere, after which only
     /// tiles that may have changed are measured
     volume_region: Option<(CellularTileRegion, (u32, u32))>,
-    /// Count of the tiles whose cellular tile cells broke this tick, then each tile's buffer index
-    /// and remaining static cells as two `u32` masks
-    broken_cellular_tile_buffer: wgpu::Buffer,
-    /// Count of the rigid body cells that broke this tick, then each one's rigid body tile index
-    /// times 64 plus its cell
-    broken_rigid_body_cell_buffer: wgpu::Buffer,
 }
 
 impl PressureCellularTilePass {
@@ -87,6 +79,8 @@ impl PressureCellularTilePass {
         fluid_raster_buffer: &wgpu::Buffer,
         actor_buffer: &wgpu::Buffer,
         rigid_body_cellular_tile_buffer: &wgpu::Buffer,
+        changed_cellular_tile_buffer: &wgpu::Buffer,
+        changed_rigid_body_cell_buffer: &wgpu::Buffer,
     ) -> Self {
         let device: &wgpu::Device = accelerator.device();
         let cell_count: u64 = cellular_tile_buffers.material_identifier_buffer().size() / 4;
@@ -248,19 +242,6 @@ impl PressureCellularTilePass {
             16 + tile_count * 268,
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         );
-        // the count of tiles where cellular tile cells broke this tick, then each tile's buffer
-        // index and remaining static cells
-        let broken_cellular_tile_buffer: wgpu::Buffer = create_buffer(
-            "`PressureCellularTilePass.broken_cellular_tile_buffer`",
-            4 + PRESSURE_BROKEN_CELLULAR_TILE_COUNT_MAXIMUM * 12,
-            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
-        );
-        // the count of rigid body cells that broke this tick, then the cells
-        let broken_rigid_body_cell_buffer: wgpu::Buffer = create_buffer(
-            "`PressureCellularTilePass.broken_rigid_body_cell_buffer`",
-            4 + PRESSURE_BROKEN_RIGID_BODY_CELL_COUNT_MAXIMUM * 4,
-            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
-        );
         let dispatch_buffer: wgpu::Buffer = create_buffer(
             "`PressureCellularTilePass.dispatch_buffer`",
             48,
@@ -337,7 +318,7 @@ impl PressureCellularTilePass {
                     },
                     wgpu::BindGroupEntry {
                         binding: 17,
-                        resource: broken_cellular_tile_buffer.as_entire_binding(),
+                        resource: changed_cellular_tile_buffer.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 18,
@@ -345,7 +326,7 @@ impl PressureCellularTilePass {
                     },
                     wgpu::BindGroupEntry {
                         binding: 19,
-                        resource: broken_rigid_body_cell_buffer.as_entire_binding(),
+                        resource: changed_rigid_body_cell_buffer.as_entire_binding(),
                     },
 
                 ],
@@ -383,8 +364,6 @@ impl PressureCellularTilePass {
             control_buffer,
             dispatch_buffer,
             volume_region: None,
-            broken_cellular_tile_buffer,
-            broken_rigid_body_cell_buffer,
         }
     }
 
@@ -474,8 +453,6 @@ impl PressureCellularTilePass {
                 label: Some("Scene pressure cellular tiles"),
             });
         command_encoder.clear_buffer(&self.control_buffer, 0, Some(16));
-        command_encoder.clear_buffer(&self.broken_cellular_tile_buffer, 0, Some(4));
-        command_encoder.clear_buffer(&self.broken_rigid_body_cell_buffer, 0, Some(4));
         {
             let mut compute_pass: wgpu::ComputePass<'_> = command_encoder
                 .begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -547,18 +524,6 @@ impl PressureCellularTilePass {
         }
         accelerator.queue().submit(Some(command_encoder.finish()));
         Ok(())
-    }
-
-    /// Returns the count of the tiles whose cellular tile cells broke in the last tick, then each
-    /// tile's buffer index and remaining static cells as two `u32` masks
-    pub fn broken_cellular_tile_buffer(&self) -> &wgpu::Buffer {
-        &self.broken_cellular_tile_buffer
-    }
-
-    /// Returns the count of the rigid body cells that broke in the last tick, then each one's
-    /// rigid body tile index times 64 plus its cell
-    pub fn broken_rigid_body_cell_buffer(&self) -> &wgpu::Buffer {
-        &self.broken_rigid_body_cell_buffer
     }
 
 }

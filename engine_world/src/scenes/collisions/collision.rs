@@ -1,6 +1,8 @@
 // Copyright Rob Gage 2026
 
 use super::{
+    COLLISION_CHANGED_CELLULAR_TILE_COUNT_MAXIMUM,
+    COLLISION_CHANGED_RIGID_BODY_CELL_COUNT_MAXIMUM,
     collider::Collider,
     collider_shape::ColliderShape,
     collision_body::CollisionBody,
@@ -53,10 +55,6 @@ use crate::{
         fluids::{
             FLUID_TIME_STEP,
             FluidActorContact,
-        },
-        pressure::{
-            PRESSURE_BROKEN_CELLULAR_TILE_COUNT_MAXIMUM,
-            PRESSURE_BROKEN_RIGID_BODY_CELL_COUNT_MAXIMUM,
         },
     },
 };
@@ -132,10 +130,16 @@ pub struct Collision {
     removed_cellular_tiles: Vec<u32>,
     /// GPU rasterization of rigid body cells into the active cellular tiles
     rigid_body_pass: CollisionRigidBodyPass,
-    /// Pressure breakage of static tiles copied for the next collision tick
-    broken_cellular_tile_readbacks: AcceleratorReadback<(CellularTileRegion, (u32, u32))>,
-    /// Pressure breakage of rigid body cells copied for the next collision tick
-    broken_rigid_body_cell_readbacks: AcceleratorReadback<()>,
+    /// Count of the tiles whose static cells changed this tick by pressure damage, then each
+    /// tile's buffer index and remaining static cells as two `u32` masks
+    changed_cellular_tile_buffer: wgpu::Buffer,
+    /// Count of the rigid body cells removed from their bodies this tick, then each one's rigid
+    /// body tile index times 64 plus its cell
+    changed_rigid_body_cell_buffer: wgpu::Buffer,
+    /// Changed static tiles copied for the next collision tick
+    changed_cellular_tile_readbacks: AcceleratorReadback<(CellularTileRegion, (u32, u32))>,
+    /// Removed rigid body cells copied for the next collision tick
+    changed_rigid_body_cell_readbacks: AcceleratorReadback<()>,
     /// Rigid bodies of every simulated actor
     rigid_bodies: rapier2d::dynamics::RigidBodySet,
     /// Cellular tile collider and every simulated actor collider
@@ -200,16 +204,36 @@ impl Collision {
             removed_rigid_bodies: Vec::new(),
             removed_cellular_tiles: Vec::new(),
             rigid_body_pass: CollisionRigidBodyPass::new(accelerator, cellular_tile_buffers),
-            broken_cellular_tile_readbacks: AcceleratorReadback::new(
+            changed_cellular_tile_buffer: accelerator.device().create_buffer(
+                &wgpu::BufferDescriptor {
+                    label: Some("`Collision.changed_cellular_tile_buffer`"),
+                    size: 4 + COLLISION_CHANGED_CELLULAR_TILE_COUNT_MAXIMUM * 12,
+                    usage: wgpu::BufferUsages::STORAGE
+                        | wgpu::BufferUsages::COPY_DST
+                        | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                },
+            ),
+            changed_rigid_body_cell_buffer: accelerator.device().create_buffer(
+                &wgpu::BufferDescriptor {
+                    label: Some("`Collision.changed_rigid_body_cell_buffer`"),
+                    size: 4 + COLLISION_CHANGED_RIGID_BODY_CELL_COUNT_MAXIMUM * 4,
+                    usage: wgpu::BufferUsages::STORAGE
+                        | wgpu::BufferUsages::COPY_DST
+                        | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                },
+            ),
+            changed_cellular_tile_readbacks: AcceleratorReadback::new(
                 accelerator,
-                "`Collision.broken_cellular_tile_readbacks`",
-                4 + PRESSURE_BROKEN_CELLULAR_TILE_COUNT_MAXIMUM * 12,
+                "`Collision.changed_cellular_tile_readbacks`",
+                4 + COLLISION_CHANGED_CELLULAR_TILE_COUNT_MAXIMUM * 12,
                 3,
             ),
-            broken_rigid_body_cell_readbacks: AcceleratorReadback::new(
+            changed_rigid_body_cell_readbacks: AcceleratorReadback::new(
                 accelerator,
-                "`Collision.broken_rigid_body_cell_readbacks`",
-                4 + PRESSURE_BROKEN_RIGID_BODY_CELL_COUNT_MAXIMUM * 4,
+                "`Collision.changed_rigid_body_cell_readbacks`",
+                4 + COLLISION_CHANGED_RIGID_BODY_CELL_COUNT_MAXIMUM * 4,
                 3,
             ),
             rigid_bodies: rapier2d::dynamics::RigidBodySet::new(),
@@ -256,7 +280,7 @@ impl Collision {
         {
             self.detached_cell_groups.clear();
         }
-        self.simulate_collisions_read_broken_cells(
+        self.simulate_collisions_read_changed_cell_feedback(
             accelerator,
             active_region,
             ring_offset,
@@ -382,29 +406,29 @@ impl Collision {
     /// Requests that the next simulation read the GPU cells after edits wrote them
     pub fn request_cellular_tile_read(&mut self) { self.is_cellular_tile_read_requested = true; }
 
-    /// Reads pressure breakage from its prior tick and applies it to collision state
-    fn simulate_collisions_read_broken_cells(
+    /// Reads prior changed-cell feedback and applies it to collision state
+    fn simulate_collisions_read_changed_cell_feedback(
         &mut self,
         accelerator: &Accelerator,
         active_region: CellularTileRegion,
         ring_offset: (u32, u32),
         material_table: &MaterialTable,
     ) -> Result<(), SceneError> {
-        let mut broken_tiles: Option<((CellularTileRegion, (u32, u32)), Vec<u8>)> = None;
+        let mut changed_tiles: Option<((CellularTileRegion, (u32, u32)), Vec<u8>)> = None;
         let tile_read_result: Result<(), AcceleratorReadbackError> =
-            self.broken_cellular_tile_readbacks.read(accelerator, true, |metadata, bytes| {
-                broken_tiles = Some((metadata, bytes.to_vec()));
+            self.changed_cellular_tile_readbacks.read(accelerator, true, |metadata, bytes| {
+                changed_tiles = Some((metadata, bytes.to_vec()));
             });
         tile_read_result.map_err(|error| match error {
             AcceleratorReadbackError::Poll(_) => SceneError::CollisionCellularTilePoll,
             AcceleratorReadbackError::BufferAsync(error) =>
                 SceneError::CollisionCellularTileResponse { error },
         })?;
-        let mut broken_rigid_body_cells: Vec<u32> = Vec::new();
+        let mut changed_rigid_body_cells: Vec<u32> = Vec::new();
         let rigid_body_read_result: Result<(), AcceleratorReadbackError> =
-            self.broken_rigid_body_cell_readbacks.read(accelerator, true, |(), bytes| {
+            self.changed_rigid_body_cell_readbacks.read(accelerator, true, |(), bytes| {
                 let count: usize = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
-                broken_rigid_body_cells.extend(bytes[4..].chunks_exact(4).take(count).map(|cell| {
+                changed_rigid_body_cells.extend(bytes[4..].chunks_exact(4).take(count).map(|cell| {
                     u32::from_le_bytes(cell.try_into().unwrap())
                 }));
             });
@@ -413,16 +437,16 @@ impl Collision {
             AcceleratorReadbackError::BufferAsync(error) =>
                 SceneError::CollisionCellularTileResponse { error },
         })?;
-        if !broken_rigid_body_cells.is_empty() {
+        if !changed_rigid_body_cells.is_empty() {
             self.simulate_collisions_remove_rigid_body_cells(
                 accelerator,
-                &broken_rigid_body_cells,
+                &changed_rigid_body_cells,
                 material_table,
             );
         }
-        let Some(((read_region, read_ring_offset), bytes)) = broken_tiles else { return Ok(()); };
+        let Some(((read_region, read_ring_offset), bytes)) = changed_tiles else { return Ok(()); };
         let count: usize = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
-        if count > PRESSURE_BROKEN_CELLULAR_TILE_COUNT_MAXIMUM as usize {
+        if count > COLLISION_CHANGED_CELLULAR_TILE_COUNT_MAXIMUM as usize {
             self.is_cellular_tile_read_requested = true;
             return Ok(());
         }
@@ -453,37 +477,50 @@ impl Collision {
         Ok(())
     }
 
-    /// Copies pressure-broken cells for the next collision tick without waiting for the GPU
-    pub fn request_broken_cells(
+    /// Copies the static tiles and rigid body cells changed this tick for the next collision tick
+    /// without waiting for the GPU, then empties the lists for the next tick's changes
+    pub fn request_changed_cells(
         &mut self,
         accelerator: &Accelerator,
         active_region: CellularTileRegion,
         ring_offset: (u32, u32),
-        broken_cellular_tile_buffer: &wgpu::Buffer,
-        broken_rigid_body_cell_buffer: &wgpu::Buffer,
     ) {
         let mut command_encoder: wgpu::CommandEncoder = accelerator.device()
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Scene collision pressure breakage readbacks"),
+                label: Some("Scene collision changed cell readbacks"),
             });
-        self.broken_cellular_tile_readbacks.copy(
+        self.changed_cellular_tile_readbacks.copy(
             &mut command_encoder,
-            broken_cellular_tile_buffer,
+            &self.changed_cellular_tile_buffer,
             0,
-            broken_cellular_tile_buffer.size(),
+            self.changed_cellular_tile_buffer.size(),
             (active_region, ring_offset),
         );
-        self.broken_rigid_body_cell_readbacks.copy(
+        self.changed_rigid_body_cell_readbacks.copy(
             &mut command_encoder,
-            broken_rigid_body_cell_buffer,
+            &self.changed_rigid_body_cell_buffer,
             0,
-            broken_rigid_body_cell_buffer.size(),
+            self.changed_rigid_body_cell_buffer.size(),
             (),
         );
+        command_encoder.clear_buffer(&self.changed_cellular_tile_buffer, 0, Some(4));
+        command_encoder.clear_buffer(&self.changed_rigid_body_cell_buffer, 0, Some(4));
         let submission_index: wgpu::SubmissionIndex =
             accelerator.queue().submit(Some(command_encoder.finish()));
-        self.broken_cellular_tile_readbacks.map(submission_index.clone());
-        self.broken_rigid_body_cell_readbacks.map(submission_index);
+        self.changed_cellular_tile_readbacks.map(submission_index.clone());
+        self.changed_rigid_body_cell_readbacks.map(submission_index);
+    }
+
+    /// Returns the count of the tiles whose static cells changed this tick, then each tile's
+    /// buffer index and remaining static cells as two `u32` masks
+    pub fn changed_cellular_tile_buffer(&self) -> &wgpu::Buffer {
+        &self.changed_cellular_tile_buffer
+    }
+
+    /// Returns the count of the rigid body cells removed from their bodies this tick, then each
+    /// one's rigid body tile index times 64 plus its cell
+    pub fn changed_rigid_body_cell_buffer(&self) -> &wgpu::Buffer {
+        &self.changed_rigid_body_cell_buffer
     }
 
     /// Returns the cells of cellular tiles overlapped by colliders in the edit collision group

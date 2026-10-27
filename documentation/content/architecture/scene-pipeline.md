@@ -23,7 +23,7 @@ Scene::simulate (when an active region exists)
   collision / pawn movement / Rapier step / rigid-body rasterization
   fluid particles using current tile geometry and shared actor records
   gas using current tile geometry, the new fluid raster, and shared actor records
-  pressure-owned broken-cell copies for the next update
+  collision-owned changed-cell copies for the next update
   mark outgoing particle export submitted
 
 Scene::graphics -> renderer compute shading -> scene draw -> UI -> present
@@ -43,20 +43,20 @@ Ring movement can be deferred by chunk readiness, readback capacity, resident sa
 
 ## Simulation order
 
-When the active region is resident, `Scene::simulate` runs these steps in order. Pressure consumers read the buffer published during the preceding tick. Contact and pressure broken-cell readbacks copied during tick N are consumed starting in tick N+1; waits target only the submission containing each copy. The [synchronization page](@/architecture/concurrency-and-gpu-sync.md) describes waits and feedback latency.
+When the active region is resident, `Scene::simulate` runs these steps in order. Pressure consumers read the buffer published during the preceding tick. Contact and collision changed-cell readbacks copied during tick N are consumed starting in tick N+1; waits target only the submission containing each copy. The [synchronization page](@/architecture/concurrency-and-gpu-sync.md) describes waits and feedback latency.
 
 1. **Read cellular feedback.** At the start of `CellularTiles::simulate_cellular_tiles`, `CellularTilePass` reads actor contacts, rigid-body contacts, and control counts from prior submissions. Actor contacts use the newest completed sample; rigid-body contacts accumulate. Control results size this tick's cellular work. Contact reads wait only for their copied submission when needed; control sizing never waits.
 2. **Simulate cellular tiles.** GPU stages run in order: `collect`, `clear`, `prepare`, `integrate`; then `prepare` and, for each cellular substep, `request`, `pick`, `resolve_begin`, the configured `resolve_even`/`resolve_odd` chain, `stage`, and `commit`; finally `contact`, `rigid_fluid_faces`, and `rigid_fluid`. `integrate`, `contact`, and `rigid_fluid` read previous published pressure; kinematics and rigid-fluid stages read the previous fluid raster. Contacts are copied for later CPU use. Actor records use pre-collision positions and inferred displacement.
 3. **Poll fluid actor feedback.** `Scene` polls completed fluid actor samples using the actor identities and collision settings from their submission before calling collision.
-4. **Read broken cells.** Collision consumes the pressure-owned asynchronous broken-cell copies from the prior tick and updates affected voxel colliders and rigid-body topology.
+4. **Read changed cells.** Collision consumes its prior asynchronous changed-cell copy and updates affected voxel colliders and rigid-body topology.
 5. **Apply collision topology and occupancy.** Collision applies detached-cell results and detached groups whose asynchronous material reads have arrived. Static occupancy is read when region/ring changes or edits request it; edit changed-cell reads and required occupancy reads can block. Settled dynamic occupancy uses completed snapshots, falling back to a blocking read when no matching snapshot exists. Collision updates voxel colliders, releases bodies outside the region, applies cellular and fluid impulses to rigid bodies, and updates actors and pawns using prior contacts.
 6. **Step Rapier and rasterize.** Pawn movement and Rapier advance actors and rigid bodies. Collision rasterizes rigid bodies into cellular tile buffers, retaining per-cell stored pressure and integrity through rasterization and splits. It requests detached-cell GPU copies for a later collision step.
 7. **Simulate fluid particles.** The solver consumes queued edits/imports and raster-contact deltas, then predicts, solves, and updates particles against current cellular and rasterized rigid-body geometry. The first `predict` substep reads previous-tick pressure and applies pressure push. The solver rebuilds the fluid raster and queues actor/count feedback. A result copied in tick N is consumed starting in N+1; actor feedback waits only for its copy submission when a response is needed.
 8. **Measure pressure volume.** `PressureCellularTilePass` measures open volume and actor drag. It measures the full ring when the region or ring offset changes; otherwise `volume_collect` lists only tiles that may have changed: tiles whose cellular cells changed or were simulated this tick, tiles awake from edits, streaming, or moving gas, tiles near fluid or dragging actors at the last measurement, and tiles within an actor's drag range.
 9. **Collect pressure work.** `collect`, `clear`, `collect_blocks`, and `prepare` build sparse dispatches for awake pressure tiles, their neighbors, and the blocks of 2×2 tiles holding them.
 10. **Step pressure.** `coarsen` rebuilds [pressure cells](@/internals/simulation/pressure.md#pressure-cells) of 2×2 cells from the cellular gas. Three fixed substeps of `step` and `step_gas` update staggered gas/solid face flows, pressure cell state, and gas relaxation, double-buffered between two pressure cell buffers. Solid load also reduces integrity in each substep. `refine` writes the result back over the cells of the active tiles.
-11. **Publish and damage.** `publish` writes gauge atmospheres to the shared pressure buffer and wakes dynamic cells next to pushing pressure. `damage` releases broken-cell pressure as phantom air and writes broken cells to pressure-owned lists for collision to apply on the next tick.
-12. **Request broken-cell copies.** `Collision::request_broken_cells` copies the pressure-owned broken-cell lists without waiting. Pressure clears those lists at the start of its next tick; collision consumes the copies on that tick. The scene marks a particle export submitted only after successful fluid simulation.
+11. **Publish and damage.** `publish` writes gauge atmospheres to the shared pressure buffer and wakes dynamic cells next to pushing pressure. `damage` releases broken-cell pressure as phantom air; topology changes are reported through the collision-owned changed-cell list.
+12. **Request changed-cell copies.** `Collision::request_changed_cells` copies collision changes without waiting. Collision reads them next tick. The scene marks a particle export submitted only after successful fluid simulation.
 
 ## Ownership
 

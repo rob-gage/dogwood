@@ -66,7 +66,7 @@ The collision update writes records when a body's pose, per-tick linear or angul
 
 Dynamic cells under a rigid body stay associated while its current rasterization covers them. When the body moves, old coverage markers are cleared; dynamic material, color, and kinematics at uncovered old cells remain in place. Unchanged, resting bodies keep their current rasterized cells.
 
-Edit changed-cell scans wait for GPU staging-buffer mappings. Pressure's broken-cell lists are copied asynchronously and applied on the next collision tick. Detached group material reads are asynchronous; bodies are created on the following tick after the read is verified. Rasterization writes are queued without waiting.
+Edit changed-cell scans wait for GPU staging-buffer mappings. The collision-owned changed-cell list is copied asynchronously and applied on the next collision tick. Detached group material reads are asynchronous; bodies are created on the following tick after the read is verified. Rasterization writes are queued without waiting.
 
 ## Release
 

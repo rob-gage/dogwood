@@ -76,7 +76,7 @@ Solid material properties provide static `strength` in atmospheres and `absorpti
 
 Each static cell under that pressure cell loses integrity while the load exceeds its material's strength.
 
-After publishing pressure, `damage` breaks cells whose integrity is exhausted. A broken cell becomes its configured dynamic debris material, retaining color and receiving velocity from the pressure push, or becomes empty. Stored pressure is released as phantom air. Pressure records broken rigid-body cells and static tiles with their remaining occupancy for collision to apply on the next tick.
+After publishing pressure, `damage` breaks cells whose integrity is exhausted. A broken cell becomes its configured dynamic debris material, retaining color and receiving velocity from the pressure push, or becomes empty. Stored pressure is released as phantom air. Rigid-body cells are removed from their body's cell mask, and changed tiles are reported with their remaining static occupancy for later topology updates.
 
 ## Published pressure and consumers
 
@@ -101,4 +101,4 @@ The model is isothermal and has no thermal simulation. Temperature values may be
 
 > **Limitation:** Pressure flow is not temperature-dependent. Momentum is not exactly conserved across the substrate and its consumers. Faces between terrain and a body, or between different bodies, reflect. Contact impulses do not yet load the pressure substrate.
 
-> **Limitation:** Pure species gas without phantom air does not enter solids. Static occupancy refresh on region/ring movement and edits, edit changed-cell reads, saves, and streaming still use blocking occupancy reads. Pressure breakage feedback is asynchronous and applied incrementally; see [collision ordering](@/internals/simulation/collision-world.md).
+> **Limitation:** Pure species gas without phantom air does not enter solids. Static occupancy refresh on region/ring movement and edits, edit changed-cell reads, saves, and streaming still use blocking occupancy reads. Collision-owned changed-cell feedback is asynchronous and applied incrementally; see [collision ordering](@/internals/simulation/collision-world.md).

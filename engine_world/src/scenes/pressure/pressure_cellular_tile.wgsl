@@ -164,13 +164,13 @@ var<storage, read_write> cellular_awake: array<atomic<u32>>;
 var<storage, read_write> kinematics: array<vec2<u32>>;
 
 @group(0) @binding(17)
-var<storage, read_write> broken_cellular_tiles: array<atomic<u32>>;
+var<storage, read_write> changed_cellular_tiles: array<atomic<u32>>;
 
 @group(0) @binding(18)
 var<storage, read_write> colors: array<u32>;
 
 @group(0) @binding(19)
-var<storage, read_write> broken_rigid_body_cells: array<atomic<u32>>;
+var<storage, read_write> changed_rigid_body_cells: array<atomic<u32>>;
 
 @group(1) @binding(0)
 var<storage, read_write> dispatches: array<u32>;
@@ -1884,9 +1884,9 @@ fn damage(
         && (kinematics[index].y & INTEGRITY_BROKEN) == INTEGRITY_BROKEN;
     // a rigid body cell breaks only once listed for its body to lose it, or waits a tick
     if is_broken && rigid_body_cell != 0u {
-        let count: u32 = atomicAdd(&broken_rigid_body_cells[0], 1u);
-        is_broken = count + 1u < arrayLength(&broken_rigid_body_cells);
-        if is_broken { atomicStore(&broken_rigid_body_cells[count + 1u], rigid_body_cell - 1u); }
+        let count: u32 = atomicAdd(&changed_rigid_body_cells[0], 1u);
+        is_broken = count + 1u < arrayLength(&changed_rigid_body_cells);
+        if is_broken { atomicStore(&changed_rigid_body_cells[count + 1u], rigid_body_cell - 1u); }
     }
     if is_broken {
         let material: vec4<f32> = static_materials[material_identifier & 0x3fffffffu];
@@ -1940,11 +1940,11 @@ fn damage(
         atomicAnd(&pressure_awake[physical_tile], ~TILE_BROKEN);
         atomicOr(&pressure_awake[physical_tile], TILE_AWAKE);
         // the tile and its remaining static cells, three words per listed tile
-        let count: u32 = atomicAdd(&broken_cellular_tiles[0], 1u);
-        if count * 3u + 3u < arrayLength(&broken_cellular_tiles) {
-            atomicStore(&broken_cellular_tiles[count * 3u + 1u], physical_tile);
-            atomicStore(&broken_cellular_tiles[count * 3u + 2u], atomicLoad(&damage_occupancy[0]));
-            atomicStore(&broken_cellular_tiles[count * 3u + 3u], atomicLoad(&damage_occupancy[1]));
+        let count: u32 = atomicAdd(&changed_cellular_tiles[0], 1u);
+        if count * 3u + 3u < arrayLength(&changed_cellular_tiles) {
+            atomicStore(&changed_cellular_tiles[count * 3u + 1u], physical_tile);
+            atomicStore(&changed_cellular_tiles[count * 3u + 2u], atomicLoad(&damage_occupancy[0]));
+            atomicStore(&changed_cellular_tiles[count * 3u + 3u], atomicLoad(&damage_occupancy[1]));
         }
     }
 }
