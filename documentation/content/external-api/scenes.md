@@ -16,7 +16,9 @@ This page covers the `Scene` type, the `SceneGenerator` trait, `ScenePosition`, 
 - `material_table()` returns the compiled material table.
 - `set_gravity(f32)` sets downward acceleration in tiles per second squared. The source default is `50.0`. The setter does not validate; negative values produce upward acceleration.
 - `set_ambient_gas_pressure(f32)` sets the pressure of the phantom air filling empty cells, in atmospheres. Values must be finite and in `[0, 256)`; otherwise it returns `InvalidAmbientGasPressure`. The default is `1.0`; zero leaves empty cells a vacuum. Tiles without stored gas start with it.
-- `ambient_gas_temperature()` returns the configured phantom-air temperature in kelvin. `set_ambient_gas_temperature(f32)` accepts finite nonnegative values and controls the temperature assigned to newly initialized gas.
+- `ambient_gas_temperature()` returns the configured phantom-air temperature in kelvin. `set_ambient_gas_temperature(f32)` accepts finite nonnegative values and controls newly initialized gas temperatures and ambient relaxation.
+- `set_ambient_gas_heat_capacity(f32)` sets heat per atmosphere per kelvin; it must be finite and positive.
+- `set_ambient_gas_conduction(f32)` sets ambient gas conduction; it must be finite and nonnegative.
 - `set_ambient_gas_mass(f32)` sets the mass of one atmosphere of phantom air, compared with gas material masses. Values must be finite and positive; otherwise it returns `InvalidAmbientGasMass`. The default is `29.0`.
 - `edit(Edit)` queues an edit and returns `EditError` on failure. See [Collisions and edits](@/external-api/collisions-and-edits.md).
 - `save()` requests persistence; it is a no-op before streaming is initialized. Save requests are nonblocking; drive the normal `stream`/`simulate` lifecycle until `is_saved()` is true. [Particle persistence](@/internals/world-streaming/fluid-streaming.md#resident-saves) describes the pending phases.
@@ -28,7 +30,7 @@ This page covers the `Scene` type, the `SceneGenerator` trait, `ScenePosition`, 
 Call `stream` and `simulate` each fixed update, and `graphics` when drawing. `GameInstance` already does this for games launched with `Engine::launch`; see [Frame and update lifecycle](@/architecture/frame-lifecycle.md) for the order and internal steps.
 
 - `stream(&Accelerator, &Processor, camera_actor) -> Result<(), SceneError>` moves the active region toward a region centered on the camera, twice its unzoomed width and height. It does not wait for I/O. The actor needs camera and kinematics-position components, and the processor needs a `chunk_io` pool ([Host types](@/external-api/host.md)).
-- `simulate(&Accelerator) -> Result<(), SceneError>` returns immediately before the active region exists. Otherwise it simulates dynamic cells against actors and rigid bodies, then performs actor and rigid-body collisions against active tiles, advances fluid particles, and simulates gas pressure and flow. Temperatures are stored and carried with matter and fluid particles, but are not simulated. Collision processing may wait for GPU readbacks when it reads settled occupancies or changed cells; gas submits its work without waiting or reading back.
+- `simulate(&Accelerator) -> Result<(), SceneError>` returns immediately before the active region exists. Otherwise it simulates dynamic cells against actors and rigid bodies, then performs actor and rigid-body collisions against active tiles, then advances fluid particles, then gas and thermal conduction, followed by fluid particle heat. Collision processing may wait for GPU readbacks when it reads settled occupancies or changed cells; gas submits its work without waiting or reading back.
 - `graphics(camera_actor)` returns borrowed graphics data, or an `ActorError` if the actor data is missing. Its actor also needs camera and kinematics-position components.
 - `cellular_graphics(camera_position)` returns active cellular graphics if available.
 - `fluid_graphics(camera_position)` returns optional borrowed raster/material data for fluid rendering, included automatically by `graphics`.
@@ -93,7 +95,7 @@ Tile and cell coordinate conversion, including negative coordinates, is covered 
 | Tile streaming | `CellularTileStreamingRequestNotFound`, `InvalidCellularTileRegion`, `CellularTileStreamingResponse`, `CellularTileStreamingResponseChunkInactive`, `CellularTileStreamingPoll` |
 | Collision and kinematics | `CollisionCellularTileResponse`, `CollisionCellularTilePoll`, `CellularTileResponse`, `CellularTilePoll` |
 | Fluid configuration and transfers | `InvalidFluidCapacityFactor`, `FluidCapacityFixed`, `FluidParticleStreamingRecordInvalid`, `FluidParticleStreamingResponseChunkInactive`, `FluidParticleResponse`, `FluidParticlePoll`, `FluidParticleExportBufferSizeInvalid`, `FluidParticleExportRecordInvalid`, `FluidParticleSnapshotResponseChannelClosed` |
-| Gas configuration | `InvalidAmbientGasPressure`, `InvalidAmbientGasMass`, `InvalidAmbientGasTemperature` |
+| Gas configuration | `InvalidAmbientGasPressure`, `InvalidAmbientGasMass`, `InvalidAmbientGasTemperature`, `InvalidAmbientGasHeatCapacity`, `InvalidAmbientGasConduction` |
 | Actors and colliders | `CameraActor`, `InvalidCollider`, `ActorDespawn` |
 
 See the linked rustdoc for variant payloads.

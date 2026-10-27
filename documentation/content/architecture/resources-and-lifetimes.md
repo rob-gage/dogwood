@@ -3,7 +3,7 @@ title = "Resources and lifetimes"
 description = "How a scene creates, shares, saves, and releases its world resources."
 weight = 50
 [extra]
-sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/pressure", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl", "engine_host/src/acceleration/accelerator.rs"]
+sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/pressure", "engine_world/src/scenes/thermal", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl", "engine_host/src/acceleration/accelerator.rs"]
 +++
 
 This page describes what a `Scene` owns, when its GPU and streaming state is created, the fixed capacity constants, and what happens on save and drop. It is for engine contributors.
@@ -23,6 +23,7 @@ Scene
 ├── CellularTileBuffers ── cloned Accelerator + GPU buffers
 ├── CellularTileStreamingState
 ├── Collision
+├── Thermal ── fluid heat
 └── CellularTiles
 ```
 
@@ -30,7 +31,7 @@ Scene
 
 `Scene::new` leaves chunk streaming, tile buffers, tile streaming, collision, and kinematics absent. The first `Scene::stream` creates chunk streaming and the GPU tile ring, sized to twice the first camera's unzoomed width and height. Later requested regions must keep those dimensions.
 
-Collision and kinematics are created on the first `simulate` call with an active region. Pressure simulation is created after fluids. Tile buffers retain a cloned `Accelerator`; its clone holds handles to the same WGPU instance, adapter, device, and queue, so teardown can use that context. See the [scene pipeline](@/architecture/scene-pipeline.md) for call order.
+Collision, kinematics, and thermal simulation are created on the first `simulate` call with an active region. Pressure simulation is created after fluids. Tile buffers retain a cloned `Accelerator`; its clone holds handles to the same WGPU instance, adapter, device, and queue, so teardown can use that context. See the [scene pipeline](@/architecture/scene-pipeline.md) for call order.
 
 ## Saving and drop behavior
 
@@ -88,6 +89,8 @@ These constants are fixed implementation values rather than runtime settings.
 | `SCENE_AMBIENT_GAS_PRESSURE_DEFAULT` | 1.0 | Default phantom air pressure, in atmospheres |
 | `SCENE_AMBIENT_GAS_MASS_DEFAULT` | 29.0 | Default mass of one atmosphere of phantom air |
 | `SCENE_AMBIENT_GAS_TEMPERATURE_DEFAULT` | 293.0 K | Default phantom-air temperature |
+| `SCENE_AMBIENT_GAS_HEAT_CAPACITY_DEFAULT` | 0.01 | Heat capacity per atmosphere of phantom air |
+| `SCENE_AMBIENT_GAS_CONDUCTION_DEFAULT` | 0.05 | Heat conduction between phantom-air cells and toward surroundings |
 | `SCENE_CHUNK_THREAD_POOL_NAME` | `"chunk_io"` | Pool for background chunk loads, generation, and saves |
 | `COLLISION_GROUP_CELLULAR_DYNAMIC` | `1 << 27` | Settled dynamic cells collision group |
 | `COLLISION_GROUP_ACTOR` | `1 << 28` | Actor colliders collision group |
@@ -119,6 +122,17 @@ Public solver constants in `engine_world/src/scenes/fluids/mod.rs`:
 | `FLUID_TIME_STEP` | 1/60 second |
 
 The private `FLUID_ACTOR_CONTACT_SCALE` is `1024`. Count, actor, and import readbacks each have three staging slots; the resident save has one separate snapshot slot. [GPU layouts](@/internals/shaders/fluid-shader.md) document record sizes and region/pool scaling. The collision-side `RIGID_BODY_FLUID_CURRENT_COUPLING` is `1.0`.
+
+## Thermal resources
+
+Thermal simulation shares the cellular matter, gas, awake, and fluid heat buffers. Public
+fixed-point scales in `engine_world/src/scenes/thermal/mod.rs` are:
+
+| Constant | Value | Meaning |
+| --- | ---: | --- |
+| `THERMAL_FLUID_CAPACITY_SCALE` | 1024 | Units per heat-capacity unit in fluid heat records |
+| `THERMAL_FLUID_ENERGY_SCALE` | 64 | Units per heat unit in fluid heat records |
+| `THERMAL_FLUID_CONDUCTION_SCALE` | 1024 | Units per heat-capacity and conduction product in fluid heat records |
 
 ## Pressure resources
 

@@ -49,4 +49,5 @@ GPU kinematics submits work without waiting for its contact readbacks, so collis
 - [Fluid boundaries and sleeping](@/internals/simulation/fluid-boundaries.md) — solid samples, projection, and wake rules.
 - [Fluid interactions](@/internals/simulation/fluid-coupling.md) — raster contacts, buoyancy, body feedback, and swimming.
 - [Fluid streaming](@/internals/world-streaming/fluid-streaming.md) — capacity, edits, import/export ownership, and saving.
+- [Thermal simulation](@/internals/simulation/thermal.md) — cell heat storage, conduction, ambient exchange, and fluid coupling.
 - [Pressure simulation](@/internals/simulation/pressure.md) — face flows, exact integer transfers, phantom air, and displacement by cells, fluid, and actors.

@@ -41,6 +41,11 @@ use crate::{
             CHUNK_SIZE,
         },
         collisions::CollisionRigidBodyPass,
+        thermal::{
+            THERMAL_FLUID_CAPACITY_SCALE,
+            THERMAL_FLUID_CONDUCTION_SCALE,
+            THERMAL_FLUID_ENERGY_SCALE,
+        },
         SceneError,
     },
 };
@@ -151,6 +156,9 @@ pub struct FluidParticlePass {
     erasure_mask_buffer: wgpu::Buffer,
     /// Physical cell raster followed by sparse tile flags, list, and count
     fluid_raster_buffer: wgpu::Buffer,
+    /// Fixed-point heat capacity, heat, and heat capacity times conduction of the particles in each
+    /// physical cell, then the temperature change in kelvin the thermal step leaves them
+    fluid_heat_buffer: wgpu::Buffer,
     /// Per-cell Akinci weights and moving-boundary velocity
     boundary_psi_buffer: wgpu::Buffer,
     /// Sparse boundary tile list and packed solid-cell occupancy
@@ -264,6 +272,9 @@ impl FluidParticlePass {
                     storage_entry(25, true),
                     storage_entry(26, false),
                     storage_entry(27, false),
+                    storage_entry(28, false),
+                    storage_entry(29, true),
+                    storage_entry(30, false),
                 ],
             },
         );
@@ -394,7 +405,16 @@ impl FluidParticlePass {
                 immediate_size: 0,
             });
         let shader_source: String = include_str!("fluid_particle.wgsl")
-            .replace("__FLUID_BIN_SIZE__", &FLUID_BIN_SIZE.to_string());
+            .replace("__FLUID_BIN_SIZE__", &FLUID_BIN_SIZE.to_string())
+            .replace(
+                "__THERMAL_FLUID_CAPACITY_SCALE__",
+                &format!("{:?}", THERMAL_FLUID_CAPACITY_SCALE),
+            )
+            .replace("__THERMAL_FLUID_ENERGY_SCALE__", &format!("{:?}", THERMAL_FLUID_ENERGY_SCALE))
+            .replace(
+                "__THERMAL_FLUID_CONDUCTION_SCALE__",
+                &format!("{:?}", THERMAL_FLUID_CONDUCTION_SCALE),
+            );
         let shader_module: wgpu::ShaderModule = device.create_shader_module(
             wgpu::ShaderModuleDescriptor {
                 label: Some("`FluidParticlePass.shader_module`"),
@@ -422,6 +442,7 @@ impl FluidParticlePass {
             "reset_fluid_raster_tile_count",
             "clear_fluid_current_tiles",
             "rasterize_fluid",
+            "heat",
             "actor_contacts",
             "boundary",
             "boundary_weights",
@@ -586,6 +607,11 @@ impl FluidParticlePass {
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
         );
+        let fluid_heat_buffer: wgpu::Buffer = create_buffer(
+            "`FluidParticlePass.fluid_heat_buffer`",
+            cell_count * 16,
+            wgpu::BufferUsages::STORAGE,
+        );
         let boundary_tile_data_buffer: wgpu::Buffer = create_buffer(
             "`FluidParticlePass.boundary_tile_data_buffer`",
             (tile_count * 2 + cell_count) * 4,
@@ -672,6 +698,18 @@ impl FluidParticlePass {
                     resource: import_result_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry { binding: 27, resource: export_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 28,
+                    resource: fluid_heat_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 29,
+                    resource: material_table.thermal_properties_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 30,
+                    resource: cellular_tile_buffers.thermal_awake_buffer().as_entire_binding(),
+                },
             ],
         });
         let actor_projection_bind_group: wgpu::BindGroup = device.create_bind_group(
@@ -928,6 +966,7 @@ impl FluidParticlePass {
             particle_state_b,
             erasure_mask_buffer,
             fluid_raster_buffer,
+            fluid_heat_buffer,
             boundary_psi_buffer,
             boundary_tile_data_buffer,
             uniform_buffer,
@@ -1094,6 +1133,35 @@ impl FluidParticlePass {
 
     /// Returns the physical ring-cell raster of mass, momentum, and material identifiers
     pub fn fluid_raster_buffer(&self) -> &wgpu::Buffer { &self.fluid_raster_buffer }
+
+    /// Adds the temperature change the thermal step left in each particle's cell to the particle,
+    /// after a simulated tick and without waiting for the GPU
+    pub fn simulate_heat(&self, accelerator: &Accelerator) {
+        let mut command_encoder: wgpu::CommandEncoder = accelerator.device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Scene fluid particle heat"),
+            });
+        {
+            let mut compute_pass: wgpu::ComputePass<'_> = command_encoder
+                .begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Scene fluid particle heat"),
+                    timestamp_writes: None,
+                });
+            // the last tick's final uniforms point at the side its particles were rasterized from
+            let slot_offset: u32 = (3 * UNIFORM_STRIDE) as u32;
+            compute_pass.set_bind_group(0, &self.prepare_bind_group, &[slot_offset]);
+            compute_pass.set_bind_group(1, &self.dispatch_bind_group, &[]);
+            compute_pass.set_pipeline(&self.pipelines["prepare"]);
+            compute_pass.dispatch_workgroups(1, 1, 1);
+            compute_pass.set_bind_group(0, &self.bind_group, &[slot_offset]);
+            compute_pass.set_pipeline(&self.pipelines["heat"]);
+            compute_pass.dispatch_workgroups_indirect(&self.dispatch_buffer, 0);
+        }
+        accelerator.queue().submit(Some(command_encoder.finish()));
+    }
+
+    /// Returns the fluid heat the particles in each physical cell deposit
+    pub fn fluid_heat_buffer(&self) -> &wgpu::Buffer { &self.fluid_heat_buffer }
 
     /// Returns every actor sample whose asynchronous mapping completed
     pub(super) fn read_actor_contacts(

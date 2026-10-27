@@ -165,6 +165,31 @@ var<storage, read_write> fluid_particle_import_results: array<atomic<u32>>;
 @group(0) @binding(27)
 var<storage, read_write> fluid_particle_exports: array<atomic<u32>>;
 
+@group(0) @binding(28)
+var<storage, read_write> fluid_heat: array<atomic<i32>>;
+
+@group(0) @binding(29)
+var<storage, read> thermal_materials: array<vec4<u32>>;
+
+@group(0) @binding(30)
+var<storage, read_write> thermal_awake: array<atomic<u32>>;
+
+/// First thermal index of the static, dynamic, fluid, and gas materials
+const THERMAL_OFFSETS: vec4<u32> = __THERMAL_OFFSETS__;
+
+/// Fixed-point units per heat capacity unit in the fluid heat
+const THERMAL_FLUID_CAPACITY_SCALE: f32 = __THERMAL_FLUID_CAPACITY_SCALE__;
+
+/// Fixed-point units per heat unit in the fluid heat
+const THERMAL_FLUID_ENERGY_SCALE: f32 = __THERMAL_FLUID_ENERGY_SCALE__;
+
+/// Fixed-point units per heat capacity unit times conduction unit in the fluid heat
+const THERMAL_FLUID_CONDUCTION_SCALE: f32 = __THERMAL_FLUID_CONDUCTION_SCALE__;
+
+/// Amount of a particle holding one whole unit of its material, matching
+/// `CELLULAR_TILE_AMOUNT_PER_UNIT`
+const AMOUNT_PER_UNIT: f32 = 65536.0;
+
 /// Rigid-body tile record shared with cellular kinematics
 struct FluidRigidBodyCellularTile {
     /// GPU record index of the owning body
@@ -545,13 +570,17 @@ fn add_fluid_contact_tile(physical_tile: u32) {
     }
 }
 
-/// Clears all fixed-point values for one physical ring cell
+/// Clears all fixed-point values and the fluid heat for one physical ring cell
 fn clear_raster_cell(index: u32) {
     let base: u32 = index * 4u;
     atomicStore(&fluid_raster[base], 0u);
     atomicStore(&fluid_raster[base + 1u], 0u);
     atomicStore(&fluid_raster[base + 2u], 0u);
     atomicStore(&fluid_raster[base + 3u], 0u);
+    atomicStore(&fluid_heat[base], 0);
+    atomicStore(&fluid_heat[base + 1u], 0);
+    atomicStore(&fluid_heat[base + 2u], 0);
+    atomicStore(&fluid_heat[base + 3u], 0);
 }
 
 /// Adds a signed fixed-point value while clamping to the i32 range
@@ -1317,7 +1346,8 @@ fn clear_fluid_current_tiles(
     clear_raster_cell(physical_tile * 64u + local_index);
 }
 
-/// Rasterizes each live particle into its nearest physical ring cell
+/// Rasterizes each live particle and its heat into its nearest physical ring cell,
+/// waking the cell's tile for the thermal step
 @compute @workgroup_size(PARTICLE_WORKGROUP_SIZE)
 fn rasterize_fluid(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let particle_count: u32 = atomicLoad(&control[0]);
@@ -1344,7 +1374,20 @@ fn rasterize_fluid(@builtin(global_invocation_id) invocation: vec3<u32>) {
     atomic_saturating_add(base + 1u, momentum_fixed.x);
     atomic_saturating_add(base + 2u, momentum_fixed.y);
     atomicMax(&fluid_raster[base + 3u], particle.material_identifier);
+    // the thermal step reads the particles' heat capacity, heat, and conduction in each cell
+    let thermal_index: u32 = THERMAL_OFFSETS.z + material_index;
+    let properties: vec4<u32> = thermal_materials[thermal_index * 4u];
+    let heat_capacity: f32 = bitcast<f32>(properties.x) * f32(particle.amount) / AMOUNT_PER_UNIT;
+    atomicAdd(&fluid_heat[base], i32(round(heat_capacity * THERMAL_FLUID_CAPACITY_SCALE)));
+    atomicAdd(&fluid_heat[base + 1u], i32(round(
+        heat_capacity * particle.temperature * THERMAL_FLUID_ENERGY_SCALE,
+    )));
+    atomicAdd(&fluid_heat[base + 2u], i32(round(
+        heat_capacity * bitcast<f32>(properties.y) * THERMAL_FLUID_CONDUCTION_SCALE,
+    )));
     let physical_tile: u32 = tile_index(vec2<u32>(cell) / 8u);
+    // awake, matching `CELLULAR_TILE_THERMAL_AWAKE`
+    atomicOr(&thermal_awake[physical_tile], 1u);
     let flag_index: u32 = raster_tile_flags_offset() + physical_tile;
     // reading the flag first leaves only a tile's first particles contending to list it
     if atomicLoad(&fluid_raster[flag_index]) != 0u { return; }
@@ -1363,6 +1406,21 @@ fn rasterize_fluid(@builtin(global_invocation_id) invocation: vec3<u32>) {
         }
         if exchange.old_value != 0u { break; }
     }
+}
+
+/// Adds the temperature change the thermal step left the particles in each particle's cell
+@compute @workgroup_size(PARTICLE_WORKGROUP_SIZE)
+fn heat(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let particle_count: u32 = atomicLoad(&control[0]);
+    if invocation.x >= particle_count { return; }
+    var particle: FluidParticle = load_particle(invocation.x, uniforms.state_side);
+    let cell: vec2<i32> = vec2<i32>(floor(particle.state.xy));
+    if !cell_inside(cell) { return; }
+    let temperature_change: f32 =
+        bitcast<f32>(atomicLoad(&fluid_heat[cell_index(cell) * 4u + 3u]));
+    if temperature_change == 0.0 { return; }
+    particle.temperature = max(particle.temperature + temperature_change, 0.0);
+    store_particle(invocation.x, uniforms.state_side, particle);
 }
 
 /// Adds the velocity change that cellular kinematics' solid contacts left in a particle's cell

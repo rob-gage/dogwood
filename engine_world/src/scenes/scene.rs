@@ -33,7 +33,10 @@ use super::{
     },
     scene_error::SceneError,
     scene_generator::SceneGenerator,
+    thermal::Thermal,
     scene_position::ScenePosition,
+    SCENE_AMBIENT_GAS_CONDUCTION_DEFAULT,
+    SCENE_AMBIENT_GAS_HEAT_CAPACITY_DEFAULT,
     SCENE_AMBIENT_GAS_MASS_DEFAULT,
     SCENE_AMBIENT_GAS_PRESSURE_DEFAULT,
     SCENE_AMBIENT_GAS_TEMPERATURE_DEFAULT,
@@ -101,6 +104,8 @@ pub struct Scene {
     fluids: Option<Fluids>,
     /// GPU simulation of the gas in the active cellular tiles, absent until simulated
     pressure: Option<Pressure>,
+    /// GPU simulation of the heat in the active cellular tiles, absent until simulated
+    thermal: Option<Thermal>,
     /// Requested edits awaiting their write into the GPU-resident cellular tiles
     edit_streaming_state: EditStreamingState,
     /// Whether the next stream advance must start a resident particle save snapshot
@@ -119,6 +124,11 @@ pub struct Scene {
     ambient_gas_mass: f32,
     /// Temperature in kelvin of the phantom air in empty cells, which open cells relax toward
     ambient_gas_temperature: f32,
+    /// Heat per atmosphere of the phantom air in one cell needed to warm it by one kelvin
+    ambient_gas_heat_capacity: f32,
+    /// Heat per second per kelvin passing through each face between cells of phantom air, and
+    /// between phantom air and its surroundings
+    ambient_gas_conduction: f32,
     /// ECS world and fixed-tick systems of every live actor
     actor_registry: ActorRegistry,
     /// Materials of every cell in this scene, shared with chunk generation to color new cells
@@ -147,6 +157,7 @@ impl Scene {
             cellular_tiles: None,
             fluids: None,
             pressure: None,
+            thermal: None,
             edit_streaming_state: EditStreamingState::new(),
             is_fluid_save_requested: false,
             fluid_snapshot_chunk_region_index: None,
@@ -156,6 +167,8 @@ impl Scene {
             ambient_gas_pressure: SCENE_AMBIENT_GAS_PRESSURE_DEFAULT,
             ambient_gas_mass: SCENE_AMBIENT_GAS_MASS_DEFAULT,
             ambient_gas_temperature: SCENE_AMBIENT_GAS_TEMPERATURE_DEFAULT,
+            ambient_gas_heat_capacity: SCENE_AMBIENT_GAS_HEAT_CAPACITY_DEFAULT,
+            ambient_gas_conduction: SCENE_AMBIENT_GAS_CONDUCTION_DEFAULT,
             actor_registry: ActorRegistry::new(),
             material_table: Arc::new(material_table),
             generator,
@@ -215,6 +228,26 @@ impl Scene {
             return Err(SceneError::InvalidAmbientGasTemperature);
         }
         self.ambient_gas_temperature = temperature;
+        Ok(())
+    }
+
+    /// Sets the heat per atmosphere of the phantom air in one cell needed to warm it by one kelvin
+    pub fn set_ambient_gas_heat_capacity(&mut self, heat_capacity: f32) -> Result<(), SceneError> {
+        if !heat_capacity.is_finite() || heat_capacity <= 0.0 {
+            return Err(SceneError::InvalidAmbientGasHeatCapacity);
+        }
+        self.ambient_gas_heat_capacity = heat_capacity;
+        Ok(())
+    }
+
+    /// Sets the heat per second per kelvin passing through each face between cells of phantom air,
+    /// and between phantom air and the surroundings at the ambient gas temperature it relaxes
+    /// toward; zero keeps empty cells from conducting or relaxing heat
+    pub fn set_ambient_gas_conduction(&mut self, conduction: f32) -> Result<(), SceneError> {
+        if !conduction.is_finite() || conduction < 0.0 {
+            return Err(SceneError::InvalidAmbientGasConduction);
+        }
+        self.ambient_gas_conduction = conduction;
         Ok(())
     }
 
@@ -512,6 +545,16 @@ impl Scene {
             &fluid_actor_contacts,
             &self.material_table,
         )?;
+        let fluid_heat_buffer: &wgpu::Buffer = self.fluids
+            .as_ref()
+            .expect("fluid storage exists with the tile buffers")
+            .fluid_heat_buffer();
+        self.thermal.get_or_insert_with(|| Thermal::new(
+            accelerator,
+            cellular_tile_buffers,
+            &self.material_table,
+            fluid_heat_buffer,
+        ));
         let cellular_tiles: &CellularTiles = self.cellular_tiles
             .as_ref()
             .expect("cellular tile simulation exists after simulation");
@@ -560,6 +603,20 @@ impl Scene {
             self.ambient_gas_mass,
             cellular_tiles.fluid_actors().len() as u32,
         )?;
+        // heat moves through every cell after the matter carrying it has moved
+        let fluids: &mut Fluids = self.fluids.as_mut()
+            .expect("fluid storage exists with the tile buffers");
+        self.thermal.as_mut()
+            .expect("thermal simulation exists after setup")
+            .simulate_thermal(
+                accelerator,
+                active_region,
+                cellular_tile_streaming_state.cellular_tile_ring_offset(),
+                self.ambient_gas_temperature,
+                self.ambient_gas_heat_capacity,
+                self.ambient_gas_conduction,
+            );
+        fluids.simulate_heat(accelerator);
         collision.request_changed_cells(
             accelerator,
             active_region,

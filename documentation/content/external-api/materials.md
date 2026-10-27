@@ -30,8 +30,6 @@ color transformation.
 
 > **Not implemented:** Material transitions are not yet simulated.
 
-Heat capacity and conduction are retained as material properties, but state 03 does not simulate temperature changes.
-
 Registration rejects empty trimmed names and duplicate exact names. Names are case-sensitive and
 are not trimmed before lookup. Compilation rejects unknown references, debris that does not name a
 cellular dynamic material, and invalid transitions. The compilation validation limits are listed

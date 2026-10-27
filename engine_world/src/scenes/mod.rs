@@ -6,6 +6,7 @@ pub mod collisions;
 pub mod edits;
 pub mod fluids;
 pub mod pressure;
+pub mod thermal;
 mod scene;
 mod scene_error;
 mod scene_generator;
@@ -46,6 +47,13 @@ const SCENE_AMBIENT_GAS_MASS_DEFAULT: f32 = 29.0;
 
 /// Default temperature in kelvin of the phantom air in empty cells
 const SCENE_AMBIENT_GAS_TEMPERATURE_DEFAULT: f32 = 293.0;
+
+/// Default heat per atmosphere of the phantom air in one cell needed to warm it by one kelvin
+const SCENE_AMBIENT_GAS_HEAT_CAPACITY_DEFAULT: f32 = 0.01;
+
+/// Default heat per second per kelvin passing through each face between cells of phantom air, and
+/// between phantom air and the surroundings it relaxes toward
+const SCENE_AMBIENT_GAS_CONDUCTION_DEFAULT: f32 = 0.05;
 
 /// Default fraction of active-region cells available to fluid particles
 const SCENE_FLUID_CAPACITY_FACTOR_DEFAULT: f32 = 0.25;

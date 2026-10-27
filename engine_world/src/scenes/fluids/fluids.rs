@@ -77,6 +77,8 @@ pub struct Fluids {
     tick: u64,
     /// Submission number of the newest simulation that edited, erased, or imported particles
     change_tick: u64,
+    /// Whether the newest tick was simulated, so its particles take the thermal step's changes
+    is_heat_pending: bool,
     /// Latest actor contacts whose collision settings still match the current actor records
     actor_contacts: BTreeMap<Actor, (ActorCollisionComponent, FluidActorContact, u64)>,
 }
@@ -115,6 +117,7 @@ impl Fluids {
             previous_region_origin: None,
             tick: 0,
             change_tick: 0,
+            is_heat_pending: false,
             actor_contacts: BTreeMap::new(),
         }
     }
@@ -415,7 +418,16 @@ impl Fluids {
         self.queued_erasures.clear();
         self.previous_region_origin = Some(origin);
         self.tick = self.tick.wrapping_add(1);
+        self.is_heat_pending = true;
         Ok(())
+    }
+
+    /// Gives the particles of the newest simulated tick the temperature changes the thermal step
+    /// left in their cells, without waiting for the GPU
+    pub fn simulate_heat(&mut self, accelerator: &Accelerator) {
+        if !self.is_heat_pending { return; }
+        self.is_heat_pending = false;
+        self.particle_pass.simulate_heat(accelerator);
     }
 
     /// Polls actor feedback without waiting and drops samples for replaced or absent actors
@@ -446,6 +458,12 @@ impl Fluids {
     /// Returns the GPU raster of fluid mass, momentum, and material identifiers
     pub fn fluid_raster_buffer(&self) -> &wgpu::Buffer {
         self.particle_pass.fluid_raster_buffer()
+    }
+
+    /// Returns the fixed-point heat capacity, heat, and heat capacity times conduction of the
+    /// particles in each physical cell, then the temperature change the thermal step leaves them
+    pub fn fluid_heat_buffer(&self) -> &wgpu::Buffer {
+        self.particle_pass.fluid_heat_buffer()
     }
 
     /// Returns the fixed byte size of one compaction export readback
