@@ -50,13 +50,14 @@ The high five group bits are reserved by the engine:
 
 ## Edits
 
-An `Edit` exposes its `mode`, `cellular_tiles` fills, and `pressures` map of per-cell pressure deltas. Request one with `Scene::edit`; see [editing and saving the world](@/examples/editing-cells.md) for the request flow.
+An `Edit` exposes its `mode`, `cellular_tiles` fills, and `pressures` map of per-cell pressure deltas, and `temperatures` map of per-cell temperature deltas. Request one with `Scene::edit`; see [editing and saving the world](@/examples/editing-cells.md) for the request flow.
 
 ### Building an edit
 
 - `Edit::new(mode)` starts an empty edit.
-- `fill_cell(cell: CellCoordinates, material_identifier: MaterialIdentifier, color: u32)` records a cell and replaces any earlier fill of that cell in the edit. Pack `color` as RGBA with red in the least-significant byte: `u32::from_le_bytes([r, g, b, a])`.
-- `fill_segment(start: ScenePosition, end: ScenePosition, radius: f64, material_identifier: MaterialIdentifier, color: u32) -> Result<(), EditError>` fills cells whose centers fall within `radius` of the segment; `radius` is in tiles.
+- `fill_cell(cell: CellCoordinates, material_identifier: MaterialIdentifier, color: u32, temperature: Option<f32>)` records a cell and replaces any earlier fill of that cell in the edit. Pack `color` as RGBA with red in the least-significant byte: `u32::from_le_bytes([r, g, b, a])`. The optional fill temperature is supplied in kelvin; omitted temperatures use the material edit temperature.
+- `fill_segment(start: ScenePosition, end: ScenePosition, radius: f64, material_identifier: MaterialIdentifier, color: u32, temperature: Option<f32>) -> Result<(), EditError>` fills cells whose centers fall within `radius` of the segment; `radius` is in tiles.
+- `add_temperature_cell` / `remove_temperature_cell` change everything in one cell by a kelvin amount; segment variants apply the change to cells near a segment. Cooling does not lower a cell below zero kelvin.
 - `add_pressure_cell` / `remove_pressure_cell` change one cell by an atmosphere amount. `add_pressure_segment` / `remove_pressure_segment` apply the change within a segment radius in tiles.
 
 `fill_segment` edge cases:
@@ -82,6 +83,7 @@ In `Replace` mode, filling with `MaterialIdentifier::EMPTY` clears a cell; `Inse
 - `CellularTileInactive { coordinates }`: a tile of the edit is outside the active region.
 - `MaterialUnregistered { material_identifier }`: the material is not in the scene's material table.
 - `InvalidPressure`: a segment pressure is negative or not finite.
+- `InvalidTemperature`: a fill or temperature segment has a negative or nonfinite temperature.
 - `CapacityReached`: see below.
 
 `Scene::edit` also returns `CapacityReached` when the tile entries in edits awaiting the next stream would exceed 4096. Tile entries repeated across edits count separately.

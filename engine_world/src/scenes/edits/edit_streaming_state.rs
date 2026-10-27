@@ -35,6 +35,11 @@ use std::collections::{
     HashSet,
 };
 
+/// Inserted and replaced cells, materials, colors, added pressures, temperatures, and added
+/// temperatures of one tile's merged edits
+pub type EditedCellularTile =
+    (u64, u64, [MaterialIdentifier; 64], [u32; 64], [f32; 64], [f32; 64], [f32; 64]);
+
 /// Requested edits awaiting their write into the GPU-resident cellular tiles
 pub struct EditStreamingState {
     /// Edits requested since the last stream in request order
@@ -51,30 +56,39 @@ impl EditStreamingState {
     }
 
     /// Requests an edit of resident cells, written before the next stream moves resident tiles,
-    /// giving each filled cell its material's color tinted by the edit's color
+    /// giving each filled cell its material's color tinted by the edit's color and, without a
+    /// temperature, its material's edit temperature or, when emptied, the ambient gas temperature,
+    /// and returns the queued edit
     pub fn request_edit(
         &mut self,
         mut edit: Edit,
         material_table: &MaterialTable,
         active_region: Option<CellularTileRegion>,
-    ) -> Result<(), EditError> {
+        ambient_gas_temperature: f32,
+    ) -> Result<&Edit, EditError> {
         // the whole edit is rejected unless every tile and material can be written
         let mut cellular_tiles: HashSet<CellularTileCoordinates> = self.edits.iter()
             .flat_map(|queued_edit| queued_edit.cellular_tiles.keys()
-                .chain(queued_edit.pressures.keys()).copied())
+                .chain(queued_edit.pressures.keys())
+                .chain(queued_edit.temperatures.keys()).copied())
             .collect();
         cellular_tiles.extend(edit.cellular_tiles.keys().copied());
         cellular_tiles.extend(edit.pressures.keys().copied());
+        cellular_tiles.extend(edit.temperatures.keys().copied());
         if cellular_tiles.len() > EDIT_CELLULAR_TILE_COUNT_MAXIMUM {
             return Err(EditError::CapacityReached);
         }
-        for (coordinates, (cells, material_identifiers, _)) in &edit.cellular_tiles {
+        for (coordinates, (cells, material_identifiers, _, temperatures)) in &edit.cellular_tiles {
             if !active_region.is_some_and(|region| region.contains(*coordinates)) {
                 return Err(EditError::CellularTileInactive { coordinates: *coordinates });
             }
             for (cell_index, material_identifier) in material_identifiers.iter().enumerate() {
-                if cells & 1 << cell_index == 0 || *material_identifier == MaterialIdentifier::EMPTY
-                { continue; }
+                if cells & 1 << cell_index == 0 { continue; }
+                let temperature: f32 = temperatures[cell_index];
+                if !temperature.is_nan() && (!temperature.is_finite() || temperature < 0.0) {
+                    return Err(EditError::InvalidTemperature);
+                }
+                if *material_identifier == MaterialIdentifier::EMPTY { continue; }
                 match material_table.get(*material_identifier).map(|material| material.form()) {
                     None => return Err(EditError::MaterialUnregistered {
                         material_identifier: *material_identifier,
@@ -83,19 +97,27 @@ impl EditStreamingState {
                 }
             }
         }
-        // like filled tiles, a pressure tile outside the resident region rejects the whole edit
-        for coordinates in edit.pressures.keys() {
+        // like filled tiles, a pressure or temperature tile outside the resident region rejects the
+        // whole edit
+        for coordinates in edit.pressures.keys().chain(edit.temperatures.keys()) {
             if !active_region.is_some_and(|region| region.contains(*coordinates)) {
                 return Err(EditError::CellularTileInactive { coordinates: *coordinates });
             }
         }
-        for (coordinates, (cells, material_identifiers, colors)) in &mut edit.cellular_tiles {
-            for (cell_index, (material_identifier, color)) in
-                material_identifiers.iter().zip(colors.iter_mut()).enumerate()
+        for (coordinates, (cells, material_identifiers, colors, temperatures)) in
+            &mut edit.cellular_tiles
+        {
+            for (cell_index, (material_identifier, (color, temperature))) in material_identifiers
+                .iter()
+                .zip(colors.iter_mut().zip(temperatures.iter_mut()))
+                .enumerate()
             {
-                if *cells & 1 << cell_index == 0
-                    || *material_identifier == MaterialIdentifier::EMPTY
-                { continue; }
+                if *cells & 1 << cell_index == 0 { continue; }
+                if temperature.is_nan() {
+                    *temperature = material_table.edit_temperature(*material_identifier)
+                        .unwrap_or(ambient_gas_temperature);
+                }
+                if *material_identifier == MaterialIdentifier::EMPTY { continue; }
                 let cell: CellCoordinates = CellCoordinates {
                     x: coordinates.x * CELLULAR_TILE_SIZE + cell_index as i64 % CELLULAR_TILE_SIZE,
                     y: coordinates.y * CELLULAR_TILE_SIZE + cell_index as i64 / CELLULAR_TILE_SIZE,
@@ -104,7 +126,7 @@ impl EditStreamingState {
             }
         }
         self.edits.push(edit);
-        Ok(())
+        Ok(self.edits.last().expect("the edit was just queued"))
     }
 
     /// Writes requested edits into the resident tiles in request order before the ring moves,
@@ -129,16 +151,17 @@ impl EditStreamingState {
         // merge edits per cell so one dispatch matches applying them one after another: a
         // replacement always writes, and an insertion writes only if no earlier edit filled the
         // cell, becoming a replacement when an earlier replacement emptied it
-        let mut edited_cellular_tiles: BTreeMap<
-            CellularTileCoordinates,
-            (u64, u64, [MaterialIdentifier; 64], [u32; 64], [f32; 64]),
-        > = BTreeMap::new();
+        let mut edited_cellular_tiles: BTreeMap<CellularTileCoordinates, EditedCellularTile> =
+            BTreeMap::new();
+        let empty_cellular_tile: EditedCellularTile =
+            (0, 0, [MaterialIdentifier::EMPTY; 64], [0; 64], [0.0; 64], [0.0; 64], [0.0; 64]);
         for edit in self.edits.drain(..) {
-            for (coordinates, (cells, material_identifiers, colors)) in edit.cellular_tiles {
-                let (inserted_cells, replaced_cells, edited_materials, edited_colors, _):
-                    &mut (u64, u64, [MaterialIdentifier; 64], [u32; 64], [f32; 64]) =
-                    edited_cellular_tiles.entry(coordinates)
-                        .or_insert((0, 0, [MaterialIdentifier::EMPTY; 64], [0; 64], [0.0; 64]));
+            for (coordinates, (cells, material_identifiers, colors, temperatures)) in
+                edit.cellular_tiles
+            {
+                let (inserted_cells, replaced_cells, edited_materials, edited_colors, _,
+                    edited_temperatures, _): &mut EditedCellularTile =
+                    edited_cellular_tiles.entry(coordinates).or_insert(empty_cellular_tile);
                 let blocked_cells: u64 = intersections.get(&coordinates).copied().unwrap_or(0);
                 for cell_index in 0..64 {
                     let cell: u64 = 1 << cell_index;
@@ -163,44 +186,39 @@ impl EditStreamingState {
                         }
                     };
                     if !is_written { continue; }
+                    // a fluid fill empties the cell for its particle and keeps its temperature
                     if material_identifiers[cell_index].form() == MaterialForm::Fluid {
                         edited_materials[cell_index] = MaterialIdentifier::EMPTY;
                         edited_colors[cell_index] = 0;
+                        edited_temperatures[cell_index] = -1.0;
                     } else {
                         edited_materials[cell_index] = material_identifiers[cell_index];
                         edited_colors[cell_index] = colors[cell_index];
+                        edited_temperatures[cell_index] = temperatures[cell_index];
                     }
                 }
             }
             for (coordinates, pressures) in edit.pressures {
-                let (_, _, _, _, edited_pressures):
-                    &mut (u64, u64, [MaterialIdentifier; 64], [u32; 64], [f32; 64]) =
-                    edited_cellular_tiles.entry(coordinates)
-                        .or_insert((0, 0, [MaterialIdentifier::EMPTY; 64], [0; 64], [0.0; 64]));
+                let (_, _, _, _, edited_pressures, _, _): &mut EditedCellularTile =
+                    edited_cellular_tiles.entry(coordinates).or_insert(empty_cellular_tile);
                 for cell_index in 0..64 { edited_pressures[cell_index] += pressures[cell_index]; }
+            }
+            for (coordinates, temperatures) in edit.temperatures {
+                let (_, _, _, _, _, _, temperature_changes): &mut EditedCellularTile =
+                    edited_cellular_tiles.entry(coordinates).or_insert(empty_cellular_tile);
+                for cell_index in 0..64 {
+                    temperature_changes[cell_index] += temperatures[cell_index];
+                }
             }
         }
         // validated tiles stay resident because only streaming after this write moves the ring
-        let edit_cellular_tiles: Vec<(
-            CellularTileIndex,
-            u64,
-            u64,
-            [MaterialIdentifier; 64],
-            [u32; 64],
-            [f32; 64],
-        )> = edited_cellular_tiles.into_iter()
-            .filter_map(|(coordinates, (inserted_cells, replaced_cells, materials, colors,
-                pressures))| {
-                Some((
+        let edit_cellular_tiles: Vec<(CellularTileIndex, EditedCellularTile)> =
+            edited_cellular_tiles.into_iter()
+                .filter_map(|(coordinates, edited_cellular_tile)| Some((
                     cellular_tile_streaming_state.cellular_tile_index(coordinates)?,
-                    inserted_cells,
-                    replaced_cells,
-                    materials,
-                    colors,
-                    pressures,
-                ))
-            })
-            .collect();
+                    edited_cellular_tile,
+                )))
+                .collect();
         if edit_cellular_tiles.is_empty() { return Ok(()); }
         self.edit_cellular_tile_pass
             .get_or_insert_with(|| EditCellularTilePass::new(accelerator, cellular_tile_buffers))

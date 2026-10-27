@@ -109,6 +109,12 @@ var<storage, read_write> rigid_body_contacts: array<atomic<u32>>;
 @group(0) @binding(18)
 var<storage, read> pressure: array<f32>;
 
+@group(0) @binding(20)
+var<storage, read_write> matter: array<vec2<u32>>;
+
+@group(0) @binding(21)
+var<storage, read> rigid_body_cell_states: array<vec4<u32>>;
+
 @group(1) @binding(0)
 var<storage, read_write> dispatches: array<u32>;
 
@@ -964,8 +970,8 @@ fn collide(cell: vec2<i32>, index: u32, motion: vec4<u32>) {
     }
 }
 
-/// Copies each cell entering a cell this substep beside it, so no cell is overwritten while read,
-/// and collides the dynamic cells that stay
+/// Copies each cell entering a cell this substep, with its temperature and amount, beside it, so
+/// no cell is overwritten while read, and collides the dynamic cells that stay
 @compute @workgroup_size(64)
 fn stage(
     @builtin(workgroup_id) workgroup: vec3<u32>,
@@ -977,6 +983,7 @@ fn stage(
     collide(cell, index, motion);
     let picked: u32 = motion.y;
     var payload: vec4<u32> = vec4<u32>(0u);
+    var matter_payload: vec2<u32> = vec2<u32>(0u);
     if picked != 0u {
         let claimant_index: u32 = cell_index(cell + direction_offset(picked));
         if (motions[claimant_index].z & STATUS_MASK) == STATUS_SUCCEEDED {
@@ -990,9 +997,11 @@ fn stage(
                 packed.x,
                 packed.y,
             );
+            matter_payload = matter[claimant_index];
         }
     }
-    staged[index] = payload;
+    staged[index * 2u] = payload;
+    staged[index * 2u + 1u] = vec4<u32>(matter_payload, 0u, 0u);
 }
 
 /// Moves staged cells into place, empties the cells they left, gives the dynamic cells that stay
@@ -1006,12 +1015,13 @@ fn commit(
     let cell: vec2<i32> = workgroup_cell(workgroup.x, local_cell);
     let index: u32 = cell_index(cell);
     let tile: u32 = tile_index(vec2<u32>(cell) / 8u);
-    let payload: vec4<u32> = staged[index];
+    let payload: vec4<u32> = staged[index * 2u];
     let motion: vec4<u32> = motions[index];
     if payload.x != 0u {
         material_identifiers[index] = payload.x;
         colors[index] = payload.y;
         kinematics[index] = payload.zw;
+        matter[index] = staged[index * 2u + 1u].xy;
         atomicOr(&awake[tile], TILE_AWAKE | TILE_DISTURBED);
         return;
     }
@@ -1028,10 +1038,13 @@ fn commit(
                 vec2<f32>(0.0),
                 0u,
             ));
+            matter[index] = rigid_body_cell_states[rigid_body_cell - 1u].zw;
         } else {
+            // the emptied cell keeps its temperature for the gas that fills it
             material_identifiers[index] = 0u;
             colors[index] = 0u;
             kinematics[index] = vec2<u32>(0u);
+            matter[index].y = 0u;
         }
         atomicOr(&awake[tile], TILE_AWAKE | TILE_DISTURBED);
         return;
@@ -1075,7 +1088,7 @@ fn commit(
     var is_target_collided: bool = false;
     if is_cell_active(target_cell) {
         let target_index: u32 = cell_index(target_cell);
-        is_target_collided = staged[target_index].x == 0u
+        is_target_collided = staged[target_index * 2u].x == 0u
             && (motions[target_index].z & STATUS_MASK) != STATUS_SUCCEEDED
             && is_dynamic(material_identifiers[target_index]);
     }

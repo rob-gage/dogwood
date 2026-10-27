@@ -10,7 +10,7 @@ sources = ["engine_graphics/src/renders", "engine_graphics/src/world/scenes"]
 
 This page is for engine contributors working on `engine_graphics/src/renders`. It explains how `SceneRenderer` prepares and draws a scene's cellular content and sprites.
 
-`SceneRenderer` owns seven passes and draws them in this order, so the first sprite group is behind cells and the second in front:
+`SceneRenderer` owns its scene passes and draws them in this order, so the first sprite group is behind cells and the second in front:
 
 ```text
 SceneGraphics -> SceneRenderer:

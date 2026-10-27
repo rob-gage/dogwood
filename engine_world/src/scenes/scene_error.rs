@@ -25,6 +25,8 @@ pub enum SceneError {
     InvalidAmbientGasPressure,
     /// Ambient gas mass is not finite or is not positive
     InvalidAmbientGasMass,
+    /// Ambient gas temperature is not finite or is negative
+    InvalidAmbientGasTemperature,
     /// The scene already has its maximum number of chunk region requests
     ChunkRegionRequestLimitReached,
     /// A chunk region has reversed bounds or exceeds the per-side size limit

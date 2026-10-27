@@ -21,7 +21,7 @@ Other rigid-body capacities are listed in [resources and lifetimes](@/architectu
 
 Detection starts after the static-cell occupancy readback changes; see [static cell colliders](@/internals/simulation/static-cell-colliders.md) for how occupancy is built and refreshed.
 
-- The detector is seeded from occupancy changes in the previous snapshot. Occupancy in newly entering tiles does not seed a flood, so this is not a full-region scan.
+- The detector is seeded from occupancy changes in the previous snapshot. Tiles entering the region are not checked, so floating terrain in generated or saved chunks stays until a change near it.
 - Collision checks the changed cells and their four side-neighbors.
 - For each unvisited static cell in those seed neighborhoods, it flood-fills side-connected static cells.
 - A group stays attached when the search reaches the active region's edge, exceeds 4096 cells, or reaches a cell already assigned to another flood.
@@ -30,7 +30,7 @@ These checks avoid detaching groups that may continue beyond the available regio
 
 ## Creation
 
-Detached groups are read from GPU cell storage to retain each cell's material identifier, color, stored pressure, and integrity. The read is copied at the end of the collision tick and applied in the next one, and a group whose cells are no longer all static by then is dropped.
+Detached groups are read from GPU cell storage to retain each cell's material identifier, color, stored pressure, and integrity. The read is copied at the end of the collision tick and applied in the next one. At apply time, a group is discarded if any of its cells are no longer static; otherwise it is processed as a group.
 
 - Groups with fewer than 12 cells become debris. Each cell is replaced by its static material's configured debris material (a registered cellular dynamic material), or by empty if none is configured. Cells converted to a debris material keep their color; cells replaced by empty have their color cleared.
 - Groups of 12 or more cells become candidate rigid bodies.
@@ -66,7 +66,7 @@ The collision update writes records when a body's pose, per-tick linear or angul
 
 Dynamic cells under a rigid body stay associated while its current rasterization covers them. When the body moves, old coverage markers are cleared; dynamic material, color, and kinematics at uncovered old cells remain in place. Unchanged, resting bodies keep their current rasterized cells.
 
-Edit changed-cell scans wait for GPU staging-buffer mappings. Pressure-broken cell and tile lists are copied asynchronously and applied on the next collision tick. Detached group material reads are asynchronous; bodies are created on the following tick after the read is verified. Rasterization writes are queued without waiting.
+Edit changed-cell scans wait for GPU staging-buffer mappings. Pressure's broken-cell lists are copied asynchronously and applied on the next collision tick. Detached group material reads are asynchronous; bodies are created on the following tick after the read is verified. Rasterization writes are queued without waiting.
 
 ## Release
 

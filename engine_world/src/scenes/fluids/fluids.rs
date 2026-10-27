@@ -47,7 +47,7 @@ use std::collections::{
 };
 
 /// Bytes in one world-cell particle record written by the compaction export
-const EXPORT_RECORD_BYTE_COUNT: usize = 40;
+const EXPORT_RECORD_BYTE_COUNT: usize = 52;
 
 /// Fluid particle simulation of one scene's active cellular tile ring
 pub struct Fluids {
@@ -122,7 +122,7 @@ impl Fluids {
     /// Returns whether a request's possible fluid spawns fit the reserved particle capacity
     pub fn can_queue_edit(&self, edit: &Edit) -> bool {
         let mut spawn_count: u64 = 0;
-        for (cells, material_identifiers, _) in edit.cellular_tiles.values() {
+        for (cells, material_identifiers, _, _) in edit.cellular_tiles.values() {
             for (cell_index, material_identifier) in material_identifiers.iter().enumerate() {
                 if cells & (1u64 << cell_index) != 0
                     && *material_identifier != MaterialIdentifier::EMPTY
@@ -137,7 +137,9 @@ impl Fluids {
 
     /// Queues the particle effects of one already validated world-cell edit
     pub fn queue_edit(&mut self, edit: &Edit) {
-        for (coordinates, (cells, material_identifiers, _)) in &edit.cellular_tiles {
+        for (coordinates, (cells, material_identifiers, colors, temperatures))
+            in &edit.cellular_tiles
+        {
             for cell_index in 0..64 {
                 if cells & (1u64 << cell_index) == 0 { continue; }
                 let cell: CellCoordinates = CellCoordinates {
@@ -154,6 +156,8 @@ impl Fluids {
                     } else { 0 };
                     self.queued_edits.insert(cell, FluidEdit {
                         material_identifier,
+                        color: colors[cell_index],
+                        temperature: temperatures[cell_index],
                         mode,
                     });
                     if mode == 0 { self.queued_erasures.insert(cell); }
@@ -316,8 +320,8 @@ impl Fluids {
         self.particle_pass.read_live_particles_blocking(accelerator, origin)
     }
 
-    /// Simulates one fixed tick using the actor records uploaded by the cellular tile simulation and queues a
-    /// live-particle count readback, or skips a tick that would change nothing
+    /// Simulates one fixed tick using the actor records uploaded by the cellular tile simulation,
+    /// queues a live-particle count readback, or skips a tick that would change nothing
     pub(crate) fn simulate(
         &mut self,
         accelerator: &Accelerator,
@@ -490,6 +494,9 @@ pub(crate) fn decode_exported_particle_records(
         ];
         let material_identifier: MaterialIdentifier =
             MaterialIdentifier::from_u32(read_u32(record_start + 32));
+        let color: u32 = read_u32(record_start + 36);
+        let temperature: f32 = f32::from_bits(read_u32(record_start + 40));
+        let amount: u32 = read_u32(record_start + 44);
         if !fraction_x.is_finite() || !(0.0..1.0).contains(&fraction_x)
             || !fraction_y.is_finite() || !(0.0..1.0).contains(&fraction_y)
         { return Err(SceneError::FluidParticleExportRecordInvalid); }
@@ -506,6 +513,9 @@ pub(crate) fn decode_exported_particle_records(
             position,
             velocity,
             material_identifier,
+            color,
+            temperature,
+            amount,
         ).map_err(|_| SceneError::FluidParticleExportRecordInvalid)?;
         particles.push((coordinates, particle));
     }

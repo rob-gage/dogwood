@@ -27,16 +27,19 @@ use std::{
 const CHUNK_FILE_HEADER: [u8; 8] = *b"DOGWOOD\0";
 
 /// Current sparse chunk file format version
-const CHUNK_FILE_VERSION: u16 = 7;
+const CHUNK_FILE_VERSION: u16 = 8;
 
 /// Bytes in one sparse cell entry holding its index, material identifier, color, and kinematics
 const CHUNK_FILE_CELL_BYTE_COUNT: usize = 20;
 
-/// Bytes in one persisted fluid particle record
-const CHUNK_FILE_FLUID_PARTICLE_BYTE_COUNT: usize = 20;
+/// Bytes in one persisted fluid particle record with color, temperature, and amount
+const CHUNK_FILE_FLUID_PARTICLE_BYTE_COUNT: usize = 32;
 
 /// Bytes in one persisted cellular tile gas record
 const CHUNK_FILE_GAS_TILE_BYTE_COUNT: usize = 4 + 512 * 4;
+
+/// Bytes in one persisted cellular tile matter record
+const CHUNK_FILE_MATTER_TILE_BYTE_COUNT: usize = 4 + 128 * 4;
 
 /// Number of cells addressable by one chunk
 const CHUNK_CELL_COUNT: usize = (CHUNK_SIZE * CHUNK_SIZE) as usize;
@@ -57,6 +60,9 @@ pub struct Chunk {
     /// Gas cells of each cellular tile whose gas differs from the default, keyed by row-major tile
     /// index within the chunk, with eight words per row-major cell
     gas_cellular_tiles: BTreeMap<u32, Box<[u32; 512]>>,
+    /// Temperature bits and amount of each cell of each cellular tile whose matter differs from the
+    /// default, keyed by row-major tile index within the chunk, with two words per row-major cell
+    matter_cellular_tiles: BTreeMap<u32, Box<[u32; 128]>>,
 }
 
 /// Exact bit representation of one persisted fluid particle
@@ -68,6 +74,12 @@ pub struct ChunkFluidParticle {
     velocity_bits: [u32; 2],
     /// Fluid material identifier
     material_identifier: MaterialIdentifier,
+    /// Packed sRGB RGBA color
+    color: u32,
+    /// IEEE-754 temperature bits in kelvin
+    temperature_bits: u32,
+    /// Amount in units of `CELLULAR_TILE_AMOUNT_PER_UNIT`
+    amount: u32,
 }
 
 impl ChunkFluidParticle {
@@ -77,11 +89,17 @@ impl ChunkFluidParticle {
         position: [f32; 2],
         velocity: [f32; 2],
         material_identifier: MaterialIdentifier,
+        color: u32,
+        temperature: f32,
+        amount: u32,
     ) -> Result<Self, ChunkError> {
         let particle: Self = Self {
             position_bits: [position[0].to_bits(), position[1].to_bits()],
             velocity_bits: [velocity[0].to_bits(), velocity[1].to_bits()],
             material_identifier,
+            color,
+            temperature_bits: temperature.to_bits(),
+            amount,
         };
         particle.validate()?;
         Ok(particle)
@@ -100,15 +118,29 @@ impl ChunkFluidParticle {
     /// Returns the fluid material identifier
     pub fn material_identifier(self) -> MaterialIdentifier { self.material_identifier }
 
-    /// Checks that a persisted particle fits its chunk and uses a fluid material
+    /// Returns the packed sRGB RGBA color
+    pub fn color(self) -> u32 { self.color }
+
+    /// Returns the particle temperature in kelvin
+    pub fn temperature(self) -> f32 { f32::from_bits(self.temperature_bits) }
+
+    /// Returns the amount in units of `CELLULAR_TILE_AMOUNT_PER_UNIT`
+    pub fn amount(self) -> u32 { self.amount }
+
+    /// Checks that a persisted particle fits its chunk, uses a fluid material, and has a valid
+    /// temperature
     fn validate(self) -> Result<(), ChunkError> {
         let position: [f32; 2] = self.position();
         let velocity: [f32; 2] = self.velocity();
+        let temperature: f32 = self.temperature();
         if position.iter().any(|value| {
             !value.is_finite() || *value < 0.0 || *value >= CHUNK_SIZE as f32
         }) { return Err(ChunkError::FluidParticlePositionInvalid); }
         if velocity.iter().any(|value| !value.is_finite()) {
             return Err(ChunkError::FluidParticleVelocityInvalid);
+        }
+        if !temperature.is_finite() || temperature < 0.0 {
+            return Err(ChunkError::FluidParticleTemperatureInvalid);
         }
         if self.material_identifier == MaterialIdentifier::EMPTY
             || self.material_identifier.form() != MaterialForm::Fluid
@@ -129,6 +161,7 @@ impl Chunk {
             kinematics: vec![0; CHUNK_CELL_COUNT],
             fluid_particles: Vec::new(),
             gas_cellular_tiles: BTreeMap::new(),
+            matter_cellular_tiles: BTreeMap::new(),
         }
     }
 
@@ -139,6 +172,7 @@ impl Chunk {
         self.kinematics.fill(0);
         self.fluid_particles.clear();
         self.gas_cellular_tiles.clear();
+        self.matter_cellular_tiles.clear();
     }
 
     /// Reads a versioned sparse chunk from a reader
@@ -217,6 +251,27 @@ impl Chunk {
                 ChunkError::Io(error)
             }
         })?;
+        let mut matter_tile_count_bytes: [u8; 4] = [0; 4];
+        r.read_exact(&mut matter_tile_count_bytes).map_err(|error| {
+            if error.kind() == io::ErrorKind::UnexpectedEof {
+                ChunkError::InvalidLength
+            } else {
+                ChunkError::Io(error)
+            }
+        })?;
+        let matter_tile_count: usize = u32::from_le_bytes(matter_tile_count_bytes) as usize;
+        if matter_tile_count > 4096 { return Err(ChunkError::MatterTileCapacityExceeded); }
+        let mut encoded_matter_tiles: Vec<u8> = vec![
+            0;
+            matter_tile_count * CHUNK_FILE_MATTER_TILE_BYTE_COUNT
+        ];
+        r.read_exact(&mut encoded_matter_tiles).map_err(|error| {
+            if error.kind() == io::ErrorKind::UnexpectedEof {
+                ChunkError::InvalidLength
+            } else {
+                ChunkError::Io(error)
+            }
+        })?;
         let mut trailing_byte: [u8; 1] = [0];
         if r.read(&mut trailing_byte).map_err(ChunkError::Io)? != 0 {
             return Err(ChunkError::InvalidLength);
@@ -283,6 +338,9 @@ impl Chunk {
                 position_bits: [read_u32(0), read_u32(4)],
                 velocity_bits: [read_u32(8), read_u32(12)],
                 material_identifier: MaterialIdentifier::from_u32(read_u32(16)),
+                color: read_u32(20),
+                temperature_bits: read_u32(24),
+                amount: read_u32(28),
             };
             particle.validate()?;
             chunk.fluid_particles.push(particle);
@@ -311,6 +369,31 @@ impl Chunk {
                 ]);
             }
             chunk.gas_cellular_tiles.insert(tile_index, Box::new(gas_cells));
+        }
+        for encoded_matter_tile in encoded_matter_tiles.chunks_exact(
+            CHUNK_FILE_MATTER_TILE_BYTE_COUNT,
+        ) {
+            let tile_index: u32 = u32::from_le_bytes([
+                encoded_matter_tile[0],
+                encoded_matter_tile[1],
+                encoded_matter_tile[2],
+                encoded_matter_tile[3],
+            ]);
+            if tile_index >= 4096 { return Err(ChunkError::MatterTileIndexOutOfRange); }
+            if chunk.matter_cellular_tiles.contains_key(&tile_index) {
+                return Err(ChunkError::MatterTileIndexIsDuplicate);
+            }
+            let mut matter_cells: [u32; 128] = [0; 128];
+            for (cell_index, matter_cell) in matter_cells.iter_mut().enumerate() {
+                let offset: usize = 4 + cell_index * 4;
+                *matter_cell = u32::from_le_bytes([
+                    encoded_matter_tile[offset],
+                    encoded_matter_tile[offset + 1],
+                    encoded_matter_tile[offset + 2],
+                    encoded_matter_tile[offset + 3],
+                ]);
+            }
+            chunk.matter_cellular_tiles.insert(tile_index, Box::new(matter_cells));
         }
         Ok(chunk)
     }
@@ -358,7 +441,12 @@ impl Chunk {
             for value in particle.position_bits
                 .into_iter()
                 .chain(particle.velocity_bits)
-                .chain([particle.material_identifier.as_u32()])
+                .chain([
+                    particle.material_identifier.as_u32(),
+                    particle.color,
+                    particle.temperature_bits,
+                    particle.amount,
+                ])
             {
                 encoded_particles.extend_from_slice(&value.to_le_bytes());
             }
@@ -379,7 +467,23 @@ impl Chunk {
                 encoded_gas_tiles.extend_from_slice(&gas_cell.to_le_bytes());
             }
         }
-        w.write_all(&encoded_gas_tiles).map_err(ChunkError::Io)
+        w.write_all(&encoded_gas_tiles).map_err(ChunkError::Io)?;
+        let matter_tile_count: u32 = self.matter_cellular_tiles.len().try_into()
+            .map_err(|_| ChunkError::MatterTileCapacityExceeded)?;
+        if self.matter_cellular_tiles.len() > 4096 {
+            return Err(ChunkError::MatterTileCapacityExceeded);
+        }
+        w.write_all(&matter_tile_count.to_le_bytes()).map_err(ChunkError::Io)?;
+        let mut encoded_matter_tiles: Vec<u8> = Vec::with_capacity(
+            self.matter_cellular_tiles.len() * CHUNK_FILE_MATTER_TILE_BYTE_COUNT,
+        );
+        for (tile_index, matter_cells) in &self.matter_cellular_tiles {
+            encoded_matter_tiles.extend_from_slice(&tile_index.to_le_bytes());
+            for matter_cell in matter_cells.iter() {
+                encoded_matter_tiles.extend_from_slice(&matter_cell.to_le_bytes());
+            }
+        }
+        w.write_all(&encoded_matter_tiles).map_err(ChunkError::Io)
     }
 
     /// Returns the sparse fluid particles stored in this chunk
@@ -520,6 +624,20 @@ impl Chunk {
         Ok(self.gas_cellular_tiles.get(&tile_index).map(|gas_cells| **gas_cells))
     }
 
+    /// Returns one cellular tile's temperature bits and amount of each cell, or `None` when its
+    /// matter is the default
+    pub fn cellular_tile_matter(
+        &self,
+        coordinates: CellularTileCoordinates,
+    ) -> Result<Option<[u32; 128]>, ChunkError> {
+        self.cellular_tile_row_starts(coordinates)?;
+        let tiles_per_chunk_side: i64 = CHUNK_SIZE / CELLULAR_TILE_SIZE;
+        let tile_x: usize = coordinates.x.rem_euclid(tiles_per_chunk_side) as usize;
+        let tile_y: usize = coordinates.y.rem_euclid(tiles_per_chunk_side) as usize;
+        let tile_index: u32 = (tile_y * tiles_per_chunk_side as usize + tile_x) as u32;
+        Ok(self.matter_cellular_tiles.get(&tile_index).map(|matter_cells| **matter_cells))
+    }
+
     /// Replaces the material identifiers of one cellular tile within this chunk
     pub fn set_cellular_tile_material_identifiers(
         &mut self,
@@ -583,6 +701,26 @@ impl Chunk {
             self.gas_cellular_tiles.insert(tile_index, Box::new(*gas_cells));
         } else {
             self.gas_cellular_tiles.remove(&tile_index);
+        }
+        Ok(())
+    }
+
+    /// Replaces one cellular tile's temperature bits and amount of each cell, or removes its stored
+    /// matter when `None`
+    pub fn set_cellular_tile_matter(
+        &mut self,
+        coordinates: CellularTileCoordinates,
+        matter: Option<&[u32; 128]>,
+    ) -> Result<(), ChunkError> {
+        self.cellular_tile_row_starts(coordinates)?;
+        let tiles_per_chunk_side: i64 = CHUNK_SIZE / CELLULAR_TILE_SIZE;
+        let tile_x: usize = coordinates.x.rem_euclid(tiles_per_chunk_side) as usize;
+        let tile_y: usize = coordinates.y.rem_euclid(tiles_per_chunk_side) as usize;
+        let tile_index: u32 = (tile_y * tiles_per_chunk_side as usize + tile_x) as u32;
+        if let Some(matter_cells) = matter {
+            self.matter_cellular_tiles.insert(tile_index, Box::new(*matter_cells));
+        } else {
+            self.matter_cellular_tiles.remove(&tile_index);
         }
         Ok(())
     }

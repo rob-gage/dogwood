@@ -25,7 +25,7 @@ Sprite frames outside a sheet are skipped. Sheet pixel dimensions are converted 
 - the active region's camera-relative origin and dimensions in tiles;
 - the ring offsets and cells per tile.
 
-The fluid record borrows the mass/momentum raster and material properties with the same region/ring placement; see [fluid rendering](@/internals/rendering/fluid-pass.md). The gas record borrows the gas cells, material identifiers, and gas material properties with the same placement; see [gas rendering](@/internals/rendering/gas-pass.md).
+The fluid record borrows the mass/momentum raster and material properties with the same region/ring placement; see [fluid rendering](@/internals/rendering/fluid-pass.md). The gas record borrows the gas cells, material identifiers, and gas material properties with the same placement; see [gas rendering](@/internals/rendering/gas-pass.md). Pressure records borrow their cell buffers with the same placement and ambient value.
 
 See {{ <rustdoc path="engine_graphics/world/scenes/struct.SceneGraphics.html" text="the scene graphics API" /> }} and the {{ <rustdoc path="engine/scenes/struct.Scene.html" text="Scene API" /> }}.
 
@@ -37,7 +37,7 @@ It rounds the resulting viewport dimensions, caps them at the texture dimensions
 
 ## Pass order
 
-The renderer prepares passes only when the viewport has nonzero dimensions. Cellular rendering also requires a present cellular record with nonzero region width, region height, and tile size. Fluid, gas, and pressure rendering require the same nonzero viewport and region dimensions. Pressure rendering is selected by `SceneRendererViewMode::Pressure`. It classifies and shades fluid cells in two compute dispatches before opening one render pass with no depth attachment and draws in this order:
+The renderer prepares passes only when the viewport has nonzero dimensions. Cellular rendering also requires a present cellular record with nonzero region width, region height, and tile size. Fluid, gas, and pressure rendering require the same nonzero viewport and region dimensions. Pressure rendering is selected by `SceneRendererViewMode::Pressure`. The renderer classifies and shades fluid cells in two compute dispatches before opening one render pass with no depth attachment and draws in this order:
 
 0. Parallax planes, sorted farthest first by physical depth, then by sprite integer order, through a dedicated sprite pass instance.
 1. Sprites with depth `i32::MIN..=-1`.
@@ -45,7 +45,7 @@ The renderer prepares passes only when the viewport has nonzero dimensions. Cell
 3. Gas cells, when resident gas data is available.
 4. Cellular tiles, when resident cellular data is available.
 5. Sprites with depth `0..=i32::MAX`.
-6. Pressure tint, when pressure view mode is selected.
+6. Pressure tint, when its view mode is selected.
 7. Cell-aligned overlays, including actor and host cursor shapes.
 
 Each pass uses premultiplied-alpha blending. `SceneRenderer` finishes its command encoder and submits it to the accelerator queue itself. This is a scene-only render: the UI overlay is a separate stage described in [User interface rendering](@/internals/rendering/user-interface.md).

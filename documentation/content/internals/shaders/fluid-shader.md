@@ -51,7 +51,8 @@ Group 0 binding 0 is a dynamic uniform buffer. The main solver layout has ninete
 | 23–24 | Shared-layout actor records / actor feedback |
 | 25–27 | Import commands, rejection flags, and particle exports |
 
-The host requests twenty storage buffers per shader stage; see [accelerator requirements](@/internals/runtime/accelerator.md). Not every declared WGSL resource is present in every specialized layout.
+The solver uses its existing storage bindings. Thermal properties remain in the material table,
+but transitions are not simulated by the fluid pass.
 
 ## Packed records
 
@@ -71,7 +72,7 @@ All words are serialized little-endian by Rust. Sizes below are record strides, 
 | Import result | 4 | Zero accepted, nonzero rejected |
 | Export | 40 | Whole world-cell x/y as four low/high words, fractional xy, velocity xy, material ID, padding |
 
-Exports have a leading `u32` count. Resident snapshots instead hold a leading live count plus the packed particle array. The [material table](@/internals/simulation/material-table.md#fluid-property-buffer) owns the 32-byte material layout; [chunk format](@/internals/world-streaming/chunk-format.md#fluid-particle-section) owns the distinct 20-byte disk layout.
+Exports have a leading `u32` count. Resident snapshots instead hold a leading live count plus the packed particle array. The [material table](@/internals/simulation/material-table.md#fluid-property-buffer) owns the 32-byte material layout; [chunk format](@/internals/world-streaming/chunk-format.md#fluid-particle-section) owns the distinct 32-byte disk layout.
 
 ### Uniforms
 
@@ -84,7 +85,7 @@ The binding uses 152 bytes at each 256-byte dynamic stride. Four setup slots pre
 | 64–96 | Relaxation, rho0, gravity increment, rebase xy, substep count, cohesion scale/normalization, raster scale |
 | 100–116 | Fluid-material count, collision-relative region origin xy, substep index, import count |
 | 120–132 | World origin low xy and high xy |
-| 136–148 | Actor count, contact scale, actor time, padding |
+| 136–148 | Actor count, contact scale, actor time, tick |
 
 Sparse contact clearing sizes the shared indirect dispatch for contact tiles. The pass restores the live-particle dispatch before prediction, sorting, and the solver substeps.
 
@@ -114,6 +115,6 @@ The first `predict` substep reads the pressure buffer published by the prior tic
 
 ## Readback policy
 
-Count, import status, and actor feedback each have three staging slots. Count and actor copies are skipped when all slots are busy; their previous CPU state remains. Import submissions wait for a status slot so every submitted record can be accepted or returned. Counts retain submission tick and spawn revision; actor slots retain identities and collision settings. [Fluid streaming](@/internals/world-streaming/fluid-streaming.md) explains reservations and record ownership.
+Count, import status, and actor feedback each have three staging slots. Count and actor copies are skipped when all slots are busy; their previous CPU state remains. Import submissions wait for a status slot so every submitted record can be accepted or returned. Particle counts retain submission tick and spawn revision; actor slots retain identities and collision settings. [Fluid streaming](@/internals/world-streaming/fluid-streaming.md) explains reservations and record ownership.
 
 One separate resident snapshot may be mapped at a time. Ordinary reads use `Poll`; import draining and final live-pool reads use `wait_indefinitely` during teardown. Mapping or polling failures propagate as [scene errors](@/architecture/errors.md#fluid-failures).

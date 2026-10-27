@@ -147,6 +147,8 @@ impl CellularTilePass {
                     storage_entry(17, true),
                     storage_entry(18, true),
                     storage_entry(19, true),
+                    storage_entry(20, false),
+                    storage_entry(21, true),
                 ],
             },
         );
@@ -236,10 +238,11 @@ impl CellularTilePass {
             cell_count * 16,
             wgpu::BufferUsages::STORAGE,
         );
-        // each cell's incoming material identifier, color, and kinematics
+        // each cell's incoming material identifier, color, and kinematics, then its temperature and
+        // amount
         let staged_buffer: wgpu::Buffer = create_buffer(
             "`CellularTilePass.staged_buffer`",
-            cell_count * 16,
+            cell_count * 32,
             wgpu::BufferUsages::STORAGE,
         );
         let control_buffer: wgpu::Buffer = create_buffer(
@@ -367,6 +370,15 @@ impl CellularTilePass {
                 wgpu::BindGroupEntry {
                     binding: 19,
                     resource: rigid_fluid_tile_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 20,
+                    resource: cellular_tile_buffers.matter_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 21,
+                    resource: collision_rigid_body_pass.cellular_tile_state_buffer()
+                        .as_entire_binding(),
                 },
             ],
         });

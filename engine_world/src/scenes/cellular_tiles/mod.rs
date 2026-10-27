@@ -28,6 +28,13 @@ pub const CELLULAR_TILE_AWAKE: u32 = 0b11;
 /// Gas awake buffer value of a tile whose gas, and that of its neighbors, must be simulated
 pub const CELLULAR_TILE_GAS_AWAKE: u32 = 0b1;
 
+/// Thermal awake buffer value of a tile whose temperatures, and those of its neighbors, must be
+/// simulated
+pub const CELLULAR_TILE_THERMAL_AWAKE: u32 = 0b1;
+
+/// Amount of a cell or fluid particle holding one whole unit of its material
+pub const CELLULAR_TILE_AMOUNT_PER_UNIT: u32 = 65_536;
+
 /// Duration of one fixed tick in seconds, matching the collision step
 const CELLULAR_TILE_TIME_STEP: f32 = 1.0 / 60.0;
 

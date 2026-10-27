@@ -58,6 +58,7 @@ impl EditorBrush {
                     f64::from(size) / 2.0 / CELLULAR_TILE_SIZE as f64,
                     material_identifier,
                     color,
+                    None,
                 )
             }
             // stamp a square at every cell along the stroke
@@ -80,6 +81,7 @@ impl EditorBrush {
                                 CellCoordinates { x: x + offset_x, y: y + offset_y },
                                 material_identifier,
                                 color,
+                                None,
                             );
                         }
                     }

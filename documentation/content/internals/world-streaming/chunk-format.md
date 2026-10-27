@@ -16,7 +16,7 @@ This page is for contributors who need the exact in-memory layout and on-disk fo
 - a packed RGBA `u32` color
 - a packed `u64` kinematics value, the packed per-cell motion state (see [cellular kinematics](@/internals/simulation/cellular-kinematics.md))
 
-A chunk also owns a separate sparse list of `ChunkFluidParticle` records and a sparse map of gas cells for cellular tiles that differ from default gas.
+A chunk also owns a sparse list of `ChunkFluidParticle` records and sparse maps of gas cells and matter records for cellular tiles that differ from their defaults.
 
 A newly created chunk fills these with `MaterialIdentifier::EMPTY`, zero color, and zero kinematics. `fill` replaces all three arrays, sets kinematics to zero, and clears the particle list and gas map.
 
@@ -29,12 +29,12 @@ For a cell at local coordinates `(x, y)`, the row-major cell index is `y * 512 +
 | Header offset | Size | Value |
 | --- | ---: | --- |
 | 0 | 8 | ASCII `DOGWOOD` followed by NUL |
-| 8 | 2 | Format version `7` |
+| 8 | 2 | Format version `8` |
 | 10 | 4 | Chunk x coordinate as `i32` |
 | 14 | 4 | Chunk y coordinate as `i32` |
 | 18 | 4 | Number of stored entries as `u32` |
 
-Each entry contains the row-major cell index (`u32`), material identifier (`u32`), packed color (`u32`), and kinematics (`u64`), all little-endian. The writer omits a cell only when its material is `EMPTY` and its color is zero; therefore its kinematics value is also omitted in that case. Other entries are written in ascending cell-index order.
+Each entry contains the row-major cell index (`u32`), material identifier (`u32`), packed color (`u32`), and kinematics (`u64`), all little-endian. The writer omits a cell only when its material is `EMPTY` and its color is zero; therefore its kinematics value is also omitted in that case. Matter is stored separately as sparse 8 × 8 tile records, each with a tile index and 128 words (temperature bits and amount per cell). Other entries are written in ascending cell-index order.
 
 ### Reading and validation
 
@@ -66,16 +66,20 @@ Chunk loading and save scheduling are covered in [chunk I/O scheduling](@/intern
 
 ## Fluid particle section
 
-Version 6 introduced a little-endian `u32` particle count after cell entries, then 20 bytes per particle: two `f32` position components relative to the chunk origin, two `f32` velocity components in cells/tick, and a `u32` fluid material identifier. Float bits are preserved exactly. The count cannot exceed `512 * 512`; positions must be finite and in `[0, 512)`, velocities finite, and identifiers fluid-form. Failures return `FluidParticleCapacityExceeded`, `FluidParticlePositionInvalid`, `FluidParticleVelocityInvalid`, or `FluidParticleMaterialInvalid`.
+Version 8 stores 32 bytes per particle: position, velocity, material identifier, packed color, temperature, then amount, each as a little-endian `u32` (float values preserve their bits). Float bits are preserved exactly. The count cannot exceed `512 * 512`; positions must be finite and in `[0, 512)`, velocities finite, and identifiers fluid-form. Failures return `FluidParticleCapacityExceeded`, `FluidParticlePositionInvalid`, `FluidParticleVelocityInvalid`, `FluidParticleTemperatureInvalid`, or `FluidParticleMaterialInvalid`.
 
 `Chunk::fluid_particles` reads the list; `set_fluid_particles` validates and replaces it. `ChunkFluidParticle::new` validates the record and preserves supplied float bits; storage validates records again.
 
+## Matter tile section
+
+Version 8 stores sparse matter tiles after gas tiles. Each record is a tile index (`u32`) followed by 128 `u32` words, two per row-major cell: temperature bits and amount. Missing tiles use the scene ambient temperature and default amount.
+
 ## Gas tile section
 
-Version 7 appends a little-endian `u32` gas tile count after the particle records. Each tile record contains its row-major tile index (`u32`) followed by 512 little-endian `u32` gas words in row-major cell order. The count cannot exceed 4096; tile indices must be below 4096 and unique. Failures return `GasTileCapacityExceeded`, `GasTileIndexOutOfRange`, or `GasTileIndexIsDuplicate`. Truncated sections return `InvalidLength`.
+Version 7 appended a little-endian `u32` gas tile count after the particle records. Each tile record contains its row-major tile index (`u32`) followed by 512 little-endian `u32` gas words in row-major cell order. The count cannot exceed 4096; tile indices must be below 4096 and unique. Failures return `GasTileCapacityExceeded`, `GasTileIndexOutOfRange`, or `GasTileIndexIsDuplicate`. Truncated sections return `InvalidLength`.
 
 `Chunk::cellular_tile_gas` returns `None` for default gas. `set_cellular_tile_gas` stores or removes a tile entry.
 
-> **Limitation:** The reader accepts only version 7; older files return `InvalidVersion`.
+> **Limitation:** The reader accepts only version 8; older files return `InvalidVersion`.
 
 The format validates that a particle identifier is fluid-form, but does not check that it is registered in a particular scene material table. GPU admission checks registration later. Saved records do not include particle sleep state, actor samples, raster data, or material definitions; reconstructed simulation uses the scene's registered materials.

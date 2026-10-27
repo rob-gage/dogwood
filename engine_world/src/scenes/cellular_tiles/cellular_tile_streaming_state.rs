@@ -7,12 +7,17 @@ use super::{
     CellularTileCoordinates,
     CellularTileIndex,
     CellularTileRegion,
+    CELLULAR_TILE_AMOUNT_PER_UNIT,
     CELLULAR_TILE_AWAKE,
     CELLULAR_TILE_GAS_AWAKE,
     CELLULAR_TILE_SIZE,
+    CELLULAR_TILE_THERMAL_AWAKE,
 };
 use crate::{
-    materials::MaterialIdentifier,
+    materials::{
+        MaterialIdentifier,
+        MaterialTable,
+    },
     scenes::{
         chunks::{
             ChunkCoordinates,
@@ -53,10 +58,15 @@ const CELLULAR_TILE_KINEMATICS_BYTE_COUNT: u64 = CELLULAR_TILE_CELL_COUNT as u64
 /// Bytes occupied by one cellular tile's cells in the gas buffer
 const CELLULAR_TILE_GAS_BYTE_COUNT: u64 = CELLULAR_TILE_CELL_COUNT as u64 * 32;
 
-/// Bytes of one tile in a streaming request: its material identifiers, colors, kinematics, and gas
+/// Bytes occupied by one cellular tile's cells in the matter buffer
+const CELLULAR_TILE_MATTER_BYTE_COUNT: u64 = CELLULAR_TILE_CELL_COUNT as u64 * 8;
+
+/// Bytes of one tile in a streaming request: its material identifiers, colors, kinematics, gas,
+/// and matter
 const CELLULAR_TILE_STREAMING_BYTE_COUNT: u64 = CELLULAR_TILE_BYTE_COUNT * 2
     + CELLULAR_TILE_KINEMATICS_BYTE_COUNT
-    + CELLULAR_TILE_GAS_BYTE_COUNT;
+    + CELLULAR_TILE_GAS_BYTE_COUNT
+    + CELLULAR_TILE_MATTER_BYTE_COUNT;
 
 /// GPU-resident cellular tiles stored in a two-dimensional ring around the active region
 pub struct CellularTileStreamingState {
@@ -215,13 +225,15 @@ impl CellularTileStreamingState {
     }
 
     /// Returns every active tile to its chunk, waiting for every response, storing only gas that
-    /// differs from phantom air of an ambient amount in every empty cell
+    /// differs from phantom air of an ambient amount in every empty cell and only matter that
+    /// differs from the matter entering tiles are given
     pub fn return_cellular_tiles(
         &mut self,
         accelerator: &Accelerator,
         cellular_tile_buffers: &CellularTileBuffers,
         chunk_streaming_state: &mut ChunkStreamingState,
         ambient_gas_amount: u32,
+        ambient_gas_temperature: f32,
     ) -> Result<(), SceneError> {
         // copy every resident tile so the chunks match the authoritative GPU state
         if let Some(active_region) = self.active_region {
@@ -240,7 +252,11 @@ impl CellularTileStreamingState {
             self.complete_unsubmitted_fluid_particle_exports(accelerator);
             accelerator.device().poll(wgpu::PollType::wait_indefinitely())
                 .map_err(|_| SceneError::CellularTileStreamingPoll)?;
-            self.stream_cellular_tiles_apply_responses(chunk_streaming_state, ambient_gas_amount)?;
+            self.stream_cellular_tiles_apply_responses(
+                chunk_streaming_state,
+                ambient_gas_amount,
+                ambient_gas_temperature,
+            )?;
             let inactive_chunk: Option<ChunkCoordinates> = self.streaming_requests.values()
                 .filter(|streaming_request| streaming_request.is_response_ready)
                 .flat_map(|streaming_request| streaming_request.coordinates.iter())
@@ -254,7 +270,8 @@ impl CellularTileStreamingState {
     }
 
     /// Advances tile streaming after chunk streaming without waiting for the GPU, with phantom air
-    /// of an ambient amount in every empty cell of tiles without stored gas
+    /// of an ambient amount in every empty cell of tiles without stored gas, and every empty cell
+    /// of tiles without stored matter at the ambient gas temperature
     pub fn stream_cellular_tiles(
         &mut self,
         accelerator: &Accelerator,
@@ -263,12 +280,16 @@ impl CellularTileStreamingState {
         fluids: &mut Fluids,
         is_particle_snapshot_pending: bool,
         ambient_gas_amount: u32,
+        ambient_gas_temperature: f32,
     ) -> Result<(), SceneError> {
         // incorporate mapped responses and return their chunks to normal streaming
         accelerator.device().poll(wgpu::PollType::Poll)
             .map_err(|_| SceneError::CellularTileStreamingPoll)?;
-        let response_result: Result<(), SceneError> =
-            self.stream_cellular_tiles_apply_responses(chunk_streaming_state, ambient_gas_amount);
+        let response_result: Result<(), SceneError> = self.stream_cellular_tiles_apply_responses(
+            chunk_streaming_state,
+            ambient_gas_amount,
+            ambient_gas_temperature,
+        );
         // save the chunks once every tile returned for a requested save has reached them
         if let Some(streaming_request_identifier) = self.save_streaming_request_identifier
             && !self.streaming_requests.contains_key(&streaming_request_identifier)
@@ -308,6 +329,7 @@ impl CellularTileStreamingState {
             chunk_streaming_state,
             fluids,
             ambient_gas_amount,
+            ambient_gas_temperature,
         )?;
         // retry dormant records in resident tiles after each region advance
         if !is_particle_snapshot_pending && !self.is_cellular_tile_save_requested()
@@ -334,6 +356,7 @@ impl CellularTileStreamingState {
         &mut self,
         chunk_streaming_state: &mut ChunkStreamingState,
         ambient_gas_amount: u32,
+        ambient_gas_temperature: f32,
     ) -> Result<(), SceneError> {
         // record mapping results, keeping failed requests for another mapping attempt
         let mut first_error: Option<SceneError> = None;
@@ -384,7 +407,8 @@ impl CellularTileStreamingState {
                 let mapped_bytes: wgpu::BufferView = streaming_request.buffer
                     .get_mapped_range(..)
                     .expect("mapped cellular tile streaming buffer should be readable");
-                // each staged tile holds its material identifiers, colors, kinematics, then gas
+                // each staged tile holds its material identifiers, colors, kinematics, gas, then
+                // matter
                 let mapped_tile_bytes: ChunksExact<u8> = mapped_bytes
                     .chunks_exact(CELLULAR_TILE_STREAMING_BYTE_COUNT as usize);
                 for (coordinates, tile_bytes) in
@@ -399,8 +423,10 @@ impl CellularTileStreamingState {
                         tile_bytes.split_at(CELLULAR_TILE_BYTE_COUNT as usize);
                     let (color_bytes, tile_bytes): (&[u8], &[u8]) =
                         tile_bytes.split_at(CELLULAR_TILE_BYTE_COUNT as usize);
-                    let (kinematics_bytes, gas_bytes): (&[u8], &[u8]) =
+                    let (kinematics_bytes, tile_bytes): (&[u8], &[u8]) =
                         tile_bytes.split_at(CELLULAR_TILE_KINEMATICS_BYTE_COUNT as usize);
+                    let (gas_bytes, matter_bytes): (&[u8], &[u8]) =
+                        tile_bytes.split_at(CELLULAR_TILE_GAS_BYTE_COUNT as usize);
                     for (material_identifier, cell_bytes) in material_identifiers.iter_mut()
                         .zip(material_identifier_bytes.chunks_exact(4))
                     {
@@ -443,17 +469,35 @@ impl CellularTileStreamingState {
                             word_bytes[3],
                         ]);
                     }
-                    // chunks keep only gas that differs from the gas given to entering tiles
+                    let mut matter: [u32; CELLULAR_TILE_CELL_COUNT * 2] =
+                        [0; CELLULAR_TILE_CELL_COUNT * 2];
+                    for (word, word_bytes) in matter.iter_mut().zip(matter_bytes.chunks_exact(4)) {
+                        *word = u32::from_le_bytes([
+                            word_bytes[0],
+                            word_bytes[1],
+                            word_bytes[2],
+                            word_bytes[3],
+                        ]);
+                    }
+                    // chunks keep only gas and matter that differ from those given to entering
+                    // tiles
                     let is_gas_default: bool = gas == Self::stream_cellular_tiles_default_gas(
                         &material_identifiers,
                         ambient_gas_amount,
                     );
+                    let is_matter_default: bool = matter
+                        == Self::stream_cellular_tiles_default_matter(
+                            &material_identifiers,
+                            chunk_streaming_state.material_table(),
+                            ambient_gas_temperature,
+                        );
                     chunk_streaming_state.set_cellular_tile_cells(
                         *coordinates,
                         &material_identifiers,
                         &colors,
                         &kinematics,
                         (!is_gas_default).then_some(&gas),
+                        (!is_matter_default).then_some(&matter),
                     );
                 }
                 if !fluid_particles.is_empty() {
@@ -507,6 +551,7 @@ impl CellularTileStreamingState {
         chunk_streaming_state: &mut ChunkStreamingState,
         fluids: &Fluids,
         ambient_gas_amount: u32,
+        ambient_gas_temperature: f32,
     ) -> Result<(), SceneError> {
         // keep the requested ring stable while a full resident save is being returned
         if self.is_save_requested
@@ -561,18 +606,33 @@ impl CellularTileStreamingState {
             [u32; CELLULAR_TILE_CELL_COUNT],
             [u64; CELLULAR_TILE_CELL_COUNT],
             [u32; CELLULAR_TILE_CELL_COUNT * 8],
+            [u32; CELLULAR_TILE_CELL_COUNT * 2],
         )> = Vec::with_capacity(incoming_coordinates.len());
         for coordinates in &incoming_coordinates {
-            let (Some(material_identifiers), Some(colors), Some(kinematics), Some(gas)) = (
+            let (
+                Some(material_identifiers),
+                Some(colors),
+                Some(kinematics),
+                Some(gas),
+                Some(matter),
+            ) = (
                 chunk_streaming_state.cellular_tile_material_identifiers(*coordinates),
                 chunk_streaming_state.cellular_tile_colors(*coordinates),
                 chunk_streaming_state.cellular_tile_kinematics(*coordinates),
                 chunk_streaming_state.cellular_tile_gas(*coordinates),
+                chunk_streaming_state.cellular_tile_matter(*coordinates),
             ) else { return Ok(()); };
             let gas: [u32; CELLULAR_TILE_CELL_COUNT * 8] = gas.unwrap_or_else(|| {
                 Self::stream_cellular_tiles_default_gas(&material_identifiers, ambient_gas_amount)
             });
-            incoming_cells.push((material_identifiers, colors, kinematics, gas));
+            let matter: [u32; CELLULAR_TILE_CELL_COUNT * 2] = matter.unwrap_or_else(|| {
+                Self::stream_cellular_tiles_default_matter(
+                    &material_identifiers,
+                    chunk_streaming_state.material_table(),
+                    ambient_gas_temperature,
+                )
+            });
+            incoming_cells.push((material_identifiers, colors, kinematics, gas, matter));
         }
         // capture departing tiles under the old ring mapping before their slots are reused
         if let Some(resident_region) = resident_region {
@@ -611,7 +671,7 @@ impl CellularTileStreamingState {
         self.chunk_region_index = self.requested_chunk_region_index.take();
         // queued writes execute after the submitted request copies of the same slots, waking each
         // entering tile so its moving cells continue and its neighbors notice it
-        for (coordinates, (material_identifiers, colors, kinematics, gas)) in
+        for (coordinates, (material_identifiers, colors, kinematics, gas, matter)) in
             incoming_coordinates.into_iter().zip(incoming_cells)
         {
             let Some(cellular_tile_index) = self.cellular_tile_index(coordinates)
@@ -666,6 +726,18 @@ impl CellularTileStreamingState {
                 u64::from(physical_tile_index) * 4,
                 &CELLULAR_TILE_GAS_AWAKE.to_le_bytes(),
             );
+            let matter_bytes: Vec<u8> =
+                matter.iter().flat_map(|word| word.to_le_bytes()).collect();
+            accelerator.queue().write_buffer(
+                cellular_tile_buffers.matter_buffer(),
+                tile_offset * 2,
+                &matter_bytes,
+            );
+            accelerator.queue().write_buffer(
+                cellular_tile_buffers.thermal_awake_buffer(),
+                u64::from(physical_tile_index) * 4,
+                &CELLULAR_TILE_THERMAL_AWAKE.to_le_bytes(),
+            );
             // entering tiles hold no rigid body cells until rigid bodies rasterize into them
             accelerator.queue().write_buffer(
                 cellular_tile_buffers.rigid_body_cell_buffer(),
@@ -700,8 +772,8 @@ impl CellularTileStreamingState {
                     mapped_at_creation: false,
                 })
             });
-        // copy each tile's material identifiers, colors, kinematics, then gas from its physical
-        // slot
+        // copy each tile's material identifiers, colors, kinematics, gas, then matter from its
+        // physical slot
         let mut command_encoder: wgpu::CommandEncoder = accelerator.device()
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Scene cellular tile streaming request"),
@@ -739,6 +811,14 @@ impl CellularTileStreamingState {
                 &buffer,
                 staging_offset + CELLULAR_TILE_BYTE_COUNT * 2 + CELLULAR_TILE_KINEMATICS_BYTE_COUNT,
                 CELLULAR_TILE_GAS_BYTE_COUNT,
+            );
+            command_encoder.copy_buffer_to_buffer(
+                cellular_tile_buffers.matter_buffer(),
+                tile_offset * 2,
+                &buffer,
+                staging_offset + CELLULAR_TILE_BYTE_COUNT * 2 + CELLULAR_TILE_KINEMATICS_BYTE_COUNT
+                    + CELLULAR_TILE_GAS_BYTE_COUNT,
+                CELLULAR_TILE_MATTER_BYTE_COUNT,
             );
         }
         accelerator.queue().submit(Some(command_encoder.finish()));
@@ -779,6 +859,27 @@ impl CellularTileStreamingState {
             }
         }
         gas
+    }
+
+    /// Returns the matter of a tile without stored matter: one unit of each cellular cell at its
+    /// material's edit temperature and every empty cell at the ambient gas temperature
+    fn stream_cellular_tiles_default_matter(
+        material_identifiers: &[MaterialIdentifier; CELLULAR_TILE_CELL_COUNT],
+        material_table: &MaterialTable,
+        ambient_gas_temperature: f32,
+    ) -> [u32; CELLULAR_TILE_CELL_COUNT * 2] {
+        let mut matter: [u32; CELLULAR_TILE_CELL_COUNT * 2] = [0; CELLULAR_TILE_CELL_COUNT * 2];
+        for (cell_index, material_identifier) in material_identifiers.iter().enumerate() {
+            if *material_identifier == MaterialIdentifier::EMPTY {
+                matter[cell_index * 2] = ambient_gas_temperature.to_bits();
+            } else {
+                matter[cell_index * 2] = material_table.edit_temperature(*material_identifier)
+                    .unwrap_or(ambient_gas_temperature)
+                    .to_bits();
+                matter[cell_index * 2 + 1] = CELLULAR_TILE_AMOUNT_PER_UNIT;
+            }
+        }
+        matter
     }
 
     /// Asks WGPU to send a response once the staging buffer is readable by the CPU

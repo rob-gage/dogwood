@@ -48,11 +48,11 @@ impl Accelerator {
             })
             .await
             .map_err(AcceleratorError::RequestAdapter)?;
-        // Metal shares buffer slots between storage, uniforms, and vertex buffers.
-        // Keep the default combined budget (28), rather than summing the individual
-        // maxima: 20 storage + 12 uniform + 8 vertex would exceed Metal's 29 slots.
+        // Metal shares buffer slots between storage, uniforms, and vertex buffers, so the storage
+        // budget stays well below its 31 slots: compute stages bind at most a few uniforms beside
+        // their storage buffers.
         let required_limits = wgpu::Limits {
-            max_storage_buffers_per_shader_stage: 20,
+            max_storage_buffers_per_shader_stage: 24,
             // the pressure step keeps the halo of a block of 2x2 cellular tiles per workgroup
             max_compute_workgroup_storage_size: 32768,
             ..wgpu::Limits::default()
@@ -67,7 +67,7 @@ impl Accelerator {
             });
         });
         if let Some(error) = unsupported_limit { return Err(error); }
-        // the fluid particle bind group contains twenty storage buffers per compute stage
+        // the cellular tile and fluid particle stages bind more than twenty storage buffers
         let (device, queue): (wgpu::Device, wgpu::Queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 required_limits,

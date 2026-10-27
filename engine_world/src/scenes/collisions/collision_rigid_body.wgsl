@@ -74,10 +74,16 @@ var<storage, read_write> cell_reads: array<vec4<u32>>;
 var<storage, read_write> changed_cells: array<atomic<u32>>;
 
 @group(0) @binding(13)
-var<storage, read_write> rigid_body_cell_states: array<vec2<u32>>;
+var<storage, read_write> rigid_body_cell_states: array<vec4<u32>>;
 
 @group(0) @binding(14)
 var<storage, read_write> gas: array<u32>;
+
+@group(0) @binding(15)
+var<storage, read_write> matter: array<vec2<u32>>;
+
+@group(0) @binding(16)
+var<storage, read_write> thermal_awake: array<atomic<u32>>;
 
 /// Release mode emptying cells a rigid body leaves, or turning them into their cells' debris
 const MODE_CLEAR: u32 = 0u;
@@ -90,6 +96,9 @@ const MODE_CHANGE: u32 = 2u;
 
 /// Awake buffer value of a tile whose dynamic cells, and those of its neighbors, must be simulated
 const TILE_AWAKE: u32 = 3u;
+
+/// Thermal awake buffer value of a tile whose temperatures must be simulated
+const TILE_THERMAL_AWAKE: u32 = 1u;
 
 /// Fixed-point units per cell per tick of packed velocities
 const VELOCITY_SCALE: f32 = 1024.0;
@@ -215,10 +224,13 @@ fn release(
             // cells whose material became debris or nothing take it moving with the body, and
             // the rest are emptied for wherever their body rasterizes next
             if is_static(material_identifier) {
-                rigid_body_cell_states[rigid_body_cell - 1u] = vec2<u32>(
+                rigid_body_cell_states[rigid_body_cell - 1u] = vec4<u32>(
                     gas[index * 8u + 7u],
                     kinematics[index].y & 0xffffu,
+                    matter[index],
                 );
+                // a cell left empty keeps its temperature for the gas that fills it
+                if !is_dynamic(rigid_cell.x) { matter[index].y = 0u; }
                 material_identifiers[index] = select(0u, rigid_cell.x, !is_static(rigid_cell.x));
                 colors[index] = select(0u, rigid_cell.y, is_dynamic(rigid_cell.x));
                 gas[index * 8u + 7u] = 0u;
@@ -231,9 +243,10 @@ fn release(
         } else if uniforms.mode == MODE_RETURN {
             // the body's cells stay as static cells at rest
             if is_static(material_identifier) {
-                rigid_body_cell_states[rigid_body_cell - 1u] = vec2<u32>(
+                rigid_body_cell_states[rigid_body_cell - 1u] = vec4<u32>(
                     gas[index * 8u + 7u],
                     kinematics[index].y & 0xffffu,
+                    matter[index],
                 );
                 kinematics[index] = vec2<u32>(0u, kinematics[index].y & 0xffffu);
             }
@@ -252,8 +265,8 @@ fn release(
 }
 
 /// Rasterizes one rigid body tile at its position: every cell whose center lies in one of the
-/// tile's occupied cells takes that cell's material, color, and velocity, except cells of other
-/// static matter, and dynamic cells there stay covered until they escape
+/// tile's occupied cells takes that cell's material, color, velocity, and state, except cells of
+/// other static matter, and dynamic cells there stay covered until they escape
 @compute @workgroup_size(64)
 fn rasterize(
     @builtin(workgroup_id) workgroup: vec3<u32>,
@@ -301,8 +314,11 @@ fn rasterize(
             material_identifiers[index] = rigid_cell.x;
             colors[index] = rigid_cell.y;
             kinematics[index] = pack_velocity(point_velocity(rigid_body, cell));
-            gas[index * 8u + 7u] = rigid_body_cell_states[rigid_body_cell - 1u].x;
-            kinematics[index].y = rigid_body_cell_states[rigid_body_cell - 1u].y;
+            let state: vec4<u32> = rigid_body_cell_states[rigid_body_cell - 1u];
+            gas[index * 8u + 7u] = state.x;
+            kinematics[index].y = state.y;
+            matter[index] = state.zw;
+            atomicOr(&thermal_awake[tile_index(vec2<u32>(cell) / 8u)], TILE_THERMAL_AWAKE);
         }
         atomicOr(&awake[tile_index(vec2<u32>(cell) / 8u)], TILE_AWAKE);
     }
@@ -314,7 +330,7 @@ fn rasterize(
 }
 
 /// Replaces one listed cell's material when it still holds the expected material and no rigid
-/// body, keeping its color unless emptied and leaving it at rest
+/// body, keeping its color, temperature, and amount unless emptied and leaving it at rest
 @compute @workgroup_size(64)
 fn write_cells(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if invocation.x >= uniforms.item_count { return; }
@@ -324,27 +340,34 @@ fn write_cells(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if material_identifiers[index] != cell_write.w { return; }
     if atomicLoad(&rigid_body_cells[index]) != 0u { return; }
     material_identifiers[index] = cell_write.z;
-    if cell_write.z == 0u { colors[index] = 0u; }
+    // an emptied cell keeps its temperature for the gas that fills it
+    if cell_write.z == 0u {
+        colors[index] = 0u;
+        matter[index].y = 0u;
+    }
     gas[index * 8u + 7u] = 0u;
     kinematics[index] = vec2<u32>(0u);
     atomicOr(&awake[tile_index(vec2<u32>(cell) / 8u)], TILE_AWAKE);
 }
 
-/// Copies one listed cell's material, color, pressure, and integrity for the CPU
+/// Copies one listed cell's material, color, pressure, integrity, temperature, and amount for the
+/// CPU
 @compute @workgroup_size(64)
 fn read_cells(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if invocation.x >= uniforms.item_count { return; }
     let cell_write: vec4<u32> = cell_writes[uniforms.item_offset + invocation.x];
     let index: u32 = cell_index(vec2<i32>(cell_write.xy));
-    cell_reads[invocation.x] = vec4<u32>(
+    cell_reads[invocation.x * 2u] = vec4<u32>(
         material_identifiers[index],
         colors[index],
         gas[index * 8u + 7u],
         kinematics[index].y & 0xffffu,
     );
+    cell_reads[invocation.x * 2u + 1u] = vec4<u32>(matter[index], 0u, 0u);
 }
 
-/// Copies stored pressure and integrity from old rigid body cell indices to newly allocated ones
+/// Copies stored pressure, integrity, temperature, and amount from old rigid body cell indices to
+/// newly allocated ones
 @compute @workgroup_size(64)
 fn copy_states(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if invocation.x >= uniforms.item_count { return; }

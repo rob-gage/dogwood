@@ -50,7 +50,7 @@ The enums identify failures; they do not decide whether a caller can recover.
 | `WindowError` | Event-loop, OS, surface creation, unsupported surface, and surface validation failures. |
 | `ChunkError` | I/O and serialized chunk validation. |
 | `SceneError` | Streaming, storage, tile readback, collision/kinematics, ambient gas configuration, despawn, and collider failures; chunk load, save, and generation variants carry coordinates and a lower-level error. |
-| `EditError` | Inactive tiles, unregistered materials, or edit request capacity reached. |
+| `EditError` | Inactive tiles, unregistered materials, invalid temperatures, or edit request capacity reached. |
 | `EngineError` | Launch wrapper; see above. |
 
 ### Recovery and retry

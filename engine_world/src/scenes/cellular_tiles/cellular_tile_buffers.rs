@@ -26,6 +26,16 @@ pub struct CellularTileBuffers {
     /// Tile-major pressure of each row-major cell above the ambient pressure in atmospheres as one
     /// `f32`, published by the pressure simulation's last tick in the cell's tile
     pressure_buffer: wgpu::Buffer,
+    /// Tile-major matter of each row-major cell as two `u32`: the temperature in kelvin of the
+    /// cell's cellular matter and gas as `f32` bits, past which a transitioning material banks its
+    /// latent heat, and the amount of its cellular matter in units of
+    /// `CELLULAR_TILE_AMOUNT_PER_UNIT`
+    matter_buffer: wgpu::Buffer,
+    /// Tile-major temperature change in kelvin for each row-major
+    /// cell, as two `u32` words
+    temperature_change_buffer: wgpu::Buffer,
+    /// Whether each tile's temperatures must be simulated, with one `u32` per tile
+    thermal_awake_buffer: wgpu::Buffer,
 }
 
 impl CellularTileBuffers {
@@ -93,6 +103,27 @@ impl CellularTileBuffers {
                 usage,
                 mapped_at_creation: false,
             });
+        let matter: wgpu::Buffer = accelerator.device()
+            .create_buffer(&wgpu::BufferDescriptor {
+                label: Some("`CellularTileBuffers.matter_buffer`"),
+                size: size * 2,
+                usage,
+                mapped_at_creation: false,
+            });
+        let temperature_changes: wgpu::Buffer = accelerator.device()
+            .create_buffer(&wgpu::BufferDescriptor {
+                label: Some("`CellularTileBuffers.temperature_change_buffer`"),
+                size: size * 2,
+                usage,
+                mapped_at_creation: false,
+            });
+        let thermal_awake: wgpu::Buffer = accelerator.device()
+            .create_buffer(&wgpu::BufferDescriptor {
+                label: Some("`CellularTileBuffers.thermal_awake_buffer`"),
+                size: (u64::from(width) * u64::from(height)).max(1) * 4,
+                usage,
+                mapped_at_creation: false,
+            });
         Self {
             accelerator: accelerator.clone(),
             material_identifier_buffer: material_identifiers,
@@ -103,6 +134,9 @@ impl CellularTileBuffers {
             gas_buffer: gas,
             gas_awake_buffer: gas_awake,
             pressure_buffer: pressure,
+            matter_buffer: matter,
+            temperature_change_buffer: temperature_changes,
+            thermal_awake_buffer: thermal_awake,
         }
     }
 
@@ -132,5 +166,14 @@ impl CellularTileBuffers {
 
     /// Returns the published pressure buffer
     pub fn pressure_buffer(&self) -> &wgpu::Buffer { &self.pressure_buffer }
+
+    /// Returns the matter buffer of temperatures and amounts
+    pub fn matter_buffer(&self) -> &wgpu::Buffer { &self.matter_buffer }
+
+    /// Returns per-cell temperature changes and fixed-point heat added by matter changes
+    pub fn temperature_change_buffer(&self) -> &wgpu::Buffer { &self.temperature_change_buffer }
+
+    /// Returns the tile thermal awake buffer
+    pub fn thermal_awake_buffer(&self) -> &wgpu::Buffer { &self.thermal_awake_buffer }
 
 }

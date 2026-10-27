@@ -389,8 +389,8 @@ impl PressureCellularTilePass {
     }
 
     /// Simulates one tick of the pressure in the active tiles without waiting for the GPU, with
-    /// gravity in cells per substep squared and the first actor records displacing gas, then
-    /// publishes the pressure of the active tiles
+    /// gravity in cells per substep squared, the first actor records displacing gas, and phantom
+    /// air, then publishes the pressure of the active tiles
     pub fn simulate_cellular_tiles(
         &mut self,
         accelerator: &Accelerator,
@@ -459,6 +459,7 @@ impl PressureCellularTilePass {
                 fraction_per_substep(PRESSURE_OPEN_RELAXATION).to_bits(),
                 (PRESSURE_OPEN_RELAXATION_MINIMUM * GAS_AMOUNT_PER_ATMOSPHERE * area * substep_time)
                     .to_bits(),
+                0,
                 0,
                 0,
             ] {

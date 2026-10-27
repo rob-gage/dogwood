@@ -70,7 +70,7 @@ pub struct CollisionRigidBodyPass {
     uniform_buffer: wgpu::Buffer,
     /// Material identifier and packed color of every rigid body tile cell
     cellular_tile_cell_buffer: wgpu::Buffer,
-    /// Stored pressure and integrity of every rigid body cell
+    /// Stored pressure, integrity, temperature bits, and amount of every rigid body cell
     cellular_tile_state_buffer: wgpu::Buffer,
     /// Rigid body, tile coordinates, and occupied cells of every rigid body tile
     cellular_tile_buffer: wgpu::Buffer,
@@ -80,7 +80,8 @@ pub struct CollisionRigidBodyPass {
     item_buffer: wgpu::Buffer,
     /// Cells written or read, with their new and expected material identifiers
     cell_write_buffer: wgpu::Buffer,
-    /// Material identifiers and colors of read cells
+    /// Material identifiers, colors, stored pressures, integrities, temperature bits, and amounts
+    /// of read cells
     cell_read_buffer: wgpu::Buffer,
     /// Count and rigid body cells of every changed cell found under rigid bodies
     changed_cell_buffer: wgpu::Buffer,
@@ -139,6 +140,8 @@ impl CollisionRigidBodyPass {
                     storage_entry(12, false),
                     storage_entry(13, false),
                     storage_entry(14, false),
+                    storage_entry(15, false),
+                    storage_entry(16, false),
                 ],
             },
         );
@@ -191,7 +194,7 @@ impl CollisionRigidBodyPass {
         );
         let cellular_tile_state_buffer: wgpu::Buffer = create_buffer(
             "`CollisionRigidBodyPass.cellular_tile_state_buffer`",
-            cellular_tile_count * 64 * 8,
+            cellular_tile_count * 64 * 16,
             storage,
         );
         let cellular_tile_buffer: wgpu::Buffer = create_buffer(
@@ -217,7 +220,7 @@ impl CollisionRigidBodyPass {
         );
         let cell_read_buffer: wgpu::Buffer = create_buffer(
             "`CollisionRigidBodyPass.cell_read_buffer`",
-            CELL_COUNT_MAXIMUM as u64 * 16,
+            CELL_COUNT_MAXIMUM as u64 * 32,
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         );
         let changed_cell_buffer: wgpu::Buffer = create_buffer(
@@ -306,6 +309,14 @@ impl CollisionRigidBodyPass {
                     binding: 14,
                     resource: cellular_tile_buffers.gas_buffer().as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 15,
+                    resource: cellular_tile_buffers.matter_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 16,
+                    resource: cellular_tile_buffers.thermal_awake_buffer().as_entire_binding(),
+                },
             ],
         });
         let (response_sender, response_receiver): (
@@ -334,6 +345,10 @@ impl CollisionRigidBodyPass {
     /// Returns the material identifier and packed color of every rigid body tile cell
     pub fn cellular_tile_cell_buffer(&self) -> &wgpu::Buffer { &self.cellular_tile_cell_buffer }
 
+    /// Returns each rigid body tile's stored pressure, integrity, temperature bits, and amount
+    /// cell
+    pub fn cellular_tile_state_buffer(&self) -> &wgpu::Buffer { &self.cellular_tile_state_buffer }
+
     /// Returns the record of every rigid body tile
     pub fn cellular_tile_buffer(&self) -> &wgpu::Buffer { &self.cellular_tile_buffer }
 
@@ -352,7 +367,7 @@ impl CollisionRigidBodyPass {
         previous_cells: u64,
         material_identifiers: &[MaterialIdentifier; 64],
         colors: &[u32; 64],
-        states: &[[u32; 2]; 64],
+        states: &[[u32; 4]; 64],
     ) {
         let mut record_bytes: Vec<u8> = Vec::with_capacity(CELLULAR_TILE_BYTE_COUNT as usize);
         record_bytes.extend_from_slice(&rigid_body.to_le_bytes());
@@ -380,7 +395,7 @@ impl CollisionRigidBodyPass {
             .flat_map(u32::to_le_bytes).collect();
         accelerator.queue().write_buffer(
             &self.cellular_tile_state_buffer,
-            u64::from(cellular_tile) * 64 * 8,
+            u64::from(cellular_tile) * 64 * 16,
             &state_bytes,
         );
     }
@@ -490,7 +505,7 @@ impl CollisionRigidBodyPass {
             );
             self.dispatch(&mut compute_pass, "read_cells", SLOT_READ, cells.len(), false);
         }
-        let byte_count: u64 = cells.len() as u64 * 16;
+        let byte_count: u64 = cells.len() as u64 * 32;
         self.cell_readbacks.copy(
             &mut command_encoder,
             &self.cell_read_buffer,
@@ -511,12 +526,12 @@ impl CollisionRigidBodyPass {
     ) -> Result<Vec<(
         CellularTileRegion,
         (u32, u32),
-        Vec<Vec<((u32, u32), (MaterialIdentifier, u32, [u32; 2]))>>,
+        Vec<Vec<((u32, u32), (MaterialIdentifier, u32, [u32; 4]))>>,
     )>, SceneError> {
         let mut cell_groups: Vec<(
             CellularTileRegion,
             (u32, u32),
-            Vec<Vec<((u32, u32), (MaterialIdentifier, u32, [u32; 2]))>>,
+            Vec<Vec<((u32, u32), (MaterialIdentifier, u32, [u32; 4]))>>,
         )> = Vec::new();
         let read_result: Result<(), AcceleratorReadbackError> = self.cell_readbacks.read(
             accelerator,
@@ -524,23 +539,21 @@ impl CollisionRigidBodyPass {
             |(active_region, ring_offset, groups), bytes| {
                 let mut cell_offset: usize = 0;
                 let mut read_groups: Vec<
-                    Vec<((u32, u32), (MaterialIdentifier, u32, [u32; 2]))>,
+                    Vec<((u32, u32), (MaterialIdentifier, u32, [u32; 4]))>,
                 > = Vec::new();
                 for group in groups {
-                    let mut read_group: Vec<((u32, u32), (MaterialIdentifier, u32, [u32; 2]))> =
+                    let mut read_group: Vec<((u32, u32), (MaterialIdentifier, u32, [u32; 4]))> =
                         Vec::new();
                     for cell in group {
-                        let start: usize = cell_offset * 16;
-                        let read: &[u8] = &bytes[start..start + 16];
+                        let start: usize = cell_offset * 32;
+                        let read: &[u8] = &bytes[start..start + 32];
+                        let word = |index: usize| -> u32 {
+                            u32::from_le_bytes(read[index * 4..index * 4 + 4].try_into().unwrap())
+                        };
                         read_group.push((cell, (
-                            MaterialIdentifier::from_u32(
-                                u32::from_le_bytes(read[0..4].try_into().unwrap()),
-                            ),
-                            u32::from_le_bytes(read[4..8].try_into().unwrap()),
-                            [
-                                u32::from_le_bytes(read[8..12].try_into().unwrap()),
-                                u32::from_le_bytes(read[12..16].try_into().unwrap()),
-                            ],
+                            MaterialIdentifier::from_u32(word(0)),
+                            word(1),
+                            [word(2), word(3), word(4), word(5)],
                         )));
                         cell_offset += 1;
                     }

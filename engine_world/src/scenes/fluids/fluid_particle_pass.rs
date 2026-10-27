@@ -32,6 +32,7 @@ use crate::{
             CellularTileBuffers,
             CellularTileRegion,
             CELLULAR_TILE_ACTOR_COUNT_MAXIMUM,
+            CELLULAR_TILE_AMOUNT_PER_UNIT,
             CELLULAR_TILE_SIZE,
         },
         chunks::{
@@ -62,19 +63,19 @@ const UNIFORM_STRIDE: u64 = 256;
 const UNIFORM_BYTE_COUNT: u64 = 152;
 
 /// Bytes in the packed fluid particle state record
-const PARTICLE_BYTE_COUNT: u64 = 32;
+const PARTICLE_BYTE_COUNT: u64 = 48;
 
 /// Bytes in one exact-position particle import command
 const IMPORT_BYTE_COUNT: u64 = 32;
 
 /// Words in one exported particle record, excluding the leading count
-const EXPORT_WORD_COUNT: u64 = 10;
+const EXPORT_WORD_COUNT: u64 = 13;
 
 /// Bytes in one compact neighbor record: old position, cohesion, pressure, and sleep flag
 const NEIGHBOR_DATA_BYTE_COUNT: u64 = 20;
 
 /// Bytes in one GPU fluid edit command
-const EDIT_BYTE_COUNT: u64 = 16;
+const EDIT_BYTE_COUNT: u64 = 32;
 
 /// Bytes in one actor contact record, including impulse and fluid sample values
 const ACTOR_CONTACT_BYTE_COUNT: u64 = 32;
@@ -100,6 +101,10 @@ const UNIFORM_COUNT: usize = SUBSTEP_UNIFORM_START
 pub(super) struct FluidEdit {
     /// Material identifier spawned at the edited cell
     pub(super) material_identifier: MaterialIdentifier,
+    /// Packed sRGB RGBA color of the spawned particle
+    pub color: u32,
+    /// Particle temperature in kelvin
+    pub temperature: f32,
     /// One for Insert, zero for Replace
     pub(super) mode: u32,
 }
@@ -156,7 +161,7 @@ pub struct FluidParticlePass {
     control_buffer: wgpu::Buffer,
     /// Indirect arguments written by `prepare` and consumed by particle dispatches
     dispatch_buffer: wgpu::Buffer,
-    /// GPU mappable copies of the live count and their submitted edit revisions
+    /// GPU mappable copies of particle counts with their submitted edit revisions
     count_readbacks: Vec<(wgpu::Buffer, Option<(u64, u64)>)>,
     /// Sender for asynchronous count mapping results
     response_sender: Sender<(usize, Result<(), wgpu::BufferAsyncError>)>,
@@ -870,7 +875,7 @@ impl FluidParticlePass {
             (0..READBACK_COUNT).map(|_| (
                 create_buffer(
                     "`FluidParticlePass.count_readbacks`",
-                    16,
+                    4,
                     wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 ),
                 None,
@@ -1177,7 +1182,7 @@ impl FluidParticlePass {
         let origin_x: i64 = region_origin.0;
         let origin_y: i64 = region_origin.1;
         let mut erase_words: Vec<[u32; 2]> = vec![[0; 2]; tile_count];
-        let mut spawn_commands: Vec<[u32; 4]> = Vec::with_capacity(edits.len());
+        let mut spawn_commands: Vec<[u32; 8]> = Vec::with_capacity(edits.len());
         let mut has_insert_spawn: bool = false;
         let mut set_erased_cell = |world_cell: CellCoordinates| {
             let local_x: i128 = i128::from(world_cell.x) - i128::from(origin_x);
@@ -1207,11 +1212,15 @@ impl FluidParticlePass {
                 local_y as u32,
                 edit.material_identifier.as_u32(),
                 edit.mode,
+                edit.color,
+                edit.temperature.to_bits(),
+                CELLULAR_TILE_AMOUNT_PER_UNIT,
+                0,
             ]);
         }
         let has_erasures: bool = erase_words.iter()
             .any(|words| words[0] != 0 || words[1] != 0);
-        let mut edit_bytes: Vec<u8> = Vec::with_capacity(spawn_commands.len() * 16);
+        let mut edit_bytes: Vec<u8> = Vec::with_capacity(spawn_commands.len() * 32);
         for command in &spawn_commands {
             for value in command { edit_bytes.extend_from_slice(&value.to_le_bytes()); }
         }
@@ -1232,7 +1241,8 @@ impl FluidParticlePass {
         for import in imports {
             for value in [import.position[0].to_bits(), import.position[1].to_bits(),
                 import.particle.velocity()[0].to_bits(), import.particle.velocity()[1].to_bits(),
-                import.particle.material_identifier().as_u32(), 0, 0, 0]
+                import.particle.material_identifier().as_u32(), import.particle.color(),
+                import.particle.temperature().to_bits(), import.particle.amount()]
             { import_bytes.extend_from_slice(&value.to_le_bytes()); }
         }
         if !import_bytes.is_empty() {
@@ -1324,6 +1334,8 @@ impl FluidParticlePass {
                 uniform_bytes[byte_offset..byte_offset + 4]
                     .copy_from_slice(&value.to_le_bytes());
             }
+            uniform_bytes[start + 148..start + 152]
+                .copy_from_slice(&(tick as u32).to_le_bytes());
         };
         write_uniform(0, old_state_side, 0, 1.0, 0);
         write_uniform(1, after_compaction_side, 0, 1.0, 0);
@@ -1477,6 +1489,7 @@ impl FluidParticlePass {
         if needs_compaction {
             command_encoder.clear_buffer(&self.control_buffer, 4, Some(4));
         }
+        let tile_count: u64 = u64::from(width) * u64::from(height);
         {
             let mut compute_pass: wgpu::ComputePass<'_> = command_encoder
                 .begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -1964,6 +1977,9 @@ fn decode_live_particle_snapshot(
                 y.rem_euclid(CHUNK_SIZE) as f32 + position[1] - position[1].floor()],
             velocity,
             MaterialIdentifier::from_u32(read(start + 16)),
+            read(start + 32),
+            f32::from_bits(read(start + 28)),
+            read(start + 36),
         ).map_err(|_| SceneError::FluidParticleExportRecordInvalid)?;
         particles.push((coordinates, particle));
     }

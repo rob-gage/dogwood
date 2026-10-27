@@ -14,7 +14,7 @@ Each cell has four gas species slots, phantom air, right and top staggered face 
 
 Open cells contain species and phantom air. Pressure is total amount divided by measured open volume; gas mass also contributes to density and buoyancy. Static terrain and rasterized rigid-body cells are solid. Their signed stored pressure is an `i32` gauge amount in gas word 7; absolute pressure is ambient plus stored pressure. They transmit pressure to open cells and to solid cells with the same owner (terrain or the same rigid body), with mass-based inertia and impedance. Solid faces absorb and relax pressure, and solids expel trapped gas through open faces. Faces between different solid owners reflect.
 
-Dynamic cells, fluid-filled cells, actor-covered cells, and other closed cells reflect pressure. Gas trapped in a closed cell is pushed out through open faces when a route exists. Gas species without phantom air do not enter solids.
+Dynamic cells, actor-covered cells, and other closed cells reflect pressure. Fluid occupancy above `FLUID_OCCUPANCY_CLOSED` closes the cell to gas. Gas trapped in a closed cell is pushed out through open faces when a route exists. Gas species without phantom air do not enter solids.
 
 ## Pressure cells
 
@@ -28,7 +28,7 @@ A pressure cell covers 2×2 cells, and a pressure tile of 8×8 pressure cells co
 
 The substeps then simulate the pressure cells with the same flow, transfer, and solid model as cells, using coefficients rescaled for the larger cell. After the substeps, `refine` writes the result back over the cells of the active tiles:
 
-- Phantom air and each species are split among the open cells by open volume, or evenly when none is open. Rounding remainders go to the most open cell, so no gas is lost.
+- Phantom air and each species are split among cells by open volume, or evenly when none is open. Rounding remainders go to the most open cell, so no gas is lost.
 - Every cell keeps its pressure cell's face flows.
 - A static cell in a solid pressure cell takes an equal share of its stored pressure, so it holds the same pressure in atmospheres. One in a partial pressure cell stores the gauge pressure of the gas pressing on it.
 
@@ -76,7 +76,7 @@ Solid material properties provide static `strength` in atmospheres and `absorpti
 
 Each static cell under that pressure cell loses integrity while the load exceeds its material's strength.
 
-After publishing pressure, `damage` breaks cells whose integrity is exhausted. A broken cell becomes its configured dynamic debris material, retaining color and receiving velocity from the pressure push, or becomes empty. Stored pressure is released as phantom air. Rigid-body cells are removed from their body's cell mask and reported for later topology updates; broken tiles are reported with their remaining static occupancy.
+After publishing pressure, `damage` breaks cells whose integrity is exhausted. A broken cell becomes its configured dynamic debris material, retaining color and receiving velocity from the pressure push, or becomes empty. Stored pressure is released as phantom air. Pressure records broken rigid-body cells and static tiles with their remaining occupancy for collision to apply on the next tick.
 
 ## Published pressure and consumers
 
@@ -97,6 +97,8 @@ Each face push uses `PRESSURE_IMPULSE` and the 0.02-atmosphere minimum. See [cel
 
 Active-region edges act as walls: gas never leaves the region, so pressure from explosions and pressure edits stays and builds up inside it, and waves reflect at the edges.
 
-> **Limitation:** The model is isothermal and has no thermal simulation. Momentum is not exactly conserved across the substrate and its consumers. Faces between terrain and a body, or between different bodies, reflect. Contact impulses do not yet load the pressure substrate.
+The model is isothermal and has no thermal simulation. Temperature values may be stored with matter and gas, but pressure transport does not change them.
 
-> **Limitation:** Pure species gas without phantom air does not enter solids. Static occupancy refresh on region/ring movement and edits, edit changed-cell reads, saves, and streaming still use blocking occupancy reads. Pressure breakage feedback itself is asynchronous and applied incrementally; see [collision ordering](@/internals/simulation/collision-world.md).
+> **Limitation:** Pressure flow is not temperature-dependent. Momentum is not exactly conserved across the substrate and its consumers. Faces between terrain and a body, or between different bodies, reflect. Contact impulses do not yet load the pressure substrate.
+
+> **Limitation:** Pure species gas without phantom air does not enter solids. Static occupancy refresh on region/ring movement and edits, edit changed-cell reads, saves, and streaming still use blocking occupancy reads. Pressure breakage feedback is asynchronous and applied incrementally; see [collision ordering](@/internals/simulation/collision-world.md).

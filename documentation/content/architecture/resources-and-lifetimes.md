@@ -30,7 +30,7 @@ Scene
 
 `Scene::new` leaves chunk streaming, tile buffers, tile streaming, collision, and kinematics absent. The first `Scene::stream` creates chunk streaming and the GPU tile ring, sized to twice the first camera's unzoomed width and height. Later requested regions must keep those dimensions.
 
-Collision and kinematics are created on the first `simulate` call with an active region; pressure simulation is created on that call after fluids. Tile buffers retain a cloned `Accelerator`; its clone holds handles to the same WGPU instance, adapter, device, and queue, so teardown can use that context. See the [scene pipeline](@/architecture/scene-pipeline.md) for call order.
+Collision and kinematics are created on the first `simulate` call with an active region. Pressure simulation is created after fluids. Tile buffers retain a cloned `Accelerator`; its clone holds handles to the same WGPU instance, adapter, device, and queue, so teardown can use that context. See the [scene pipeline](@/architecture/scene-pipeline.md) for call order.
 
 ## Saving and drop behavior
 
@@ -87,6 +87,7 @@ These constants are fixed implementation values rather than runtime settings.
 | `SCENE_GRAVITY_DEFAULT` | 50.0 | Default downward acceleration, in tiles per second squared |
 | `SCENE_AMBIENT_GAS_PRESSURE_DEFAULT` | 1.0 | Default phantom air pressure, in atmospheres |
 | `SCENE_AMBIENT_GAS_MASS_DEFAULT` | 29.0 | Default mass of one atmosphere of phantom air |
+| `SCENE_AMBIENT_GAS_TEMPERATURE_DEFAULT` | 293.0 K | Default phantom-air temperature |
 | `SCENE_CHUNK_THREAD_POOL_NAME` | `"chunk_io"` | Pool for background chunk loads, generation, and saves |
 | `COLLISION_GROUP_CELLULAR_DYNAMIC` | `1 << 27` | Settled dynamic cells collision group |
 | `COLLISION_GROUP_ACTOR` | `1 << 28` | Actor colliders collision group |
@@ -121,7 +122,7 @@ The private `FLUID_ACTOR_CONTACT_SCALE` is `1024`. Count, actor, and import read
 
 ## Pressure resources
 
-Pressure simulation allocates two pressure cell buffers, each a quarter of the tile ring's gas buffer, an eight-byte open-volume record per ring cell, 268 bytes of control storage per tile after a 16-byte header, uniforms for cells and for pressure cells, and the published pressure buffer. Its first `simulate` creates them; they live until the scene drops. Public constants in `engine_world/src/scenes/pressure/mod.rs`:
+Pressure simulation allocates two pressure cell buffers, each a quarter of the tile ring's gas buffer, an eight-byte open-volume record per ring cell, 268 bytes of control storage per tile after a 16-byte header, uniforms for cells and for pressure cells, the published pressure buffer, and buffers for broken cells. The device requests `max_storage_buffers_per_shader_stage = 24`. Its first `simulate` creates them; they live until the scene drops. Public constants in `engine_world/src/scenes/pressure/mod.rs`:
 
 | Constant | Value |
 | --- | --- |

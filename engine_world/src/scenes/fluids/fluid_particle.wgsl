@@ -38,8 +38,8 @@ struct FluidUniforms {
     actor_count: u32,
     actor_contact_scale: f32,
     actor_time: f32,
-    /// Alignment padding after the actor fields
-    padding: u32,
+    /// Current simulation tick
+    tick: u32,
 };
 
 struct FluidParticle {
@@ -49,7 +49,16 @@ struct FluidParticle {
     tick_start_x: f32,
     /// Position at the start of the current tick, in cells
     tick_start_y: f32,
-    padding_3: u32,
+    /// Temperature in kelvin, past which a transitioning material banks its latent heat
+    temperature: f32,
+    /// Packed sRGB RGBA color
+    color: u32,
+    /// Amount in units of `CELLULAR_TILE_AMOUNT_PER_UNIT`
+    amount: u32,
+    /// Alignment padding
+    padding_0: u32,
+    /// Alignment padding
+    padding_1: u32,
 };
 
 /// Exact-position particle command imported from a chunk
@@ -58,12 +67,12 @@ struct FluidParticleImport {
     state: vec4<f32>,
     /// Fluid material identifier
     material_identifier: u32,
-    /// Alignment padding
-    padding_0: u32,
-    /// Alignment padding
-    padding_1: u32,
-    /// Alignment padding
-    padding_2: u32,
+    /// Packed sRGB RGBA color
+    color: u32,
+    /// Temperature in kelvin
+    temperature: f32,
+    /// Amount in units of `CELLULAR_TILE_AMOUNT_PER_UNIT`
+    amount: u32,
 };
 
 @group(0) @binding(0)
@@ -1603,7 +1612,7 @@ fn compact(@builtin(global_invocation_id) invocation: vec3<u32>) {
         || position.y >= f32(uniforms.cell_height)
     {
         let export_index: u32 = atomicAdd(&fluid_particle_exports[0], 1u);
-        let export_base: u32 = 1u + export_index * 10u;
+        let export_base: u32 = 1u + export_index * 13u;
         let cell: vec2<i32> = vec2<i32>(floor(position));
         let local_x: u32 = bitcast<u32>(cell.x);
         let local_y: u32 = bitcast<u32>(cell.y);
@@ -1626,7 +1635,11 @@ fn compact(@builtin(global_invocation_id) invocation: vec3<u32>) {
         atomicStore(&fluid_particle_exports[export_base + 6u], bitcast<u32>(particle.state.z));
         atomicStore(&fluid_particle_exports[export_base + 7u], bitcast<u32>(particle.state.w));
         atomicStore(&fluid_particle_exports[export_base + 8u], particle.material_identifier);
-        atomicStore(&fluid_particle_exports[export_base + 9u], 0u);
+        atomicStore(&fluid_particle_exports[export_base + 9u], particle.color);
+        atomicStore(&fluid_particle_exports[export_base + 10u],
+            bitcast<u32>(particle.temperature));
+        atomicStore(&fluid_particle_exports[export_base + 11u], particle.amount);
+        atomicStore(&fluid_particle_exports[export_base + 12u], 0u);
         return;
     }
     let output_index: u32 = atomicAdd(&control[1], 1u);
@@ -1655,7 +1668,8 @@ fn begin_occupancy() {
 @compute @workgroup_size(PARTICLE_WORKGROUP_SIZE)
 fn spawn(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if invocation.x >= uniforms.edit_count { return; }
-    let command: vec4<u32> = edit_commands[invocation.x];
+    let command: vec4<u32> = edit_commands[invocation.x * 2u];
+    let particle_data: vec4<u32> = edit_commands[invocation.x * 2u + 1u];
     let material_index: u32 = command.z & 0x3fffffffu;
     if command.z >> 30u != 2u || material_index >= uniforms.fluid_material_count { return; }
     let cell: vec2<i32> = vec2<i32>(command.xy);
@@ -1699,6 +1713,10 @@ fn spawn(@builtin(global_invocation_id) invocation: vec3<u32>) {
         command.z,
         position.x,
         position.y,
+        bitcast<f32>(particle_data.y),
+        particle_data.x,
+        particle_data.z,
+        0u,
         0u,
     );
     store_particle(count, uniforms.state_side, particle);
@@ -1729,7 +1747,8 @@ fn spawn_imported(@builtin(global_invocation_id) invocation: vec3<u32>) {
     }
     let particle: FluidParticle = FluidParticle(imported_particle.state,
         imported_particle.material_identifier, imported_particle.state.x,
-        imported_particle.state.y, 0u);
+        imported_particle.state.y, imported_particle.temperature,
+        imported_particle.color, imported_particle.amount, 0u, 0u);
     store_particle(count, uniforms.state_side, particle);
     atomicStore(&fluid_particle_import_results[invocation.x], 0u);
 }

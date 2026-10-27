@@ -31,7 +31,7 @@ pub(crate) struct FluidActorContact {
 pub(crate) struct FluidParticleImport {
     /// Chunk that owns the record if the GPU rejects the import
     pub(crate) chunk_coordinates: ChunkCoordinates,
-    /// Exact persisted particle state and material
+    /// Exact persisted particle state, material, color, temperature, and amount
     pub(crate) particle: ChunkFluidParticle,
     /// Position relative to the active region origin, in cells
     pub(crate) position: [f32; 2],

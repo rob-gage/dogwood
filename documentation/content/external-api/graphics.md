@@ -61,7 +61,7 @@ Each frame is drawn in this order, into a centered letterboxed viewport:
 [negative-depth sprites] -> [fluid] -> [gas] -> [cellular content] -> [nonnegative-depth sprites] -> [pressure tint, optional] -> [cell overlays]
 ```
 
-`SceneRendererViewMode::Pressure` enables pressure tint. `GameInstance::set_view_mode` selects the view and `set_overlays` supplies host overlays. Cellular rendering is skipped without resident data or a nonempty viewport. See [scene renderer](@/internals/rendering/scene-renderer.md) for the render passes.
+`SceneRendererViewMode::Pressure` enables the cell tint. `GameInstance::set_view_mode` selects the view and `set_overlays` supplies host overlays. Cellular rendering is skipped without resident data or a nonempty viewport. See [scene renderer](@/internals/rendering/scene-renderer.md) for the render passes.
 
 {{ <rustdoc path="engine_graphics/sprites/struct.SpriteSheet.html" text="SpriteSheet" /> }} ·
 {{ <rustdoc path="engine_graphics/sprites/enum.SpriteSheetError.html" text="SpriteSheetError" /> }} ·

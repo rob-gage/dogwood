@@ -28,6 +28,8 @@ pub enum EditError {
     },
     /// A pressure is negative or not finite
     InvalidPressure,
+    /// A temperature is negative or not finite
+    InvalidTemperature,
     /// The edit would exceed a segment, queued tile, or fluid-particle capacity
     CapacityReached,
 }
@@ -42,6 +44,8 @@ impl Display for EditError {
             Self::MaterialUnregistered { material_identifier } =>
                 write!(formatter, "Material {material_identifier:?} is not registered"),
             Self::InvalidPressure => write!(formatter, "Pressure must be finite and nonnegative"),
+            Self::InvalidTemperature =>
+                write!(formatter, "Temperature must be finite and nonnegative"),
             Self::CapacityReached => write!(formatter, "Edit capacity is reached"),
         }
     }

@@ -36,6 +36,7 @@ use super::{
     scene_position::ScenePosition,
     SCENE_AMBIENT_GAS_MASS_DEFAULT,
     SCENE_AMBIENT_GAS_PRESSURE_DEFAULT,
+    SCENE_AMBIENT_GAS_TEMPERATURE_DEFAULT,
     SCENE_CHUNK_THREAD_POOL_NAME,
     SCENE_FLUID_CAPACITY_FACTOR_DEFAULT,
     SCENE_GRAVITY_DEFAULT,
@@ -116,6 +117,8 @@ pub struct Scene {
     ambient_gas_pressure: f32,
     /// Mass of one atmosphere of the phantom air in empty cells
     ambient_gas_mass: f32,
+    /// Temperature in kelvin of the phantom air in empty cells, which open cells relax toward
+    ambient_gas_temperature: f32,
     /// ECS world and fixed-tick systems of every live actor
     actor_registry: ActorRegistry,
     /// Materials of every cell in this scene, shared with chunk generation to color new cells
@@ -152,6 +155,7 @@ impl Scene {
             fluid_capacity_factor: SCENE_FLUID_CAPACITY_FACTOR_DEFAULT,
             ambient_gas_pressure: SCENE_AMBIENT_GAS_PRESSURE_DEFAULT,
             ambient_gas_mass: SCENE_AMBIENT_GAS_MASS_DEFAULT,
+            ambient_gas_temperature: SCENE_AMBIENT_GAS_TEMPERATURE_DEFAULT,
             actor_registry: ActorRegistry::new(),
             material_table: Arc::new(material_table),
             generator,
@@ -201,6 +205,19 @@ impl Scene {
         Ok(())
     }
 
+    /// Returns the configured ambient gas temperature in kelvin
+    pub fn ambient_gas_temperature(&self) -> f32 { self.ambient_gas_temperature }
+
+    /// Sets the temperature in kelvin of the phantom air filling empty cells, which tiles without
+    /// stored temperatures start with and open cells relax toward
+    pub fn set_ambient_gas_temperature(&mut self, temperature: f32) -> Result<(), SceneError> {
+        if !temperature.is_finite() || temperature < 0.0 {
+            return Err(SceneError::InvalidAmbientGasTemperature);
+        }
+        self.ambient_gas_temperature = temperature;
+        Ok(())
+    }
+
     /// Returns the phantom air amount of one empty cell at the ambient gas pressure
     fn ambient_gas_amount(&self) -> u32 {
         ((self.ambient_gas_pressure * GAS_AMOUNT_PER_ATMOSPHERE).round() as u32)
@@ -232,9 +249,13 @@ impl Scene {
         if self.fluids.as_ref().is_some_and(|fluids| !fluids.can_queue_edit(&edit)) {
             return Err(EditError::CapacityReached);
         }
-        let queued_edit: Edit = edit.clone();
-        self.edit_streaming_state.request_edit(edit, &self.material_table, active_region)?;
-        if let Some(fluids) = self.fluids.as_mut() { fluids.queue_edit(&queued_edit); }
+        let queued_edit: &Edit = self.edit_streaming_state.request_edit(
+            edit,
+            &self.material_table,
+            active_region,
+            self.ambient_gas_temperature,
+        )?;
+        if let Some(fluids) = self.fluids.as_mut() { fluids.queue_edit(queued_edit); }
         Ok(())
     }
 
@@ -404,6 +425,7 @@ impl Scene {
                 fluids,
                 is_particle_snapshot_pending,
                 ambient_gas_amount,
+                self.ambient_gas_temperature,
             )?;
         }
         Ok(())
@@ -829,6 +851,7 @@ impl Drop for Scene {
                 cellular_tile_buffers,
                 chunk_streaming_state,
                 ambient_gas_amount,
+                self.ambient_gas_temperature,
             ));
         if let Err(error) = tile_result {
             panic!("Scene cellular tiles could not be returned: {error:?}");

@@ -23,38 +23,50 @@ use std::collections::BTreeMap;
 pub struct Edit {
     /// Whether filled cells keep or replace existing matter
     pub mode: EditMode,
-    /// Filled cells as bit `y * 8 + x`, material identifiers, and packed RGBA colors of each tile
+    /// Filled cells as bit `y * 8 + x`, material identifiers, packed RGBA colors, and temperatures
+    /// in kelvin of each tile, a NaN temperature taking the material's edit temperature
     pub cellular_tiles: BTreeMap<
         CellularTileCoordinates,
-        (u64, [MaterialIdentifier; 64], [u32; 64]),
+        (u64, [MaterialIdentifier; 64], [u32; 64], [f32; 64]),
     >,
     /// Pressure in atmospheres added to each row-major cell of each tile, negative where removed
     pub pressures: BTreeMap<CellularTileCoordinates, [f32; 64]>,
+    /// Temperature in kelvin added to everything in each row-major cell of each tile, negative
+    /// where removed
+    pub temperatures: BTreeMap<CellularTileCoordinates, [f32; 64]>,
 }
 
 impl Edit {
 
     /// Creates an edit without cells
     pub fn new(mode: EditMode) -> Self {
-        Self { mode, cellular_tiles: BTreeMap::new(), pressures: BTreeMap::new() }
+        Self {
+            mode,
+            cellular_tiles: BTreeMap::new(),
+            pressures: BTreeMap::new(),
+            temperatures: BTreeMap::new(),
+        }
     }
 
-    /// Fills one cell with a material and packed RGBA color, replacing an earlier fill of the cell
+    /// Fills one cell with a material, packed RGBA color, and temperature in kelvin, or the
+    /// material's edit temperature when `None`, replacing an earlier fill of the cell
     pub fn fill_cell(
         &mut self,
         cell: CellCoordinates,
         material_identifier: MaterialIdentifier,
         color: u32,
+        temperature: Option<f32>,
     ) {
         let cell_index: usize = (cell.y.rem_euclid(CELLULAR_TILE_SIZE) * CELLULAR_TILE_SIZE
             + cell.x.rem_euclid(CELLULAR_TILE_SIZE)) as usize;
-        let (cells, material_identifiers, colors): &mut (u64, [MaterialIdentifier; 64], [u32; 64]) =
-            self.cellular_tiles
+        let (cells, material_identifiers, colors, temperatures):
+            &mut (u64, [MaterialIdentifier; 64], [u32; 64], [f32; 64]) = self.cellular_tiles
                 .entry(cell.cellular_tile_coordinates())
-                .or_insert((0, [MaterialIdentifier::EMPTY; 64], [0; 64]));
+                .or_insert((0, [MaterialIdentifier::EMPTY; 64], [0; 64], [f32::NAN; 64]));
         *cells |= 1 << cell_index;
         material_identifiers[cell_index] = material_identifier;
         colors[cell_index] = color;
+        temperatures[cell_index] = temperature.unwrap_or(f32::NAN);
     }
 
     /// Adds pressure in atmospheres to one cell, accumulating with earlier calls and ignoring a
@@ -77,7 +89,28 @@ impl Edit {
             .or_insert([0.0; 64])[cell_index] -= pressure;
     }
 
-    /// Fills every cell whose center lies within a radius in tiles of a segment
+    /// Adds temperature in kelvin to everything in one cell, accumulating with earlier calls and
+    /// ignoring a negative or nonfinite temperature
+    pub fn add_temperature_cell(&mut self, cell: CellCoordinates, temperature: f32) {
+        if !temperature.is_finite() || temperature < 0.0 { return; }
+        let cell_index: usize = (cell.y.rem_euclid(CELLULAR_TILE_SIZE) * CELLULAR_TILE_SIZE
+            + cell.x.rem_euclid(CELLULAR_TILE_SIZE)) as usize;
+        self.temperatures.entry(cell.cellular_tile_coordinates())
+            .or_insert([0.0; 64])[cell_index] += temperature;
+    }
+
+    /// Removes temperature in kelvin from everything in one cell, never below zero, accumulating
+    /// with earlier calls and ignoring a negative or nonfinite temperature
+    pub fn remove_temperature_cell(&mut self, cell: CellCoordinates, temperature: f32) {
+        if !temperature.is_finite() || temperature < 0.0 { return; }
+        let cell_index: usize = (cell.y.rem_euclid(CELLULAR_TILE_SIZE) * CELLULAR_TILE_SIZE
+            + cell.x.rem_euclid(CELLULAR_TILE_SIZE)) as usize;
+        self.temperatures.entry(cell.cellular_tile_coordinates())
+            .or_insert([0.0; 64])[cell_index] -= temperature;
+    }
+
+    /// Fills every cell whose center lies within a radius in tiles of a segment with a material,
+    /// packed RGBA color, and temperature in kelvin, or the material's edit temperature when `None`
     pub fn fill_segment(
         &mut self,
         start: ScenePosition,
@@ -85,9 +118,10 @@ impl Edit {
         radius: f64,
         material_identifier: MaterialIdentifier,
         color: u32,
+        temperature: Option<f32>,
     ) -> Result<(), EditError> {
         for cell in Self::segment_cells(start, end, radius)? {
-            self.fill_cell(cell, material_identifier, color);
+            self.fill_cell(cell, material_identifier, color, temperature);
         }
         Ok(())
     }
@@ -118,6 +152,41 @@ impl Edit {
         if !pressure.is_finite() || pressure < 0.0 { return Err(EditError::InvalidPressure); }
         for cell in Self::segment_cells(start, end, radius)? {
             self.remove_pressure_cell(cell, pressure);
+        }
+        Ok(())
+    }
+
+    /// Adds temperature in kelvin to everything in every cell within a segment radius
+    pub fn add_temperature_segment(
+        &mut self,
+        start: ScenePosition,
+        end: ScenePosition,
+        radius: f64,
+        temperature: f32,
+    ) -> Result<(), EditError> {
+        if !temperature.is_finite() || temperature < 0.0 {
+            return Err(EditError::InvalidTemperature);
+        }
+        for cell in Self::segment_cells(start, end, radius)? {
+            self.add_temperature_cell(cell, temperature);
+        }
+        Ok(())
+    }
+
+    /// Removes temperature in kelvin from everything in every cell within a segment radius, never
+    /// below zero
+    pub fn remove_temperature_segment(
+        &mut self,
+        start: ScenePosition,
+        end: ScenePosition,
+        radius: f64,
+        temperature: f32,
+    ) -> Result<(), EditError> {
+        if !temperature.is_finite() || temperature < 0.0 {
+            return Err(EditError::InvalidTemperature);
+        }
+        for cell in Self::segment_cells(start, end, radius)? {
+            self.remove_temperature_cell(cell, temperature);
         }
         Ok(())
     }

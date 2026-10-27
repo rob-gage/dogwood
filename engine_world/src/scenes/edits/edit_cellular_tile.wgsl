@@ -8,6 +8,8 @@ struct EditCellularTile {
     material_identifiers: array<u32, 64>,
     colors: array<u32, 64>,
     pressures: array<f32, 64>,
+    temperatures: array<f32, 64>,
+    temperature_changes: array<f32, 64>,
 };
 
 @group(0) @binding(0)
@@ -31,6 +33,19 @@ var<storage, read_write> gas: array<vec4<u32>>;
 @group(0) @binding(6)
 var<storage, read_write> gas_awake: array<atomic<u32>>;
 
+@group(0) @binding(7)
+var<storage, read_write> matter: array<vec2<u32>>;
+
+@group(0) @binding(8)
+var<storage, read_write> temperature_changes: array<vec2<u32>>;
+
+@group(0) @binding(9)
+var<storage, read_write> thermal_awake: array<atomic<u32>>;
+
+/// Amount of a cell holding one whole unit of its material, matching
+/// `CELLULAR_TILE_AMOUNT_PER_UNIT`
+const AMOUNT_PER_UNIT: u32 = 65536u;
+
 /// Gas amount in one atmosphere
 const AMOUNT_PER_ATMOSPHERE: u32 = 4096u;
 
@@ -43,7 +58,9 @@ const AMOUNT_MAXIMUM: u32 = 16773120u;
 /// cell leaves only ambient phantom air; and a cellular material keeps the cell's gases, which it
 /// then pushes out, but removes its phantom air. Added pressure raises a static cell's stored
 /// pressure or another cell's phantom air, and removed pressure lowers the stored pressure or
-/// every gas amount in proportion, waking the tile's pressure but not its cellular tiles
+/// every gas amount in proportion, waking the tile's pressure but not its cellular tiles. Written
+/// cells take their temperature, and cellular cells one unit of amount; added temperatures wait
+/// for the next thermal step to warm or cool everything in their cells
 @compute @workgroup_size(64)
 fn compute(
     @builtin(workgroup_id) workgroup: vec3<u32>,
@@ -85,10 +102,29 @@ fn compute(
             }
         }
         kinematics[cell_index] = vec2<u32>(0u, 0u);
+        // a negative temperature, written for fluid fills, keeps the emptied cell's temperature
+        let temperature: f32 = edit_cellular_tiles[edit_cellular_tile_index].temperatures[cell];
+        if temperature >= 0.0 { matter[cell_index].x = bitcast<u32>(temperature); }
+        matter[cell_index].y = select(0u, AMOUNT_PER_UNIT, material_identifiers[cell_index] != 0u);
+        // awake, matching `CELLULAR_TILE_THERMAL_AWAKE`
+        atomicOr(
+            &thermal_awake[edit_cellular_tiles[edit_cellular_tile_index].cellular_tile_index],
+            1u,
+        );
         // awake and disturbed, matching `CELLULAR_TILE_AWAKE`
         atomicOr(&awake[edit_cellular_tiles[edit_cellular_tile_index].cellular_tile_index], 3u);
         // awake, matching `CELLULAR_TILE_GAS_AWAKE`
         atomicOr(&gas_awake[edit_cellular_tiles[edit_cellular_tile_index].cellular_tile_index], 1u);
+    }
+    let temperature_change: f32 =
+        edit_cellular_tiles[edit_cellular_tile_index].temperature_changes[cell];
+    if temperature_change != 0.0 {
+        let previous: f32 = bitcast<f32>(temperature_changes[cell_index].x);
+        temperature_changes[cell_index].x = bitcast<u32>(previous + temperature_change);
+        atomicOr(
+            &thermal_awake[edit_cellular_tiles[edit_cellular_tile_index].cellular_tile_index],
+            1u,
+        );
     }
     let pressure: f32 = edit_cellular_tiles[edit_cellular_tile_index].pressures[cell];
     if pressure != 0.0 {

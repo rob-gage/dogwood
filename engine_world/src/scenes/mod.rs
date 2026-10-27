@@ -44,6 +44,9 @@ const SCENE_AMBIENT_GAS_PRESSURE_DEFAULT: f32 = 1.0;
 /// Default mass of one atmosphere of the phantom air in empty cells, compared with gas masses
 const SCENE_AMBIENT_GAS_MASS_DEFAULT: f32 = 29.0;
 
+/// Default temperature in kelvin of the phantom air in empty cells
+const SCENE_AMBIENT_GAS_TEMPERATURE_DEFAULT: f32 = 293.0;
+
 /// Default fraction of active-region cells available to fluid particles
 const SCENE_FLUID_CAPACITY_FACTOR_DEFAULT: f32 = 0.25;
 

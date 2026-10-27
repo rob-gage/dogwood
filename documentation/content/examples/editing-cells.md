@@ -17,7 +17,7 @@ sources = [
 
 ## Build an edit
 
-An `Edit` groups cells by cellular tile (an 8x8 block of cells). Each filled cell carries a material identifier and a packed color. Create one with `Edit::new`, then add cells:
+An `Edit` groups cells by cellular tile (an 8x8 block of cells). Each filled cell carries a material identifier, packed color, and optional temperature in kelvin. Create one with `Edit::new`, then add cells:
 
 - `fill_cell`: sets one cell, replacing an earlier fill of the same cell in the same edit.
 - `fill_segment`: takes two scene positions and a radius in tiles, and fills cells whose centers are within the radius of the segment. A negative or non-finite radius produces no fill and returns `Ok(())`.
@@ -35,13 +35,14 @@ use engine::scenes::{
 fn build_edit(material_identifier: MaterialIdentifier) -> Result<Edit, EditError> {
     let mut edit = Edit::new(EditMode::Replace);
     let color = u32::from_le_bytes([180, 120, 60, 255]);
-    edit.fill_cell(CellCoordinates { x: 12, y: 7 }, material_identifier, color);
+    edit.fill_cell(CellCoordinates { x: 12, y: 7 }, material_identifier, color, None);
     edit.fill_segment(
         ScenePosition { tile_x: 2, tile_y: 1, offset_x: 0, offset_y: 0 },
         ScenePosition { tile_x: 3, tile_y: 1, offset_x: 0, offset_y: 0 },
         0.25,
         material_identifier,
         color,
+        None,
     )?;
     Ok(edit)
 }
@@ -68,6 +69,7 @@ Validation is all-or-nothing: if any check fails, the entire edit is rejected an
 
 - `CellularTileInactive`: a targeted tile is outside the active region.
 - `MaterialUnregistered`: a filled material is not registered.
+- `InvalidTemperature`: a supplied fill temperature is negative or nonfinite.
 - `CapacityReached`: the request exceeds capacity. `fill_segment` also returns it, before filling, when its bounding rectangle spans more than 4096 tiles.
 
 The complete API is in [collisions and edits](@/external-api/collisions-and-edits.md).

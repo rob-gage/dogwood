@@ -277,7 +277,7 @@ impl Collision {
             // are read so that replaced cells read as static cells
             if self.is_cellular_tile_read_requested {
                 self.is_cellular_tile_read_requested = false;
-                self.simulate_collisions_read_changed_cells(
+                self.simulate_collisions_read_edited_rigid_body_cells(
                     accelerator,
                     active_region,
                     ring_offset,
@@ -659,6 +659,7 @@ impl Collision {
             .take(changed_cell_count)
             .map(|(key, _)| *key)
             .collect();
+        // Occupancy gains and removals both seed detachment; newly solid cells can be floating.
         if cell_changes.is_empty() { return changed_cells; }
         for (_, is_filled) in &cell_changes {
             if *is_filled { solid_cell_count += 1; } else { solid_cell_count -= 1; }
@@ -1356,7 +1357,7 @@ impl Collision {
 
     /// Detaches every rigid body cell an edit replaced from its body, waiting for the GPU, then
     /// splits the bodies it divides
-    fn simulate_collisions_read_changed_cells(
+    fn simulate_collisions_read_edited_rigid_body_cells(
         &mut self,
         accelerator: &Accelerator,
         active_region: CellularTileRegion,
@@ -1525,14 +1526,14 @@ impl Collision {
             if *region != active_region { continue; }
             let width: usize = region.width();
             let mut verified_groups: Vec<
-                Vec<((u32, u32), (MaterialIdentifier, u32, [u32; 2]))>,
+                Vec<((u32, u32), (MaterialIdentifier, u32, [u32; 4]))>,
             > = Vec::new();
             for group in groups {
-                let is_current: bool = group.iter().all(|((x, y), _)| {
+                let is_unchanged: bool = group.iter().all(|((x, y), _)| {
                     cellular_tiles[(*y as usize / 8) * width + *x as usize / 8].as_u64()
                         >> ((*y % 8) * 8 + *x % 8) & 1 == 1
                 });
-                if is_current { verified_groups.push(group); }
+                if is_unchanged { verified_groups.push(group); }
             }
             self.simulate_collisions_apply_detached_cells(
                 accelerator,
@@ -1549,13 +1550,13 @@ impl Collision {
         &mut self,
         accelerator: &Accelerator,
         active_region: CellularTileRegion,
-        groups: Vec<Vec<((u32, u32), (MaterialIdentifier, u32, [u32; 2]))>>,
+        groups: Vec<Vec<((u32, u32), (MaterialIdentifier, u32, [u32; 4]))>>,
         material_table: &MaterialTable,
     ) {
         let region_tile_width: i64 = active_region.width() as i64;
         let (region_x, region_y): (i32, i32) = self.rigid_body_region_origin(active_region);
         for group in groups {
-            let group_cells: Vec<((i64, i64), (MaterialIdentifier, u32, [u32; 2]))> =
+            let group_cells: Vec<((i64, i64), (MaterialIdentifier, u32, [u32; 4]))> =
                 group.into_iter().map(|(cell, read)| {
                     ((i64::from(cell.0), i64::from(cell.1)), read)
                 }).collect();
@@ -1565,7 +1566,7 @@ impl Collision {
             if !is_debris {
                 let mut body_cellular_tiles: BTreeMap<
                     (i32, i32),
-                    (u64, [MaterialIdentifier; 64], [u32; 64], [[u32; 2]; 64], u32, u64),
+                    (u64, [MaterialIdentifier; 64], [u32; 64], [[u32; 4]; 64], u32, u64),
                 > = BTreeMap::new();
                 for ((x, y), (material_identifier, color, state)) in &group_cells {
                     let local_x: i32 = (x - anchor_x) as i32;
@@ -1576,7 +1577,7 @@ impl Collision {
                             0,
                             [MaterialIdentifier::EMPTY; 64],
                             [0; 64],
-                            [[0; 2]; 64],
+                            [[0; 4]; 64],
                             0,
                             0,
                         ));
@@ -1600,7 +1601,7 @@ impl Collision {
                     material_table,
                 ).is_none() { continue; }
             }
-            // the cells leave the static voxels now so the new body never starts inside them
+            // the cells leave the static voxels before the new body is inserted
             for ((x, y), (material_identifier, _, _)) in group_cells {
                 let material: u32 = if is_debris {
                     material_table.debris(material_identifier)
@@ -1640,7 +1641,7 @@ impl Collision {
         accelerator: &Accelerator,
         mut cellular_tiles: BTreeMap<
             (i32, i32),
-            (u64, [MaterialIdentifier; 64], [u32; 64], [[u32; 2]; 64], u32, u64),
+            (u64, [MaterialIdentifier; 64], [u32; 64], [[u32; 4]; 64], u32, u64),
         >,
         translation: rapier2d::math::Vector,
         rotation: f32,
@@ -1796,7 +1797,7 @@ impl Collision {
             }
             let group_cellular_tiles: BTreeMap<
                 (i32, i32),
-                (u64, [MaterialIdentifier; 64], [u32; 64], [[u32; 2]; 64], u32, u64),
+                (u64, [MaterialIdentifier; 64], [u32; 64], [[u32; 4]; 64], u32, u64),
             > = group.iter()
                 .filter_map(|(coordinates, cells)| {
                     let (_, material_identifiers, colors, states, _, _) =
