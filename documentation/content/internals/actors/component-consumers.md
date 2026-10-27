@@ -51,6 +51,8 @@ These components are empty markers that no system reads:
 - `ActorKinematicsRotationComponent`: collision locks all actor body rotations regardless of this component.
 - `ActorKinematicsAngularVelocityComponent`
 - `ActorSamplerMaterialsComponent`
+- `ActorSamplerTemperaturesComponent`
+- `ActorSamplerPressuresComponent`
 
 ## Update order
 

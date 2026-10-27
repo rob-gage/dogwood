@@ -16,6 +16,8 @@ mod actor_pawn_movement;
 mod actor_pawn_possession;
 mod actor_persistence;
 mod actor_sampler_materials;
+mod actor_sampler_pressures;
+mod actor_sampler_temperatures;
 mod actor_sprites;
 
 pub use actor_attachment::ActorAttachmentComponent;
@@ -34,6 +36,8 @@ pub use actor_pawn_movement::ActorPawnMovementComponent;
 pub use actor_pawn_possession::ActorPawnPossessionComponent;
 pub use actor_persistence::ActorPersistenceComponent;
 pub use actor_sampler_materials::ActorSamplerMaterialsComponent;
+pub use actor_sampler_pressures::ActorSamplerPressuresComponent;
+pub use actor_sampler_temperatures::ActorSamplerTemperaturesComponent;
 pub use actor_sprites::ActorSpritesComponent;
 
 // Shared with the graphics representation of parallax planes.

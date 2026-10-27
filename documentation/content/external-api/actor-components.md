@@ -42,6 +42,8 @@ See [parallax backgrounds](@/external-api/scenes.md#parallax-backgrounds) for ph
 | `ActorKinematicsRotationComponent` | Empty marker | `Default::default()` | No runtime consumer. |
 | `ActorKinematicsAngularVelocityComponent` | Empty marker | `Default::default()` | No runtime consumer. |
 | `ActorSamplerMaterialsComponent` | Empty marker | `Default::default()` | No runtime consumer. |
+| `ActorSamplerTemperaturesComponent` | Empty marker | `Default::default()` | No runtime consumer. |
+| `ActorSamplerPressuresComponent` | Empty marker | `Default::default()` | No runtime consumer. |
 
 ### Control and possession
 
