@@ -89,6 +89,7 @@ Open-volume records use two words per cell. The first stores volume at 65,536 un
 | `VOLUME_SCALE` | 65,536 | Integer units per whole open volume |
 | `VOLUME_MINIMUM` | 0.25 | Minimum flow-evaluation volume |
 | `FLUID_OCCUPANCY_CLOSED` | 0.5 | Smoothed fluid occupancy above which the open volume follows the unoccupied fraction |
+| `FLUID_GAS_PERMEABILITY` | 0.5 | Minimum open volume retained by a fluid-occupied cell |
 | `ADVECTION_SPEED_MAXIMUM` | 0.9 | Maximum flow advection speed per substep |
 | `BULK_FRACTION_MAXIMUM` | 0.5 | Maximum total amount transferred per substep |
 

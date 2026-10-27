@@ -14,7 +14,7 @@ Each cell has four gas species slots, phantom air, right and top staggered face 
 
 Open cells contain species and phantom air. Pressure is total amount divided by measured open volume; gas mass also contributes to density and buoyancy. Static terrain and rasterized rigid-body cells are solid. Their signed stored pressure is an `i32` gauge amount in gas word 7; absolute pressure is ambient plus stored pressure. They transmit pressure to open cells and to solid cells with the same owner (terrain or the same rigid body), with mass-based inertia and impedance. Solid faces absorb and relax pressure, and solids expel trapped gas through open faces. Faces between different solid owners reflect.
 
-Dynamic cells, actor-covered cells, and other closed cells reflect pressure. Fluid occupancy above `FLUID_OCCUPANCY_CLOSED` closes the cell to gas. Gas trapped in a closed cell is pushed out through open faces when a route exists. Gas species without phantom air do not enter solids.
+Dynamic cells, actor-covered cells, and other closed cells reflect pressure. Fluid occupancy above `FLUID_OCCUPANCY_CLOSED` reduces a cell's gas volume to the unoccupied fraction, with a minimum of `FLUID_GAS_PERMEABILITY`; this lets gas bubble through fluid while its pressure pushes fluid particles aside. Gas trapped in a closed cell is pushed out through open faces when a route exists. Gas species without phantom air do not enter solids.
 
 ## Pressure cells
 
@@ -28,7 +28,7 @@ A pressure cell covers 2×2 cells, and a pressure tile of 8×8 pressure cells co
 
 The substeps then simulate the pressure cells with the same flow, transfer, and solid model as cells, using coefficients rescaled for the larger cell. After the substeps, `refine` writes the result back over the cells of the active tiles:
 
-- Phantom air and each species are split among cells by open volume, or evenly when none is open. Rounding remainders go to the most open cell, so no gas is lost.
+- Phantom air and each species are split among cells by open volume, or evenly when none is open. Fluid-occupied cells retain partial volume, so refinement does not distribute bubbling gas evenly into a fully closed 2×2 group. Rounding remainders go to the most open cell, so no gas is lost.
 - Every cell keeps its pressure cell's face flows.
 - A static cell in a solid pressure cell takes an equal share of its stored pressure, so it holds the same pressure in atmospheres. One in a partial pressure cell stores the gauge pressure of the gas pressing on it.
 

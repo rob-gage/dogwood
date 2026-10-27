@@ -343,6 +343,9 @@ const ACTOR_VELOCITY_MAXIMUM: f32 = 8.0;
 /// Smoothed fluid occupancy above which a cell's gas volume follows the fluid's unoccupied fraction
 const FLUID_OCCUPANCY_CLOSED: f32 = 0.5;
 
+/// Minimum gas volume retained in a fluid-occupied cell, so gas can bubble through fluid
+const FLUID_GAS_PERMEABILITY: f32 = 0.5;
+
 /// Smallest open volume used for pressure, so closed cells push their gas out without dividing
 /// by zero
 const VOLUME_MINIMUM: f32 = 0.25;
@@ -955,15 +958,28 @@ fn actor_stream(actor: PressureActor, point: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(stream, select(0.0, 1.0, distance < radius * ACTOR_DRAG_RANGE));
 }
 
-/// Returns a cell's fluid occupancy, in cells of the densest fluid present
+/// Returns a cell's fluid occupancy smoothed over its neighbors like the fluid renderer, in
+/// cells of the densest fluid present
 fn fluid_occupancy(cell: vec2<i32>) -> f32 {
-    let raster_index: u32 = cell_index(cell) * 4u;
-    let mass: f32 = max(f32(bitcast<i32>(fluid_raster[raster_index])), 0.0);
-    if mass <= 0.0 { return 0.0; }
-    let dominant_identifier: u32 = fluid_raster[raster_index + 3u];
+    var weighted_mass: f32 = 0.0;
+    var dominant_identifier: u32 = 0u;
+    for (var offset_y: i32 = -1; offset_y <= 1; offset_y++) {
+        for (var offset_x: i32 = -1; offset_x <= 1; offset_x++) {
+            let neighbor: vec2<i32> = cell + vec2<i32>(offset_x, offset_y);
+            if !is_cell_inside(neighbor) { continue; }
+            let raster_index: u32 = cell_index(neighbor) * 4u;
+            let mass: f32 = max(f32(bitcast<i32>(fluid_raster[raster_index])), 0.0);
+            if mass <= 0.0 { continue; }
+            let weight: f32 = select(select(2.0, 1.0, offset_x != 0 && offset_y != 0), 4.0,
+                offset_x == 0 && offset_y == 0);
+            weighted_mass += mass * weight;
+            dominant_identifier = max(dominant_identifier, fluid_raster[raster_index + 3u]);
+        }
+    }
+    if dominant_identifier == 0u { return 0.0; }
     let density: f32 = fluid_materials[(dominant_identifier & 0x3fffffffu) * 2u].x;
     if density <= 0.0 { return 0.0; }
-    return mass / uniforms.fluid_raster_scale / density;
+    return weighted_mass / (uniforms.fluid_raster_scale * 16.0) / density;
 }
 
 /// Measures the open volume of every cell of the listed tiles, or of the whole ring: closed under
@@ -993,7 +1009,8 @@ fn volume(
     let occupancy: f32 = fluid_occupancy(cell);
     var open_volume: f32 = 0.0;
     if material_identifiers[index] == 0u {
-        open_volume = select(1.0, 0.0, occupancy > FLUID_OCCUPANCY_CLOSED);
+        open_volume = select(1.0, max(1.0 - occupancy, FLUID_GAS_PERMEABILITY),
+            occupancy > FLUID_OCCUPANCY_CLOSED);
     }
     let center: vec2<f32> = vec2<f32>(cell) + 0.5;
     let corner: vec2<f32> = vec2<f32>(cell);
