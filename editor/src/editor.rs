@@ -23,7 +23,6 @@ use engine::{
         GameInstance,
     },
     materials::{
-        MaterialForm,
         MaterialIdentifier,
         MaterialTable,
     },
@@ -1188,24 +1187,9 @@ impl<G: Game> Editor<G> {
 
     /// Returns the registered paintable materials and their names
     fn materials(material_table: &MaterialTable) -> Vec<(MaterialIdentifier, String)> {
-        let mut materials: Vec<(MaterialIdentifier, String)> = Vec::new();
-        // static indices start after the empty material, dynamic indices at zero
-        for (material_form, first_index) in
-            [
-                (MaterialForm::CellularStatic, 1),
-                (MaterialForm::CellularDynamic, 0),
-                (MaterialForm::Fluid, 0),
-                (MaterialForm::Gas, 0),
-            ]
-        {
-            for index in first_index.. {
-                let Ok(material_identifier) = MaterialIdentifier::new(material_form, index)
-                else { break; };
-                let Some(material) = material_table.get(material_identifier) else { break; };
-                materials.push((material_identifier, material.name().to_owned()));
-            }
-        }
-        materials
+        material_table.materials()
+            .map(|(identifier, name, _form)| (identifier, name.to_owned()))
+            .collect()
     }
 
     /// Returns the position of a cell's bottom-left corner

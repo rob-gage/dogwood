@@ -8,7 +8,8 @@ pub struct SceneGraphicsGas<'a> {
     pub gas_buffer: &'a wgpu::Buffer,
     /// One u32 per cell, zero is empty
     pub material_identifier_buffer: &'a wgpu::Buffer,
-    /// Mass, diffusivity, cohesion, and packed sRGB color bits as four 32-bit words per gas index
+    /// Mass, diffusivity, cohesion, packed sRGB color bits, opacity, and padding as eight 32-bit
+    /// words per gas index
     pub material_properties_buffer: &'a wgpu::Buffer,
     /// Horizontal offset of the region's bottom-left corner from the camera in tiles
     pub region_x: f32,

@@ -18,13 +18,13 @@ use engine::{
     },
     games::Game,
     materials::{
-        Material,
         MaterialIdentifier,
         MaterialPropertiesCellularDynamic,
         MaterialPropertiesCellularStatic,
         MaterialPropertiesFluid,
         MaterialPropertiesGas,
         MaterialRegistry,
+        MaterialTable,
     },
     scenes::{
         cellular_tiles::CELLULAR_TILE_SIZE,
@@ -49,7 +49,6 @@ use engine::{
     Accelerator,
     MaterialGraphicsCellularDynamic,
     MaterialGraphicsCellularStatic,
-    MaterialGraphicsFluid,
     MaterialGraphicsGas,
     SpriteSheet,
 };
@@ -72,79 +71,73 @@ impl TemplateGame {
     pub fn new(accelerator: &Accelerator) -> Result<Self, EngineError> {
         let mut material_registry: MaterialRegistry = MaterialRegistry::new();
         // cellular dynamic debris that piles at its angle of repose and that players wade through
-        let gravel: MaterialIdentifier = material_registry.register(Material::CellularDynamic {
-            name: String::from("gravel"),
-            properties: MaterialPropertiesCellularDynamic {
-                graphics: MaterialGraphicsCellularDynamic {
-                    sprite_sheet: Arc::new(SpriteSheet::from_png(
-                        accelerator,
-                        include_bytes!("../assets/sprites/gravel.png"),
-                        1,
-                        1,
-                    )?),
-                    frame: 0,
-                    width: 1.0,
-                    height: 1.0,
-                },
-                mass: 1.0,
-                friction: 0.8,
-                restitution: 0.1,
+        material_registry.register_cellular_dynamic("gravel", MaterialPropertiesCellularDynamic {
+            edit_color: MaterialGraphicsCellularDynamic {
+                sprite_sheet: Arc::new(SpriteSheet::from_png(
+                    accelerator,
+                    include_bytes!("../assets/sprites/gravel.png"),
+                    1,
+                    1,
+                )?),
+                frame: 0,
+                width: 1.0,
+                height: 1.0,
             },
+            mass: 1.0,
+            friction: 0.8,
+            restitution: 0.1,
+            thermal: Default::default(),
         })?;
-        let stone: MaterialIdentifier = material_registry.register(Material::CellularStatic {
-            name: String::from("stone"),
-            properties: MaterialPropertiesCellularStatic {
-                graphics: MaterialGraphicsCellularStatic {
-                    sprite_sheet: Arc::new(SpriteSheet::from_png(
-                        accelerator,
-                        include_bytes!("../assets/sprites/stone.png"),
-                        1,
-                        1,
-                    )?),
-                    frame: 0,
-                    width: 1.0,
-                    height: 1.0,
-                },
-                mass: 2.0,
-                friction: 0.6,
-                restitution: 0.1,
-                strength: 10.0,
-                absorption: 0.1,
-                debris: Some(gravel),
+        material_registry.register_cellular_static("stone", MaterialPropertiesCellularStatic {
+            edit_color: MaterialGraphicsCellularStatic {
+                sprite_sheet: Arc::new(SpriteSheet::from_png(
+                    accelerator,
+                    include_bytes!("../assets/sprites/stone.png"),
+                    1,
+                    1,
+                )?),
+                frame: 0,
+                width: 1.0,
+                height: 1.0,
             },
+            mass: 2.0,
+            friction: 0.6,
+            restitution: 0.1,
+            strength: 10.0,
+            absorption: 0.1,
+            debris: Some(String::from("gravel")),
+            thermal: Default::default(),
         })?;
-        let _water: MaterialIdentifier = material_registry.register(Material::Fluid {
-            name: String::from("water"),
-            properties: MaterialPropertiesFluid {
-                density: 0.6,
-                viscosity: 0.05,
-                cohesion: 0.2,
-                artificial_pressure: 0.001,
-                drag: 1.0,
-                friction: 0.0,
-                restitution: 0.0,
-                graphics: MaterialGraphicsFluid {
-                    color: u32::from_le_bytes([40, 110, 200, 200]),
-                },
-            },
+        material_registry.register_fluid("water", MaterialPropertiesFluid {
+            density: 0.6,
+            viscosity: 0.05,
+            cohesion: 0.2,
+            artificial_pressure: 0.001,
+            drag: 1.0,
+            friction: 0.0,
+            restitution: 0.0,
+            edit_color: u32::from_le_bytes([40, 110, 200, 200]),
+            thermal: Default::default(),
         })?;
-        let _water_vapor: MaterialIdentifier = material_registry.register(Material::Gas {
-            name: String::from("water vapor"),
-            properties: MaterialPropertiesGas {
-                mass: 18.0,
-                diffusivity: 0.04,
-                cohesion: 0.1,
-                graphics: MaterialGraphicsGas {
-                    color: u32::from_le_bytes([225, 230, 240, 150]),
-                },
+        material_registry.register_gas("water vapor", MaterialPropertiesGas {
+            mass: 18.0,
+            diffusivity: 0.04,
+            cohesion: 0.1,
+            graphics: MaterialGraphicsGas {
+                color: u32::from_le_bytes([225, 230, 240, 150]),
+                opacity: 1.0,
             },
+            thermal: Default::default(),
         })?;
         // the template starts from its generated world on every launch
         let world_path: PathBuf = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("world");
         let _ = std::fs::remove_dir_all(&world_path);
+        let material_table: MaterialTable = material_registry.compile(accelerator)?;
+        let stone: MaterialIdentifier = material_table.lookup("stone")
+            .expect("registered stone material should be present");
         let mut scene: Scene = Scene::new(
             ChunkData::new(world_path),
-            material_registry.compile(accelerator)?,
+            material_table,
             Arc::new(TemplateSceneGenerator { stone }),
             0,
         );

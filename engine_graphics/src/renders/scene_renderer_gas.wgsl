@@ -97,7 +97,7 @@ fn cell_gas_color(cell: vec2<i32>) -> vec4<f32> {
         let amount: u32 = packed_slot & 0x00ffffffu;
         if amount > 0u {
             let gas_index: u32 = packed_slot >> 24u;
-            let properties: vec4<f32> = gas_materials[gas_index];
+            let properties: vec4<f32> = gas_materials[gas_index * 2u];
             let srgb_color: vec4<f32> = unpack4x8unorm(bitcast<u32>(properties.w));
             let linear_rgb: vec3<f32> = vec3<f32>(
                 srgb_to_linear(srgb_color.r),

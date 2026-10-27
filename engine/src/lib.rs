@@ -4,13 +4,16 @@ pub mod games;
 pub mod runtime;
 
 pub use engine_graphics::{
-    renders::{SceneRenderer, SceneRendererViewMode},
+    renders::{
+        SceneRenderer,
+        SceneRendererViewMode,
+    },
     sprites::SpriteSheet,
     world::{
         materials::{
+            MaterialColorTransformation,
             MaterialGraphicsCellularDynamic,
             MaterialGraphicsCellularStatic,
-            MaterialGraphicsFluid,
             MaterialGraphicsGas,
         },
         scenes::{SceneGraphicsOverlay, SceneGraphicsOverlayShape},

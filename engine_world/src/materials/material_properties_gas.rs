@@ -1,6 +1,7 @@
 // Copyright Rob Gage 2026
 
 use engine_graphics::world::materials::MaterialGraphicsGas;
+use super::MaterialPropertiesThermal;
 
 /// Properties for a gas material
 pub struct MaterialPropertiesGas {
@@ -14,4 +15,6 @@ pub struct MaterialPropertiesGas {
     pub cohesion: f32,
     /// Graphics for this gas material
     pub graphics: MaterialGraphicsGas,
+    /// Thermal and phase-transition properties; heat capacity is per atmosphere
+    pub thermal: MaterialPropertiesThermal,
 }

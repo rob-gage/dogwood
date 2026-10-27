@@ -6,7 +6,7 @@ use super::{
 };
 
 /// Identifies a `Material`
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct MaterialIdentifier(u32);
 
 impl MaterialIdentifier {

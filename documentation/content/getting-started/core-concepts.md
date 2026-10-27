@@ -32,7 +32,7 @@ The **tile ring** is a GPU buffer holding tiles near the camera. The **active re
 
 ### Materials
 
-A **material** defines how a kind of cell behaves and looks. A game registers materials in a `MaterialRegistry` and compiles them into a `MaterialTable`, which it passes to the scene. A material has one form:
+A **material** defines how a kind of cell behaves and looks. A game registers named material definitions in a `MaterialRegistry` and compiles them into a `MaterialTable`, which it passes to the scene. The table resolves dependency names and supplies identifiers through `lookup` for edits and generators. A material has one form:
 
 - **cellular static:** static cells that the dynamic-cell simulation does not move, such as stone.
 - **cellular dynamic:** cells moved by the kinematics simulation, such as gravel, which falls and piles.

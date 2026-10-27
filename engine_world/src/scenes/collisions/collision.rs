@@ -1603,8 +1603,7 @@ impl Collision {
             // the cells leave the static voxels now so the new body never starts inside them
             for ((x, y), (material_identifier, _, _)) in group_cells {
                 let material: u32 = if is_debris {
-                    material_table.cellular_static_properties(material_identifier)
-                        .and_then(|properties| properties.debris)
+                    material_table.debris(material_identifier)
                         .unwrap_or(MaterialIdentifier::EMPTY)
                         .as_u32()
                 } else { 0 };
@@ -1853,8 +1852,7 @@ impl Collision {
                     let cell: usize = remaining_cells.trailing_zeros() as usize;
                     remaining_cells &= remaining_cells - 1;
                     material_identifiers[cell] = material_table
-                        .cellular_static_properties(material_identifiers[cell])
-                        .and_then(|properties| properties.debris)
+                        .debris(material_identifiers[cell])
                         .unwrap_or(MaterialIdentifier::EMPTY);
                 }
             }

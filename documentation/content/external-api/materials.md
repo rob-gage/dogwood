@@ -10,31 +10,55 @@ Materials are registered in a `MaterialRegistry`, compiled into an immutable `Ma
 
 ## Forms and properties
 
-A `Material` is one of four variants, one per `MaterialForm`: `CellularStatic`, `CellularDynamic`, `Fluid`, or `Gas`. Each variant carries a `String` name and its properties struct; `Material::name()` and `Material::form()` return those values.
+Games register materials with a name and one form-specific properties struct. References such as
+static debris and transition products use names; compilation resolves them after all definitions
+have been registered.
 
-| Properties type | Fields | Meaning |
+| Registration method | Properties type | Additional properties |
 |---|---|---|
-| `MaterialPropertiesCellularStatic` | `graphics`; `mass`, `friction`, `restitution`, `strength`, `absorption: f32`; `debris: Option<MaterialIdentifier>` | `mass` uses dynamic cellular material mass units. `friction` is the Coulomb coefficient for rigid bodies. `restitution` is the fraction of speed kept, reversed, on collision. `strength` is the pressure difference in atmospheres held indefinitely; infinity makes cells unbreakable. `absorption` is the fraction of passing pressure absorbed by each cell, damping waves and damaging cells above their strength. `debris` selects the dynamic material used when cells break off, or `None` to vanish. |
-| `MaterialPropertiesCellularDynamic` | `graphics`; `mass`, `friction`, `restitution: f32` | `mass` uses dynamic cellular material mass units. `friction` is the tangent of the steepest slope a resting cell holds. `restitution` is the fraction of speed kept, reversed, when a cell hits something it cannot enter. |
-| `MaterialPropertiesFluid` | `graphics`; `density`, `viscosity`, `cohesion`, `artificial_pressure`, `drag`, `friction`, `restitution: f32` | Density is mass per fluid cell; viscosity is XSPH velocity smoothing; cohesion and artificial pressure control surface cohesion and PBF artificial pressure. Drag configures swimming and idle-swimmer current coupling; friction and restitution configure direct fluid-cell contacts. |
-| `MaterialPropertiesGas` | `graphics`; `mass`, `diffusivity`, `cohesion: f32` | `mass` is the mass of one atmosphere of the gas in one cell, compared with the scene's ambient gas mass. `diffusivity` is the fraction exchanged with each neighboring cell per tick. `cohesion` is the atmospheres a cell must hold before the gas spreads into a cell without it. |
+| `register_cellular_static(name, properties)` | `MaterialPropertiesCellularStatic` | `mass`, `friction`, `restitution`, `strength`, `absorption`, `debris: Option<String>` |
+| `register_cellular_dynamic(name, properties)` | `MaterialPropertiesCellularDynamic` | `mass`, `friction`, `restitution` |
+| `register_fluid(name, properties)` | `MaterialPropertiesFluid` | `density`, `viscosity`, `cohesion`, `artificial_pressure`, `drag`, `friction`, `restitution`, `edit_color` |
+| `register_gas(name, properties)` | `MaterialPropertiesGas` | `mass`, `diffusivity`, `cohesion`, `graphics` (`color`, `opacity`) |
+
+Every form also has `thermal: MaterialPropertiesThermal`, with `heat_capacity`, `conduction`,
+`edit_temperature`, `hot_transition`, and `cold_transition`. Defaults are heat capacity `1.0`,
+conduction `0.0`, edit temperature `293.0`, and no transitions. Gas heat capacity is per
+atmosphere. `MaterialTransition::new(temperature, latent_heat, product)` takes a product name,
+then `with_amount` and `with_color` set optional values; defaults are amount `1.0` and identity
+color transformation.
+
+> **Not implemented:** Material transitions are not yet simulated.
+
+These thermal values are material configuration only in state 01. The scene does not store per-cell temperatures, and edits do not accept temperature values.
+
+Registration rejects empty trimmed names and duplicate exact names. Names are case-sensitive and
+are not trimmed before lookup. Compilation rejects unknown references, debris that does not name a
+cellular dynamic material, and invalid transitions. The compilation validation limits are listed
+in [the material table page](@/internals/simulation/material-table.md).
 
 ### Validation at compile time
 
-- Cellular `mass` must be finite and positive.
-- `friction` must be finite and nonnegative.
-- `restitution` must be between 0 and 1 inclusive.
-- Static `strength` must be positive and not NaN; positive infinity is allowed. Static `absorption` must be finite and in `[0, 1]`.
-- Fluid `density` must be finite and positive; `viscosity` must be in `[0, 1]`. Fluid `cohesion`, `artificial_pressure`, and `drag` must be finite and nonnegative.
-- Gas `mass` must be finite and positive; `diffusivity` must be in `[0, 0.4]` and `cohesion` in `[0, 1]`. At most 255 gas materials can be registered.
-- Static `debris` must identify a registered cellular dynamic material.
-- Graphics `width` and `height` repetition scales must be finite and positive, and the sprite-sheet `frame` must be valid.
+- Cellular mass must be finite and positive; friction finite and nonnegative; restitution in
+  `[0, 1]`.
+- Static strength must be positive and not NaN (positive infinity is allowed), and absorption must
+  be finite in `[0, 1]`.
+- Fluid density must be finite and positive; viscosity and restitution in `[0, 1]`; cohesion,
+  artificial pressure, drag, and friction finite and nonnegative. Viscosity controls XSPH velocity
+  smoothing. Fluid friction also controls dynamic-cell contacts.
+- Gas mass must be finite and positive; diffusivity in `[0, 0.4]`; cohesion in `[0, 1]`; at most
+  255 gas materials may be registered.
+- Thermal heat capacity must be finite and positive; conduction and edit temperature finite and
+  nonnegative. Transition temperatures and latent heat must be nonnegative, amount at least
+  1/4096, and hot transition temperature above cold transition temperature. Color transformation values must
+  be finite, and color variances nonnegative.
+- Cellular albedo scales must be finite and positive, and each sprite frame must be valid.
 
 ### Graphics properties
 
 `MaterialGraphicsCellularStatic` and `MaterialGraphicsCellularDynamic` share the fields `sprite_sheet: Arc<SpriteSheet>`, `frame` (frame index), and `width` and `height` (repetition scales in cells per pixel). The facade re-exports them as `engine::MaterialGraphicsCellularStatic` and `engine::MaterialGraphicsCellularDynamic`; they are defined in `engine_graphics::world::materials`.
 
-`MaterialGraphicsFluid` has a `color: u32` field containing packed sRGB RGBA; alpha specifies the opacity of a full fluid cell. It is re-exported as `engine::MaterialGraphicsFluid`. `MaterialGraphicsGas` has the same `color: u32` field; alpha specifies the opacity of one atmosphere of the gas. It is re-exported as `engine::MaterialGraphicsGas`.
+`MaterialPropertiesFluid::edit_color` is packed sRGB RGBA; alpha specifies the opacity of a full cell when edits create fluid particles. `MaterialGraphicsGas` has a packed `color: u32` and an `opacity` multiplier; alpha specifies the opacity of one atmosphere of the gas before that multiplier. It is re-exported as `engine::MaterialGraphicsGas`.
 
 Fluid materials use [particle simulation](@/internals/simulation/fluids.md) and [raster-based rendering](@/internals/rendering/fluid-pass.md). Material density supplies physical mass; the pressure solver uses a shared rest spacing.
 
@@ -44,7 +68,8 @@ Placing a fluid identifier directly in a cellular array does not create a partic
 
 ## Identifiers
 
-`MaterialIdentifier` wraps a `u32`:
+`MaterialIdentifier` is an internal simulation handle that wraps a `u32`. Games should obtain
+handles from `MaterialTable::lookup` after compilation rather than predicting their indices:
 
 - Bits 31-30 encode the `MaterialForm`.
 - Bits 29-0 encode a form-specific index.
@@ -58,28 +83,39 @@ Registered static materials start at index 1. Dynamic, fluid, and gas indices st
 ## MaterialRegistry
 
 - `MaterialRegistry::new()` creates an empty registry.
-- `register(material)` checks that the trimmed name is nonempty, assigns the next index for that form, and returns the identifier.
-- `get_by_name(name)` returns `Option<MaterialIdentifier>` using the exact, case-sensitive registered name, without trimming. Duplicate names resolve to the latest successful registration; earlier identifiers remain valid.
-- `get`, `material_count`, and the form-specific property methods query registered entries. `material_count()` counts registrations across all forms.
-- `cellular_static_graphics()` yields `None` for the empty identifier, then each registered static material's graphics in identifier order.
-- `compile(self, accelerator)` consumes the registry and returns an immutable `MaterialTable`. Compilation validates the properties above and reads sprite-sheet albedo frames.
-
-`register` and `compile` return `MaterialError`, which has four variants: `EmptyName`, `CapacityExceeded`, `IdentifierIndexOutOfRange`, and `Compilation(String)`.
+- The four `register_*` methods take a name and matching properties struct and return
+  `Result<(), MaterialError>`.
+- `compile(self, accelerator)` assigns identifiers in registration order within each form, resolves
+  name references, validates properties, and reads sprite-sheet albedo frames.
+- Registration errors include `EmptyName` and `DuplicateName`; compilation can return
+  `UnknownMaterial`, `InvalidDebris`, `InvalidTransition`, capacity errors, or
+  `Compilation(String)`.
 
 ## MaterialTable
 
-`MaterialTable` provides `get`, `material_count`, `cellular_static_properties`, `cellular_dynamic_properties`, `fluid_properties`, `gas_properties`, and `cellular_color(identifier, cell, color)`. Typed lookups return `None` for an unregistered identifier or one of another form.
+`lookup(name)` returns the compiled identifier for an exact, case-sensitive name.
+`materials()` iterates `(MaterialIdentifier, name, MaterialForm)` in identifier order.
+`get` and the typed property methods return the compiled definitions, including their dependency
+names. `debris(identifier)` returns the resolved dynamic debris identifier. `material_count()`
+counts all forms.
 
-`cellular_color` returns the supplied color for non-cellular materials or missing albedo data. For cellular materials with albedo, it samples the albedo at the cell center. The pattern repeats from the scene origin, with image rows flipped. It applies the packed sRGB tint, multiplying RGB in linear light and alpha separately. Colors use RGBA bytes, with red in the least-significant byte: `u32::from_le_bytes([r, g, b, a])`.
+The table provides `cellular_color(identifier, cell, color)` and the GPU buffer accessors. For
+cellular materials with albedo, `cellular_color` samples the frame at the cell center. The pattern
+repeats from the scene origin with image rows flipped. It applies the packed sRGB tint, multiplying
+RGB in linear light and alpha separately. Colors use RGBA bytes, with red in the least-significant
+byte: `u32::from_le_bytes([r, g, b, a])`.
 
 ### Advanced: GPU buffers
 
-The accessors `cellular_static_properties_buffer`, `cellular_dynamic_properties_buffer`, `fluid_properties_buffer`, and `gas_properties_buffer` expose buffers containing records. Compilation waits for cellular albedo-frame texture readback, so it completes synchronously from the caller's perspective. See [material table compilation](@/internals/simulation/material-table.md) for buffer layout and tint details.
+Compilation keeps the existing GPU record layouts. It waits for cellular albedo-frame texture
+readback, so it completes synchronously from the caller's perspective. See
+[material table compilation](@/internals/simulation/material-table.md) for buffer layout and tint
+details.
 
 ## Rustdoc
 
-Core: {{ <rustdoc path="engine/materials/enum.Material.html" text="Material" /> }} · {{ <rustdoc path="engine/materials/enum.MaterialForm.html" text="MaterialForm" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialIdentifier.html" text="MaterialIdentifier" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialRegistry.html" text="MaterialRegistry" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialTable.html" text="MaterialTable" /> }} · {{ <rustdoc path="engine/materials/enum.MaterialError.html" text="MaterialError" /> }}
+Core: {{ <rustdoc path="engine/materials/enum.Material.html" text="Material" /> }} · {{ <rustdoc path="engine/materials/enum.MaterialForm.html" text="MaterialForm" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialIdentifier.html" text="MaterialIdentifier" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialRegistry.html" text="MaterialRegistry" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialTable.html" text="MaterialTable" /> }} · {{ <rustdoc path="engine/materials/enum.MaterialError.html" text="MaterialError" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialTransition.html" text="MaterialTransition" /> }}
 
-Properties: {{ <rustdoc path="engine/materials/struct.MaterialPropertiesCellularStatic.html" text="MaterialPropertiesCellularStatic" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialPropertiesCellularDynamic.html" text="MaterialPropertiesCellularDynamic" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialPropertiesFluid.html" text="MaterialPropertiesFluid" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialPropertiesGas.html" text="MaterialPropertiesGas" /> }}
+Properties: {{ <rustdoc path="engine/materials/struct.MaterialPropertiesCellularStatic.html" text="MaterialPropertiesCellularStatic" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialPropertiesCellularDynamic.html" text="MaterialPropertiesCellularDynamic" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialPropertiesFluid.html" text="MaterialPropertiesFluid" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialPropertiesGas.html" text="MaterialPropertiesGas" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialPropertiesThermal.html" text="MaterialPropertiesThermal" /> }}
 
-Graphics: {{ <rustdoc path="engine/struct.MaterialGraphicsCellularStatic.html" text="MaterialGraphicsCellularStatic" /> }} · {{ <rustdoc path="engine/struct.MaterialGraphicsCellularDynamic.html" text="MaterialGraphicsCellularDynamic" /> }} · {{ <rustdoc path="engine/struct.MaterialGraphicsFluid.html" text="MaterialGraphicsFluid" /> }} · {{ <rustdoc path="engine/struct.MaterialGraphicsGas.html" text="MaterialGraphicsGas" /> }}
+Graphics: {{ <rustdoc path="engine/struct.MaterialGraphicsCellularStatic.html" text="MaterialGraphicsCellularStatic" /> }} · {{ <rustdoc path="engine/struct.MaterialGraphicsCellularDynamic.html" text="MaterialGraphicsCellularDynamic" /> }} · {{ <rustdoc path="engine/struct.MaterialGraphicsGas.html" text="MaterialGraphicsGas" /> }}

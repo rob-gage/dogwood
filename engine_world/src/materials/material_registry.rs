@@ -9,21 +9,23 @@ use super::{
     MaterialPropertiesCellularStatic,
     MaterialPropertiesFluid,
     MaterialPropertiesGas,
+    MaterialPropertiesThermal,
 };
 use engine_graphics::world::materials::MaterialGraphicsCellularStatic;
-use std::collections::HashMap;
+use engine_host::acceleration::Accelerator;
+use std::collections::{HashMap, HashSet};
 
-/// Owns registered materials and their identifiers
+/// Owns unresolved material definitions
 pub struct MaterialRegistry {
-    /// Identifiers indexed by exact material name; later registrations replace earlier entries
-    materials_by_name: HashMap<String, MaterialIdentifier>,
-    /// The `Material::CellularStatic`s in this `MaterialRegistry`
+    /// Names already registered, used to reject duplicates immediately
+    names: HashSet<String>,
+    /// Registered cellular static materials in registration order
     cellular_statics: Vec<Material>,
-    /// The `Material::CellularDynamic`s in this `MaterialRegistry`
+    /// Registered cellular dynamic materials in registration order
     cellular_dynamics: Vec<Material>,
-    /// The `Material::Fluid`s in this `MaterialRegistry`
+    /// Registered fluid materials in registration order
     fluids: Vec<Material>,
-    /// The `Material::Gas`s in this `MaterialRegistry`
+    /// Registered gas materials in registration order
     gases: Vec<Material>,
 }
 
@@ -32,7 +34,7 @@ impl MaterialRegistry {
     /// Creates an empty material registry
     pub fn new() -> Self {
         Self {
-            materials_by_name: HashMap::new(),
+            names: HashSet::new(),
             cellular_statics: Vec::new(),
             cellular_dynamics: Vec::new(),
             fluids: Vec::new(),
@@ -40,68 +42,72 @@ impl MaterialRegistry {
         }
     }
 
-    /// Registers a material and returns its stable form-specific identifier
-    pub fn register(&mut self, material: Material) -> Result<MaterialIdentifier, MaterialError> {
-        Self::validate_material(&material)?;
-        let form: MaterialForm = material.form();
-        let material_count: usize = match form {
-            MaterialForm::CellularStatic => self.cellular_statics.len(),
-            MaterialForm::CellularDynamic => self.cellular_dynamics.len(),
-            MaterialForm::Fluid => self.fluids.len(),
-            MaterialForm::Gas => self.gases.len(),
-        };
-        let material_index_offset: usize = match form {
-            MaterialForm::CellularStatic => material_count.checked_add(1)
-                .ok_or(MaterialError::CapacityExceeded)?,
-            MaterialForm::CellularDynamic | MaterialForm::Fluid | MaterialForm::Gas => {
-                material_count
-            }
-        };
-        let material_index: u32 = material_index_offset
-            .try_into()
-            .map_err(|_| MaterialError::CapacityExceeded)?;
-        let identifier: MaterialIdentifier = MaterialIdentifier::new(form, material_index)?;
-        self.materials_by_name.insert(material.name().to_owned(), identifier);
-        match material {
-            material @ Material::CellularStatic { .. } => self.cellular_statics.push(material),
-            material @ Material::CellularDynamic { .. } => self.cellular_dynamics.push(material),
-            material @ Material::Fluid { .. } => self.fluids.push(material),
-            material @ Material::Gas { .. } => self.gases.push(material),
-        }
-        Ok(identifier)
+    /// Registers an unresolved cellular static material by name
+    pub fn register_cellular_static(
+        &mut self,
+        name: impl Into<String>,
+        properties: MaterialPropertiesCellularStatic,
+    ) -> Result<(), MaterialError> {
+        let name: String = self.validate_name(name.into())?;
+        self.cellular_statics.push(Material::CellularStatic { name, properties });
+        Ok(())
     }
 
-    /// Returns the material represented by a valid registered identifier
+    /// Registers an unresolved cellular dynamic material by name
+    pub fn register_cellular_dynamic(
+        &mut self,
+        name: impl Into<String>,
+        properties: MaterialPropertiesCellularDynamic,
+    ) -> Result<(), MaterialError> {
+        let name: String = self.validate_name(name.into())?;
+        self.cellular_dynamics.push(Material::CellularDynamic { name, properties });
+        Ok(())
+    }
+
+    /// Registers an unresolved fluid material by name
+    pub fn register_fluid(
+        &mut self,
+        name: impl Into<String>,
+        properties: MaterialPropertiesFluid,
+    ) -> Result<(), MaterialError> {
+        let name: String = self.validate_name(name.into())?;
+        self.fluids.push(Material::Fluid { name, properties });
+        Ok(())
+    }
+
+    /// Registers an unresolved gas material by name
+    pub fn register_gas(
+        &mut self,
+        name: impl Into<String>,
+        properties: MaterialPropertiesGas,
+    ) -> Result<(), MaterialError> {
+        let name: String = self.validate_name(name.into())?;
+        self.gases.push(Material::Gas { name, properties });
+        Ok(())
+    }
+
+    /// Returns the definition addressed by this form-specific identifier position
     pub fn get(&self, identifier: MaterialIdentifier) -> Option<&Material> {
         if identifier == MaterialIdentifier::EMPTY { return None; }
-        let material_form_index: usize = identifier.index() as usize;
+        let index: usize = identifier.index() as usize;
         match identifier.form() {
-            MaterialForm::CellularStatic => self
-                .cellular_statics
-                .get(material_form_index.checked_sub(1)?),
-            MaterialForm::CellularDynamic => self.cellular_dynamics.get(material_form_index),
-            MaterialForm::Fluid => self.fluids.get(material_form_index),
-            MaterialForm::Gas => self.gases.get(material_form_index),
+            MaterialForm::CellularStatic => self.cellular_statics.get(index.checked_sub(1)?),
+            MaterialForm::CellularDynamic => self.cellular_dynamics.get(index),
+            MaterialForm::Fluid => self.fluids.get(index),
+            MaterialForm::Gas => self.gases.get(index),
         }
     }
 
-    /// Returns the latest registered identifier with this exact, case-sensitive name
-    pub fn lookup(&self, name: &str) -> Option<MaterialIdentifier> {
-        self.materials_by_name.get(name).copied()
-    }
-
-    /// Iterates over the graphics of every cellular static material index, starting with empty
-    pub fn cellular_static_graphics(
+    /// Iterates over static edit colors, including the reserved empty slot
+    pub fn cellular_static_edit_colors(
         &self,
-    ) -> impl Iterator<Item = Option<&MaterialGraphicsCellularStatic>> {
-        std::iter::once(None).chain(self.cellular_statics.iter().map(
-            |material: &Material| match material {
-                Material::CellularStatic { properties, .. } => Some(&properties.graphics),
-                Material::CellularDynamic { .. }
-                | Material::Fluid { .. }
-                | Material::Gas { .. } => None,
-            },
-        ))
+    ) -> impl Iterator<
+        Item = Option<&MaterialGraphicsCellularStatic>,
+    > {
+        std::iter::once(None).chain(self.cellular_statics.iter().map(|material| match material {
+            Material::CellularStatic { properties, .. } => Some(&properties.edit_color),
+            _ => None,
+        }))
     }
 
     /// Returns the properties of a registered cellular static material
@@ -111,9 +117,7 @@ impl MaterialRegistry {
     ) -> Option<&MaterialPropertiesCellularStatic> {
         match self.get(identifier)? {
             Material::CellularStatic { properties, .. } => Some(properties),
-            Material::CellularDynamic { .. }
-            | Material::Fluid { .. }
-            | Material::Gas { .. } => None,
+            _ => None,
         }
     }
 
@@ -124,9 +128,7 @@ impl MaterialRegistry {
     ) -> Option<&MaterialPropertiesCellularDynamic> {
         match self.get(identifier)? {
             Material::CellularDynamic { properties, .. } => Some(properties),
-            Material::CellularStatic { .. }
-            | Material::Fluid { .. }
-            | Material::Gas { .. } => None,
+            _ => None,
         }
     }
 
@@ -137,9 +139,7 @@ impl MaterialRegistry {
     ) -> Option<&MaterialPropertiesFluid> {
         match self.get(identifier)? {
             Material::Fluid { properties, .. } => Some(properties),
-            Material::CellularStatic { .. }
-            | Material::CellularDynamic { .. }
-            | Material::Gas { .. } => None,
+            _ => None,
         }
     }
 
@@ -150,10 +150,93 @@ impl MaterialRegistry {
     ) -> Option<&MaterialPropertiesGas> {
         match self.get(identifier)? {
             Material::Gas { properties, .. } => Some(properties),
-            Material::CellularStatic { .. }
-            | Material::CellularDynamic { .. }
-            | Material::Fluid { .. } => None,
+            _ => None,
         }
+    }
+
+    /// Compiles the registry, assigning identifiers and resolving all material names
+    pub fn compile(self, accelerator: &Accelerator) -> Result<super::MaterialTable, MaterialError> {
+        let mut identifiers_by_name: HashMap<String, MaterialIdentifier> = HashMap::new();
+        for (form, materials, first_index) in [
+            (MaterialForm::CellularStatic, &self.cellular_statics, 1usize),
+            (MaterialForm::CellularDynamic, &self.cellular_dynamics, 0usize),
+            (MaterialForm::Fluid, &self.fluids, 0usize),
+            (MaterialForm::Gas, &self.gases, 0usize),
+        ] {
+            for (offset, material) in materials.iter().enumerate() {
+                let index: u32 = first_index.checked_add(offset)
+                    .ok_or(MaterialError::CapacityExceeded)?
+                    .try_into().map_err(|_| MaterialError::CapacityExceeded)?;
+                let identifier: MaterialIdentifier = MaterialIdentifier::new(form, index)?;
+                identifiers_by_name.insert(material.name().to_owned(), identifier);
+            }
+        }
+        let mut debris_by_identifier: HashMap<MaterialIdentifier, MaterialIdentifier> =
+            HashMap::new();
+        let mut transition_products: HashMap<(MaterialIdentifier, bool), MaterialIdentifier> =
+            HashMap::new();
+        for (form, materials, first_index) in [
+            (MaterialForm::CellularStatic, &self.cellular_statics, 1usize),
+            (MaterialForm::CellularDynamic, &self.cellular_dynamics, 0usize),
+            (MaterialForm::Fluid, &self.fluids, 0usize),
+            (MaterialForm::Gas, &self.gases, 0usize),
+        ] {
+            for (offset, material) in materials.iter().enumerate() {
+                let index: u32 = (first_index + offset).try_into()
+                    .map_err(|_| MaterialError::CapacityExceeded)?;
+                let identifier: MaterialIdentifier = MaterialIdentifier::new(form, index)?;
+                let source_name: &str = material.name();
+                let thermal: Option<&MaterialPropertiesThermal> = match material {
+                    Material::CellularStatic { properties, .. } => Some(&properties.thermal),
+                    Material::CellularDynamic { properties, .. } => Some(&properties.thermal),
+                    Material::Fluid { properties, .. } => Some(&properties.thermal),
+                    Material::Gas { properties, .. } => Some(&properties.thermal),
+                };
+                if let Material::CellularStatic { properties, .. } = material {
+                    if let Some(name) = properties.debris.as_deref() {
+                        let Some(debris) = identifiers_by_name.get(name).copied() else {
+                            return Err(MaterialError::UnknownMaterial {
+                                name: name.to_owned(), referenced_by: source_name.to_owned(),
+                            });
+                        };
+                        if debris.form() != MaterialForm::CellularDynamic {
+                            return Err(MaterialError::InvalidDebris {
+                                name: name.to_owned(), referenced_by: source_name.to_owned(),
+                            });
+                        }
+                        debris_by_identifier.insert(identifier, debris);
+                    }
+                }
+                if let Some(thermal) = thermal {
+                    for (hot, transition) in [
+                        (true, thermal.hot_transition.as_ref()),
+                        (false, thermal.cold_transition.as_ref()),
+                    ] {
+                        let Some(transition) = transition else { continue; };
+                        let Some(product) = identifiers_by_name.get(&transition.product).copied()
+                        else {
+                            return Err(MaterialError::UnknownMaterial {
+                                name: transition.product.clone(),
+                                referenced_by: source_name.to_owned(),
+                            });
+                        };
+                        if product == identifier {
+                            return Err(MaterialError::InvalidTransition {
+                                name: source_name.to_owned(),
+                                message: format!(
+                                    "transition product '{}' must differ from its source",
+                                    transition.product,
+                                ),
+                            });
+                        }
+                        transition_products.insert((identifier, hot), product);
+                    }
+                }
+            }
+        }
+        super::MaterialTable::new(
+            accelerator, self, identifiers_by_name, debris_by_identifier, transition_products,
+        )
     }
 
     /// Returns the number of registered materials
@@ -164,9 +247,13 @@ impl MaterialRegistry {
             + self.gases.len()
     }
 
-    fn validate_material(material: &Material) -> Result<(), MaterialError> {
-        if material.name().trim().is_empty() { return Err(MaterialError::EmptyName); }
-        Ok(())
+    /// Validates a name and records it so duplicate registrations are rejected
+    fn validate_name(&mut self, name: String) -> Result<String, MaterialError> {
+        if name.trim().is_empty() { return Err(MaterialError::EmptyName); }
+        if !self.names.insert(name.clone()) {
+            return Err(MaterialError::DuplicateName { name });
+        }
+        Ok(name)
     }
 
 }

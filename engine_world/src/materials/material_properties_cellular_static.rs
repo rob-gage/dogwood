@@ -1,12 +1,13 @@
 // Copyright Rob Gage 2026
 
 use engine_graphics::world::materials::MaterialGraphicsCellularStatic;
-use super::MaterialIdentifier;
+use super::MaterialPropertiesThermal;
 
 /// Properties for a cellular static material
 pub struct MaterialPropertiesCellularStatic {
-    /// Graphics for this cellular static material
-    pub graphics: MaterialGraphicsCellularStatic,
+    /// Albedo sampled at each cell to give the cells edits and generated chunks create the color
+    /// they keep, unless they give another
+    pub edit_color: MaterialGraphicsCellularStatic,
     /// Mass of one cell, in the units of actor collision masses
     pub mass: f32,
     /// Coulomb friction coefficient of rigid bodies made of this material
@@ -19,7 +20,9 @@ pub struct MaterialPropertiesCellularStatic {
     /// Fraction from zero to one of the pressure passing through each cell that the material
     /// absorbs, which damps pressure waves and, above its strength, damages the cell
     pub absorption: f32,
-    /// Cellular dynamic material each cell becomes when it breaks off as debris, keeping its
+    /// Name of the cellular dynamic material each cell becomes when it breaks off, keeping its
     /// color, or `None` to vanish
-    pub debris: Option<MaterialIdentifier>,
+    pub debris: Option<String>,
+    /// Thermal and phase-transition properties
+    pub thermal: MaterialPropertiesThermal,
 }

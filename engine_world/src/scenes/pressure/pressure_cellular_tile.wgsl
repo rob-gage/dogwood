@@ -51,6 +51,8 @@ struct PressureUniforms {
     open_relaxation_minimum: f32,
     padding_0: u32,
     padding_1: u32,
+    padding_2: u32,
+    padding_3: u32,
 };
 
 /// An actor displacing gas, laid out like the cellular tile actor records
@@ -324,7 +326,7 @@ const ACTOR_WAKE_LENGTH: f32 = 3.0;
 /// Largest actor velocity in cells per tick, matching the cellular tile actor records
 const ACTOR_VELOCITY_MAXIMUM: f32 = 8.0;
 
-/// Smoothed fluid occupancy above which a cell is closed to gas, matching the fluid renderer
+/// Smoothed fluid occupancy above which a cell's gas volume follows the fluid's unoccupied fraction
 const FLUID_OCCUPANCY_CLOSED: f32 = 0.5;
 
 /// Smallest open volume used for pressure, so closed cells push their gas out without dividing
@@ -430,7 +432,7 @@ fn load_coarse_cell(cell: vec2<i32>, is_active: bool) -> PressureCell {
     for (var slot: u32 = 0u; slot < 4u; slot++) {
         let amount: f32 = f32(slot_amount(pressure_cell.slots[slot]));
         if amount <= 0.0 { continue; }
-        mass += amount * gas_materials[slot_gas(pressure_cell.slots[slot])].x;
+        mass += amount * gas_materials[slot_gas(pressure_cell.slots[slot]) * 2u].x;
         total += amount;
     }
     let volume: f32 = max(pressure_cell.volume, VOLUME_MINIMUM);
@@ -513,7 +515,7 @@ fn load_cell_with_activity(cell: vec2<i32>, is_active: bool) -> PressureCell {
     for (var slot: u32 = 0u; slot < 4u; slot++) {
         let amount: f32 = f32(slot_amount(pressure_cell.slots[slot]));
         if amount <= 0.0 { continue; }
-        mass += amount * gas_materials[slot_gas(pressure_cell.slots[slot])].x;
+        mass += amount * gas_materials[slot_gas(pressure_cell.slots[slot]) * 2u].x;
         total += amount;
     }
     let volume: f32 = max(pressure_cell.volume, VOLUME_MINIMUM);
@@ -816,14 +818,14 @@ fn is_transfer_allowed(
         if !is_admitted { return false; }
     }
     if is_held || giver.volume <= 0.0 { return true; }
-    return f32(slot_amount(slot)) >= gas_materials[gas].z * AMOUNT_PER_ATMOSPHERE;
+    return f32(slot_amount(slot)) >= gas_materials[gas * 2u].z * AMOUNT_PER_ATMOSPHERE;
 }
 
 /// Returns the fraction a gas slot exchanges with a neighbor by diffusion, only between open cells
 fn diffusion(giver: PressureCell, receiver: PressureCell, slot: u32) -> u32 {
     if giver.volume <= 0.0 || receiver.volume <= 0.0 { return 0u; }
     return u32(
-        gas_materials[slot_gas(slot)].y / uniforms.substep_count * uniforms.diffusion_scale
+        gas_materials[slot_gas(slot) * 2u].y / uniforms.substep_count * uniforms.diffusion_scale
             * TRANSFER_SCALE,
     );
 }
@@ -912,28 +914,15 @@ fn actor_stream(actor: PressureActor, point: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(stream, select(0.0, 1.0, distance < radius * ACTOR_DRAG_RANGE));
 }
 
-/// Returns a cell's fluid occupancy smoothed over its neighbors like the fluid renderer, in
-/// cells of the densest fluid present
+/// Returns a cell's fluid occupancy, in cells of the densest fluid present
 fn fluid_occupancy(cell: vec2<i32>) -> f32 {
-    var weighted_mass: f32 = 0.0;
-    var dominant_identifier: u32 = 0u;
-    for (var offset_y: i32 = -1; offset_y <= 1; offset_y++) {
-        for (var offset_x: i32 = -1; offset_x <= 1; offset_x++) {
-            let neighbor: vec2<i32> = cell + vec2<i32>(offset_x, offset_y);
-            if !is_cell_inside(neighbor) { continue; }
-            let raster_index: u32 = cell_index(neighbor) * 4u;
-            let mass: f32 = max(f32(bitcast<i32>(fluid_raster[raster_index])), 0.0);
-            if mass <= 0.0 { continue; }
-            let weight: f32 = select(select(2.0, 1.0, offset_x != 0 && offset_y != 0), 4.0,
-                offset_x == 0 && offset_y == 0);
-            weighted_mass += mass * weight;
-            dominant_identifier = max(dominant_identifier, fluid_raster[raster_index + 3u]);
-        }
-    }
-    if dominant_identifier == 0u { return 0.0; }
+    let raster_index: u32 = cell_index(cell) * 4u;
+    let mass: f32 = max(f32(bitcast<i32>(fluid_raster[raster_index])), 0.0);
+    if mass <= 0.0 { return 0.0; }
+    let dominant_identifier: u32 = fluid_raster[raster_index + 3u];
     let density: f32 = fluid_materials[(dominant_identifier & 0x3fffffffu) * 2u].x;
     if density <= 0.0 { return 0.0; }
-    return weighted_mass / (uniforms.fluid_raster_scale * 16.0) / density;
+    return mass / uniforms.fluid_raster_scale / density;
 }
 
 /// Measures the open volume of every cell of the listed tiles, or of the whole ring: closed under
@@ -961,7 +950,10 @@ fn volume(
     );
     let cell: vec2<i32> = vec2<i32>(tile * 8u + vec2<u32>(local_cell % 8u, local_cell / 8u));
     let occupancy: f32 = fluid_occupancy(cell);
-    var is_open: bool = material_identifiers[index] == 0u && occupancy <= FLUID_OCCUPANCY_CLOSED;
+    var open_volume: f32 = 0.0;
+    if material_identifiers[index] == 0u {
+        open_volume = select(1.0, 0.0, occupancy > FLUID_OCCUPANCY_CLOSED);
+    }
     let center: vec2<f32> = vec2<f32>(cell) + 0.5;
     let corner: vec2<f32> = vec2<f32>(cell);
     // the stream function at the top right, bottom right, and top left corners
@@ -973,7 +965,7 @@ fn volume(
         if any(abs(center - actor.center) > reach) { continue; }
         if actor_stream(actor, center).y == 0.0 { continue; }
         is_dragged = true;
-        if is_inside_actor(actor, center) { is_open = false; }
+        if is_inside_actor(actor, center) { open_volume = 0.0; }
         streams += vec3<f32>(
             actor_stream(actor, corner + vec2<f32>(1.0, 1.0)).x,
             actor_stream(actor, corner + vec2<f32>(1.0, 0.0)).x,
@@ -982,7 +974,7 @@ fn volume(
     }
     let drag: vec2<f32> = vec2<f32>(streams.x - streams.y, streams.z - streams.x);
     let encoded: vec2<u32> = vec2<u32>(
-        select(0u, u32(VOLUME_SCALE), is_open) | select(0u, VOLUME_DRAGGED, is_dragged),
+        u32(round(open_volume * VOLUME_SCALE)) | select(0u, VOLUME_DRAGGED, is_dragged),
         select(0u, pack2x16snorm(drag / ACTOR_VELOCITY_MAXIMUM), is_dragged),
     );
     if any(volumes[index] != encoded) {
@@ -1280,7 +1272,7 @@ fn cell_admission(cell: vec2<i32>) -> u32 {
             }
             if is_held { continue; }
             if neighbor.volume > 0.0
-                && f32(amount) < gas_materials[gas].z * AMOUNT_PER_ATMOSPHERE
+                && f32(amount) < gas_materials[gas * 2u].z * AMOUNT_PER_ATMOSPHERE
             { continue; }
             candidate_gases[candidate_count] = gas;
             candidate_amounts[candidate_count] = amount;
@@ -1500,7 +1492,8 @@ fn simulate_substep(cell: vec2<i32>, local_cell: u32) {
             amounts[target_slot] += amount;
         }
         if center.volume > 0.0 {
-            phantom += transfer(neighbor.phantom, receiving + ambient_diffusion(neighbor, center));
+            phantom +=
+                transfer(neighbor.phantom, receiving + ambient_diffusion(neighbor, center));
         }
     }
     // stored pressure slowly relaxes toward the ambient pressure
