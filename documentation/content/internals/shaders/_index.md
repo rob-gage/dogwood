@@ -28,7 +28,7 @@ This section is the reference for Dogwood's embedded WGSL shaders, for engine co
 | `engine_world/src/scenes/edits/edit_cellular_tile.wgsl` | Compute: `compute` | `EditCellularTilePass` | Edited tile records, material IDs, colors, kinematics, gas/pressure state and atomic awake flags | One 64-thread workgroup per edited tile |
 | `engine_world/src/scenes/pressure/pressure_cellular_tile.wgsl` | [Compute: `volume_collect`, `prepare_volume`, `volume`, `collect`, `clear`, `prepare`, `step`, `publish`, `damage`](@/internals/shaders/pressure-shader.md) | `PressureCellularTilePass` | Group 0: uniforms, material IDs, gas in and out, pressure awake flags, volumes, control, gas materials, fluid raster and materials, actor records; group 1: indirect dispatch | Full-ring or sparse volume scan, then 12 indirect `step` substeps and publish/damage |
 
-| `engine_world/src/scenes/thermal/thermal_cellular_tile.wgsl` | Compute: `collect`, `clear`, `prepare`, `step`, `apply` | `ThermalCellularTilePass` | Matter, thermal materials, gas, fluid heat, and awake state | Awake-tile dispatch over the active region |
+| `engine_world/src/scenes/thermal/thermal_cellular_tile.wgsl` | Compute: `collect`, `clear`, `prepare`, `step`, `apply` | `ThermalCellularTilePass` | Matter cells, materials, gas, fluids, awake flags, conversion and changed-cell records | Awake-tile dispatch over the active region |
 
 ## Common conventions
 

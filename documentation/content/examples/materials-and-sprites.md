@@ -94,8 +94,6 @@ empty cell. See [editing and saving cells](@/examples/editing-cells.md) for worl
 Fluid and gas definitions use the same named registration methods. Their thermal settings live in
 `MaterialPropertiesThermal`; transitions name their products:
 
-> **Not implemented:** Material transitions are not yet simulated.
-
 ```rust
 use engine::{
     materials::{

@@ -130,8 +130,8 @@ pub struct Collision {
     removed_cellular_tiles: Vec<u32>,
     /// GPU rasterization of rigid body cells into the active cellular tiles
     rigid_body_pass: CollisionRigidBodyPass,
-    /// Count of the tiles whose static cells changed this tick by pressure damage, then each
-    /// tile's buffer index and remaining static cells as two `u32` masks
+    /// Count of the tiles whose static cells changed this tick, by pressure damage or material
+    /// transitions, then each tile's buffer index and remaining static cells as two `u32` masks
     changed_cellular_tile_buffer: wgpu::Buffer,
     /// Count of the rigid body cells removed from their bodies this tick, then each one's rigid
     /// body tile index times 64 plus its cell

@@ -27,7 +27,7 @@ Group 0 bindings:
 | 5 | Gas (`array<vec4<u32>>`, two per cell) | read/write |
 | 6 | Gas awake flags (atomic) | read/write |
 | 7 | Matter temperature and amount (`array<vec2<u32>>`) | read/write |
-| 8 | Temperature changes (`array<vec2<u32>>`; `.x` stores the edit delta) | read/write |
+| 8 | Temperature changes and conversion heat (`array<vec2<u32>>`) | read/write |
 | 9 | Thermal awake flags (atomic) | read/write |
 
 Each tile record occupies 536 bytes, serialized little-endian by Rust:
@@ -45,8 +45,8 @@ Each tile record occupies 536 bytes, serialized little-endian by Rust:
 
 - The two-word masks cover the tile's 64 cells in row-major order. The shader selects word `cell / 32` and bit `cell % 32`.
 - Cell buffers are addressed at `cellular_tile_index * 64 + cell`.
-- Temperature changes store the requested kelvin delta in `.x` as `f32` bits. The buffer retains
-  its two-word shape; `.y` is unused.
+- Temperature changes store the requested kelvin delta in `.x` as `f32` bits; `.y` stores
+  fixed-point heat added by matter conversion.
 - Gas is addressed at `(cellular_tile_index * 64 + cell) * 2` for the species slots and one more for phantom air and flows.
 - The awake and gas awake buffers are addressed at `cellular_tile_index`.
 

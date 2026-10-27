@@ -42,6 +42,7 @@ use crate::{
         },
         collisions::CollisionRigidBodyPass,
         thermal::{
+            THERMAL_HEAT_SCALE,
             THERMAL_FLUID_CAPACITY_SCALE,
             THERMAL_FLUID_CONDUCTION_SCALE,
             THERMAL_FLUID_ENERGY_SCALE,
@@ -128,6 +129,8 @@ pub struct FluidParticlePass {
     prepare_raster_bind_group: wgpu::BindGroup,
     /// Layout for preprocessing moving boundary-cell velocities
     boundary_motion_bind_group_layout: wgpu::BindGroupLayout,
+    /// Layout for particle and cellular thermal conversions
+    conversion_bind_group_layout: wgpu::BindGroupLayout,
     /// Boundary motion resources shared with cellular kinematics and rigid-body rasterization
     boundary_motion_bind_group: Option<wgpu::BindGroup>,
     /// Actor records copied from the cellular tile simulation for projection and immersion sampling
@@ -169,7 +172,7 @@ pub struct FluidParticlePass {
     control_buffer: wgpu::Buffer,
     /// Indirect arguments written by `prepare` and consumed by particle dispatches
     dispatch_buffer: wgpu::Buffer,
-    /// GPU mappable copies of particle counts with their submitted edit revisions
+    /// GPU mappable copies of particle and transition counts with their submitted edit revisions
     count_readbacks: Vec<(wgpu::Buffer, Option<(u64, u64)>)>,
     /// Sender for asynchronous count mapping results
     response_sender: Sender<(usize, Result<(), wgpu::BufferAsyncError>)>,
@@ -337,6 +340,33 @@ impl FluidParticlePass {
                     storage_entry(24, false),
                 ],
             });
+        let conversion_bind_group_layout: wgpu::BindGroupLayout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("`FluidParticlePass.conversion_bind_group_layout`"),
+                entries: &[
+                    uniform_entry(),
+                    storage_entry(3, false),
+                    storage_entry(4, false),
+                    storage_entry(10, false),
+                    storage_entry(29, true),
+                    storage_entry(30, false),
+                    storage_entry(40, false),
+                    storage_entry(41, false),
+                    storage_entry(42, false),
+                    storage_entry(43, false),
+                    storage_entry(44, false),
+                    storage_entry(45, true),
+                    storage_entry(46, true),
+                    storage_entry(47, false),
+                    storage_entry(48, false),
+                    storage_entry(49, false),
+                    storage_entry(50, false),
+                    storage_entry(51, false),
+                    storage_entry(52, false),
+                    storage_entry(53, true),
+                    storage_entry(54, true),
+                ],
+            });
         let prepare_bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`FluidParticlePass.prepare_bind_group_layout`"),
@@ -404,8 +434,24 @@ impl FluidParticlePass {
                 bind_group_layouts: &[Some(&actor_commit_bind_group_layout)],
                 immediate_size: 0,
             });
-        let shader_source: String = include_str!("fluid_particle.wgsl")
+        let conversion_pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
+            &wgpu::PipelineLayoutDescriptor {
+                label: Some("`FluidParticlePass.conversion_pipeline_layout`"),
+                bind_group_layouts: &[Some(&conversion_bind_group_layout)],
+                immediate_size: 0,
+            },
+        );
+        let thermal_offsets: [u32; 4] = material_table.thermal_offsets();
+        let shader_source: String = [
+            include_str!("fluid_particle.wgsl"),
+            include_str!("../thermal/thermal_transition.wgsl"),
+        ].join("\n")
             .replace("__FLUID_BIN_SIZE__", &FLUID_BIN_SIZE.to_string())
+            .replace("__THERMAL_OFFSETS__", &format!(
+                "vec4<u32>({}u, {}u, {}u, {}u)",
+                thermal_offsets[0], thermal_offsets[1], thermal_offsets[2], thermal_offsets[3],
+            ))
+            .replace("__THERMAL_HEAT_SCALE__", &format!("{:?}", THERMAL_HEAT_SCALE))
             .replace(
                 "__THERMAL_FLUID_CAPACITY_SCALE__",
                 &format!("{:?}", THERMAL_FLUID_CAPACITY_SCALE),
@@ -429,6 +475,8 @@ impl FluidParticlePass {
             "prepare_raster",
             "prepare_fluid_contacts",
             "compact",
+            "convert_particles",
+            "convert_cells",
             "finish_compaction",
             "begin_occupancy",
             "spawn",
@@ -474,7 +522,11 @@ impl FluidParticlePass {
             "apply_xsph",
             "commit_actor_velocity",
         ] {
-            let layout: &wgpu::PipelineLayout = if entry_point == "boundary_motion" {
+            let layout: &wgpu::PipelineLayout = if entry_point == "convert_particles"
+                || entry_point == "convert_cells"
+            {
+                &conversion_pipeline_layout
+            } else if entry_point == "boundary_motion" {
                 &boundary_motion_pipeline_layout
             } else if entry_point == "project_actors" || entry_point == "wake_actor_neighbors" {
                 &actor_projection_pipeline_layout
@@ -563,7 +615,7 @@ impl FluidParticlePass {
         );
         let control_buffer: wgpu::Buffer = create_buffer(
             "`FluidParticlePass.control_buffer`",
-            20 + cell_count * 4 + tile_count * 28,
+            24 + cell_count * 4 + tile_count * 28,
             wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
@@ -913,7 +965,7 @@ impl FluidParticlePass {
             (0..READBACK_COUNT).map(|_| (
                 create_buffer(
                     "`FluidParticlePass.count_readbacks`",
-                    4,
+                    16,
                     wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 ),
                 None,
@@ -952,6 +1004,7 @@ impl FluidParticlePass {
             prepare_bind_group,
             prepare_raster_bind_group,
             boundary_motion_bind_group_layout,
+            conversion_bind_group_layout,
             boundary_motion_bind_group: None,
             actor_buffer,
             actor_contact_buffer,
@@ -1217,6 +1270,10 @@ impl FluidParticlePass {
         collision_rigid_body_pass: &CollisionRigidBodyPass,
         cellular_tile_actor_buffer: Option<&wgpu::Buffer>,
         fluid_properties_buffer: &wgpu::Buffer,
+        material_table: &MaterialTable,
+        conversion_buffer: &wgpu::Buffer,
+        changed_rigid_body_cell_buffer: &wgpu::Buffer,
+        is_converting: bool,
         actors: &[(Actor, ActorCollisionComponent)],
         edits: &[(CellCoordinates, FluidEdit)],
         erasures: &[CellCoordinates],
@@ -1224,9 +1281,110 @@ impl FluidParticlePass {
         export_target: Option<&wgpu::Buffer>,
         tick: u64,
         spawn_revision: u64,
-    ) -> Result<(Option<(u32, u64, u64)>, Vec<FluidParticleImport>, usize), SceneError> {
-        let newest_count: Option<(u32, u64, u64)> = self.read_count_readbacks(accelerator)?;
+    ) -> Result<(Option<(u32, u32, u64, u64)>, Vec<FluidParticleImport>, usize), SceneError> {
+        let newest_count: Option<(u32, u32, u64, u64)> = self.read_count_readbacks(accelerator)?;
         let device: &wgpu::Device = accelerator.device();
+        let conversion_bind_group: wgpu::BindGroup = device.create_bind_group(
+            &wgpu::BindGroupDescriptor {
+                label: Some("`FluidParticlePass.conversion_bind_group`"),
+                layout: &self.conversion_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &self.uniform_buffer,
+                            offset: 0,
+                            size: wgpu::BufferSize::new(UNIFORM_BYTE_COUNT),
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: self.particle_state_a.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: self.particle_state_b.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 10,
+                        resource: self.control_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 29,
+                        resource: material_table.thermal_properties_buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 30,
+                        resource: cellular_tile_buffers.thermal_awake_buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 40,
+                        resource: cellular_tile_buffers.material_identifier_buffer()
+                            .as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 41,
+                        resource: cellular_tile_buffers.color_buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 42,
+                        resource: cellular_tile_buffers.kinematics_buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 43,
+                        resource: cellular_tile_buffers.matter_buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 44,
+                        resource: cellular_tile_buffers.gas_buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 45,
+                        resource: material_table.transition_color_buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 46,
+                        resource: conversion_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 47,
+                        resource: cellular_tile_buffers.rigid_body_cell_buffer()
+                            .as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 48,
+                        resource: collision_rigid_body_pass.cellular_tile_buffer()
+                            .as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 49,
+                        resource: changed_rigid_body_cell_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 50,
+                        resource: cellular_tile_buffers.awake_buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 51,
+                        resource: cellular_tile_buffers.gas_awake_buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 52,
+                        resource: cellular_tile_buffers.temperature_change_buffer()
+                            .as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 53,
+                        resource: material_table.gas_properties_buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 54,
+                        resource: material_table.cellular_static_properties_buffer()
+                            .as_entire_binding(),
+                    },
+                ],
+            },
+        );
         let width: u32 = active_region.width() as u32;
         let height: u32 = active_region.height() as u32;
         if width == 0 || height == 0 {
@@ -1330,7 +1488,7 @@ impl FluidParticlePass {
             * FLUID_TIME_STEP.powi(2) / FLUID_SUBSTEP_COUNT as f32;
         let old_state_side: u32 = self.state_side;
         let needs_compaction: bool = has_erasures || rebase[0] != 0.0 || rebase[1] != 0.0
-            || export_target.is_some();
+            || export_target.is_some() || is_converting;
         let after_compaction_side: u32 = if needs_compaction {
             1 - old_state_side
         } else {
@@ -1558,6 +1716,8 @@ impl FluidParticlePass {
             command_encoder.clear_buffer(&self.control_buffer, 4, Some(4));
         }
         let tile_count: u64 = u64::from(width) * u64::from(height);
+        let conversion_count_offset: u64 = 20 + tile_count * (64 * 4 + 28);
+        command_encoder.clear_buffer(&self.control_buffer, conversion_count_offset, Some(4));
         {
             let mut compute_pass: wgpu::ComputePass<'_> = command_encoder
                 .begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -1627,6 +1787,17 @@ impl FluidParticlePass {
             compute_pass.dispatch_workgroups_indirect(&self.dispatch_buffer, 0);
             compute_pass.set_pipeline(&pipelines["reset_fluid_raster_tile_count"]);
             compute_pass.dispatch_workgroups(1, 1, 1);
+            if is_converting {
+                set_prepare_slot(&mut compute_pass, 0);
+                compute_pass.set_pipeline(&pipelines["prepare"]);
+                compute_pass.set_bind_group(1, &self.dispatch_bind_group, &[]);
+                compute_pass.dispatch_workgroups(1, 1, 1);
+                compute_pass.set_bind_group(0, &conversion_bind_group, &[0]);
+                compute_pass.set_pipeline(&pipelines["convert_particles"]);
+                compute_pass.dispatch_workgroups_indirect(&self.dispatch_buffer, 0);
+                compute_pass.set_pipeline(&pipelines["convert_cells"]);
+                compute_pass.dispatch_workgroups(16384u32.div_ceil(FLUID_WORKGROUP_SIZE), 1, 1);
+            }
             if needs_compaction {
                 set_prepare_slot(&mut compute_pass, 0);
                 compute_pass.set_pipeline(&pipelines["prepare"]);
@@ -1877,6 +2048,13 @@ impl FluidParticlePass {
                 0,
                 4,
             );
+            command_encoder.copy_buffer_to_buffer(
+                &self.control_buffer,
+                conversion_count_offset,
+                &self.count_readbacks[readback].0,
+                4,
+                4,
+            );
         }
         let actor_readback: bool = if actors.is_empty() { false } else {
             self.actor_contact_readbacks.copy(
@@ -1930,7 +2108,7 @@ impl FluidParticlePass {
             *submission = Some((tick, spawn_revision));
             let response_sender: Sender<(usize, Result<(), wgpu::BufferAsyncError>)> =
                 self.response_sender.clone();
-            buffer.slice(..4).map_async(
+            buffer.slice(..8).map_async(
                 wgpu::MapMode::Read,
                 move |result: Result<(), wgpu::BufferAsyncError>| {
                     let _ = response_sender.send((readback, result));
@@ -1986,23 +2164,26 @@ impl FluidParticlePass {
     fn read_count_readbacks(
         &mut self,
         accelerator: &Accelerator,
-    ) -> Result<Option<(u32, u64, u64)>, SceneError> {
+    ) -> Result<Option<(u32, u32, u64, u64)>, SceneError> {
         accelerator.device().poll(wgpu::PollType::Poll)
             .map_err(|_| SceneError::FluidParticlePoll)?;
-        let mut newest: Option<(u32, u64, u64)> = None;
+        let mut newest: Option<(u32, u32, u64, u64)> = None;
         while let Ok((readback, result)) = self.response_receiver.try_recv() {
             let (buffer, submission): &mut (wgpu::Buffer, Option<(u64, u64)>) =
                 &mut self.count_readbacks[readback];
             let Some((tick, revision)) = submission.take() else { continue; };
             result.map_err(|error| SceneError::FluidParticleResponse { error })?;
-            let particle_count: u32 = {
-                let bytes: wgpu::BufferView = buffer.get_mapped_range(..4)
-                    .expect("mapped fluid particle count should be readable");
-                u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+            let (particle_count, conversion_count): (u32, u32) = {
+                let bytes: wgpu::BufferView = buffer.get_mapped_range(..8)
+                    .expect("mapped fluid particle counts should be readable");
+                (
+                    u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+                    u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]),
+                )
             };
             buffer.unmap();
-            if newest.is_none_or(|(_, newest_tick, _)| tick >= newest_tick) {
-                newest = Some((particle_count, tick, revision));
+            if newest.is_none_or(|(_, _, newest_tick, _)| tick >= newest_tick) {
+                newest = Some((particle_count, conversion_count, tick, revision));
             }
         }
         Ok(newest)

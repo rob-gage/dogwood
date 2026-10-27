@@ -1,6 +1,6 @@
 +++
 title = "Material table compilation"
-description = "How MaterialRegistry::compile builds material, thermal property, and cellular albedo data."
+description = "How MaterialRegistry::compile builds material, thermal transition, and cellular albedo data."
 weight = 20
 [extra]
 sources = ["engine_world/src/materials", "engine_graphics/src/sprites", "engine_graphics/src/world/materials/material_graphics_gas.rs", "engine_graphics/src/world/materials/material_graphics_gas.rs", "engine_graphics/src/world/materials/material_graphics_cellular_static.rs", "engine_graphics/src/world/materials/material_graphics_cellular_dynamic.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl", "engine_world/src/scenes/collisions/collision_rigid_body.rs", "engine_world/src/scenes/collisions/collision.rs"]
@@ -13,7 +13,7 @@ This page is for engine contributors. It explains how `MaterialRegistry::compile
 - the named material definitions, for CPU lookups;
 - compiled name lookups and resolved debris identifiers;
 - GPU buffers of static-cell, dynamic-cell, fluid, gas, and thermal properties;
-- transition colors and properties;
+- transition colors and whether any transition starts or ends in fluid;
 - CPU pixel arrays that assign colors to generated or edited cells.
 
 Static and dynamic cellular materials use separate identifier-indexed albedo arrays. Fluid and gas definitions remain available through table lookups but do not participate in this cellular path. See the [materials API](@/external-api/materials.md) for registration and property types.
@@ -65,10 +65,9 @@ and amounts, and transition flags. Static index zero is reserved for empty. `the
 thermal index for each form. A parallel buffer stores seven `vec4<f32>` values for each hot or cold
 transition's color transform.
 
-The compiled table retains transition temperatures, latent heat, product identifiers and amounts,
-and color transforms. These properties are not yet used to simulate transitions.
-
-> **Not implemented:** Material transitions are not yet simulated.
+Compilation stores `has_fluid_transitions` once: it is true when a fluid material has a transition
+or any material's transition product is fluid. The scene uses this flag to decide whether the fluid
+pass needs thermal conversion work.
 
 ### Albedo readback
 

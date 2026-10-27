@@ -68,6 +68,8 @@ pub struct MaterialTable {
     /// First thermal index of the static, dynamic, fluid, and gas forms, static index zero being
     /// empty
     thermal_offsets: [u32; 4],
+    /// Whether any registered transition starts or ends in a fluid
+    has_fluid_transitions: bool,
     /// Packed sRGB albedo pixels, frame size, and repetition size in cells of each static
     /// cellular material, indexed from reserved empty index zero
     cellular_static_albedos: Vec<MaterialAlbedo>,
@@ -267,7 +269,8 @@ impl MaterialTable {
             thermal_property_bytes,
             transition_color_bytes,
             thermal_offsets,
-        ): (Vec<u8>, Vec<u8>, [u32; 4]) =
+            has_fluid_transitions,
+        ): (Vec<u8>, Vec<u8>, [u32; 4], bool) =
             Self::new_thermal_properties(&material_registry, &transition_products)?;
         let thermal_properties_buffer: wgpu::Buffer = device.create_buffer(
             &wgpu::BufferDescriptor {
@@ -412,6 +415,7 @@ impl MaterialTable {
             thermal_properties_buffer,
             transition_color_buffer,
             thermal_offsets,
+            has_fluid_transitions,
             cellular_static_albedos: albedos,
             cellular_dynamic_albedos,
         })
@@ -422,11 +426,12 @@ impl MaterialTable {
     fn new_thermal_properties(
         material_registry: &MaterialRegistry,
         transition_products: &HashMap<(MaterialIdentifier, bool), MaterialIdentifier>,
-    ) -> Result<(Vec<u8>, Vec<u8>, [u32; 4]), MaterialError> {
+    ) -> Result<(Vec<u8>, Vec<u8>, [u32; 4], bool), MaterialError> {
         let mut property_bytes: Vec<u8> = vec![0; 64];
         let mut color_bytes: Vec<u8> = vec![0; 224];
         let mut offsets: [u32; 4] = [0; 4];
         let mut count: u32 = 1;
+        let mut has_fluid_transitions: bool = false;
         for (form_index, form) in [
             MaterialForm::CellularStatic,
             MaterialForm::CellularDynamic,
@@ -490,6 +495,14 @@ impl MaterialTable {
                         ),
                     });
                 }
+                for (hot, transition) in [(true, hot_transition), (false, cold_transition)] {
+                    if transition.is_some() && (form == MaterialForm::Fluid
+                        || transition_products.get(&(identifier, hot))
+                            .is_some_and(|product| product.form() == MaterialForm::Fluid))
+                    {
+                        has_fluid_transitions = true;
+                    }
+                }
                 let mut flags: u32 = 0;
                 let mut words: [u32; 16] = [0; 16];
                 words[0] = heat_capacity.to_bits();
@@ -542,7 +555,7 @@ impl MaterialTable {
                 count += 1;
             }
         }
-        Ok((property_bytes, color_bytes, offsets))
+        Ok((property_bytes, color_bytes, offsets, has_fluid_transitions))
     }
 
     /// Returns the color a cell or fluid particle is created with: its material's albedo at the
@@ -729,5 +742,8 @@ impl MaterialTable {
 
     /// Returns the first thermal index of the static, dynamic, fluid, and gas forms
     pub fn thermal_offsets(&self) -> [u32; 4] { self.thermal_offsets }
+
+    /// Returns whether any registered transition starts or ends in a fluid
+    pub fn has_fluid_transitions(&self) -> bool { self.has_fluid_transitions }
 
 }

@@ -12,7 +12,7 @@ This page defines Dogwood's world terms and coordinate spaces, with the conversi
 
 - **Cell:** one grid square, the smallest simulated unit.
 - **Fluid particle:** a continuous-position sample stored separately from cellular cells; see [fluid simulation](@/internals/simulation/fluids.md).
-- **Thermal transition:** a material property that specifies a temperature, latent heat, product, and optional color change. Transitions are not simulated yet; see the [materials API](@/external-api/materials.md).
+- **Thermal transition:** gas changes form at its transition temperature and moves latent heat into its cell; cellular matter and fluid particles hold that temperature while latent heat banks. Fluid products are applied by the particle pass. `THERMAL_HEAT_SCALE` stores added heat in fixed-point units; the conversion-list bound is in [resource limits](@/architecture/resources-and-lifetimes.md#thermal-resources).
 - **Gas cell:** a cell's gas state in the tile ring: four species slots of a gas index and an amount, phantom air, and face flows. `GAS_AMOUNT_PER_ATMOSPHERE` (4096) amount units make one atmosphere; see [pressure simulation](@/internals/simulation/pressure.md).
 - **Phantom air:** the ambient gas held as a separate amount in each cell's gas, filling empty cells at the scene's ambient gas pressure; see [tile ring](@/internals/world-streaming/tile-ring.md).
 - **Pressure cell:** a 2 × 2 group of cells on which pressure is simulated each tick, rebuilt from and written back to their gas cells; see [pressure simulation](@/internals/simulation/pressure.md#pressure-cells).

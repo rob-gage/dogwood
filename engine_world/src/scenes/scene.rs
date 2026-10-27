@@ -549,12 +549,22 @@ impl Scene {
             .as_ref()
             .expect("fluid storage exists with the tile buffers")
             .fluid_heat_buffer();
-        self.thermal.get_or_insert_with(|| Thermal::new(
+        let thermal: &mut Thermal = self.thermal.get_or_insert_with(|| Thermal::new(
             accelerator,
             cellular_tile_buffers,
             &self.material_table,
             fluid_heat_buffer,
+            collision.rigid_body_pass().cellular_tile_buffer(),
+            collision.changed_cellular_tile_buffer(),
+            collision.changed_rigid_body_cell_buffer(),
         ));
+        let thermal_has_fluid_conversions: bool = thermal.has_fluid_conversions(accelerator)?;
+        let is_converting: bool = self.material_table.has_fluid_transitions()
+            && (self.fluids.as_ref()
+                .expect("fluid storage exists with the tile buffers")
+                .has_pending_fluid_conversions()
+                || thermal_has_fluid_conversions);
+        let conversion_buffer: &wgpu::Buffer = thermal.conversion_buffer();
         let cellular_tiles: &CellularTiles = self.cellular_tiles
             .as_ref()
             .expect("cellular tile simulation exists after simulation");
@@ -573,6 +583,10 @@ impl Scene {
                 actor_components,
                 particle_export_target.as_ref().map(|(_, buffer)| *buffer),
                 self.material_table.fluid_properties_buffer(),
+                &self.material_table,
+                conversion_buffer,
+                collision.changed_rigid_body_cell_buffer(),
+                is_converting,
             );
         particle_simulation_result?;
         // pressure moves last, through the cells the other simulations and actors left open
@@ -609,7 +623,7 @@ impl Scene {
         let fluids: &mut Fluids = self.fluids.as_mut()
             .expect("fluid storage exists with the tile buffers");
         self.thermal.as_mut()
-            .expect("thermal simulation exists after setup")
+            .expect("thermal simulation exists before fluid conversions")
             .simulate_thermal(
                 accelerator,
                 active_region,

@@ -174,6 +174,51 @@ var<storage, read> thermal_materials: array<vec4<u32>>;
 @group(0) @binding(30)
 var<storage, read_write> thermal_awake: array<atomic<u32>>;
 
+@group(0) @binding(40)
+var<storage, read_write> conversion_material_identifiers: array<atomic<u32>>;
+
+@group(0) @binding(41)
+var<storage, read_write> conversion_colors: array<u32>;
+
+@group(0) @binding(42)
+var<storage, read_write> conversion_kinematics: array<vec2<u32>>;
+
+@group(0) @binding(43)
+var<storage, read_write> conversion_matter: array<vec2<u32>>;
+
+@group(0) @binding(44)
+var<storage, read_write> conversion_gas: array<atomic<u32>>;
+
+@group(0) @binding(45)
+var<storage, read> transition_colors: array<vec4<f32>>;
+
+@group(0) @binding(46)
+var<storage, read> conversions: array<u32>;
+
+@group(0) @binding(47)
+var<storage, read_write> conversion_rigid_body_cells: array<atomic<u32>>;
+
+@group(0) @binding(48)
+var<storage, read_write> conversion_rigid_body_tiles: array<atomic<u32>>;
+
+@group(0) @binding(49)
+var<storage, read_write> conversion_changed_rigid_body_cells: array<atomic<u32>>;
+
+@group(0) @binding(50)
+var<storage, read_write> conversion_cellular_awake: array<atomic<u32>>;
+
+@group(0) @binding(51)
+var<storage, read_write> conversion_gas_awake: array<atomic<u32>>;
+
+@group(0) @binding(52)
+var<storage, read_write> conversion_temperature_changes: array<atomic<i32>>;
+
+@group(0) @binding(53)
+var<storage, read> conversion_gas_materials: array<vec4<f32>>;
+
+@group(0) @binding(54)
+var<storage, read> cellular_static_materials: array<vec4<f32>>;
+
 /// First thermal index of the static, dynamic, fluid, and gas materials
 const THERMAL_OFFSETS: vec4<u32> = __THERMAL_OFFSETS__;
 
@@ -185,6 +230,9 @@ const THERMAL_FLUID_ENERGY_SCALE: f32 = __THERMAL_FLUID_ENERGY_SCALE__;
 
 /// Fixed-point units per heat capacity unit times conduction unit in the fluid heat
 const THERMAL_FLUID_CONDUCTION_SCALE: f32 = __THERMAL_FLUID_CONDUCTION_SCALE__;
+
+/// Fixed-point units per heat unit added to cells by changes of matter
+const THERMAL_HEAT_SCALE: f32 = __THERMAL_HEAT_SCALE__;
 
 /// Amount of a particle holding one whole unit of its material, matching
 /// `CELLULAR_TILE_AMOUNT_PER_UNIT`
@@ -423,6 +471,11 @@ fn sleep_tile_offset(tile_index: u32) -> u32 {
 fn wake_count_offset() -> u32 {
     return sleep_state_offset()
         + uniforms.region_width * uniforms.region_height * SLEEP_TILE_STRIDE;
+}
+
+/// Returns the control word used to count particles due for a thermal transition
+fn conversion_count_offset() -> u32 {
+    return wake_count_offset() + 1u;
 }
 
 /// Returns the logical tile index containing a cell-space particle position
@@ -687,6 +740,80 @@ fn store_particle(index: u32, side: u32, particle: FluidParticle) {
     } else {
         particles_b[index] = particle;
     }
+}
+
+/// Returns the logical cell position of a physical tile-major cell index
+fn conversion_cell_position(index: u32) -> vec2<i32> {
+    let tile: u32 = index / 64u;
+    let physical: vec2<u32> = vec2<u32>(tile % uniforms.region_width, tile / uniforms.region_width);
+    let logical: vec2<u32> = (physical + vec2<u32>(uniforms.region_width, uniforms.region_height)
+        - vec2<u32>(uniforms.ring_offset_x, uniforms.ring_offset_y))
+        % vec2<u32>(uniforms.region_width, uniforms.region_height);
+    let local: u32 = index % 64u;
+    return vec2<i32>(logical * 8u + vec2<u32>(local % 8u, local / 8u));
+}
+
+/// Reserves one live particle slot or returns the sentinel when the pool is full
+fn reserve_conversion_particle() -> u32 {
+    var count: u32 = atomicLoad(&control[0]);
+    loop {
+        if count >= uniforms.capacity { return 0xffffffffu; }
+        let exchange = atomicCompareExchangeWeak(&control[0], count, count + 1u);
+        if exchange.exchanged { return count; }
+        count = exchange.old_value;
+    }
+    return 0xffffffffu;
+}
+
+/// Removes a rigid-body cell from its body and reports the changed body cell
+fn conversion_remove_rigid_body_cell(index: u32) -> bool {
+    let rigid_body_cell: u32 = atomicLoad(&conversion_rigid_body_cells[index]);
+    if rigid_body_cell == 0u { return true; }
+    let count: u32 = atomicAdd(&conversion_changed_rigid_body_cells[0], 1u);
+    if count + 1u >= arrayLength(&conversion_changed_rigid_body_cells) { return false; }
+    atomicStore(&conversion_changed_rigid_body_cells[count + 1u], rigid_body_cell - 1u);
+    let body_cell: u32 = rigid_body_cell - 1u;
+    let bit: u32 = body_cell % 64u;
+    atomicAnd(
+        &conversion_rigid_body_tiles[body_cell / 64u * 8u + 4u + bit / 32u],
+        ~(1u << (bit % 32u)),
+    );
+    atomicStore(&conversion_rigid_body_cells[index], 0u);
+    return true;
+}
+
+/// Claims a gas slot for the species and amount, refusing overflow or a full cell
+fn conversion_add_gas(index: u32, gas_index: u32, amount: u32) -> bool {
+    for (var slot: u32 = 0u; slot < 4u; slot++) {
+        let address: u32 = index * 8u + slot;
+        var previous: u32 = atomicLoad(&conversion_gas[address]);
+        loop {
+            let held: u32 = previous & 0xffffffu;
+            if held == 0u || previous >> 24u != gas_index { break; }
+            if held + amount > 0xffffffu { return false; }
+            let exchange = atomicCompareExchangeWeak(
+                &conversion_gas[address], previous, (gas_index << 24u) | (held + amount),
+            );
+            if exchange.exchanged { return true; }
+            previous = exchange.old_value;
+        }
+    }
+    for (var slot: u32 = 0u; slot < 4u; slot++) {
+        let address: u32 = index * 8u + slot;
+        let exchange = atomicCompareExchangeWeak(
+            &conversion_gas[address], 0u, (gas_index << 24u) | amount,
+        );
+        if exchange.exchanged { return true; }
+    }
+    return false;
+}
+
+/// Seeds one spawned particle at a cell center with the solver's stable sub-cell jitter
+fn conversion_position(cell: vec2<i32>) -> vec2<f32> {
+    let jitter_hash: u32 = (u32(cell.x) * JITTER_HASH) ^ (u32(cell.y) * 2891336453u);
+    let jitter_x: f32 = (f32(jitter_hash & 0xffffu) / 65535.0 - 0.5) * 0.02;
+    let jitter_y: f32 = (f32(jitter_hash >> 16u) / 65535.0 - 0.5) * 0.02;
+    return vec2<f32>(cell) + 0.5 + vec2<f32>(jitter_x, jitter_y);
 }
 
 /// Reads a predicted position from one half of the packed scratch record
@@ -1353,6 +1480,10 @@ fn rasterize_fluid(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let particle_count: u32 = atomicLoad(&control[0]);
     if invocation.x >= particle_count { return; }
     let particle: FluidParticle = load_particle(invocation.x, uniforms.state_side);
+    let source: u32 = thermal_index(particle.material_identifier, THERMAL_OFFSETS);
+    if due_transition(particle.temperature, source, true).is_due {
+        atomicAdd(&control[conversion_count_offset()], 1u);
+    }
     let cell: vec2<i32> = vec2<i32>(floor(particle.state.xy));
     if !cell_inside(cell) { return; }
     let material_index: u32 = particle.material_identifier & 0x3fffffffu;
@@ -1380,7 +1511,8 @@ fn rasterize_fluid(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let heat_capacity: f32 = bitcast<f32>(properties.x) * f32(particle.amount) / AMOUNT_PER_UNIT;
     atomicAdd(&fluid_heat[base], i32(round(heat_capacity * THERMAL_FLUID_CAPACITY_SCALE)));
     atomicAdd(&fluid_heat[base + 1u], i32(round(
-        heat_capacity * particle.temperature * THERMAL_FLUID_ENERGY_SCALE,
+        heat_capacity * effective_temperature(particle.temperature, thermal_index)
+            * THERMAL_FLUID_ENERGY_SCALE,
     )));
     atomicAdd(&fluid_heat[base + 2u], i32(round(
         heat_capacity * bitcast<f32>(properties.y) * THERMAL_FLUID_CONDUCTION_SCALE,
@@ -1665,6 +1797,7 @@ fn compact(@builtin(global_invocation_id) invocation: vec3<u32>) {
     var position: vec2<f32> = particle.state.xy
         + vec2<f32>(uniforms.rebase_x, uniforms.rebase_y);
     if uniforms.erasure_count != 0u && particle_is_erased(position) { return; }
+    if particle.material_identifier == 0u { return; }
     if any(position < vec2<f32>(0.0))
         || position.x >= f32(uniforms.cell_width)
         || position.y >= f32(uniforms.cell_height)
@@ -1705,6 +1838,257 @@ fn compact(@builtin(global_invocation_id) invocation: vec3<u32>) {
     survivor.state = vec4<f32>(position, particle.state.zw);
     let output_side: u32 = 1u - uniforms.state_side;
     store_particle(output_index, output_side, survivor);
+}
+
+/// Changes due fluid particles into their cellular or gaseous products before compaction
+fn has_static_neighbor(cell: vec2<i32>) -> bool {
+    for (var direction: u32 = 0u; direction < 4u; direction++) {
+        var neighbor: vec2<i32> = cell;
+        if direction == 0u { neighbor.x += 1; }
+        if direction == 1u { neighbor.x -= 1; }
+        if direction == 2u { neighbor.y += 1; }
+        if direction == 3u { neighbor.y -= 1; }
+        if !cell_inside(neighbor) { continue; }
+        let neighbor_index: u32 = cell_index(neighbor);
+        let material: u32 = atomicLoad(&conversion_material_identifiers[neighbor_index]);
+        if (material != 0u && material >> 30u == 0u)
+            || atomicLoad(&conversion_rigid_body_cells[neighbor_index]) != 0u
+        { return true; }
+    }
+    return false;
+}
+
+fn conversion_debris(product: u32, cell: vec2<i32>) -> u32 {
+    if product >> 30u != 0u || has_static_neighbor(cell) { return product; }
+    let properties: vec4<f32> = cellular_static_materials[product & 0x3fffffffu];
+    let debris: u32 = bitcast<u32>(properties.w);
+    return select(product, debris, debris != 0u);
+}
+
+@compute @workgroup_size(PARTICLE_WORKGROUP_SIZE)
+fn convert_particles(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let particle_count: u32 = atomicLoad(&control[0]);
+    if invocation.x >= particle_count { return; }
+    var particle: FluidParticle = load_particle(invocation.x, uniforms.state_side);
+    let source: u32 = thermal_index(particle.material_identifier, THERMAL_OFFSETS);
+    let transition: ThermalTransition = due_transition(particle.temperature, source, true);
+    if !transition.is_due { return; }
+    let amount: f32 = f32(particle.amount) / AMOUNT_PER_UNIT;
+    let product: u32 = thermal_index(transition.product, THERMAL_OFFSETS);
+    let product_amount: f32 = amount * transition.amount;
+    let temperature: f32 = product_temperature(
+        transition,
+        particle.temperature,
+        amount,
+        thermal_heat_capacity(source),
+        product_amount,
+        thermal_heat_capacity(product),
+        true,
+    );
+    let seed: u32 = invocation.x ^ (uniforms.tick * 0x9e3779b9u);
+    let form: u32 = transition.product >> 30u;
+    if form == 2u {
+        particle.material_identifier = transition.product;
+        particle.color = transition_color(particle.color, source, transition.is_hot, seed);
+        particle.temperature = temperature;
+        particle.amount = u32(round(product_amount * AMOUNT_PER_UNIT));
+        store_particle(invocation.x, uniforms.state_side, particle);
+        return;
+    }
+    let current_cell: vec2<i32> = vec2<i32>(floor(
+        particle.state.xy + vec2<f32>(uniforms.rebase_x, uniforms.rebase_y),
+    ));
+    if !cell_inside(current_cell) { return; }
+    let cell: u32 = cell_index(current_cell);
+    if form < 2u {
+        if atomicLoad(&conversion_rigid_body_cells[cell]) != 0u { return; }
+        let converted_material: u32 = conversion_debris(transition.product, current_cell);
+        var previous_material: u32 = atomicLoad(&conversion_material_identifiers[cell]);
+        loop {
+            if previous_material != 0u { return; }
+            let exchange = atomicCompareExchangeWeak(
+                &conversion_material_identifiers[cell], 0u, converted_material,
+            );
+            if exchange.exchanged { break; }
+            previous_material = exchange.old_value;
+        }
+        conversion_colors[cell] = transition_color(particle.color, source, transition.is_hot, seed);
+        if converted_material >> 30u == 1u {
+            let velocity: vec2<i32> = vec2<i32>(round(clamp(
+                particle.state.zw,
+                vec2<f32>(-8.0),
+                vec2<f32>(8.0),
+            ) * 1024.0));
+            conversion_kinematics[cell] = vec2<u32>(
+                (bitcast<u32>(velocity.x) & 0xffffu) | (bitcast<u32>(velocity.y) << 16u),
+                0u,
+            );
+        } else {
+            conversion_kinematics[cell] = vec2<u32>(0u);
+        }
+        conversion_matter[cell] = vec2<u32>(
+            bitcast<u32>(temperature),
+            u32(round(product_amount * AMOUNT_PER_UNIT)),
+        );
+        atomicStore(&conversion_gas[cell * 8u + 7u], 0u);
+        let tile: u32 = tile_index(vec2<u32>(current_cell) / 8u);
+        atomicOr(&conversion_cellular_awake[tile], 3u);
+        atomicOr(&thermal_awake[tile], 1u | select(
+            0u,
+            2u,
+            converted_material >> 30u == 0u,
+        ));
+        atomicOr(&conversion_gas_awake[tile], 1u);
+        particle.material_identifier = 0u;
+        store_particle(invocation.x, uniforms.state_side, particle);
+        return;
+    }
+    let gas_index: u32 = transition.product & 0xffu;
+    let gas_amount: u32 = u32(round(product_amount * 4096.0));
+    if gas_amount > 0xffffffu || !conversion_add_gas(cell, gas_index, gas_amount) { return; }
+    let cell_temperature: f32 = bitcast<f32>(conversion_matter[cell].x);
+    let heat: i32 = i32(round(
+        product_amount * thermal_heat_capacity(product) * (temperature - cell_temperature)
+            * THERMAL_HEAT_SCALE,
+    ));
+    atomicAdd(&conversion_temperature_changes[cell * 2u + 1u], heat);
+    let tile: u32 = tile_index(vec2<u32>(current_cell) / 8u);
+    atomicOr(&conversion_gas_awake[tile], 1u);
+    atomicOr(&thermal_awake[tile], 1u);
+    particle.material_identifier = 0u;
+    store_particle(invocation.x, uniforms.state_side, particle);
+}
+
+/// Converts cells and gas slots listed by thermal into newly reserved fluid particles
+@compute @workgroup_size(PARTICLE_WORKGROUP_SIZE)
+fn convert_cells(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let count: u32 = min(conversions[0], 16384u);
+    if invocation.x >= count { return; }
+    let index: u32 = conversions[2u + invocation.x * 2u];
+    let kind: u32 = conversions[3u + invocation.x * 2u];
+    let cell: vec2<i32> = conversion_cell_position(index);
+    let cell_temperature: f32 = bitcast<f32>(conversion_matter[index].x);
+    if kind == 0u {
+        let identifier: u32 = atomicLoad(&conversion_material_identifiers[index]);
+        if identifier == 0u || identifier >> 30u >= 2u { return; }
+        let source: u32 = thermal_index(identifier, THERMAL_OFFSETS);
+        let transition: ThermalTransition = due_transition(cell_temperature, source, true);
+        if !transition.is_due || transition.product >> 30u != 2u { return; }
+        let slot: u32 = reserve_conversion_particle();
+        if slot == 0xffffffffu { return; }
+        if !conversion_remove_rigid_body_cell(index) {
+            atomicSub(&control[0], 1u);
+            return;
+        }
+        let amount: f32 = f32(conversion_matter[index].y) / AMOUNT_PER_UNIT;
+        let product: u32 = thermal_index(transition.product, THERMAL_OFFSETS);
+        let product_amount: f32 = amount * transition.amount;
+        let temperature: f32 = product_temperature(
+            transition,
+            cell_temperature,
+            amount,
+            thermal_heat_capacity(source),
+            product_amount,
+            thermal_heat_capacity(product),
+            true,
+        );
+        let current_position: vec2<f32> = conversion_position(cell);
+        let position: vec2<f32> = current_position
+            - vec2<f32>(uniforms.rebase_x, uniforms.rebase_y);
+        var velocity: vec2<f32> = vec2<f32>(0.0);
+        if identifier >> 30u == 1u {
+            let packed: i32 = bitcast<i32>(conversion_kinematics[index].x);
+            velocity = vec2<f32>(
+                f32(extractBits(packed, 0u, 16u)),
+                f32(extractBits(packed, 16u, 16u)),
+            ) / 1024.0;
+        }
+        let particle: FluidParticle = FluidParticle(
+            vec4<f32>(position, velocity),
+            transition.product,
+            position.x,
+            position.y,
+            temperature,
+            transition_color(
+                conversion_colors[index], source, transition.is_hot,
+                index ^ (uniforms.tick * 0x9e3779b9u),
+            ),
+            u32(round(product_amount * AMOUNT_PER_UNIT)),
+            0u,
+            0u,
+        );
+        store_particle(slot, uniforms.state_side, particle);
+        atomicStore(&conversion_material_identifiers[index], 0u);
+        conversion_colors[index] = 0u;
+        conversion_kinematics[index] = vec2<u32>(0u);
+        conversion_matter[index].y = 0u;
+        atomicStore(&conversion_gas[index * 8u + 7u], 0u);
+        let tile: u32 = tile_index(vec2<u32>(cell) / 8u);
+        atomicOr(&conversion_cellular_awake[tile], 3u);
+        atomicOr(&conversion_gas_awake[tile], 1u);
+        atomicOr(&thermal_awake[tile], 1u | select(0u, 2u, identifier >> 30u == 0u));
+        return;
+    }
+    let slot_index: u32 = kind - 1u;
+    if slot_index >= 4u || atomicLoad(&conversion_material_identifiers[index]) != 0u { return; }
+    let gas_word_index: u32 = index * 8u + slot_index;
+    let gas_word: u32 = atomicLoad(&conversion_gas[gas_word_index]);
+    let held: u32 = gas_word & 0xffffffu;
+    if held == 0u { return; }
+    let gas_index: u32 = gas_word >> 24u;
+    let source: u32 = THERMAL_OFFSETS.w + gas_index;
+    let transition: ThermalTransition = due_transition(cell_temperature, source, false);
+    if !transition.is_due || transition.product >> 30u != 2u { return; }
+    let needed: f32 = 4096.0 / transition.amount;
+    if f32(held) < needed { return; }
+    let product: u32 = thermal_index(transition.product, THERMAL_OFFSETS);
+    let temperature: f32 = product_temperature(
+        transition,
+        cell_temperature,
+        needed / 4096.0,
+        thermal_heat_capacity(source),
+        1.0,
+        thermal_heat_capacity(product),
+        false,
+    );
+    let particle_slot: u32 = reserve_conversion_particle();
+    if particle_slot == 0xffffffffu { return; }
+    var previous: u32 = gas_word;
+    loop {
+        let previous_amount: u32 = previous & 0xffffffu;
+        if previous >> 24u != gas_index || f32(previous_amount) < needed {
+            atomicSub(&control[0], 1u);
+            return;
+        }
+        let left: u32 = previous_amount - min(u32(ceil(needed)), previous_amount);
+        let next: u32 = select((gas_index << 24u) | left, 0u, left == 0u);
+        let exchange = atomicCompareExchangeWeak(&conversion_gas[gas_word_index], previous, next);
+        if exchange.exchanged { break; }
+        previous = exchange.old_value;
+    }
+    let heat: i32 = i32(round(
+        needed / 4096.0 * transition.latent_heat
+            * select(1.0, -1.0, transition.is_hot) * THERMAL_HEAT_SCALE,
+    ));
+    atomicAdd(&conversion_temperature_changes[index * 2u + 1u], heat);
+    let position: vec2<f32> = vec2<f32>(cell) + 0.5
+        - vec2<f32>(uniforms.rebase_x, uniforms.rebase_y);
+    let color: u32 = bitcast<u32>(conversion_gas_materials[gas_index * 2u].w);
+    let particle: FluidParticle = FluidParticle(
+        vec4<f32>(position, vec2<f32>(0.0)),
+        transition.product,
+        position.x,
+        position.y,
+        temperature,
+        transition_color(color, source, transition.is_hot, index ^ (uniforms.tick * 0x9e3779b9u)),
+        65536u,
+        0u,
+        0u,
+    );
+    store_particle(particle_slot, uniforms.state_side, particle);
+    let tile: u32 = tile_index(vec2<u32>(cell) / 8u);
+    atomicOr(&conversion_gas_awake[tile], 1u);
+    atomicOr(&thermal_awake[tile], 1u);
 }
 
 /// Replaces the live count with the number of survivors after compaction

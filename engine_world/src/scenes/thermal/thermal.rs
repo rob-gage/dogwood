@@ -30,6 +30,9 @@ impl Thermal {
         cellular_tile_buffers: &CellularTileBuffers,
         material_table: &MaterialTable,
         fluid_heat_buffer: &wgpu::Buffer,
+        rigid_body_tile_buffer: &wgpu::Buffer,
+        changed_cellular_tile_buffer: &wgpu::Buffer,
+        changed_rigid_body_cell_buffer: &wgpu::Buffer,
     ) -> Self {
         Self {
             pass: ThermalCellularTilePass::new(
@@ -37,8 +40,22 @@ impl Thermal {
                 cellular_tile_buffers,
                 material_table,
                 fluid_heat_buffer,
+                rigid_body_tile_buffer,
+                changed_cellular_tile_buffer,
+                changed_rigid_body_cell_buffer,
             ),
         }
+    }
+
+    /// Returns the cells and gases queued for conversion into fluid particles
+    pub fn conversion_buffer(&self) -> &wgpu::Buffer { self.pass.conversion_buffer() }
+
+    /// Returns whether recent completed thermal samples contain fluid conversions
+    pub fn has_fluid_conversions(
+        &mut self,
+        accelerator: &Accelerator,
+    ) -> Result<bool, crate::scenes::SceneError> {
+        self.pass.has_fluid_conversions(accelerator)
     }
 
     /// Simulates one tick of the heat in the active tiles without waiting for the GPU, with

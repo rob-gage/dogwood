@@ -28,8 +28,6 @@ atmosphere. `MaterialTransition::new(temperature, latent_heat, product)` takes a
 then `with_amount` and `with_color` set optional values; defaults are amount `1.0` and identity
 color transformation.
 
-> **Not implemented:** Material transitions are not yet simulated.
-
 Registration rejects empty trimmed names and duplicate exact names. Names are case-sensitive and
 are not trimmed before lookup. Compilation rejects unknown references, debris that does not name a
 cellular dynamic material, and invalid transitions. The compilation validation limits are listed

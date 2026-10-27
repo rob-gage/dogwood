@@ -67,6 +67,8 @@ pub struct Fluids {
     spawn_revision: u64,
     /// Count in the newest completed asynchronous GPU readback
     particle_count: Option<u32>,
+    /// Number of particles due for a thermal transition in the newest completed readback
+    transition_count: u32,
     /// Spawn revision represented by the newest count readback
     particle_count_revision: u64,
     /// Submission number represented by the newest count readback
@@ -112,6 +114,7 @@ impl Fluids {
             queued_erasures: BTreeSet::new(),
             spawn_revision: 0,
             particle_count: None,
+            transition_count: 0,
             particle_count_revision: 0,
             particle_count_tick: 0,
             previous_region_origin: None,
@@ -338,6 +341,10 @@ impl Fluids {
         actors: &[(Actor, ActorCollisionComponent)],
         export_target: Option<&wgpu::Buffer>,
         fluid_properties_buffer: &wgpu::Buffer,
+        material_table: &MaterialTable,
+        conversion_buffer: &wgpu::Buffer,
+        changed_rigid_body_cell_buffer: &wgpu::Buffer,
+        is_converting: bool,
     ) -> Result<(), SceneError> {
         let origin: (i64, i64) = (
             active_region.bottom_left.x * CELLULAR_TILE_SIZE,
@@ -355,6 +362,7 @@ impl Fluids {
             && self.rejected_imports.is_empty()
             && export_target.is_none()
             && self.previous_region_origin == Some(origin)
+            && !is_converting
         {
             return Ok(());
         }
@@ -376,7 +384,7 @@ impl Fluids {
             .collect();
         self.spawn_revision = self.spawn_revision.saturating_add(import_count as u64);
         let result: (
-            Option<(u32, u64, u64)>,
+            Option<(u32, u32, u64, u64)>,
             Vec<FluidParticleImport>,
             usize,
         ) = self.particle_pass.simulate(
@@ -391,6 +399,10 @@ impl Fluids {
             collision_rigid_body_pass,
             cellular_tile_actor_buffer,
             fluid_properties_buffer,
+            material_table,
+            conversion_buffer,
+            changed_rigid_body_cell_buffer,
+            is_converting,
             actors,
             &edits,
             &erasures,
@@ -407,10 +419,11 @@ impl Fluids {
             self.queued_imports.drain(..submitted_import_count);
         }
         self.rejected_imports.extend(rejected_imports);
-        if let Some((particle_count, tick, revision)) = count_result
+        if let Some((particle_count, transition_count, tick, revision)) = count_result
             && tick >= self.particle_count_tick
         {
             self.particle_count = Some(particle_count);
+            self.transition_count = transition_count;
             self.particle_count_tick = tick;
             self.particle_count_revision = revision;
         }
@@ -421,6 +434,9 @@ impl Fluids {
         self.is_heat_pending = true;
         Ok(())
     }
+
+    /// Returns whether a recent GPU sample found fluid particles due for conversion
+    pub fn has_pending_fluid_conversions(&self) -> bool { self.transition_count > 0 }
 
     /// Gives the particles of the newest simulated tick the temperature changes the thermal step
     /// left in their cells, without waiting for the GPU

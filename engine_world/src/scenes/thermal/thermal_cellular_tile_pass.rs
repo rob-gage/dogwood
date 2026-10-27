@@ -1,9 +1,11 @@
 // Copyright Rob Gage 2026
 
 use super::{
+    THERMAL_CONVERSION_COUNT_MAXIMUM,
     THERMAL_FLUID_CAPACITY_SCALE,
     THERMAL_FLUID_CONDUCTION_SCALE,
     THERMAL_FLUID_ENERGY_SCALE,
+    THERMAL_HEAT_SCALE,
     THERMAL_SLEEP_TEMPERATURE,
     THERMAL_TIME_STEP,
 };
@@ -14,8 +16,9 @@ use crate::{
         CellularTileRegion,
         CELLULAR_TILE_SIZE,
     },
+    scenes::SceneError,
 };
-use engine_host::acceleration::Accelerator;
+use engine_host::acceleration::{Accelerator, AcceleratorReadback, AcceleratorReadbackError};
 use std::collections::HashMap;
 
 /// Number of invocations in one compute workgroup, one per cell of a tile
@@ -23,6 +26,9 @@ const WORKGROUP_SIZE: u32 = 64;
 
 /// Bytes of the uniforms
 const UNIFORM_BYTE_COUNT: u64 = 80;
+
+/// Number of asynchronous conversion count readbacks
+const CONVERSION_READBACK_COUNT: usize = 3;
 
 /// GPU conduction of heat through the cells of the active tiles, one step per tick over the tiles
 /// whose temperatures change and their neighbors
@@ -39,6 +45,14 @@ pub struct ThermalCellularTilePass {
     control_buffer: wgpu::Buffer,
     /// Indirect dispatch of one workgroup per active tile
     dispatch_buffer: wgpu::Buffer,
+    /// Cells and gases queued for fluid conversion
+    conversion_buffer: wgpu::Buffer,
+    /// Asynchronous conversion counts paired with their tick
+    conversion_readbacks: AcceleratorReadback<u64>,
+    /// Tick of the latest completed nonzero fluid conversion sample
+    last_nonzero_conversion_tick: Option<u32>,
+    /// Current thermal tick
+    tick: u32,
     /// First thermal index of each material form
     thermal_offsets: [u32; 4],
 }
@@ -52,6 +66,9 @@ impl ThermalCellularTilePass {
         cellular_tile_buffers: &CellularTileBuffers,
         material_table: &MaterialTable,
         fluid_heat_buffer: &wgpu::Buffer,
+        rigid_body_tile_buffer: &wgpu::Buffer,
+        changed_cellular_tile_buffer: &wgpu::Buffer,
+        changed_rigid_body_cell_buffer: &wgpu::Buffer,
     ) -> Self {
         let device: &wgpu::Device = accelerator.device();
         let cell_count: u64 = cellular_tile_buffers.material_identifier_buffer().size() / 4;
@@ -93,6 +110,16 @@ impl ThermalCellularTilePass {
                     storage_entry(9, false),
                     storage_entry(10, false),
                     storage_entry(11, false),
+                    storage_entry(12, true),
+                    storage_entry(13, false),
+                    storage_entry(14, false),
+                    storage_entry(15, false),
+                    storage_entry(16, false),
+                    storage_entry(17, false),
+                    storage_entry(18, false),
+                    storage_entry(19, false),
+                    storage_entry(20, true),
+                    storage_entry(21, true),
                 ],
             },
         );
@@ -120,9 +147,11 @@ impl ThermalCellularTilePass {
         let shader_module: wgpu::ShaderModule = device.create_shader_module(
             wgpu::ShaderModuleDescriptor {
                 label: Some("`ThermalCellularTilePass.shader_module`"),
-                source: wgpu::ShaderSource::Wgsl(
-                    include_str!("thermal_cellular_tile.wgsl").into(),
-                ),
+                source: wgpu::ShaderSource::Wgsl(concat!(
+                    include_str!("thermal_cellular_tile.wgsl"),
+                    "\n",
+                    include_str!("thermal_transition.wgsl"),
+                ).into()),
             },
         );
         let mut pipelines: HashMap<&'static str, wgpu::ComputePipeline> = HashMap::new();
@@ -171,6 +200,18 @@ impl ThermalCellularTilePass {
             cell_count * 8,
             wgpu::BufferUsages::STORAGE,
         );
+        let conversion_buffer: wgpu::Buffer = create_buffer(
+            "`ThermalCellularTilePass.conversion_buffer`",
+            (2 + THERMAL_CONVERSION_COUNT_MAXIMUM * 2) * 4,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
+        );
+        let conversion_readbacks: AcceleratorReadback<u64> = AcceleratorReadback::new(
+            accelerator,
+            "`ThermalCellularTilePass.conversion_readback`",
+            4,
+            CONVERSION_READBACK_COUNT,
+        );
         let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("`ThermalCellularTilePass.bind_group`"),
             layout: &bind_group_layout,
@@ -216,6 +257,47 @@ impl ThermalCellularTilePass {
                     binding: 11,
                     resource: cellular_tile_buffers.gas_awake_buffer().as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 12,
+                    resource: material_table.transition_color_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 13,
+                    resource: cellular_tile_buffers.color_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: cellular_tile_buffers.kinematics_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 15,
+                    resource: cellular_tile_buffers.rigid_body_cell_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 16,
+                    resource: rigid_body_tile_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 17,
+                    resource: changed_cellular_tile_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 18,
+                    resource: changed_rigid_body_cell_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 19,
+                    resource: conversion_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 20,
+                    resource: material_table.gas_properties_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 21,
+                    resource: material_table.cellular_static_properties_buffer()
+                        .as_entire_binding(),
+                },
             ],
         });
         let dispatch_bind_group: wgpu::BindGroup = device.create_bind_group(
@@ -235,6 +317,10 @@ impl ThermalCellularTilePass {
             uniform_buffer,
             control_buffer,
             dispatch_buffer,
+            conversion_buffer,
+            conversion_readbacks,
+            last_nonzero_conversion_tick: None,
+            tick: 0,
             thermal_offsets: material_table.thermal_offsets(),
         }
     }
@@ -271,8 +357,8 @@ impl ThermalCellularTilePass {
             THERMAL_FLUID_CAPACITY_SCALE.to_bits(),
             THERMAL_FLUID_ENERGY_SCALE.to_bits(),
             THERMAL_FLUID_CONDUCTION_SCALE.to_bits(),
-            0,
-            0,
+            THERMAL_HEAT_SCALE.to_bits(),
+            self.tick,
             0,
             0,
         ] {
@@ -283,6 +369,7 @@ impl ThermalCellularTilePass {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Scene thermal cellular tiles"),
             });
+        command_encoder.clear_buffer(&self.conversion_buffer, 0, Some(8));
         command_encoder.clear_buffer(&self.control_buffer, 0, Some(4));
         {
             let mut compute_pass: wgpu::ComputePass<'_> = command_encoder
@@ -307,7 +394,46 @@ impl ThermalCellularTilePass {
             compute_pass.set_pipeline(&pipelines["apply"]);
             compute_pass.dispatch_workgroups_indirect(&self.dispatch_buffer, 0);
         }
-        accelerator.queue().submit(Some(command_encoder.finish()));
+        let readback: bool = self.conversion_readbacks.copy(
+            &mut command_encoder,
+            &self.conversion_buffer,
+            0,
+            4,
+            u64::from(self.tick),
+        );
+        let submission_index: wgpu::SubmissionIndex =
+            accelerator.queue().submit(Some(command_encoder.finish()));
+        if readback { self.conversion_readbacks.map(submission_index); }
+        self.tick = self.tick.wrapping_add(1);
+    }
+
+    /// Returns the cells and gases queued for conversion into fluid particles
+    pub fn conversion_buffer(&self) -> &wgpu::Buffer { &self.conversion_buffer }
+
+    /// Returns whether a recent completed sample contains fluid conversions
+    pub fn has_fluid_conversions(&mut self, accelerator: &Accelerator) -> Result<bool, SceneError> {
+        let mut newest: Option<(u64, u32)> = None;
+        let result: Result<(), AcceleratorReadbackError> = self.conversion_readbacks.read(
+            accelerator,
+            false,
+            |tick, bytes| {
+                let count: u32 = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                if newest.is_none_or(|(newest_tick, _)| tick >= newest_tick) {
+                    newest = Some((tick, count));
+                }
+            },
+        );
+        result.map_err(|error| match error {
+            AcceleratorReadbackError::Poll(_) => SceneError::FluidParticlePoll,
+            AcceleratorReadbackError::BufferAsync(error) =>
+                SceneError::FluidParticleResponse { error },
+        })?;
+        if let Some((tick, count)) = newest {
+            if count > 0 { self.last_nonzero_conversion_tick = Some(tick as u32); }
+        }
+        let recent_nonzero: bool = self.last_nonzero_conversion_tick
+            .is_some_and(|tick| self.tick.wrapping_sub(tick) < 2);
+        Ok(newest.is_some_and(|(_, count)| count > 0) || recent_nonzero)
     }
 
 }

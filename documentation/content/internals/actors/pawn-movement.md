@@ -89,4 +89,4 @@ The swimming branch applies, in order:
 
 Swimming does not require a new jump press or grounding. Crouch supplies downward thrust rather than selecting walking speed. Walking rules resume below the immersion thresholds, with remembered jump-held state still updated. A gameplay position change resets swimming along with velocity and grounding.
 
-The controller reads immersion, current, density, and drag rather than directly applying fluid projection impulses to kinematic pawns. Only idle swimmers set the GPU current-coupling flag; see [pawn/current feedback](@/internals/simulation/fluid-coupling.md#pawns-and-currents). Samples come from earlier GPU submissions, so sampled fluid data can lag the visible raster.
+The controller reads immersion, current, density, and drag rather than directly applying fluid projection impulses to kinematic pawns. Only idle swimmers set the GPU current-coupling flag; see [pawn/current feedback](@/internals/simulation/fluid-coupling.md#pawns-and-currents). Samples come from earlier GPU submissions, so transitions can lag the visible fluid raster.

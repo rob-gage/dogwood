@@ -3,7 +3,7 @@ title = "Fluid simulation"
 description = "The particle solver, its numerical model, and where to find coupling and persistence details."
 weight = 75
 [extra]
-sources = ["engine_world/src/scenes/fluids"]
+sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/thermal"]
 +++
 
 Fluids are GPU particles, separate from the cellular tile arrays. A particle represents one cell's fluid mass but can move continuously and share a cell with other particles. `Fluids` owns edits, imports, count reservations, and actor feedback; `FluidParticlePass` owns storage and compute submission.
@@ -13,7 +13,7 @@ This page describes the implemented numerical model. See [boundaries and sleepin
 ## One fixed tick
 
 ```text
-prepare -> compact / rebase / erase
+prepare / convert due particles and listed cells -> compact / rebase / erase
   -> spawn edits and imports -> prepare boundaries and sleeping
   -> apply accumulated fluid contact velocities
   -> four substeps:
@@ -24,7 +24,8 @@ prepare -> compact / rebase / erase
   -> rasterize mass and momentum -> sample actors -> queue readbacks / exports
 ```
 
-A tick is skipped when nothing could change. That requires all of the following:
+A tick is skipped when nothing could change. That requires all of the following and no recent
+thermal sample listing a conversion into fluid:
 
 - A count readback newer than every particle edit, erasure, import, and spawn reports an empty pool.
 - No edits, erasures, or imports are queued, including rejected imports.
@@ -35,7 +36,13 @@ The skipped tick submits no work, so the fluid raster stays as the last tick lef
 
 The tick is 1/60 second. Positions use cells relative to the active region; velocities use cells per tick, including during substeps. Gravity in tiles/s² converts to a substep velocity increment as `gravity * CELLULAR_TILE_SIZE * dt² / FLUID_SUBSTEP_COUNT`. Prediction divides velocity by the substep count to obtain displacement.
 
-Material transitions can be configured through thermal properties, but they are not simulated.
+When a material transition starts or ends in a fluid, the pass converts due live particles and
+then consumes the preceding thermal tick's list of cells or gas slots due to become fluid.
+Compaction runs for a recent nonzero particle-transition sample, a nonzero thermal fluid-conversion
+list, or an edit, rebase, or export that requires it. Particle-to-cell conversions wait for an empty,
+unowned cell; cell and gas conversions wait for pool capacity. The thermal list holds at most
+`THERMAL_CONVERSION_COUNT_MAXIMUM` entries, and asynchronous count readback keeps the pool awake
+briefly after a nonzero list.
 
 ## Neighbors
 

@@ -20,3 +20,8 @@ pub const THERMAL_FLUID_ENERGY_SCALE: f32 = 64.0;
 /// Fixed-point units per heat capacity unit times conduction unit in fluid heat records
 pub const THERMAL_FLUID_CONDUCTION_SCALE: f32 = 1024.0;
 
+/// Fixed-point units per heat unit added to cells by changes of matter
+pub const THERMAL_HEAT_SCALE: f32 = 64.0;
+
+/// Maximum number of cells and gases listed for fluid conversion per tick
+pub const THERMAL_CONVERSION_COUNT_MAXIMUM: u64 = 16384;

@@ -31,7 +31,7 @@ pub struct CellularTileBuffers {
     /// latent heat, and the amount of its cellular matter in units of
     /// `CELLULAR_TILE_AMOUNT_PER_UNIT`
     matter_buffer: wgpu::Buffer,
-    /// Tile-major temperature change in kelvin for each row-major
+    /// Tile-major change in kelvin and fixed-point heat added by conversions for each row-major
     /// cell, as two `u32` words
     temperature_change_buffer: wgpu::Buffer,
     /// Whether each tile's temperatures must be simulated, with one `u32` per tile

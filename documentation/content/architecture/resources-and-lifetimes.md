@@ -23,7 +23,7 @@ Scene
 ├── CellularTileBuffers ── cloned Accelerator + GPU buffers
 ├── CellularTileStreamingState
 ├── Collision
-├── Thermal ── fluid heat
+├── Thermal ── fluid heat, collision change lists, conversion list
 └── CellularTiles
 ```
 
@@ -31,7 +31,7 @@ Scene
 
 `Scene::new` leaves chunk streaming, tile buffers, tile streaming, collision, and kinematics absent. The first `Scene::stream` creates chunk streaming and the GPU tile ring, sized to twice the first camera's unzoomed width and height. Later requested regions must keep those dimensions.
 
-Collision, kinematics, and thermal simulation are created on the first `simulate` call with an active region. Pressure simulation is created after fluids. Tile buffers retain a cloned `Accelerator`; its clone holds handles to the same WGPU instance, adapter, device, and queue, so teardown can use that context. See the [scene pipeline](@/architecture/scene-pipeline.md) for call order.
+Collision, kinematics, and thermal simulation are created on the first `simulate` call with an active region; thermal storage is available before fluid simulation so conversions can consume the prior thermal tick's list. Pressure simulation is created after fluids. Tile buffers retain a cloned `Accelerator`; its clone holds handles to the same WGPU instance, adapter, device, and queue, so teardown can use that context. See the [scene pipeline](@/architecture/scene-pipeline.md) for call order.
 
 ## Saving and drop behavior
 
@@ -125,14 +125,17 @@ The private `FLUID_ACTOR_CONTACT_SCALE` is `1024`. Count, actor, and import read
 
 ## Thermal resources
 
-Thermal simulation shares the cellular matter, gas, awake, and fluid heat buffers. Public
-fixed-point scales in `engine_world/src/scenes/thermal/mod.rs` are:
+Thermal simulation is created before the first fluid simulation so it can provide the prior tick's
+conversion list. It shares the cellular matter, gas, awake, and collision change-list buffers, and
+reads the fluid heat raster. The conversion list holds up to `THERMAL_CONVERSION_COUNT_MAXIMUM` (16,384) cell or gas entries.
+Public fixed-point scales in `engine_world/src/scenes/thermal/mod.rs` are:
 
 | Constant | Value | Meaning |
 | --- | ---: | --- |
 | `THERMAL_FLUID_CAPACITY_SCALE` | 1024 | Units per heat-capacity unit in fluid heat records |
 | `THERMAL_FLUID_ENERGY_SCALE` | 64 | Units per heat unit in fluid heat records |
 | `THERMAL_FLUID_CONDUCTION_SCALE` | 1024 | Units per heat-capacity and conduction product in fluid heat records |
+| `THERMAL_HEAT_SCALE` | 64 | Units per heat unit added to cells by matter changes |
 
 ## Pressure resources
 

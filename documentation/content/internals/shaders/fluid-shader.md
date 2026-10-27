@@ -3,7 +3,7 @@ title = "Fluid particle shader"
 description = "Compute stages, bind groups, packed records, raster layout, and asynchronous readbacks."
 weight = 35
 [extra]
-sources = ["engine_world/src/scenes/fluids"]
+sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/thermal/thermal_transition.wgsl"]
 +++
 
 `fluid_particle.wgsl` is driven by `FluidParticlePass`. This page owns the GPU layout and dispatch reference; [fluid simulation](@/internals/simulation/fluids.md) explains the numerical algorithm. Rust substitutes `FLUID_BIN_SIZE` for the WGSL source placeholder when creating the module.
@@ -15,6 +15,7 @@ The pass records the following work in one command encoder, using one compute pa
 | Phase | Entry points |
 | --- | --- |
 | Previous raster cleanup | `prepare_raster`, `clear_fluid_raster_tiles`, `reset_fluid_raster_tile_count` |
+| Optional thermal conversion | `prepare`, `convert_particles`, `convert_cells` |
 | Optional erase/rebase/export | `prepare`, `compact`, `finish_compaction` |
 | Optional Insert/import occupancy | `begin_occupancy`, `prepare`, `mark_occupancy` |
 | Spawn edits and imports | `spawn`, `prepare`, `spawn_imported`, when needed |
@@ -51,8 +52,12 @@ Group 0 binding 0 is a dynamic uniform buffer. The main solver layout has ninete
 | 23–24 | Shared-layout actor records / actor feedback |
 | 25–27 | Import commands, rejection flags, and particle exports |
 
-The solver uses its existing storage bindings. Thermal properties remain in the material table,
-but transitions are not simulated by the fluid pass.
+The main solver layout uses its existing storage bindings. The conversion layout adds bindings
+40–53 for writable cellular material, color, kinematics, matter, gas, conversion lists, rigid-body
+cells, changed rigid-body cells, awake flags, temperature heat changes, transition colors, and gas
+properties. Thermal materials and awake flags reuse bindings 29 and 30; static material debris
+records use binding 54. Only conversion entry points use this reduced layout, which stays within
+the per-stage storage binding limit.
 
 ## Packed records
 
@@ -105,7 +110,7 @@ T words       sparse physical-tile list
 
 Mass/momentum/contact deltas use scale `4096`; actor feedback uses scale `1024`. Mass/momentum and actor-feedback additions saturate to signed 32-bit range. Contact-delta accumulators use ordinary atomic integer addition, with individual contributions clamped before conversion.
 
-Control begins with live count, survivor count, listed-boundary count, and occupancy generation, followed by one occupancy stamp per logical cell. Each logical tile has seven sleep words: maximum net displacement, maximum positive density error, calm ticks, solid hash, current flags, prior displacement, and prior flags. A wake-count word follows.
+Control begins with live count, survivor count, listed-boundary count, and occupancy generation, followed by one occupancy stamp per logical cell. Each logical tile has seven sleep words: maximum net displacement, maximum positive density error, calm ticks, solid hash, current flags, prior displacement, and prior flags. A wake-count word and a particle-transition count word follow. The transition counter is cleared each tick, incremented during fluid rasterization for particles due to convert, and copied with the live count for asynchronous CPU polling.
 
 With `P` particle capacity, the two state arrays, two predicted arrays, neighbor records, and lambdas use `104 * P` bytes before import/export/readback storage. Boundary-cell and corner-node maps use 16 bytes per cell/node independently of particle capacity. Empty storage allocations have a 16-byte minimum.
 
@@ -115,6 +120,6 @@ The first `predict` substep reads the pressure buffer published by the prior tic
 
 ## Readback policy
 
-Count, import status, and actor feedback each have three staging slots. Count and actor copies are skipped when all slots are busy; their previous CPU state remains. Import submissions wait for a status slot so every submitted record can be accepted or returned. Particle counts retain submission tick and spawn revision; actor slots retain identities and collision settings. [Fluid streaming](@/internals/world-streaming/fluid-streaming.md) explains reservations and record ownership.
+Count, import status, and actor feedback each have three staging slots. Count and actor copies are skipped when all slots are busy; their previous CPU state remains. Import submissions wait for a status slot so every submitted record can be accepted or returned. Particle counts retain submission tick and spawn revision; actor slots retain identities and collision settings. The particle count staging copy includes both live-particle count and due-transition count. [Fluid streaming](@/internals/world-streaming/fluid-streaming.md) explains reservations and record ownership.
 
 One separate resident snapshot may be mapped at a time. Ordinary reads use `Poll`; import draining and final live-pool reads use `wait_indefinitely` during teardown. Mapping or polling failures propagate as [scene errors](@/architecture/errors.md#fluid-failures).
