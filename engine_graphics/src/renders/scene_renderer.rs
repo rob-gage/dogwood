@@ -6,6 +6,7 @@ use super::{
     scene_renderer_gas_pass::SceneRendererGasPass,
     scene_renderer_overlay_pass::SceneRendererOverlayPass,
     scene_renderer_pressure_pass::SceneRendererPressurePass,
+    scene_renderer_temperature_pass::SceneRendererTemperaturePass,
     scene_renderer_sprites_pass::SceneRendererSpritesPass,
 };
 use crate::world::scenes::{
@@ -14,9 +15,16 @@ use crate::world::scenes::{
     SceneGraphicsFluid,
     SceneGraphicsGas,
     SceneGraphicsPressure,
+    SceneGraphicsTemperature,
     SceneGraphicsSprites,
 };
 use engine_host::acceleration::Accelerator;
+
+/// Highest temperature shown in the temperature view mode
+pub const TEMPERATURE_VIEW_MAXIMUM: f32 = 6000.0;
+
+/// Ambient reference temperature used by the temperature view mode
+pub const TEMPERATURE_VIEW_AMBIENT: f32 = 293.0;
 
 /// Appearance drawn by a scene renderer
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -26,6 +34,8 @@ pub enum SceneRendererViewMode {
     Graphics,
     /// Also tints every resident cell by its pressure
     Pressure,
+    /// Also tints every resident cell by its temperature
+    Temperature,
 }
 
 /// Draws the unlit appearance of a scene into one view's texture
@@ -42,6 +52,8 @@ pub struct SceneRenderer {
     gas_pass: SceneRendererGasPass,
     /// Renderer of resident pressure cells
     pressure_pass: SceneRendererPressurePass,
+    /// Renderer of resident temperature cells
+    temperature_pass: SceneRendererTemperaturePass,
     /// Renderer of cell-aligned overlays drawn over every scene view
     overlay_pass: SceneRendererOverlayPass,
     /// Renderer of resident cellular tiles
@@ -61,6 +73,7 @@ impl SceneRenderer {
             fluid_pass: SceneRendererFluidPass::new(accelerator),
             gas_pass: SceneRendererGasPass::new(accelerator),
             pressure_pass: SceneRendererPressurePass::new(accelerator),
+            temperature_pass: SceneRendererTemperaturePass::new(accelerator),
             overlay_pass: SceneRendererOverlayPass::new(accelerator),
             cellular_pass: SceneRendererCellularPass::new(accelerator),
             above_cellular_sprites_pass: SceneRendererSpritesPass::new(accelerator, 0..=i32::MAX),
@@ -95,6 +108,43 @@ impl SceneRenderer {
                 (1.0, [1.0, 1.0, 1.0]),
             ];
             let stop_index: usize = ((scale * 4.0).floor() as usize).min(3);
+            let (start, start_color): (f32, [f32; 3]) = stops[stop_index];
+            let (end, end_color): (f32, [f32; 3]) = stops[stop_index + 1];
+            let amount: f32 = (scale - start) / (end - start);
+            (
+                start_color[0] + (end_color[0] - start_color[0]) * amount,
+                start_color[1] + (end_color[1] - start_color[1]) * amount,
+                start_color[2] + (end_color[2] - start_color[2]) * amount,
+                0.85 * t.sqrt(),
+            )
+        };
+        [red, green, blue, alpha]
+    }
+
+    /// Returns the color the temperature view mode gives a cell at a temperature in kelvin
+    pub fn temperature_color(kelvin: f32, ambient: f32) -> [f32; 4] {
+        let ambient: f32 = ambient.max(1.0);
+        let (red, green, blue, alpha): (f32, f32, f32, f32) = if kelvin < ambient {
+            let amount: f32 = ((ambient - kelvin) / ambient).clamp(0.0, 1.0);
+            let t: f32 = ((ambient - kelvin) / (ambient * 0.5)).clamp(0.0, 1.0);
+            (
+                0.55 + (0.05 - 0.55) * amount,
+                0.75 + (0.15 - 0.75) * amount,
+                1.0 + (0.8 - 1.0) * amount,
+                0.85 * t.sqrt(),
+            )
+        } else {
+            let t: f32 = ((kelvin - ambient) / (ambient * 0.5)).clamp(0.0, 1.0);
+            let scale: f32 = ((kelvin / ambient).ln()
+                / (TEMPERATURE_VIEW_MAXIMUM / ambient).ln())
+                .clamp(0.0, 1.0);
+            let stops: [(f32, [f32; 3]); 4] = [
+                (0.0, [1.0, 0.0, 0.0]),
+                (1.0 / 3.0, [1.0, 0.35, 0.0]),
+                (2.0 / 3.0, [1.0, 1.0, 0.0]),
+                (1.0, [1.0, 1.0, 1.0]),
+            ];
+            let stop_index: usize = ((scale * 3.0).floor() as usize).min(2);
             let (start, start_color): (f32, [f32; 3]) = stops[stop_index];
             let (end, end_color): (f32, [f32; 3]) = stops[stop_index + 1];
             let amount: f32 = (scale - start) / (end - start);
@@ -163,6 +213,14 @@ impl SceneRenderer {
                     && pressure_graphics.region_width > 0
                     && pressure_graphics.region_height > 0
                     && pressure_graphics.cellular_tile_size > 0
+            });
+        let temperature_graphics: Option<&SceneGraphicsTemperature<'_>> =
+            graphics.temperature.as_ref().filter(|temperature_graphics| {
+                self.view_mode == SceneRendererViewMode::Temperature
+                    && is_viewport_visible
+                    && temperature_graphics.region_width > 0
+                    && temperature_graphics.region_height > 0
+                    && temperature_graphics.cellular_tile_size > 0
             });
         if is_viewport_visible {
             // Physical distance sorts first, then sprite order within coplanar backgrounds.
@@ -239,6 +297,18 @@ impl SceneRenderer {
                 pressure_graphics,
             );
         }
+        if let Some(temperature_graphics) = temperature_graphics {
+            self.temperature_pass.prepare(
+                accelerator,
+                format,
+                viewport_x,
+                viewport_y,
+                viewport_width,
+                viewport_height,
+                pixels_per_tile,
+                temperature_graphics,
+            );
+        }
         if is_viewport_visible {
             self.above_cellular_sprites_pass.prepare(
                 accelerator,
@@ -313,6 +383,9 @@ impl SceneRenderer {
             self.above_cellular_sprites_pass.draw(&mut render_pass, format);
             if pressure_graphics.is_some() {
                 self.pressure_pass.draw(&mut render_pass, format);
+            }
+            if temperature_graphics.is_some() {
+                self.temperature_pass.draw(&mut render_pass, format);
             }
             self.overlay_pass.draw(&mut render_pass, format);
         }

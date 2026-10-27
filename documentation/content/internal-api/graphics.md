@@ -15,7 +15,7 @@ This page is for engine contributors working on `engine_graphics/src/renders`. I
 ```text
 SceneGraphics -> SceneRenderer:
   [sprites pass, depth < 0] -> [fluid pass] -> [gas pass] -> [cellular pass]
-    -> [sprites pass, depth >= 0] -> [pressure pass, optional] -> [overlay pass]
+    -> [sprites pass, depth >= 0] -> [pressure or temperature pass, optional] -> [overlay pass]
   (one render pass, cleared to black)
 ```
 
@@ -37,7 +37,7 @@ Sprite selection and cellular content come from `SceneGraphics`, which borrows t
 
 Each applicable pass receives `prepare` before the renderer opens its render pass. Preparation ensures a pipeline exists for the target format and uploads per-view uniforms. Each pass draws only when a pipeline exists for the supplied format; `SceneRenderer::render` passes the target format to both `prepare` and `draw`.
 
-Before drawing, two compute dispatches classify and shade visible fluid cells; see [fluid rendering](@/internals/rendering/fluid-pass.md). Drawing opens one render pass that clears the full target to opaque black. For a visible viewport, it sets the centered viewport and scissor and draws the passes in the order shown above. Pressure view mode adds a tint pass after sprites; overlays draw last. It submits the finished command buffer directly to the accelerator queue; this renderer does not take a caller-owned encoder.
+Before drawing, two compute dispatches classify and shade visible fluid cells; see [fluid rendering](@/internals/rendering/fluid-pass.md). Drawing opens one render pass that clears the full target to opaque black. For a visible viewport, it sets the centered viewport and scissor and draws the passes in the order shown above. Pressure and temperature view modes add a tint pass after sprites; overlays draw last. It submits the finished command buffer directly to the accelerator queue; this renderer does not take a caller-owned encoder.
 
 ## Cellular pass resources
 

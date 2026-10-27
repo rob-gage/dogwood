@@ -6,6 +6,7 @@ use super::{
     SceneGraphicsGas,
     SceneGraphicsOverlay,
     SceneGraphicsPressure,
+    SceneGraphicsTemperature,
     SceneGraphicsSprites,
 };
 
@@ -28,6 +29,8 @@ pub struct SceneGraphics<'a> {
     pub gas: Option<SceneGraphicsGas<'a>>,
     /// Resident pressure, absent until a cellular region has streamed onto the GPU
     pub pressure: Option<SceneGraphicsPressure<'a>>,
+    /// Resident cell temperatures, absent until a cellular region has streamed onto the GPU
+    pub temperature: Option<SceneGraphicsTemperature<'a>>,
     /// Background planes with physical depth, drawn before gameplay
     pub parallax: Vec<super::SceneGraphicsParallax<'a>>,
     /// Sprite content drawn around the cellular content by depth

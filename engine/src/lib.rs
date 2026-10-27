@@ -7,6 +7,8 @@ pub use engine_graphics::{
     renders::{
         SceneRenderer,
         SceneRendererViewMode,
+        TEMPERATURE_VIEW_AMBIENT,
+        TEMPERATURE_VIEW_MAXIMUM,
     },
     sprites::SpriteSheet,
     world::{
@@ -16,7 +18,7 @@ pub use engine_graphics::{
             MaterialGraphicsCellularStatic,
             MaterialGraphicsGas,
         },
-        scenes::{SceneGraphicsOverlay, SceneGraphicsOverlayShape},
+        scenes::{SceneGraphicsOverlay, SceneGraphicsOverlayShape, SceneGraphicsTemperature},
     },
 };
 pub use engine_host::{

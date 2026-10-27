@@ -72,6 +72,7 @@ use engine_graphics::world::scenes::{
     SceneGraphicsParallax,
     SceneGraphicsPressure,
     SceneGraphicsSprites,
+    SceneGraphicsTemperature,
 };
 use engine_host::{
     acceleration::Accelerator,
@@ -740,6 +741,7 @@ impl Scene {
             fluid: self.fluid_graphics(camera_position),
             gas: self.gas_graphics(camera_position),
             pressure: self.pressure_graphics(camera_position),
+            temperature: self.temperature_graphics(camera_position),
             parallax,
             sprites,
             overlays: self.actor_registry
@@ -884,6 +886,38 @@ impl Scene {
         Some(SceneGraphicsPressure {
             pressure_buffer: cellular_tile_buffers.pressure_buffer(),
             ambient_pressure: self.ambient_gas_pressure,
+            region_x: region_x as f32,
+            region_y: region_y as f32,
+            region_width: active_region.width() as u32,
+            region_height: active_region.height() as u32,
+            ring_offset_x,
+            ring_offset_y,
+            cellular_tile_size: CELLULAR_TILE_SIZE as u32,
+        })
+    }
+
+    /// Returns the resident cell temperatures relative to a camera, or `None` before they stream
+    pub fn temperature_graphics(
+        &self,
+        camera_position: ScenePosition,
+    ) -> Option<SceneGraphicsTemperature<'_>> {
+        let cellular_tile_streaming_state: &CellularTileStreamingState =
+            self.cellular_tile_streaming_state.as_ref()?;
+        let cellular_tile_buffers: &CellularTileBuffers = self.cellular_tile_buffers.as_ref()?;
+        let active_region: CellularTileRegion =
+            cellular_tile_streaming_state.active_cellular_tile_region()?;
+        let (ring_offset_x, ring_offset_y): (u32, u32) =
+            cellular_tile_streaming_state.cellular_tile_ring_offset();
+        let region_position: ScenePosition = ScenePosition {
+            tile_x: active_region.bottom_left.x,
+            tile_y: active_region.bottom_left.y,
+            offset_x: 0,
+            offset_y: 0,
+        };
+        let (region_x, region_y): (f64, f64) = region_position.relative_position(camera_position);
+        Some(SceneGraphicsTemperature {
+            matter_buffer: cellular_tile_buffers.matter_buffer(),
+            ambient_temperature: self.ambient_gas_temperature,
             region_x: region_x as f32,
             region_y: region_y as f32,
             region_width: active_region.width() as u32,

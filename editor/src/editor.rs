@@ -73,6 +73,8 @@ use engine::{
     SceneGraphicsOverlayShape,
     SceneRenderer,
     SceneRendererViewMode,
+    TEMPERATURE_VIEW_AMBIENT,
+    TEMPERATURE_VIEW_MAXIMUM,
 };
 use engine_host::windows::{
     Window,
@@ -106,6 +108,9 @@ const EDITOR_CAMERA_ZOOM_RANGE: (f32, f32) = (0.25, 2.0);
 /// Pressure applied per second by the pressure tool
 const EDITOR_PRESSURE_RATE_DEFAULT: f32 = 100.0;
 
+/// Temperature added per second by the heat tool
+const EDITOR_HEAT_RATE_DEFAULT: f32 = 100.0;
+
 /// Initial explosion radius in tiles
 const EDITOR_EXPLOSION_RADIUS_DEFAULT: f32 = 3.0;
 
@@ -123,6 +128,16 @@ enum EditorPressureMode {
     Add,
     /// Removes pressure from cells
     Remove,
+}
+
+/// Temperature edit direction
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+enum EditorHeatMode {
+    /// Adds temperature to cells
+    #[default]
+    Heat,
+    /// Removes temperature from cells
+    Cool,
 }
 
 /// Editor hosting a game in a scalable viewport beside its scene editing tools
@@ -163,6 +178,10 @@ pub struct Editor<G: Game> {
     pressure_mode: EditorPressureMode,
     /// Pressure applied per second
     pressure_rate: f32,
+    /// Temperature edit direction
+    heat_mode: EditorHeatMode,
+    /// Temperature added per second
+    heat_rate: f32,
     /// Radius of a delayed explosion in tiles
     explosion_radius: f32,
     /// Pressure added by a delayed explosion in atmospheres
@@ -259,6 +278,8 @@ impl<G: Game> Editor<G> {
             view_mode: SceneRendererViewMode::Graphics,
             pressure_mode: EditorPressureMode::Add,
             pressure_rate: EDITOR_PRESSURE_RATE_DEFAULT,
+            heat_mode: EditorHeatMode::Heat,
+            heat_rate: EDITOR_HEAT_RATE_DEFAULT,
             explosion_radius: EDITOR_EXPLOSION_RADIUS_DEFAULT,
             explosion_magnitude: EDITOR_EXPLOSION_MAGNITUDE_DEFAULT,
             explosion_delay: EDITOR_EXPLOSION_DELAY_DEFAULT,
@@ -552,6 +573,11 @@ impl<G: Game> Editor<G> {
                     SceneRendererViewMode::Pressure,
                     "Pressure",
                 );
+                user_interface.selectable_value(
+                    &mut self.view_mode,
+                    SceneRendererViewMode::Temperature,
+                    "Temperature",
+                );
                 user_interface.toggle_value(&mut self.is_chunk_grid_shown, "Chunks");
                 user_interface.toggle_value(&mut self.is_tile_grid_shown, "Tiles");
                 user_interface.toggle_value(&mut self.is_collision_shown, "Collision");
@@ -742,6 +768,11 @@ impl<G: Game> Editor<G> {
         );
         if self.view_mode == SceneRendererViewMode::Pressure {
             Self::render_pressure_legend(&painter, rect);
+        } else if self.view_mode == SceneRendererViewMode::Temperature {
+            let ambient_temperature: f32 = self.game_instance.game_mutable().scene()
+                .map(|(scene, _)| scene.ambient_gas_temperature())
+                .unwrap_or(TEMPERATURE_VIEW_AMBIENT);
+            Self::render_temperature_legend(&painter, rect, ambient_temperature);
         }
         let Some((camera_position, visible_width, visible_height)) = camera_view else { return; };
         // the texture may lag the tab by one frame while resizing, so map through its size
@@ -809,6 +840,11 @@ impl<G: Game> Editor<G> {
                 );
                 self.stroke_cell = Some(cell);
             }
+            (true, Some(cell)) if self.tool == EditorTool::Heat => {
+                let frame_time: f32 = user_interface.input(|input| input.stable_dt);
+                self.render_heat_stroke(self.stroke_cell.unwrap_or(cell), cell, frame_time);
+                self.stroke_cell = Some(cell);
+            }
             (true, Some(cell)) if self.stroke_cell != Some(cell) => {
                 self.render_stroke(self.stroke_cell.unwrap_or(cell), cell);
                 self.stroke_cell = Some(cell);
@@ -829,13 +865,17 @@ impl<G: Game> Editor<G> {
         let shape: SceneGraphicsOverlayShape = match (self.tool, self.brush) {
             (EditorTool::Explosion, _) =>
                 SceneGraphicsOverlayShape::Circle { radius: self.explosion_radius },
-            (EditorTool::Pressure, _) | (_, EditorBrush::Circle) =>
+            (EditorTool::Pressure | EditorTool::Heat, _) | (_, EditorBrush::Circle) =>
                 SceneGraphicsOverlayShape::Circle { radius: brush_size / 2.0 },
             (_, EditorBrush::Square) =>
                 SceneGraphicsOverlayShape::Rectangle { width: brush_size, height: brush_size },
         };
         let color: egui::Color32 = match self.tool {
             EditorTool::Pressure => egui::Color32::from_rgba_unmultiplied(150, 205, 255, 90),
+            EditorTool::Heat => match self.heat_mode {
+                EditorHeatMode::Heat => egui::Color32::from_rgba_unmultiplied(255, 90, 35, 90),
+                EditorHeatMode::Cool => egui::Color32::from_rgba_unmultiplied(150, 205, 255, 90),
+            },
             EditorTool::Explosion => egui::Color32::from_rgba_unmultiplied(255, 50, 35, 110),
             _ => egui::Color32::from_white_alpha(70),
         };
@@ -881,6 +921,7 @@ impl<G: Game> Editor<G> {
                 ),
                 EditorTool::Eraser => (EditMode::Replace, MaterialIdentifier::EMPTY, 0),
                 EditorTool::Pressure => return,
+                EditorTool::Heat => return,
                 EditorTool::Explosion => return,
             };
         let mut edit: Edit = Edit::new(mode);
@@ -940,6 +981,51 @@ impl<G: Game> Editor<G> {
                 active_region.is_some_and(|region| region.contains(*coordinates))
             });
             if edit.pressures.is_empty() { return Ok(()); }
+            scene.edit(edit)
+        });
+        match result {
+            Ok(()) => {
+                self.edit_error = None;
+                self.is_edited = true;
+            }
+            Err(EditError::CellularTileInactive { .. }) => {}
+            Err(error) => self.edit_error = Some(error),
+        }
+    }
+
+    /// Requests a temperature edit along a stroke within the resident region
+    fn render_heat_stroke(
+        &mut self,
+        start: CellCoordinates,
+        end: CellCoordinates,
+        frame_time: f32,
+    ) {
+        let point = |cell: CellCoordinates| -> ScenePosition {
+            let half_cell_size: f64 = 0.5 / CELLULAR_TILE_SIZE as f64;
+            Self::cell_position(cell).translate(half_cell_size, half_cell_size)
+        };
+        let temperature: f32 = self.heat_rate * frame_time.max(0.0);
+        let radius: f64 = f64::from(self.brush_size) / 2.0 / CELLULAR_TILE_SIZE as f64;
+        let mut edit: Edit = Edit::new(EditMode::Insert);
+        let start_position: ScenePosition = point(start);
+        let end_position: ScenePosition = point(end);
+        let edit_result: Result<(), EditError> = match self.heat_mode {
+            EditorHeatMode::Heat => {
+                edit.add_temperature_segment(start_position, end_position, radius, temperature)
+            }
+            EditorHeatMode::Cool => {
+                edit.remove_temperature_segment(start_position, end_position, radius, temperature)
+            }
+        };
+        let result: Result<(), EditError> = edit_result.and_then(|()| {
+            let Some((scene, _)) = self.game_instance.game_mutable().scene() else {
+                return Ok(());
+            };
+            let active_region: Option<CellularTileRegion> = scene.active_cellular_tile_region();
+            edit.temperatures.retain(|coordinates, _| {
+                active_region.is_some_and(|region| region.contains(*coordinates))
+            });
+            if edit.temperatures.is_empty() { return Ok(()); }
             scene.edit(edit)
         });
         match result {
@@ -1041,6 +1127,100 @@ impl<G: Game> Editor<G> {
         }
     }
 
+    /// Draws the temperature scale over the viewport
+    fn render_temperature_legend(
+        painter: &egui::Painter,
+        viewport: egui::Rect,
+        ambient_temperature: f32,
+    ) {
+        let panel_size: egui::Vec2 = egui::vec2(310.0, 66.0);
+        let panel_min: egui::Pos2 = viewport.left_bottom() + egui::vec2(10.0, -76.0);
+        let panel: egui::Rect = egui::Rect::from_min_size(panel_min, panel_size);
+        painter.rect_filled(
+            panel,
+            4.0,
+            egui::Color32::from_rgba_unmultiplied(12, 14, 20, 220),
+        );
+        painter.text(
+            panel.left_top() + egui::vec2(8.0, 5.0),
+            egui::Align2::LEFT_TOP,
+            "Temperature (K)",
+            egui::FontId::proportional(12.0),
+            egui::Color32::WHITE,
+        );
+        let bar: egui::Rect = egui::Rect::from_min_size(
+            panel.left_top() + egui::vec2(8.0, 24.0),
+            egui::vec2(panel.width() - 16.0, 12.0),
+        );
+        let ambient_temperature: f32 = ambient_temperature.max(1.0);
+        let ambient_position: f32 = 0.3;
+        let map_temperature = |temperature: f32| -> f32 {
+            if temperature <= ambient_temperature {
+                temperature / ambient_temperature * ambient_position
+            } else {
+                ambient_position + (1.0 - ambient_position)
+                    * (temperature / ambient_temperature).ln()
+                    / (TEMPERATURE_VIEW_MAXIMUM / ambient_temperature).ln()
+            }
+        };
+        let stops: [(f32, &str); 4] = [
+            (0.0, "0"),
+            (ambient_temperature, "ambient"),
+            (1000.0, "1000"),
+            (TEMPERATURE_VIEW_MAXIMUM, "6000"),
+        ];
+        for segment in 0..bar.width() as usize {
+            let left: f32 = segment as f32 / bar.width();
+            let right: f32 = (segment + 1) as f32 / bar.width();
+            let position: f32 = (left + right) * 0.5;
+            let temperature: f32 = if position <= ambient_position {
+                position / ambient_position * ambient_temperature
+            } else {
+                ambient_temperature
+                    * (((position - ambient_position) / (1.0 - ambient_position)
+                        * (TEMPERATURE_VIEW_MAXIMUM / ambient_temperature).ln()).exp())
+            };
+            let color: [f32; 4] = SceneRenderer::temperature_color(
+                temperature, ambient_temperature,
+            );
+            let color: egui::Color32 = egui::Color32::from_rgba_unmultiplied(
+                (color[0] * 255.0) as u8,
+                (color[1] * 255.0) as u8,
+                (color[2] * 255.0) as u8,
+                (color[3] * 255.0) as u8,
+            );
+            painter.rect_filled(
+                egui::Rect::from_min_max(
+                    egui::pos2(bar.left() + left * bar.width(), bar.top()),
+                    egui::pos2(bar.left() + right * bar.width() + 1.0, bar.bottom()),
+                ),
+                0.0,
+                color,
+            );
+        }
+        for (temperature, label) in stops {
+            let x: f32 = bar.left() + map_temperature(temperature) * bar.width();
+            painter.line_segment(
+                [egui::pos2(x, bar.bottom()), egui::pos2(x, bar.bottom() + 3.0)],
+                egui::Stroke::new(1.0, egui::Color32::WHITE),
+            );
+            let alignment: egui::Align2 = if temperature == 0.0 {
+                egui::Align2::LEFT_TOP
+            } else if temperature == TEMPERATURE_VIEW_MAXIMUM {
+                egui::Align2::RIGHT_TOP
+            } else {
+                egui::Align2::CENTER_TOP
+            };
+            painter.text(
+                egui::pos2(x, bar.bottom() + 4.0),
+                alignment,
+                label,
+                egui::FontId::proportional(9.0),
+                egui::Color32::WHITE,
+            );
+        }
+    }
+
     /// Draws tile and chunk boundaries across the visible area of the camera
     fn render_grids(
         painter: &egui::Painter,
@@ -1112,6 +1292,22 @@ impl<G: Game> Editor<G> {
                         EditorPressureMode::Remove,
                         "Remove",
                     );
+                });
+            });
+        InspectorSection::new("Heat")
+            .id_salt("editor-heat")
+            .show(user_interface, |user_interface| {
+                user_interface.selectable_value(&mut self.tool, EditorTool::Heat, "Heat");
+                SettingsRow::show(user_interface, "Rate", |user_interface| {
+                    user_interface.add(
+                        egui::Slider::new(&mut self.heat_rate, 1.0..=1000.0)
+                            .logarithmic(true)
+                            .suffix(" K/s"),
+                    );
+                });
+                SettingsRow::show(user_interface, "Mode", |user_interface| {
+                    user_interface.radio_value(&mut self.heat_mode, EditorHeatMode::Heat, "Heat");
+                    user_interface.radio_value(&mut self.heat_mode, EditorHeatMode::Cool, "Cool");
                 });
             });
         InspectorSection::new("Explosion")

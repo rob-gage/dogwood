@@ -11,6 +11,8 @@ pub enum EditorTool {
     Eraser,
     /// Adds or removes pressure
     Pressure,
+    /// Adds or removes temperature
+    Heat,
     /// Places a delayed pressure explosion
     Explosion,
 }

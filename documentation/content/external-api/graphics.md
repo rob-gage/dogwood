@@ -6,7 +6,7 @@ weight = 90
 sources = ["engine_graphics/src/lib.rs", "engine_graphics/src/sprites", "engine_graphics/src/renders/mod.rs", "engine_graphics/src/renders/scene_renderer.rs", "engine_graphics/src/world/scenes", "engine/src/lib.rs", "engine/src/games/game_instance.rs"]
 +++
 
-Game code generally needs only `SpriteSheet`. Integrators providing their own render loop can use `SceneRenderer` and `SceneGraphics`; the engine also uses them internally. `SceneRenderer`, `SceneRendererViewMode`, `SceneGraphicsOverlay`, and `SceneGraphicsOverlayShape` are re-exported from `engine`; borrowed scene graphics records live in `engine_graphics`.
+Game code generally needs only `SpriteSheet`. Integrators providing their own render loop can use `SceneRenderer` and `SceneGraphics`; the engine also uses them internally. `SceneRenderer`, `SceneRendererViewMode`, `SceneGraphicsOverlay`, `SceneGraphicsOverlayShape`, and `SceneGraphicsTemperature` are re-exported from `engine`; borrowed scene graphics records live in `engine_graphics`.
 
 ## SpriteSheet
 
@@ -39,13 +39,14 @@ Game code generally needs only `SpriteSheet`. Integrators providing their own re
 
 ## Scene graphics and renderer
 
-`SceneGraphics`, `SceneGraphicsCellular`, `SceneGraphicsFluid`, `SceneGraphicsGas`, `SceneGraphicsPressure`, `SceneGraphicsOverlay`, `SceneGraphicsOverlayShape`, and `SceneGraphicsSprites`, and `SceneGraphicsParallax` (in `engine_graphics::world::scenes`) are borrowed descriptions of one frame:
+`SceneGraphics`, `SceneGraphicsCellular`, `SceneGraphicsFluid`, `SceneGraphicsGas`, `SceneGraphicsPressure`, `SceneGraphicsTemperature`, `SceneGraphicsOverlay`, `SceneGraphicsOverlayShape`, and `SceneGraphicsSprites`, and `SceneGraphicsParallax` (in `engine_graphics::world::scenes`) are borrowed descriptions of one frame:
 
 - the visible tile dimensions;
 - optional resident cellular buffers and ring placement;
 - optional fluid raster, material-property, and per-particle color buffers with ring placement;
 - optional gas cell, material identifier, and gas material-property buffers with ring placement;
 - optional published pressure buffer with ambient pressure and ring placement;
+- optional tile-major matter buffer with ambient temperature and ring placement;
 - actor and host overlays aligned to scene cells, each a circle radius or a rectangle width and height in tiles with a packed RGBA8 color;
 - sprite texture views with position, size, rotation, depth, texture region, and linear color.
 
@@ -58,10 +59,10 @@ The target must be single-sample.
 Each frame is drawn in this order, into a centered letterboxed viewport:
 
 ```text
-[negative-depth sprites] -> [fluid] -> [gas] -> [cellular content] -> [nonnegative-depth sprites] -> [pressure tint, optional] -> [cell overlays]
+[negative-depth sprites] -> [fluid] -> [gas] -> [cellular content] -> [nonnegative-depth sprites] -> [pressure or temperature tint, optional] -> [cell overlays]
 ```
 
-`SceneRendererViewMode::Pressure` enables the cell tint. `GameInstance::set_view_mode` selects the view and `set_overlays` supplies host overlays. Cellular rendering is skipped without resident data or a nonempty viewport. See [scene renderer](@/internals/rendering/scene-renderer.md) for the render passes.
+`SceneRendererViewMode::Pressure` and `Temperature` enable their respective cell tints. `GameInstance::set_view_mode` selects the view and `set_overlays` supplies host overlays. Cellular rendering is skipped without resident data or a nonempty viewport. See [scene renderer](@/internals/rendering/scene-renderer.md) for the render passes.
 
 {{ <rustdoc path="engine_graphics/sprites/struct.SpriteSheet.html" text="SpriteSheet" /> }} ·
 {{ <rustdoc path="engine_graphics/sprites/enum.SpriteSheetError.html" text="SpriteSheetError" /> }} ·

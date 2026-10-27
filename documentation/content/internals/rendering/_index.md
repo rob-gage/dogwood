@@ -41,7 +41,7 @@ UserInterfaceRenderer::render(target, output)
 
 - [Scene renderer](@/internals/rendering/scene-renderer.md): scene graphics input, viewport, and pass order.
 - [Fluid render pass](@/internals/rendering/fluid-pass.md): raster smoothing, depth shading, and blending.
-- [Pressure view](@/internals/rendering/scene-renderer.md#pass-order): cell tint and legend.
+- [Pressure and temperature views](@/internals/rendering/scene-renderer.md#pass-order): cell tint and legends.
 - [Gas render pass](@/internals/rendering/gas-pass.md): cell-aligned cloud edges, slot opacity, and blending.
 - [Cellular render pass](@/internals/rendering/cellular-pass.md): uniforms, bindings, and pipeline cache.
 - [Sprite render pass](@/internals/rendering/sprite-pass.md): instances, batching, and sprite sheets.

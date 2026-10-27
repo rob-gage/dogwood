@@ -71,6 +71,10 @@ While the free camera is selected:
 
 Focus and native/egui event routing are described in [editor internals](@/internal-api/editor.md). For viewport-relative coordinates, native cursor movement subtracts the viewport's physical-pixel origin, while egui pointer coordinates subtract its egui-point origin.
 
+## View modes
+
+The editor can draw the scene in its normal graphics mode, pressure mode, or temperature mode. Temperature mode tints cells relative to `Scene::ambient_gas_temperature()` and uses a 6000 K upper display reference. Its legend uses the same ambient value.
+
 ## API reference
 
 - {{ <rustdoc path="editor/editor_viewport/struct.EditorViewport.html" text="EditorViewport" private={true} /> }}

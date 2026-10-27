@@ -79,7 +79,7 @@ Edge cases:
 - An empty clipped edit is not sent to `Scene::edit`, but the editor still treats the request as successful, clears the error, and marks itself edited.
 - Failed edits are retained as the displayed error.
 
-The toolbar selects Graphics or Pressure view; the pressure view adds a legend. Overlay toggles draw chunks (pink), tiles (dark pink), and collision outlines (green). The cursor is sent as a cell-aligned overlay. The Pressure tool calls `Edit::add_pressure_segment` or `remove_pressure_segment` at its configured rate in atmospheres per second. The Explosion tool places a red-overlay actor and, after its 0–10 second delay while playing, applies pressure within its configured radius.
+The toolbar selects Graphics, Pressure, or Temperature view; each data view adds its matching legend. Overlay toggles draw chunks (pink), tiles (dark pink), and collision outlines (green). The cursor is sent as a cell-aligned overlay. The Pressure tool calls `Edit::add_pressure_segment` or `remove_pressure_segment` at its configured rate in atmospheres per second. The Heat tool calls `Edit::add_temperature_segment` or `remove_temperature_segment` at its configured rate in kelvin per second. The Explosion tool places a red-overlay actor and, after its 0–10 second delay while playing, applies pressure within its configured radius.
 
 ### Free camera
 
