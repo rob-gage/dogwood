@@ -4,6 +4,7 @@ use super::{
     scene_renderer_cellular_pass::SceneRendererCellularPass,
     scene_renderer_fluid_pass::SceneRendererFluidPass,
     scene_renderer_gas_pass::SceneRendererGasPass,
+    scene_renderer_lighting_pass::SceneRendererLightingPass,
     scene_renderer_overlay_pass::SceneRendererOverlayPass,
     scene_renderer_pressure_pass::SceneRendererPressurePass,
     scene_renderer_temperature_pass::SceneRendererTemperaturePass,
@@ -38,10 +39,12 @@ pub enum SceneRendererViewMode {
     Temperature,
 }
 
-/// Draws the unlit appearance of a scene into one view's texture
+/// Draws the lit appearance of a scene into one view's texture
 pub struct SceneRenderer {
     /// Appearance drawn by this renderer
     view_mode: SceneRendererViewMode,
+    /// Light of the resident region, sampled by every appearance pass
+    lighting_pass: SceneRendererLightingPass,
     /// Separate background rendering, sharing sprite batching and alpha blending
     parallax_pass: SceneRendererSpritesPass,
     /// Renderer of sprites with negative depth, drawn behind cellular content
@@ -66,17 +69,22 @@ impl SceneRenderer {
 
     /// Creates the scene rendering resources
     pub fn new(accelerator: &Accelerator) -> Self {
+        let lighting_pass: SceneRendererLightingPass = SceneRendererLightingPass::new(accelerator);
+        let lighting: &wgpu::BindGroupLayout = lighting_pass.bind_group_layout();
         Self {
             view_mode: SceneRendererViewMode::Graphics,
-            parallax_pass: SceneRendererSpritesPass::new(accelerator, i32::MIN..=i32::MAX),
-            behind_cellular_sprites_pass: SceneRendererSpritesPass::new(accelerator, i32::MIN..=-1),
-            fluid_pass: SceneRendererFluidPass::new(accelerator),
-            gas_pass: SceneRendererGasPass::new(accelerator),
+            parallax_pass: SceneRendererSpritesPass::new(accelerator, i32::MIN..=i32::MAX, lighting),
+            behind_cellular_sprites_pass:
+                SceneRendererSpritesPass::new(accelerator, i32::MIN..=-1, lighting),
+            fluid_pass: SceneRendererFluidPass::new(accelerator, lighting),
+            gas_pass: SceneRendererGasPass::new(accelerator, lighting),
             pressure_pass: SceneRendererPressurePass::new(accelerator),
             temperature_pass: SceneRendererTemperaturePass::new(accelerator),
             overlay_pass: SceneRendererOverlayPass::new(accelerator),
-            cellular_pass: SceneRendererCellularPass::new(accelerator),
-            above_cellular_sprites_pass: SceneRendererSpritesPass::new(accelerator, 0..=i32::MAX),
+            cellular_pass: SceneRendererCellularPass::new(accelerator, lighting),
+            above_cellular_sprites_pass:
+                SceneRendererSpritesPass::new(accelerator, 0..=i32::MAX, lighting),
+            lighting_pass,
         }
     }
 
@@ -185,9 +193,12 @@ impl SceneRenderer {
         let is_viewport_visible: bool =
             viewport_width > 0 && viewport_height > 0 && pixels_per_tile > 0.0;
         // draw cellular content only when the viewport and its resident region are nonempty
+        let matter_buffer: Option<&wgpu::Buffer> =
+            graphics.temperature.as_ref().map(|temperature| temperature.matter_buffer);
         let cellular_graphics: Option<&SceneGraphicsCellular<'_>> =
             graphics.cellular.as_ref().filter(|cellular_graphics| {
                 is_viewport_visible
+                    && matter_buffer.is_some()
                     && cellular_graphics.region_width > 0
                     && cellular_graphics.region_height > 0
                     && cellular_graphics.cellular_tile_size > 0
@@ -202,6 +213,7 @@ impl SceneRenderer {
         let gas_graphics: Option<&SceneGraphicsGas<'_>> =
             graphics.gas.as_ref().filter(|gas_graphics| {
                 is_viewport_visible
+                    && matter_buffer.is_some()
                     && gas_graphics.region_width > 0
                     && gas_graphics.region_height > 0
                     && gas_graphics.cellular_tile_size > 0
@@ -227,16 +239,11 @@ impl SceneRenderer {
             let mut layers: Vec<_> = graphics.parallax.iter()
                 .flat_map(|layer| layer.visible_copies(visible_width, visible_height)).collect();
             layers.sort_by(|a, b| b.depth.total_cmp(&a.depth).then(a.order.cmp(&b.order)));
-            let backgrounds = SceneGraphicsSprites {
-                sprites: layers.iter().map(|layer| (
-                    layer.texture, layer.center[0], layer.center[1],
-                    layer.size[0], layer.size[1], layer.rotation, 0,
-                    layer.texture_region, layer.color,
-                )).collect(),
-            };
+            self.lighting_pass.prepare(accelerator, graphics, &layers);
             self.parallax_pass.prepare(
                 accelerator, format, viewport_x, viewport_y,
-                viewport_width, viewport_height, pixels_per_tile, &backgrounds,
+                viewport_width, viewport_height, pixels_per_tile,
+                &SceneGraphicsSprites::default(), &layers,
             );
             self.behind_cellular_sprites_pass.prepare(
                 accelerator,
@@ -247,6 +254,7 @@ impl SceneRenderer {
                 viewport_height,
                 pixels_per_tile,
                 &graphics.sprites,
+                &[],
             );
         }
         if let Some(cellular_graphics) = cellular_graphics {
@@ -259,6 +267,7 @@ impl SceneRenderer {
                 viewport_height,
                 pixels_per_tile,
                 cellular_graphics,
+                matter_buffer.expect("cellular graphics are drawn only with resident temperatures"),
             );
         }
         if let Some(fluid_graphics) = fluid_graphics {
@@ -283,6 +292,7 @@ impl SceneRenderer {
                 viewport_height,
                 pixels_per_tile,
                 gas_graphics,
+                matter_buffer.expect("gas graphics are drawn only with resident temperatures"),
             );
         }
         if let Some(pressure_graphics) = pressure_graphics {
@@ -319,6 +329,7 @@ impl SceneRenderer {
                 viewport_height,
                 pixels_per_tile,
                 &graphics.sprites,
+                &[],
             );
             self.overlay_pass.prepare(
                 accelerator,
@@ -339,8 +350,12 @@ impl SceneRenderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("`SceneRenderer::render`"),
             });
-        if fluid_graphics.is_some() {
-            self.fluid_pass.shade(&mut command_encoder);
+        let lighting_bind_group: Option<&wgpu::BindGroup> = self.lighting_pass.bind_group();
+        if is_viewport_visible {
+            self.lighting_pass.compute(&mut command_encoder);
+        }
+        if let (Some(_), Some(lighting_bind_group)) = (fluid_graphics, lighting_bind_group) {
+            self.fluid_pass.shade(&mut command_encoder, lighting_bind_group);
         }
         let mut render_pass: wgpu::RenderPass<'_> =
             command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -369,18 +384,20 @@ impl SceneRenderer {
                 1.0,
             );
             render_pass.set_scissor_rect(viewport_x, viewport_y, viewport_width, viewport_height);
-            self.parallax_pass.draw(&mut render_pass, format);
-            self.behind_cellular_sprites_pass.draw(&mut render_pass, format);
-            if fluid_graphics.is_some() {
-                self.fluid_pass.draw(&mut render_pass, format);
+            if let Some(lighting_bind_group) = lighting_bind_group {
+                self.parallax_pass.draw(&mut render_pass, format, lighting_bind_group);
+                self.behind_cellular_sprites_pass.draw(&mut render_pass, format, lighting_bind_group);
+                if fluid_graphics.is_some() {
+                    self.fluid_pass.draw(&mut render_pass, format, lighting_bind_group);
+                }
+                if gas_graphics.is_some() {
+                    self.gas_pass.draw(&mut render_pass, format, lighting_bind_group);
+                }
+                if cellular_graphics.is_some() {
+                    self.cellular_pass.draw(&mut render_pass, format, lighting_bind_group);
+                }
+                self.above_cellular_sprites_pass.draw(&mut render_pass, format, lighting_bind_group);
             }
-            if gas_graphics.is_some() {
-                self.gas_pass.draw(&mut render_pass, format);
-            }
-            if cellular_graphics.is_some() {
-                self.cellular_pass.draw(&mut render_pass, format);
-            }
-            self.above_cellular_sprites_pass.draw(&mut render_pass, format);
             if pressure_graphics.is_some() {
                 self.pressure_pass.draw(&mut render_pass, format);
             }

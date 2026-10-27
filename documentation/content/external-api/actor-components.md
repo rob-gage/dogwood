@@ -3,7 +3,7 @@ title = "Actor components"
 description = "Fields, units, and current engine use of the public actor component types."
 weight = 60
 [extra]
-sources = ["engine_world/src/scenes/pressure", "engine_world/src/scenes/fluids", "engine_world/src/actors/components", "engine_world/src/actors/actor_registry.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs", "engine/src/games/game_instance.rs", "engine/src/lib.rs"]
+sources = ["engine_world/src/scenes/pressure", "engine_world/src/scenes/fluids", "engine_world/src/actors/components", "engine_world/src/actors/actor_registry.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs", "engine/src/games/game_instance.rs", "engine/src/lib.rs", "engine_world/src/actors/components/actor_light.rs"]
 +++
 
 Components are Bevy data attached to an `Actor` through `ActorRegistry`. This page is the reference for every public component, for game programmers. All are re-exported from `engine::actors::components`.
@@ -37,6 +37,7 @@ See [parallax backgrounds](@/external-api/scenes.md#parallax-backgrounds) for ph
 | `ActorPersistenceComponent` | Empty marker | Empty | Keeps the actor from being despawned on region exit. |
 | `ActorSpritesComponent` | `sprites`: vector of sprite tuples | Empty vector | Read by scene graphics; see the tuple key below. |
 | `ActorOverlayComponent` | `shape: ActorOverlayShape`; `color: u32` packed RGBA8 | None | Draws a cell-aligned circle or rectangle at the actor position. |
+| `ActorLightComponent` | `color: [f32; 3]`; `intensity: f32`; `radius: f32` in tiles | White, `1.0`, `0.5` | Adds a disc light when paired with `ActorKinematicsPositionComponent`; invalid values are skipped. See [Lighting](@/external-api/lighting.md). |
 | `ActorAttachmentComponent` | Empty marker | `Default::default()` | No runtime consumer. |
 | `ActorKinematicsVelocityComponent` | Empty marker | `Default::default()` | No runtime consumer. |
 | `ActorKinematicsRotationComponent` | Empty marker | `Default::default()` | No runtime consumer. |
@@ -58,23 +59,27 @@ A persistent actor is not despawned by region-exit handling. Its collision body 
 
 ### Sprite tuple
 
-Each `sprites` entry is `(Arc<SpriteSheet>, u32, f32, f32, f32, f32, f32, [f32; 4], i32)`:
+Each `sprites` entry is `(Arc<SpriteSheet>, Arc<SpriteSheet>, u32, f32, f32, f32, f32, f32, [f32; 4], f32, i32)`:
 
 | Position | Meaning | Type and units |
 |---:|---|---|
-| 1 | Sprite sheet | `Arc<SpriteSheet>` |
-| 2 | Frame | `u32` frame index |
-| 3–4 | X/Y offset | `f32`, tiles |
-| 5–6 | X/Y scale | `f32`, dimension multipliers |
-| 7 | Rotation | `f32`, radians |
-| 8 | Color | `[f32; 4]`, linear RGBA |
-| 9 | Depth | `i32` sort key |
+| 1 | Albedo sheet | `Arc<SpriteSheet>` |
+| 2 | Radiance sheet | `Arc<SpriteSheet>` |
+| 3 | Albedo frame | `u32` frame index |
+| 4–5 | X/Y offset | `f32`, tiles |
+| 6–7 | X/Y scale | `f32`, dimension multipliers |
+| 8 | Rotation | `f32`, radians |
+| 9 | Color | `[f32; 4]`, linear RGBA |
+| 10 | Radiance intensity | `f32` |
+| 11 | Depth | `i32` sort key |
 
 > **Limitation:** `ActorContactComponent` creates a sensor collider, but the public API does not expose its overlap results.
 
 ## Requirements
 
-- The camera actor needs a position for streaming and drawing. Streaming requests a region twice the camera's unzoomed width and height; zoom changes only the displayed view.
+- Radiance RGB is decoded from sRGB and multiplied by intensity to give emission per cell along the path; alpha is occlusion per tile. The radiance frame is the albedo frame modulo the radiance sheet frame count.
+
+The camera actor needs a position for streaming and drawing. Streaming requests a region twice the camera's unzoomed width and height; zoom changes only the displayed view.
 - Sprites are read only from positioned actors. Ordinary sprite negative integer depths draw behind cellular content, nonnegative integer depths above it. Actors with `ActorParallaxComponent` route sprites into background rendering using physical depth; integer depth orders coplanar sprites. Out-of-range frames are skipped; see [graphics](@/external-api/graphics.md).
 - Pawn movement needs a positioned actor with a kinematic collision body and a physical collider.
 - Kinematic and dynamic actors in cellular kinematics need finite, positive `mass`, or simulation returns `SceneError::InvalidCollider`. Fixed bodies use an engine-assigned kinematics mass.
@@ -87,3 +92,5 @@ Each `sprites` entry is `(Arc<SpriteSheet>, u32, f32, f32, f32, f32, f32, [f32; 
 ## Swimming fields
 
 `ActorPawnMovementComponent` also defines `swimming_maximum_speed` (default `3.5` tiles/s), `swimming_acceleration` (`30.0` tiles/s²), `swimming_density` (`0.57` mass/cell area), `swimming_drag` (`4.0`), `swimming_enter_immersion` (`0.55`), and `swimming_exit_immersion` (`0.35`). See [pawn movement](@/internals/actors/pawn-movement.md#swimming).
+
+| `ActorLightComponent` | `color: [f32; 3]`; `intensity: f32`; `radius: f32` in tiles | White, `1.0`, `0.5` | Adds a disc light when paired with `ActorKinematicsPositionComponent`; invalid values are skipped. See [Lighting](@/external-api/lighting.md). |

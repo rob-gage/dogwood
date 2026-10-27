@@ -9,13 +9,17 @@ use super::{
     MaterialPropertiesCellularStatic,
     MaterialPropertiesFluid,
     MaterialPropertiesGas,
+    MaterialTemperatureColor,
     MaterialRegistry,
     MaterialTransition,
 };
 use crate::scenes::cellular_tiles::CellCoordinates;
 use engine_graphics::{
     sprites::SpriteSheet,
-    world::materials::MaterialColorTransformation,
+    world::materials::{
+        MaterialColorTransformation,
+        pack_radiance,
+    },
 };
 use engine_host::acceleration::Accelerator;
 use std::collections::HashMap;
@@ -28,6 +32,20 @@ use std::sync::mpsc::{
 /// Packed cellular albedo pixels and their frame and repetition dimensions
 struct MaterialAlbedo {
     /// Packed sRGB pixels in row-major order
+    pixels: Vec<u32>,
+    /// Frame width in pixels
+    width: u32,
+    /// Frame height in pixels
+    height: u32,
+    /// Horizontal repetition width in cells
+    repetition_width: f64,
+    /// Vertical repetition height in cells
+    repetition_height: f64,
+}
+
+/// Packed linear emission and occlusion pixels with their frame and repetition dimensions
+struct MaterialRadiance {
+    /// Packed radiance pixels in row-major order
     pixels: Vec<u32>,
     /// Frame width in pixels
     width: u32,
@@ -53,18 +71,19 @@ pub struct MaterialTable {
     /// Mass, friction, restitution, and padding as four `f32` per dynamic cellular index
     cellular_dynamic_properties_buffer: wgpu::Buffer,
     /// Density, nonlinear XSPH viscosity control, cohesion, artificial pressure, drag, friction,
-    /// restitution, and
-    /// color as eight 32-bit words per fluid index
+    /// restitution, and color bits as eight 32-bit words per fluid index
     fluid_properties_buffer: wgpu::Buffer,
-    /// Mass, diffusivity, cohesion, color bits, opacity, and padding as eight 32-bit words per gas
-    /// index
+    /// Mass, diffusivity, cohesion, and color bits, then opacity, radiance bits, and padding as
+    /// eight 32-bit words per gas index
     gas_properties_buffer: wgpu::Buffer,
     /// Heat capacity, conduction, hot and cold transitions, and transition flags as sixteen 32-bit
     /// words per material, indexed by its thermal index
     thermal_properties_buffer: wgpu::Buffer,
-    /// Color transformations of the hot then cold transition as 28 `f32` each per material, indexed
-    /// by its thermal index
+    /// Color then radiance transformations of the hot and cold transitions as 28 `vec4<f32>` per
+    /// material, indexed by its thermal index
     transition_color_buffer: wgpu::Buffer,
+    /// Temperature color headers and keys as `vec4<u32>` then `vec4<f32>` records
+    temperature_color_buffer: wgpu::Buffer,
     /// First thermal index of the static, dynamic, fluid, and gas forms, static index zero being
     /// empty
     thermal_offsets: [u32; 4],
@@ -76,11 +95,17 @@ pub struct MaterialTable {
     /// Packed sRGB albedo pixels, frame size, and repetition size in cells of each dynamic
     /// cellular material
     cellular_dynamic_albedos: Vec<MaterialAlbedo>,
+    /// Packed linear radiance pixels, frame size, and repetition size in cells of each static
+    /// cellular material, indexed from reserved empty index zero
+    cellular_static_radiances: Vec<MaterialRadiance>,
+    /// Packed linear radiance pixels, frame size, and repetition size in cells of each dynamic
+    /// cellular material
+    cellular_dynamic_radiances: Vec<MaterialRadiance>,
 }
 
 impl MaterialTable {
 
-    /// Compiles registered properties and reads every cellular albedo frame once
+    /// Compiles registered properties and reads every cellular albedo and radiance frame once
     #[doc(hidden)]
     pub fn new(
         accelerator: &Accelerator,
@@ -98,6 +123,7 @@ impl MaterialTable {
             }))
             .collect();
         let cellular_static_count: usize = albedo_frames.len();
+        let mut radiance_frames: Vec<Option<(&SpriteSheet, u32, f32, f32, f32)>> = vec![None];
         let mut static_property_bytes: Vec<u8> = vec![0; 16];
         let mut property_bytes: Vec<u8> = Vec::new();
         for index in 1.. {
@@ -108,6 +134,8 @@ impl MaterialTable {
             if !properties.mass.is_finite() || properties.mass <= 0.0
                 || !properties.friction.is_finite() || properties.friction < 0.0
                 || !(0.0..=1.0).contains(&properties.restitution)
+                || !properties.edit_radiance_intensity.is_finite()
+                || properties.edit_radiance_intensity < 0.0
                 || properties.strength.is_nan() || properties.strength <= 0.0
                 || !properties.absorption.is_finite()
                 || !(0.0..=1.0).contains(&properties.absorption)
@@ -115,9 +143,16 @@ impl MaterialTable {
                 return Err(MaterialError::Compilation(String::from(
                     "static cellular materials need a positive mass, a nonnegative friction, \
                     a restitution from zero to one, a positive strength, and a finite absorption \
-                    from zero to one",
+                    from zero to one, and a finite nonnegative radiance intensity",
                 )));
             }
+            radiance_frames.push(Some((
+                &*properties.edit_radiance.sprite_sheet,
+                properties.edit_radiance.frame,
+                properties.edit_radiance.width,
+                properties.edit_radiance.height,
+                properties.edit_radiance_intensity,
+            )));
             // the debris material identifier rides in the last component's bits, zero for none
             let debris_bits: f32 = f32::from_bits(
                 debris_by_identifier.get(&identifier).map_or(0, |debris| debris.as_u32()),
@@ -152,10 +187,12 @@ impl MaterialTable {
             if !properties.mass.is_finite() || properties.mass <= 0.0
                 || !properties.friction.is_finite() || properties.friction < 0.0
                 || !(0.0..=1.0).contains(&properties.restitution)
+                || !properties.edit_radiance_intensity.is_finite()
+                || properties.edit_radiance_intensity < 0.0
             {
                 return Err(MaterialError::Compilation(String::from(
                     "dynamic cellular materials need a positive mass, a nonnegative friction, \
-                    and a restitution from zero to one",
+                    a restitution from zero to one, and a finite nonnegative radiance intensity",
                 )));
             }
             // WGSL vec4<f32> records with a 16-byte stride
@@ -168,6 +205,14 @@ impl MaterialTable {
                 edit_color.frame,
                 edit_color.width,
                 edit_color.height,
+            )));
+            let edit_radiance = &properties.edit_radiance;
+            radiance_frames.push(Some((
+                &*edit_radiance.sprite_sheet,
+                edit_radiance.frame,
+                edit_radiance.width,
+                edit_radiance.height,
+                properties.edit_radiance_intensity,
             )));
         }
         // a zeroed record satisfies the storage binding when no dynamic material is registered
@@ -250,9 +295,9 @@ impl MaterialTable {
                 gas_property_bytes.extend_from_slice(&value.to_le_bytes());
             }
             gas_property_bytes.extend_from_slice(&properties.graphics.color.to_le_bytes());
-            for value in [properties.graphics.opacity, 0.0, 0.0, 0.0] {
-                gas_property_bytes.extend_from_slice(&value.to_le_bytes());
-            }
+            gas_property_bytes.extend_from_slice(&properties.graphics.opacity.to_le_bytes());
+            gas_property_bytes.extend_from_slice(&properties.graphics.radiance.to_le_bytes());
+            gas_property_bytes.extend_from_slice(&[0; 8]);
         }
         // keep the storage binding valid when the registry has no gas materials
         if gas_property_bytes.is_empty() { gas_property_bytes.resize(32, 0); }
@@ -268,9 +313,10 @@ impl MaterialTable {
         let (
             thermal_property_bytes,
             transition_color_bytes,
+            temperature_color_bytes,
             thermal_offsets,
             has_fluid_transitions,
-        ): (Vec<u8>, Vec<u8>, [u32; 4], bool) =
+        ): (Vec<u8>, Vec<u8>, Vec<u8>, [u32; 4], bool) =
             Self::new_thermal_properties(&material_registry, &transition_products)?;
         let thermal_properties_buffer: wgpu::Buffer = device.create_buffer(
             &wgpu::BufferDescriptor {
@@ -290,6 +336,19 @@ impl MaterialTable {
             },
         );
         accelerator.queue().write_buffer(&transition_color_buffer, 0, &transition_color_bytes);
+        let temperature_color_buffer: wgpu::Buffer = device.create_buffer(
+            &wgpu::BufferDescriptor {
+                label: Some("`MaterialTable.temperature_color_buffer`"),
+                size: temperature_color_bytes.len() as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
+        accelerator.queue().write_buffer(
+            &temperature_color_buffer,
+            0,
+            &temperature_color_bytes,
+        );
         // copy every frame into a readable buffer with rows padded to the copy alignment
         let mut command_encoder: wgpu::CommandEncoder = device.create_command_encoder(
             &wgpu::CommandEncoderDescriptor {
@@ -399,9 +458,133 @@ impl MaterialTable {
             }
             buffer.unmap();
             albedos.push(MaterialAlbedo {
+                pixels, width, height, repetition_width,
+                repetition_height,
+            });
+        }
+        let mut radiance_encoder: wgpu::CommandEncoder = device.create_command_encoder(
+            &wgpu::CommandEncoderDescriptor {
+                label: Some("`MaterialTable` cellular radiance frame copy"),
+            },
+        );
+        let mut radiance_copies: Vec<Option<(wgpu::Buffer, u32, u32, u32, f64, f64, f32)>> =
+            Vec::new();
+        for radiance_frame in &radiance_frames {
+            let Some((sprite_sheet, frame, width, height, intensity)) = radiance_frame else {
+                radiance_copies.push(None);
+                continue;
+            };
+            if !width.is_finite() || !height.is_finite() || *width <= 0.0 || *height <= 0.0
+                || !intensity.is_finite() || *intensity < 0.0
+            {
+                return Err(MaterialError::Compilation(String::from(
+                    "cellular radiance repetition sizes must be finite and positive and intensity must be finite and nonnegative",
+                )));
+            }
+            let texture_region: [f32; 4] = sprite_sheet.frame_texture_region(*frame)
+                .ok_or_else(|| MaterialError::Compilation(String::from(
+                    "cellular material radiance frame is outside its sprite sheet",
+                )))?;
+            let texture: &wgpu::Texture = sprite_sheet.texture_view().texture();
+            let frame_x: u32 = (texture_region[0] * texture.width() as f32).round() as u32;
+            let frame_y: u32 = (texture_region[1] * texture.height() as f32).round() as u32;
+            let frame_width: u32 = sprite_sheet.width();
+            let frame_height: u32 = sprite_sheet.height();
+            let row_byte_count: u32 = (frame_width * 4)
+                .next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+            let buffer: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("`MaterialTable` cellular radiance frame"),
+                size: u64::from(row_byte_count) * u64::from(frame_height),
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            radiance_encoder.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo {
+                    texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d { x: frame_x, y: frame_y, z: 0 },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &buffer,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(row_byte_count),
+                        rows_per_image: Some(frame_height),
+                    },
+                },
+                wgpu::Extent3d {
+                    width: frame_width,
+                    height: frame_height,
+                    depth_or_array_layers: 1,
+                },
+            );
+            radiance_copies.push(Some((
+                buffer,
+                row_byte_count,
+                frame_width,
+                frame_height,
+                f64::from(frame_width) * f64::from(*width),
+                f64::from(frame_height) * f64::from(*height),
+                *intensity,
+            )));
+        }
+        accelerator.queue().submit([radiance_encoder.finish()]);
+        let (radiance_sender, radiance_receiver): (
+            Sender<Result<(), wgpu::BufferAsyncError>>,
+            Receiver<Result<(), wgpu::BufferAsyncError>>,
+        ) = channel();
+        for (buffer, ..) in radiance_copies.iter().flatten() {
+            let radiance_sender: Sender<Result<(), wgpu::BufferAsyncError>> = radiance_sender.clone();
+            buffer.map_async(wgpu::MapMode::Read, .., move |result| {
+                let _ = radiance_sender.send(result);
+            });
+        }
+        drop(radiance_sender);
+        let radiance_read_error = || String::from("cellular material radiance frames could not be read");
+        device.poll(wgpu::PollType::wait_indefinitely())
+            .map_err(|_| MaterialError::Compilation(radiance_read_error()))?;
+        for response in radiance_receiver.try_iter() {
+            response.map_err(|_| MaterialError::Compilation(radiance_read_error()))?;
+        }
+        let mut radiances: Vec<MaterialRadiance> = Vec::with_capacity(radiance_copies.len());
+        for radiance_copy in radiance_copies {
+            let Some((buffer, row_byte_count, width, height, repetition_width, repetition_height, intensity)) =
+                radiance_copy
+            else {
+                radiances.push(MaterialRadiance {
+                    pixels: Vec::new(), width: 0, height: 0,
+                    repetition_width: 1.0, repetition_height: 1.0,
+                });
+                continue;
+            };
+            let mut pixels: Vec<u32> = Vec::with_capacity((width * height) as usize);
+            {
+                let mapped_bytes: wgpu::BufferView = buffer.get_mapped_range(..)
+                    .expect("mapped cellular radiance frame should be readable");
+                for row in mapped_bytes.chunks_exact(row_byte_count as usize) {
+                    for pixel in row[..width as usize * 4].chunks_exact(4) {
+                        let decode_srgb = |byte: u8| -> f32 {
+                            let value: f32 = f32::from(byte) / 255.0;
+                            if value <= 0.04045 { value / 12.92 }
+                            else { ((value + 0.055) / 1.055).powf(2.4) }
+                        };
+                        pixels.push(pack_radiance([
+                            decode_srgb(pixel[0]) * intensity,
+                            decode_srgb(pixel[1]) * intensity,
+                            decode_srgb(pixel[2]) * intensity,
+                            f32::from(pixel[3]) / 255.0,
+                        ]));
+                    }
+                }
+            }
+            buffer.unmap();
+            radiances.push(MaterialRadiance {
                 pixels, width, height, repetition_width, repetition_height,
             });
         }
+        let cellular_static_radiances: Vec<MaterialRadiance> = radiances.drain(..cellular_static_count).collect();
+        let cellular_dynamic_radiances: Vec<MaterialRadiance> = radiances;
         let cellular_dynamic_albedos: Vec<MaterialAlbedo> =
             albedos.split_off(cellular_static_count);
         Ok(Self {
@@ -414,10 +597,13 @@ impl MaterialTable {
             gas_properties_buffer,
             thermal_properties_buffer,
             transition_color_buffer,
+            temperature_color_buffer,
             thermal_offsets,
             has_fluid_transitions,
             cellular_static_albedos: albedos,
             cellular_dynamic_albedos,
+            cellular_static_radiances,
+            cellular_dynamic_radiances,
         })
     }
 
@@ -426,9 +612,11 @@ impl MaterialTable {
     fn new_thermal_properties(
         material_registry: &MaterialRegistry,
         transition_products: &HashMap<(MaterialIdentifier, bool), MaterialIdentifier>,
-    ) -> Result<(Vec<u8>, Vec<u8>, [u32; 4], bool), MaterialError> {
+    ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>, [u32; 4], bool), MaterialError> {
         let mut property_bytes: Vec<u8> = vec![0; 64];
-        let mut color_bytes: Vec<u8> = vec![0; 224];
+        let mut color_bytes: Vec<u8> = vec![0; 448];
+        let mut temperature_color_headers: Vec<[u32; 4]> = vec![[0; 4]];
+        let mut temperature_color_key_bytes: Vec<u8> = Vec::new();
         let mut offsets: [u32; 4] = [0; 4];
         let mut count: u32 = 1;
         let mut has_fluid_transitions: bool = false;
@@ -443,8 +631,10 @@ impl MaterialTable {
             for index in first_index.. {
                 let Ok(identifier) = MaterialIdentifier::new(form, index) else { break; };
                 let Some(material) = material_registry.get(identifier) else { break; };
-                let (heat_capacity, conduction, edit_temperature, hot_transition, cold_transition):
-                    (f32, f32, f32, &Option<MaterialTransition>, &Option<MaterialTransition>) =
+                let (heat_capacity, conduction, edit_temperature, hot_transition, cold_transition,
+                    temperature_colors):
+                    (f32, f32, f32, &Option<MaterialTransition>, &Option<MaterialTransition>,
+                    &[MaterialTemperatureColor]) =
                     match material {
                         Material::CellularStatic { properties, .. } => (
                             properties.thermal.heat_capacity,
@@ -452,6 +642,7 @@ impl MaterialTable {
                             properties.thermal.edit_temperature,
                             &properties.thermal.hot_transition,
                             &properties.thermal.cold_transition,
+                            &properties.thermal.temperature_colors,
                         ),
                         Material::CellularDynamic { properties, .. } => (
                             properties.thermal.heat_capacity,
@@ -459,6 +650,7 @@ impl MaterialTable {
                             properties.thermal.edit_temperature,
                             &properties.thermal.hot_transition,
                             &properties.thermal.cold_transition,
+                            &properties.thermal.temperature_colors,
                         ),
                         Material::Fluid { properties, .. } => (
                             properties.thermal.heat_capacity,
@@ -466,6 +658,7 @@ impl MaterialTable {
                             properties.thermal.edit_temperature,
                             &properties.thermal.hot_transition,
                             &properties.thermal.cold_transition,
+                            &properties.thermal.temperature_colors,
                         ),
                         Material::Gas { properties, .. } => (
                             properties.thermal.heat_capacity,
@@ -473,6 +666,7 @@ impl MaterialTable {
                             properties.thermal.edit_temperature,
                             &properties.thermal.hot_transition,
                             &properties.thermal.cold_transition,
+                            &properties.thermal.temperature_colors,
                         ),
                     };
                 if !heat_capacity.is_finite() || heat_capacity <= 0.0
@@ -484,6 +678,48 @@ impl MaterialTable {
                         and nonnegative edit temperature", material.name(),
                     )));
                 }
+                let first_key_vector_index: u32 = (temperature_color_key_bytes.len() / 16) as u32;
+                let mut previous_temperature: Option<f32> = None;
+                for key in temperature_colors {
+                    let valid_transformation = |transformation: &MaterialColorTransformation| {
+                        transformation.matrix.iter().flatten()
+                            .chain(&transformation.offset)
+                            .all(|value| value.is_finite())
+                            && transformation.intensity_variance == 0.0
+                            && transformation.channel_variance.iter().all(|value| *value == 0.0)
+                    };
+                    if !key.temperature.is_finite() || key.temperature < 0.0
+                        || previous_temperature.is_some_and(|temperature| {
+                            key.temperature <= temperature
+                        })
+                        || !valid_transformation(&key.color)
+                        || !valid_transformation(&key.radiance)
+                    {
+                        return Err(MaterialError::InvalidTransition {
+                            name: material.name().to_owned(),
+                            message: String::from(
+                                "temperature color keys need finite, nonnegative, strictly increasing \
+                                temperatures, finite transformations, and zero variances",
+                            ),
+                        });
+                    }
+                    previous_temperature = Some(key.temperature);
+                    for value in [key.temperature, 0.0, 0.0, 0.0]
+                        .into_iter()
+                        .chain(key.color.matrix.iter().flatten().copied())
+                        .chain(key.color.offset)
+                        .chain(key.radiance.matrix.iter().flatten().copied())
+                        .chain(key.radiance.offset)
+                    {
+                        temperature_color_key_bytes.extend_from_slice(&value.to_le_bytes());
+                    }
+                }
+                temperature_color_headers.push([
+                    first_key_vector_index,
+                    temperature_colors.len() as u32,
+                    0,
+                    0,
+                ]);
                 if let (Some(hot_transition), Some(cold_transition)) =
                     (hot_transition, cold_transition)
                     && hot_transition.temperature <= cold_transition.temperature
@@ -511,27 +747,32 @@ impl MaterialTable {
                     [hot_transition, cold_transition].into_iter().enumerate()
                 {
                     let Some(transition) = transition else {
-                        color_bytes.extend_from_slice(&[0; 112]);
+                        color_bytes.extend_from_slice(&[0; 224]);
                         continue;
                     };
                     let color: &MaterialColorTransformation = &transition.color;
+                    let radiance: &MaterialColorTransformation = &transition.radiance;
+                    let valid_transformation = |transformation: &MaterialColorTransformation| {
+                        transformation.matrix.iter().flatten().chain(&transformation.offset)
+                            .all(|value| value.is_finite())
+                            && transformation.channel_variance.iter()
+                                .chain([&transformation.intensity_variance])
+                                .all(|value| value.is_finite() && *value >= 0.0)
+                    };
                     if !transition.temperature.is_finite() || transition.temperature < 0.0
                         || !transition.latent_heat.is_finite() || transition.latent_heat < 0.0
                         // the smallest product amount is one gas amount unit, a 4096th of an
                         // atmosphere, so no unit changes into nothing
                         || !transition.amount.is_finite() || transition.amount < 1.0 / 4096.0
-                        || !color.matrix.iter().flatten().chain(&color.offset).all(|value| {
-                            value.is_finite()
-                        })
-                        || !color.channel_variance.iter().chain([&color.intensity_variance])
-                            .all(|value| value.is_finite() && *value >= 0.0)
+                        || !valid_transformation(color)
+                        || !valid_transformation(radiance)
                     {
                         return Err(MaterialError::InvalidTransition {
                             name: material.name().to_owned(),
                             message: String::from(
                                 "transition data need nonnegative temperature and latent heat, an \
-                                amount of at least 1/4096, finite color transformation, and \
-                                nonnegative color variances",
+                                amount of at least 1/4096, and finite color and radiance \
+                                transformations with nonnegative variances",
                             ),
                         });
                     }
@@ -542,12 +783,14 @@ impl MaterialTable {
                     words[word + 2] = transition_products[&(identifier, transition_index == 0)]
                         .as_u32();
                     words[word + 3] = transition.amount.to_bits();
-                    for value in color.matrix.iter().flatten()
-                        .chain(&color.offset)
-                        .chain(&color.channel_variance)
-                        .chain([&color.intensity_variance, &0.0, &0.0, &0.0])
-                    {
-                        color_bytes.extend_from_slice(&value.to_le_bytes());
+                    for transformation in [color, radiance] {
+                        for value in transformation.matrix.iter().flatten()
+                            .chain(&transformation.offset)
+                            .chain(&transformation.channel_variance)
+                            .chain([&transformation.intensity_variance, &0.0, &0.0, &0.0])
+                        {
+                            color_bytes.extend_from_slice(&value.to_le_bytes());
+                        }
                     }
                 }
                 words[10] = flags;
@@ -555,7 +798,16 @@ impl MaterialTable {
                 count += 1;
             }
         }
-        Ok((property_bytes, color_bytes, offsets, has_fluid_transitions))
+        let mut temperature_color_bytes: Vec<u8> = Vec::new();
+        let header_count: u32 = temperature_color_headers.len() as u32;
+        for header in temperature_color_headers {
+            for (index, word) in header.into_iter().enumerate() {
+                let word: u32 = if index == 0 { word + header_count } else { word };
+                temperature_color_bytes.extend_from_slice(&word.to_le_bytes());
+            }
+        }
+        temperature_color_bytes.extend_from_slice(&temperature_color_key_bytes);
+        Ok((property_bytes, color_bytes, temperature_color_bytes, offsets, has_fluid_transitions))
     }
 
     /// Returns the color a cell or fluid particle is created with: its material's albedo at the
@@ -621,6 +873,48 @@ impl MaterialTable {
             multiply(albedo_blue, blue),
             ((u16::from(albedo_alpha) * u16::from(alpha) + 127) / 255) as u8,
         ])
+    }
+
+    /// Returns the radiance a cell or fluid particle is created with from its material, or the
+    /// supplied radiance when it is not `u32::MAX`
+    pub fn cellular_radiance(
+        &self,
+        material_identifier: MaterialIdentifier,
+        cell: CellCoordinates,
+        radiance: u32,
+    ) -> u32 {
+        if radiance != u32::MAX { return radiance; }
+        let index: usize = material_identifier.index() as usize;
+        match material_identifier.form() {
+            MaterialForm::CellularStatic | MaterialForm::CellularDynamic => {
+                let radiance_data: Option<&MaterialRadiance> = if material_identifier.form()
+                    == MaterialForm::CellularStatic
+                {
+                    self.cellular_static_radiances.get(index)
+                } else {
+                    self.cellular_dynamic_radiances.get(index)
+                };
+                let Some(radiance_data) = radiance_data else { return radiance; };
+                if radiance_data.pixels.is_empty() { return 0; }
+                // repeat the frame across the scene from the origin, flipping rows since frames
+                // start at the top while cell rows count upward
+                let repetition_x: f64 =
+                    ((cell.x as f64 + 0.5) / radiance_data.repetition_width).rem_euclid(1.0);
+                let repetition_y: f64 =
+                    ((cell.y as f64 + 0.5) / radiance_data.repetition_height).rem_euclid(1.0);
+                let texel_x: u32 =
+                    ((repetition_x * f64::from(radiance_data.width)) as u32)
+                        .min(radiance_data.width - 1);
+                let texel_y: u32 =
+                    (((1.0 - repetition_y) * f64::from(radiance_data.height)) as u32)
+                        .min(radiance_data.height - 1);
+                radiance_data.pixels[(texel_y * radiance_data.width + texel_x) as usize]
+            }
+            MaterialForm::Fluid => self.fluid_properties(material_identifier)
+                .map_or(radiance, |properties| properties.edit_radiance),
+            MaterialForm::Gas => self.gas_properties(material_identifier)
+                .map_or(radiance, |properties| properties.graphics.radiance),
+        }
     }
 
     /// Returns the temperature in kelvin edits create a registered material with
@@ -720,8 +1014,8 @@ impl MaterialTable {
         &self.fluid_properties_buffer
     }
 
-    /// Returns gas GPU properties as mass, diffusivity, cohesion, packed color bits, opacity, and
-    /// padding
+    /// Returns gas GPU properties as mass, diffusivity, cohesion, and packed color bits, then
+    /// opacity, packed radiance bits, and padding
     pub fn gas_properties_buffer(&self) -> &wgpu::Buffer {
         &self.gas_properties_buffer
     }
@@ -733,11 +1027,20 @@ impl MaterialTable {
         &self.thermal_properties_buffer
     }
 
-    /// Returns the color transformations of every material's hot then cold transition as a
-    /// row-major matrix, offset, channel variance, intensity variance, and padding, indexed by
+    /// Returns the color then radiance transformations of each material's hot then cold transition
+    /// as row-major matrix, offset, channel variance, intensity variance, and padding, indexed by
     /// thermal index
     pub fn transition_color_buffer(&self) -> &wgpu::Buffer {
         &self.transition_color_buffer
+    }
+
+    /// Returns temperature-key headers and key data: one `vec4<u32>` per thermal index containing
+    /// the first key vector index, key count, and two zero words, then eleven `vec4<f32>` per key
+    /// containing temperature, color matrix rows and offset, then radiance matrix rows and offset;
+    /// indices count `vec4`s from the buffer start, whose bytes are compatible with `array<vec4<u32>>`
+    /// and `array<vec4<f32>>` storage bindings through bitcasts
+    pub fn temperature_color_buffer(&self) -> &wgpu::Buffer {
+        &self.temperature_color_buffer
     }
 
     /// Returns the first thermal index of the static, dynamic, fluid, and gas forms

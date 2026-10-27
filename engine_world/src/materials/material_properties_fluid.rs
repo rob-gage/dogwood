@@ -23,6 +23,9 @@ pub struct MaterialPropertiesFluid {
     /// Packed sRGB RGBA color of the particles edits create, unless they give another; alpha is
     /// the opacity of a full cell of the fluid
     pub edit_color: u32,
+    /// Packed linear HDR emission and occlusion of the particles edits create, unless they give
+    /// another
+    pub edit_radiance: u32,
     /// Thermal and phase-transition properties
     pub thermal: MaterialPropertiesThermal,
 }

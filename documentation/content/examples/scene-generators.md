@@ -29,7 +29,7 @@ impl SceneGenerator for WorldGenerator {
     ) -> Result<Chunk, Box<dyn Error + Send + Sync>> {
         let mut chunk = Chunk::new(coordinates);
         if coordinates.y < 0 {
-            chunk.fill(self.stone, u32::from_le_bytes([255, 255, 255, 255]));
+            chunk.fill(self.stone, u32::from_le_bytes([255, 255, 255, 255]), u32::MAX);
         }
         Ok(chunk)
     }
@@ -40,9 +40,9 @@ impl SceneGenerator for WorldGenerator {
 
 ### Build a chunk
 
-`Chunk::new` creates empty cell storage at the supplied coordinates. `fill` assigns one material identifier and packed color to every cell and clears kinematics.
+`Chunk::new` creates empty cell storage at the supplied coordinates. `fill` assigns one material identifier, packed color, and packed radiance to every cell and clears kinematics. Pass `u32::MAX` to use each material's default radiance.
 
-To vary a chunk, replace one cellular tile's arrays with `set_cellular_tile_material_identifiers`, `set_cellular_tile_colors`, or `set_cellular_tile_kinematics`. There is no public single-cell setter; scene edits can fill one cell with `Edit::fill_cell`.
+To vary a chunk, replace one cellular tile's arrays with `set_cellular_tile_material_identifiers`, `set_cellular_tile_colors`, `set_cellular_tile_radiances`, or `set_cellular_tile_kinematics`. There is no public single-cell setter; scene edits can fill one cell with `Edit::fill_cell`.
 
 ### Colors
 

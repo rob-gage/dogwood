@@ -50,6 +50,7 @@ use crate::{
             ActorCameraComponent,
             ActorCollisionComponent,
             ActorKinematicsPositionComponent,
+            ActorLightComponent,
             ActorOverlayComponent,
             ActorOverlayShape,
             ActorParallaxComponent,
@@ -67,6 +68,8 @@ use engine_graphics::world::scenes::{
     SceneGraphicsCellular,
     SceneGraphicsFluid,
     SceneGraphicsGas,
+    SceneGraphicsLight,
+    SceneGraphicsLighting,
     SceneGraphicsOverlay,
     SceneGraphicsOverlayShape,
     SceneGraphicsParallax,
@@ -130,6 +133,10 @@ pub struct Scene {
     /// Heat per second per kelvin passing through each face between cells of phantom air, and
     /// between phantom air and its surroundings
     ambient_gas_conduction: f32,
+    /// Linear light added to every lit appearance
+    ambient_light: [f32; 3],
+    /// Divisor of matter's extinction while light spreads into occluding matter
+    light_penetration: f32,
     /// ECS world and fixed-tick systems of every live actor
     actor_registry: ActorRegistry,
     /// Materials of every cell in this scene, shared with chunk generation to color new cells
@@ -170,6 +177,8 @@ impl Scene {
             ambient_gas_temperature: SCENE_AMBIENT_GAS_TEMPERATURE_DEFAULT,
             ambient_gas_heat_capacity: SCENE_AMBIENT_GAS_HEAT_CAPACITY_DEFAULT,
             ambient_gas_conduction: SCENE_AMBIENT_GAS_CONDUCTION_DEFAULT,
+            ambient_light: [1.0, 1.0, 1.0],
+            light_penetration: 8.0,
             actor_registry: ActorRegistry::new(),
             material_table: Arc::new(material_table),
             generator,
@@ -249,6 +258,33 @@ impl Scene {
             return Err(SceneError::InvalidAmbientGasConduction);
         }
         self.ambient_gas_conduction = conduction;
+        Ok(())
+    }
+
+    /// Returns the linear light added to every lit appearance
+    pub fn ambient_light(&self) -> [f32; 3] { self.ambient_light }
+
+    /// Sets the linear light added to every lit appearance, changeable each frame; `[1.0, 1.0,
+    /// 1.0]` shows albedo unchanged where nothing else lights it
+    pub fn set_ambient_light(&mut self, color: [f32; 3]) -> Result<(), SceneError> {
+        if color.iter().any(|channel: &f32| !channel.is_finite() || *channel < 0.0) {
+            return Err(SceneError::InvalidAmbientLight);
+        }
+        self.ambient_light = color;
+        Ok(())
+    }
+
+    /// Returns the divisor of matter's extinction while light spreads into occluding matter
+    pub fn light_penetration(&self) -> f32 { self.light_penetration }
+
+    /// Sets the divisor of matter's extinction while light spreads into occluding matter from its
+    /// lit surface; one spreads no deeper than direct light, larger values let light soak further
+    /// into solid matter
+    pub fn set_light_penetration(&mut self, penetration: f32) -> Result<(), SceneError> {
+        if !penetration.is_finite() || penetration < 1.0 {
+            return Err(SceneError::InvalidLightPenetration);
+        }
+        self.light_penetration = penetration;
         Ok(())
     }
 
@@ -668,6 +704,7 @@ impl Scene {
                 position.position.relative_position(camera_position);
             for (
                 sprite_sheet,
+                radiance_sheet,
                 frame,
                 offset_x,
                 offset_y,
@@ -675,10 +712,16 @@ impl Scene {
                 scale_y,
                 rotation,
                 color,
+                radiance_intensity,
                 depth,
             ) in &actor_sprites.sprites {
+                if !radiance_intensity.is_finite() || *radiance_intensity < 0.0 { continue; }
                 let Some(texture_region): Option<[f32; 4]> =
                     sprite_sheet.frame_texture_region(*frame)
+                else { continue; };
+                let radiance_frame: u32 = frame % radiance_sheet.frame_count();
+                let Some(radiance_texture_region): Option<[f32; 4]> =
+                    radiance_sheet.frame_texture_region(radiance_frame)
                 else { continue; };
                 if let Some(actor_parallax) = actor_parallax {
                     if !actor_parallax.depth.is_finite() || actor_parallax.depth < 0.0
@@ -697,6 +740,7 @@ impl Scene {
                     // Signed scales retain the sprite system's horizontal/vertical flipping.
                     parallax.push(SceneGraphicsParallax {
                         texture: sprite_sheet.texture_view(),
+                        radiance_texture: radiance_sheet.texture_view(),
                         center: [
                             ((actor_x + f64::from(*offset_x) + f64::from(actor_parallax.offset[0]) + scroll_x) * projection) as f32,
                             ((actor_y + f64::from(*offset_y) + f64::from(actor_parallax.offset[1]) + scroll_y) * projection) as f32,
@@ -713,11 +757,14 @@ impl Scene {
                         rotation: *rotation,
                         texture_region,
                         color: *color,
+                        radiance_texture_region,
+                        radiance_intensity: *radiance_intensity,
                     });
                     continue;
                 }
                 sprites.sprites.push((
                     sprite_sheet.texture_view(),
+                    radiance_sheet.texture_view(),
                     (actor_x + f64::from(*offset_x)) as f32,
                     (actor_y + f64::from(*offset_y)) as f32,
                     sprite_sheet.width() as f32 * *scale_x / CELLULAR_TILE_SIZE as f32,
@@ -725,7 +772,9 @@ impl Scene {
                     *rotation,
                     *depth,
                     texture_region,
+                    radiance_texture_region,
                     *color,
+                    *radiance_intensity,
                 ));
             }
         }
@@ -762,6 +811,29 @@ impl Scene {
                     }
                 })
                 .collect(),
+            lighting: SceneGraphicsLighting {
+                ambient: self.ambient_light,
+                penetration: self.light_penetration,
+                temperature_color_buffer: self.material_table.temperature_color_buffer(),
+                thermal_offsets: self.material_table.thermal_offsets(),
+                // lights with nonfinite or negative values are skipped
+                lights: self.actor_registry
+                    .components::<ActorLightComponent, ActorKinematicsPositionComponent>()
+                    .filter(|(light, _)| {
+                        light.color.iter().chain([&light.intensity, &light.radius])
+                            .all(|value| value.is_finite() && *value >= 0.0)
+                    })
+                    .map(|(light, position)| {
+                        let (center_x, center_y): (f64, f64) =
+                            position.position.relative_position(camera_position);
+                        SceneGraphicsLight {
+                            center: [center_x as f32, center_y as f32],
+                            radius: light.radius,
+                            emission: light.color.map(|channel| channel * light.intensity),
+                        }
+                    })
+                    .collect(),
+            },
         })
     }
 
@@ -789,6 +861,8 @@ impl Scene {
             color_buffer: cellular_tile_buffers.color_buffer(),
             region_x: region_x as f32,
             region_y: region_y as f32,
+            region_tile_x: active_region.bottom_left.x,
+            region_tile_y: active_region.bottom_left.y,
             region_width: active_region.width() as u32,
             region_height: active_region.height() as u32,
             ring_offset_x,
@@ -819,6 +893,7 @@ impl Scene {
         Some(SceneGraphicsFluid {
             raster_buffer: fluids.fluid_raster_buffer(),
             color_buffer: fluids.fluid_color_buffer(),
+            heat_buffer: fluids.fluid_heat_buffer(),
             material_properties_buffer: self.material_table.fluid_properties_buffer(),
             region_x: region_x as f32,
             region_y: region_y as f32,

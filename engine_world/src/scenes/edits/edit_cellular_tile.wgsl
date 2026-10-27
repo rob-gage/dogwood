@@ -7,6 +7,7 @@ struct EditCellularTile {
     replaced_cells: vec2<u32>,
     material_identifiers: array<u32, 64>,
     colors: array<u32, 64>,
+    radiances: array<u32, 64>,
     pressures: array<f32, 64>,
     temperatures: array<f32, 64>,
     temperature_changes: array<f32, 64>,
@@ -19,7 +20,7 @@ var<storage, read> edit_cellular_tiles: array<EditCellularTile>;
 var<storage, read_write> material_identifiers: array<u32>;
 
 @group(0) @binding(2)
-var<storage, read_write> colors: array<u32>;
+var<storage, read_write> colors: array<vec2<u32>>;
 
 @group(0) @binding(3)
 var<storage, read_write> kinematics: array<vec2<u32>>;
@@ -83,7 +84,7 @@ fn compute(
         if material_identifier >> 30u == 3u {
             let amount: u32 = min(max(ambient_gas_amount, AMOUNT_PER_ATMOSPHERE), 0xffffffu);
             material_identifiers[cell_index] = 0u;
-            colors[cell_index] = 0u;
+            colors[cell_index] = vec2<u32>(0u);
             gas[cell_index * 2u] = vec4<u32>(
                 ((material_identifier & 0xffu) << 24u) | amount,
                 0u,
@@ -93,7 +94,10 @@ fn compute(
             gas[cell_index * 2u + 1u] = vec4<u32>(0u);
         } else {
             material_identifiers[cell_index] = material_identifier;
-            colors[cell_index] = edit_cellular_tiles[edit_cellular_tile_index].colors[cell];
+            colors[cell_index] = vec2<u32>(
+                edit_cellular_tiles[edit_cellular_tile_index].colors[cell],
+                edit_cellular_tiles[edit_cellular_tile_index].radiances[cell],
+            );
             if material_identifier == 0u {
                 gas[cell_index * 2u] = vec4<u32>(0u);
                 gas[cell_index * 2u + 1u] = vec4<u32>(ambient_gas_amount, 0u, 0u, 0u);

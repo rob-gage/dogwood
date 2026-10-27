@@ -3,7 +3,7 @@ title = "Resources and lifetimes"
 description = "How a scene creates, shares, saves, and releases its world resources."
 weight = 50
 [extra]
-sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/pressure", "engine_world/src/scenes/thermal", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl", "engine_host/src/acceleration/accelerator.rs"]
+sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/pressure", "engine_world/src/scenes/thermal", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl", "engine_host/src/acceleration/accelerator.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting_blocks.wgsl", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl", "engine_graphics/src/world/materials/material_radiance.rs", "engine_world/src/materials/material_table.rs", "engine_world/src/materials/material_temperature_color.rs"]
 +++
 
 This page describes what a `Scene` owns, when its GPU and streaming state is created, the fixed capacity constants, and what happens on save and drop. It is for engine contributors.
@@ -151,3 +151,7 @@ Pressure simulation allocates two pressure cell buffers, each a quarter of the t
 | `COLLISION_CHANGED_RIGID_BODY_CELL_COUNT_MAXIMUM` | 4096 changed rigid-body cells reported per tick |
 
 Pressure uses a 1/60-second tick and 3 substeps on pressure cells of 2×2 cells; per-second coefficients are listed on the [pressure simulation](@/internals/simulation/pressure.md#flows-volume-and-sleeping) page. See the [pressure shader](@/internals/shaders/pressure-shader.md) for its tuning constants.
+
+## Lighting and radiance resources
+
+`MATERIAL_RADIANCE_MAXIMUM` is `127`; packed radiance stores emission mantissas and shared exponent in bits 0–24 and occlusion in bits 25–31. The lighting pass uses `LIGHTING_INTERVAL = 2`, `LIGHTING_DIRECTIONS = 4`, `LIGHTING_BACKLIGHT_CELLS = 4`, and at most 16 cascade levels. These lighting constants are private to the pass. See [Lighting pass](@/internals/rendering/lighting-pass.md) for GPU layouts and [radiance API](@/external-api/lighting.md) for the public data contract.

@@ -3,7 +3,7 @@ title = "Sprite render pass"
 description = "Sprite instance packing, depth ordering, texture batches, and sprite sheet uploads."
 weight = 40
 [extra]
-sources = ["engine_graphics/src/renders/scene_renderer_sprites_pass.rs", "engine_graphics/src/sprites", "engine_graphics/src/renders/scene_renderer_sprites.wgsl"]
+sources = ["engine_graphics/src/renders/scene_renderer_sprites_pass.rs", "engine_graphics/src/sprites", "engine_graphics/src/renders/scene_renderer_sprites.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl", "engine_graphics/src/sprites/sprite_sheet.rs", "engine_graphics/src/sprites/sprite_sheet_error.rs"]
 +++
 
 ## Instance data and ordering
@@ -41,8 +41,11 @@ The first bind group holds the uniform and a nearest-filter sampler clamped to t
 
 ## Sprite sheets
 
-`SpriteSheet` stores a single GPU view divided into equal frames, numbered row-major from the top-left. Uploads create a one-mip, single-sample `Rgba8UnormSrgb` 2D texture with `TEXTURE_BINDING`, `COPY_DST`, and `COPY_SRC` usage from straight-alpha sRGB RGBA8 pixels. Constructors and their errors are documented in [Graphics](@/external-api/graphics.md#spritesheet).
+`SpriteSheet` stores a GPU texture divided into equal frames, numbered row-major from the top-left. Uploads create a single-sample `Rgba8UnormSrgb` 2D texture with `TEXTURE_BINDING`, `COPY_DST`, and `COPY_SRC` usage from straight-alpha sRGB RGBA8 pixels. A CPU box filter builds the full mip chain, averaging RGB in linear light and alpha linearly. Constructors and their errors are documented in [Graphics](@/external-api/graphics.md#spritesheet).
 
 The sheet exposes frame dimensions, count, texture view, and normalized frame region. The scene adapter uses these values to make render records; invalid frame indices are omitted. See [Scene renderer](@/internals/rendering/scene-renderer.md) for the adapter and pass order, and [Render shaders](@/internals/shaders/render-shaders.md) for vertex transformation and texture sampling.
 
 Parallax uses a separate `SceneRendererSpritesPass` instance before gameplay. The renderer first sorts planes by descending physical depth and ascending sprite integer order, then submits their projected quads with equal batching depth so stable sprite batching preserves that order. See [parallax backgrounds](@/external-api/scenes.md#parallax-backgrounds).
+
+Each uploaded sprite instance has an 80-byte stride. Each sprite carries independent albedo and radiance sheets. The radiance frame is selected modulo
+its sheet's frame count; preparation and appearance sample that same sheet. See [Lighting](@/external-api/lighting.md).

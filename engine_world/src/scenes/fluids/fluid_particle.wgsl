@@ -55,10 +55,18 @@ struct FluidParticle {
     color: u32,
     /// Amount in units of `CELLULAR_TILE_AMOUNT_PER_UNIT`
     amount: u32,
-    /// Alignment padding
-    padding_0: u32,
+    /// Packed linear RGBA16F radiance
+    radiance: u32,
     /// Alignment padding
     padding_1: u32,
+    /// Alignment padding
+    padding_2: u32,
+    /// Alignment padding
+    padding_3: u32,
+    /// Alignment padding
+    padding_4: u32,
+    /// Alignment padding
+    padding_5: u32,
 };
 
 /// Exact-position particle command imported from a chunk
@@ -73,6 +81,14 @@ struct FluidParticleImport {
     temperature: f32,
     /// Amount in units of `CELLULAR_TILE_AMOUNT_PER_UNIT`
     amount: u32,
+    /// Packed linear RGBA16F radiance
+    radiance: u32,
+    /// Alignment padding
+    padding_0: u32,
+    /// Alignment padding
+    padding_1: u32,
+    /// Alignment padding
+    padding_2: u32,
 };
 
 @group(0) @binding(0)
@@ -181,7 +197,7 @@ var<storage, read_write> fluid_colors: array<atomic<u32>>;
 var<storage, read_write> conversion_material_identifiers: array<atomic<u32>>;
 
 @group(0) @binding(41)
-var<storage, read_write> conversion_colors: array<u32>;
+var<storage, read_write> conversion_colors: array<vec2<u32>>;
 
 @group(0) @binding(42)
 var<storage, read_write> conversion_kinematics: array<vec2<u32>>;
@@ -644,10 +660,10 @@ fn clear_raster_cell(index: u32) {
     atomicStore(&fluid_heat[base + 1u], 0);
     atomicStore(&fluid_heat[base + 2u], 0);
     atomicStore(&fluid_heat[base + 3u], 0);
-    atomicStore(&fluid_colors[base], 0u);
-    atomicStore(&fluid_colors[base + 1u], 0u);
-    atomicStore(&fluid_colors[base + 2u], 0u);
-    atomicStore(&fluid_colors[base + 3u], 0u);
+    let color_base: u32 = index * 8u;
+    for (var word: u32 = 0u; word < 8u; word++) {
+        atomicStore(&fluid_colors[color_base + word], 0u);
+    }
 }
 
 /// Adds a signed fixed-point value while clamping to the i32 range
@@ -1522,10 +1538,19 @@ fn rasterize_fluid(@builtin(global_invocation_id) invocation: vec3<u32>) {
     // each particle's color counts as much as its mass toward the cell's color
     let color: vec4<u32> =
         (vec4<u32>(particle.color) >> vec4<u32>(0u, 8u, 16u, 24u)) & vec4<u32>(0xffu);
-    atomicAdd(&fluid_colors[base], color.x * u32(mass_fixed));
-    atomicAdd(&fluid_colors[base + 1u], color.y * u32(mass_fixed));
-    atomicAdd(&fluid_colors[base + 2u], color.z * u32(mass_fixed));
-    atomicAdd(&fluid_colors[base + 3u], color.w * u32(mass_fixed));
+    let color_base: u32 = physical_cell * 8u;
+    atomicAdd(&fluid_colors[color_base], color.x * u32(mass_fixed));
+    atomicAdd(&fluid_colors[color_base + 1u], color.y * u32(mass_fixed));
+    atomicAdd(&fluid_colors[color_base + 2u], color.z * u32(mass_fixed));
+    atomicAdd(&fluid_colors[color_base + 3u], color.w * u32(mass_fixed));
+    let radiance: vec4<f32> = unpack_radiance(particle.radiance);
+    let emission: vec3<u32> = vec3<u32>(round(min(
+        radiance.rgb, vec3<f32>(MATERIAL_RADIANCE_MAXIMUM),
+    ) * 64.0));
+    atomicAdd(&fluid_colors[color_base + 4u], emission.x * u32(mass_fixed));
+    atomicAdd(&fluid_colors[color_base + 5u], emission.y * u32(mass_fixed));
+    atomicAdd(&fluid_colors[color_base + 6u], emission.z * u32(mass_fixed));
+    atomicAdd(&fluid_colors[color_base + 7u], u32(round(radiance.a * 255.0)) * u32(mass_fixed));
     // the thermal step reads the particles' heat capacity, heat, and conduction in each cell
     let thermal_index: u32 = THERMAL_OFFSETS.z + material_index;
     let properties: vec4<u32> = thermal_materials[thermal_index * 4u];
@@ -1824,7 +1849,7 @@ fn compact(@builtin(global_invocation_id) invocation: vec3<u32>) {
         || position.y >= f32(uniforms.cell_height)
     {
         let export_index: u32 = atomicAdd(&fluid_particle_exports[0], 1u);
-        let export_base: u32 = 1u + export_index * 13u;
+        let export_base: u32 = 1u + export_index * 14u;
         let cell: vec2<i32> = vec2<i32>(floor(position));
         let local_x: u32 = bitcast<u32>(cell.x);
         let local_y: u32 = bitcast<u32>(cell.y);
@@ -1848,10 +1873,11 @@ fn compact(@builtin(global_invocation_id) invocation: vec3<u32>) {
         atomicStore(&fluid_particle_exports[export_base + 7u], bitcast<u32>(particle.state.w));
         atomicStore(&fluid_particle_exports[export_base + 8u], particle.material_identifier);
         atomicStore(&fluid_particle_exports[export_base + 9u], particle.color);
-        atomicStore(&fluid_particle_exports[export_base + 10u],
+        atomicStore(&fluid_particle_exports[export_base + 10u], particle.radiance);
+        atomicStore(&fluid_particle_exports[export_base + 11u],
             bitcast<u32>(particle.temperature));
-        atomicStore(&fluid_particle_exports[export_base + 11u], particle.amount);
-        atomicStore(&fluid_particle_exports[export_base + 12u], 0u);
+        atomicStore(&fluid_particle_exports[export_base + 12u], particle.amount);
+        atomicStore(&fluid_particle_exports[export_base + 13u], 0u);
         return;
     }
     let output_index: u32 = atomicAdd(&control[1], 1u);
@@ -1911,6 +1937,9 @@ fn convert_particles(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if form == 2u {
         particle.material_identifier = transition.product;
         particle.color = transition_color(particle.color, source, transition.is_hot, seed);
+        particle.radiance = transition_radiance(
+            particle.radiance, source, transition.is_hot, seed,
+        );
         particle.temperature = temperature;
         particle.amount = u32(round(product_amount * AMOUNT_PER_UNIT));
         store_particle(invocation.x, uniforms.state_side, particle);
@@ -1933,7 +1962,10 @@ fn convert_particles(@builtin(global_invocation_id) invocation: vec3<u32>) {
             if exchange.exchanged { break; }
             previous_material = exchange.old_value;
         }
-        conversion_colors[cell] = transition_color(particle.color, source, transition.is_hot, seed);
+        conversion_colors[cell] = vec2<u32>(
+            transition_color(particle.color, source, transition.is_hot, seed),
+            transition_radiance(particle.radiance, source, transition.is_hot, seed),
+        );
         if converted_material >> 30u == 1u {
             let velocity: vec2<i32> = vec2<i32>(round(clamp(
                 particle.state.zw,
@@ -2031,16 +2063,23 @@ fn convert_cells(@builtin(global_invocation_id) invocation: vec3<u32>) {
             position.y,
             temperature,
             transition_color(
-                conversion_colors[index], source, transition.is_hot,
+                conversion_colors[index].x, source, transition.is_hot,
                 index ^ (uniforms.tick * 0x9e3779b9u),
             ),
             u32(round(product_amount * AMOUNT_PER_UNIT)),
+            transition_radiance(
+                conversion_colors[index].y, source, transition.is_hot,
+                index ^ (uniforms.tick * 0x9e3779b9u),
+            ),
+            0u,
+            0u,
+            0u,
             0u,
             0u,
         );
         store_particle(slot, uniforms.state_side, particle);
         atomicStore(&conversion_material_identifiers[index], 0u);
-        conversion_colors[index] = 0u;
+        conversion_colors[index] = vec2<u32>(0u);
         conversion_kinematics[index] = vec2<u32>(0u);
         conversion_matter[index].y = 0u;
         atomicStore(&conversion_gas[index * 8u + 7u], 0u);
@@ -2095,6 +2134,7 @@ fn convert_cells(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let position: vec2<f32> = vec2<f32>(cell) + 0.5
         - vec2<f32>(uniforms.rebase_x, uniforms.rebase_y);
     let color: u32 = bitcast<u32>(conversion_gas_materials[gas_index * 2u].w);
+    let radiance: u32 = bitcast<u32>(conversion_gas_materials[gas_index * 2u + 1u].y);
     let particle: FluidParticle = FluidParticle(
         vec4<f32>(position, vec2<f32>(0.0)),
         transition.product,
@@ -2103,6 +2143,11 @@ fn convert_cells(@builtin(global_invocation_id) invocation: vec3<u32>) {
         temperature,
         transition_color(color, source, transition.is_hot, index ^ (uniforms.tick * 0x9e3779b9u)),
         65536u,
+        transition_radiance(radiance, source, transition.is_hot,
+            index ^ (uniforms.tick * 0x9e3779b9u)),
+        0u,
+        0u,
+        0u,
         0u,
         0u,
     );
@@ -2179,6 +2224,10 @@ fn spawn(@builtin(global_invocation_id) invocation: vec3<u32>) {
         bitcast<f32>(particle_data.y),
         particle_data.x,
         particle_data.z,
+        particle_data.w,
+        0u,
+        0u,
+        0u,
         0u,
         0u,
     );
@@ -2211,7 +2260,8 @@ fn spawn_imported(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let particle: FluidParticle = FluidParticle(imported_particle.state,
         imported_particle.material_identifier, imported_particle.state.x,
         imported_particle.state.y, imported_particle.temperature,
-        imported_particle.color, imported_particle.amount, 0u, 0u);
+        imported_particle.color, imported_particle.amount, imported_particle.radiance,
+        0u, 0u, 0u, 0u, 0u);
     store_particle(count, uniforms.state_side, particle);
     atomicStore(&fluid_particle_import_results[invocation.x], 0u);
 }

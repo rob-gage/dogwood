@@ -3,7 +3,7 @@ title = "Concurrency and GPU synchronization"
 description = "How chunk workers and GPU submissions exchange data without stale or overwritten tiles."
 weight = 40
 [extra]
-sources = ["engine_host/src/acceleration/accelerator_readback.rs", "engine_host/src/acceleration/accelerator_readback_error.rs", "engine_host/src/processors", "engine_world/src/scenes", "engine/src/games/game_instance.rs"]
+sources = ["engine_host/src/acceleration/accelerator_readback.rs", "engine_host/src/acceleration/accelerator_readback_error.rs", "engine_host/src/processors", "engine_world/src/scenes", "engine/src/games/game_instance.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl"]
 +++
 
 This page explains which work runs on which thread, how GPU results come back, and where the runtime blocks. It is for contributors changing streaming, kinematics, or collision code.
@@ -72,3 +72,5 @@ A failed map is re-requested, but the mapping error also propagates from `Scene:
 Fluid count, actor, and import status each have three asynchronous staging slots. A full count/actor ring skips that copy; a full import ring defers import submission. One independent resident-save snapshot is allowed at a time. Streaming retains chunks until particle exports or snapshots are applied; teardown waits for imports and reads the live pool synchronously. See [GPU readback policy](@/internals/shaders/fluid-shader.md#readback-policy).
 
 Queue order makes the previous fluid raster available to cellular kinematics and current cellular/rigid-body writes available to the following particle solver. Pressure runs after fluid simulation and consumes current geometry and the new fluid raster. Cellular, actor, rigid-body, and fluid pressure consumers read the buffer published by the preceding tick. Collision-owned changed-cell copies are requested after thermal and fluid heat application, then read the following tick. CPU body responses still use asynchronous older samples; [fluid coupling](@/internals/simulation/fluid-coupling.md) describes the resulting cache behavior.
+
+Lighting preparation, cascade dispatches, spread, and mip generation are encoded on the renderer command encoder before fluid shading and scene drawing; see [lighting pass](@/internals/rendering/lighting-pass.md).

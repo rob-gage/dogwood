@@ -3,7 +3,7 @@ title = "Frame and update lifecycle"
 description = "How the host schedules fixed updates, scene work, redraws, and presentation."
 weight = 10
 [extra]
-sources = ["engine/src", "engine_host/src/windows/window.rs", "engine_host/src/windows/window_configuration.rs", "engine_graphics/src/renders/scene_renderer.rs", "engine_user_interface/src/user_interface_context.rs", "engine_user_interface/src/user_interface_renderer.rs", "engine_user_interface/src/user_interface_window_state.rs"]
+sources = ["engine/src", "engine_host/src/windows/window.rs", "engine_host/src/windows/window_configuration.rs", "engine_graphics/src/renders/scene_renderer.rs", "engine_user_interface/src/user_interface_context.rs", "engine_user_interface/src/user_interface_renderer.rs", "engine_user_interface/src/user_interface_window_state.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl"]
 +++
 
 This page follows one pass through the native host's loop: fixed updates, redraw scheduling, rendering, and presentation. It is for contributors who need to know when `Game`, scene, and renderer code runs.
@@ -64,3 +64,5 @@ Timeouts and occluded surfaces skip a frame. Outdated or lost surfaces are recon
 For the scene-internal order of edit application, streaming, and simulation, see [scene update pipeline](@/architecture/scene-pipeline.md). The public lifecycle hooks are {{ <rustdoc path="engine/games/trait.Game.html" text="Game" /> }} and {{ <rustdoc path="engine/runtime/struct.Engine.html" text="Engine" /> }}.
 
 Within each scene simulation, cellular tiles run before collision, fluids follow, and pressure advances last. See the complete [simulation order](@/architecture/scene-pipeline.md#simulation-order).
+
+Before fluid shading and scene drawing, the renderer prepares the resident-region lighting texture; see [lighting pass](@/internals/rendering/lighting-pass.md).

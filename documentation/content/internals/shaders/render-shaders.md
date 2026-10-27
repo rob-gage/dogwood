@@ -3,7 +3,7 @@ title = "Render shaders"
 description = "Documents cellular and sprite WGSL inputs, coordinate transforms, ring lookup, and color output."
 weight = 20
 [extra]
-sources = ["engine_graphics/src/renders/scene_renderer_fluid.wgsl", "engine_graphics/src/renders/scene_renderer_pressure.wgsl", "engine_graphics/src/renders/scene_renderer_overlay.wgsl", "engine_graphics/src/renders/scene_renderer_gas.wgsl", "engine_graphics/src/renders/scene_renderer_fluid_pass.rs", "engine_graphics/src/renders/scene_renderer_cellular.wgsl", "engine_graphics/src/renders/scene_renderer_sprites.wgsl", "engine_graphics/src/renders/scene_renderer_cellular_pass.rs", "engine_graphics/src/renders/scene_renderer_sprites_pass.rs", "engine_graphics/src/sprites/sprite_sheet.rs"]
+sources = ["engine_graphics/src/renders/scene_renderer_fluid.wgsl", "engine_graphics/src/renders/scene_renderer_pressure.wgsl", "engine_graphics/src/renders/scene_renderer_overlay.wgsl", "engine_graphics/src/renders/scene_renderer_gas.wgsl", "engine_graphics/src/renders/scene_renderer_fluid_pass.rs", "engine_graphics/src/renders/scene_renderer_cellular.wgsl", "engine_graphics/src/renders/scene_renderer_sprites.wgsl", "engine_graphics/src/renders/scene_renderer_cellular_pass.rs", "engine_graphics/src/renders/scene_renderer_sprites_pass.rs", "engine_graphics/src/sprites/sprite_sheet.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl", "engine_graphics/src/world/materials/material_radiance.wgsl"]
 +++
 
 This page is the reference for the cellular, fluid, gas, pressure, overlay, and sprite render shaders, for engine contributors. It covers bindings, record layouts, coordinate math, and color output. Pass resources and draw setup are in [cellular rendering](@/internals/rendering/cellular-pass.md) and [sprite rendering](@/internals/rendering/sprite-pass.md); pass order is in the [scene renderer](@/internals/rendering/scene-renderer.md).
@@ -95,3 +95,7 @@ The Rust pass uses a nearest, clamp-to-edge sampler. It groups consecutive insta
 
 
 The pressure view shader maps the published buffer through the pressure gradient; the overlay shader draws cell-aligned circles and rectangles after scene content. See [scene renderer](@/internals/rendering/scene-renderer.md#pass-order).
+
+## Lighting shaders
+
+The lighting pipeline is assembled from `scene_renderer_lighting*.wgsl` modules after the shared `MATERIAL_RADIANCE_WGSL` functions. The Rust pass defines the lighting bind group index and dispatches optical construction, cascades, spread, and mip generation. Layout and constants are documented in the [lighting pass reference](@/internals/rendering/lighting-pass.md).

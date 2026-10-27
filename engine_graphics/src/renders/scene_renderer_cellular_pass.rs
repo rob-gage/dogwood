@@ -1,10 +1,11 @@
 // Copyright Rob Gage 2026
 
+use super::scene_renderer_lighting_pass::lighting_shader_source;
 use crate::world::scenes::SceneGraphicsCellular;
 use engine_host::acceleration::Accelerator;
 use std::collections::HashMap;
 
-/// Renderer for cellular albedo tiles
+/// Renderer for lit cellular tiles
 pub struct SceneRendererCellularPass {
     /// Layout for cellular uniforms and storage buffers
     bind_group_layout: wgpu::BindGroupLayout,
@@ -22,12 +23,14 @@ pub struct SceneRendererCellularPass {
     material_identifier_buffer: Option<wgpu::Buffer>,
     /// Color buffer used by the cached cellular bind group
     color_buffer: Option<wgpu::Buffer>,
+    /// Matter buffer used by the cached cellular bind group
+    matter_buffer: Option<wgpu::Buffer>,
 }
 
 impl SceneRendererCellularPass {
 
-    /// Creates cellular rendering resources
-    pub fn new(accelerator: &Accelerator) -> Self {
+    /// Creates cellular rendering resources sampling the lighting group of a layout
+    pub fn new(accelerator: &Accelerator, lighting_bind_group_layout: &wgpu::BindGroupLayout) -> Self {
         let device: &wgpu::Device = accelerator.device();
         let bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
@@ -63,13 +66,23 @@ impl SceneRendererCellularPass {
                         },
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             },
         );
         let pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("`SceneRendererCellularPass.pipeline_layout`"),
-                bind_group_layouts: &[Some(&bind_group_layout)],
+                bind_group_layouts: &[Some(&bind_group_layout), Some(lighting_bind_group_layout)],
                 immediate_size: 0,
             },
         );
@@ -77,7 +90,7 @@ impl SceneRendererCellularPass {
             wgpu::ShaderModuleDescriptor {
                 label: Some("`SceneRendererCellularPass.shader_module`"),
                 source: wgpu::ShaderSource::Wgsl(
-                    include_str!("scene_renderer_cellular.wgsl").into(),
+                    lighting_shader_source(1, include_str!("scene_renderer_cellular.wgsl")).into(),
                 ),
             },
         );
@@ -97,6 +110,7 @@ impl SceneRendererCellularPass {
             bind_group: None,
             material_identifier_buffer: None,
             color_buffer: None,
+            matter_buffer: None,
         }
     }
 
@@ -111,6 +125,7 @@ impl SceneRendererCellularPass {
         viewport_height: u32,
         pixels_per_tile: f32,
         cellular_graphics: &SceneGraphicsCellular<'_>,
+        matter_buffer: &wgpu::Buffer,
     ) {
         let device: &wgpu::Device = accelerator.device();
         if !self.pipelines.contains_key(&format) {
@@ -184,7 +199,12 @@ impl SceneRendererCellularPass {
             != Some(cellular_graphics.material_identifier_buffer);
         let color_buffers_differ: bool = self.color_buffer.as_ref()
             != Some(cellular_graphics.color_buffer);
-        if self.bind_group.is_none() || material_buffers_differ || color_buffers_differ {
+        let matter_buffers_differ: bool = self.matter_buffer.as_ref() != Some(matter_buffer);
+        if self.bind_group.is_none()
+            || material_buffers_differ
+            || color_buffers_differ
+            || matter_buffers_differ
+        {
             let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("`SceneRendererCellularPass.bind_group`"),
                 layout: &self.bind_group_layout,
@@ -209,17 +229,27 @@ impl SceneRendererCellularPass {
                             size: None,
                         }),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: matter_buffer.as_entire_binding(),
+                    },
                 ],
             });
             self.bind_group = Some(bind_group);
             self.material_identifier_buffer =
                 Some(cellular_graphics.material_identifier_buffer.clone());
             self.color_buffer = Some(cellular_graphics.color_buffer.clone());
+            self.matter_buffer = Some(matter_buffer.clone());
         }
     }
 
-    /// Draws cellular albedo for one prepared view
-    pub fn draw(&self, render_pass: &mut wgpu::RenderPass<'_>, format: wgpu::TextureFormat) {
+    /// Draws lit cellular appearance for one prepared view
+    pub fn draw(
+        &self,
+        render_pass: &mut wgpu::RenderPass<'_>,
+        format: wgpu::TextureFormat,
+        lighting_bind_group: &wgpu::BindGroup,
+    ) {
         let render_pipeline: &wgpu::RenderPipeline = match self.pipelines.get(&format) {
             Some(render_pipeline) => render_pipeline,
             None => return,
@@ -230,6 +260,7 @@ impl SceneRendererCellularPass {
         };
         render_pass.set_pipeline(render_pipeline);
         render_pass.set_bind_group(0, bind_group, &[]);
+        render_pass.set_bind_group(1, lighting_bind_group, &[]);
         render_pass.draw(0..3, 0..1);
     }
 

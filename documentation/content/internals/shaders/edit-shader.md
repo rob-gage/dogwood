@@ -21,7 +21,8 @@ Group 0 bindings:
 | Binding | Resource | Access |
 |---:|---|---|
 | 0 | `EditCellularTile` records | read-only |
-| 1-2 | Material identifiers, colors | read/write |
+| 1 | Material identifiers | read/write |
+| 2 | Paired cell color and radiance (`array<vec2<u32>>`) | read/write |
 | 3 | Packed kinematics (`array<vec2<u32>>`) | read/write |
 | 4 | Awake flags (atomic) | read/write |
 | 5 | Gas (`array<vec4<u32>>`, two per cell) | read/write |
@@ -30,7 +31,7 @@ Group 0 bindings:
 | 8 | Temperature changes and conversion heat (`array<vec2<u32>>`) | read/write |
 | 9 | Thermal awake flags (atomic) | read/write |
 
-Each tile record occupies 536 bytes, serialized little-endian by Rust:
+Each tile record occupies 1560 bytes, serialized little-endian by Rust:
 
 | Offset | Field | Size |
 |---:|---|---:|
@@ -40,6 +41,10 @@ Each tile record occupies 536 bytes, serialized little-endian by Rust:
 | 16 | `replaced_cells: vec2<u32>` | 8 B |
 | 24 | `material_identifiers: array<u32, 64>` | 256 B |
 | 280 | `colors: array<u32, 64>` | 256 B |
+| 536 | `radiances: array<u32, 64>` | 256 B |
+| 792 | `pressures: array<f32, 64>` | 256 B |
+| 1048 | `temperatures: array<f32, 64>` | 256 B |
+| 1304 | `temperature_changes: array<f32, 64>` | 256 B |
 
 ### Masks and addressing
 
@@ -59,9 +64,9 @@ Each invocation reads its cell's inserted and replaced mask bits:
 
 On a write, the shader zeros the cell's kinematics, atomically ORs `3` into the tile's awake value (awake and disturbed flags), and ORs `1` into its pressure awake value. The rest depends on the material:
 
-- A gas material leaves the cell empty with zero color. Its gas becomes one species slot of that gas holding the ambient amount, or one atmosphere when the ambient amount is lower, with no phantom air or flow.
-- `EMPTY` is copied with its color, and the gas becomes phantom air at the ambient amount alone.
-- Any other material is copied with its color. The cell keeps its species slots, which the [pressure simulation](@/internals/simulation/pressure.md) later pushes out, but loses its phantom air and flows.
+- A gas material leaves the cell empty with zero color and radiance. Its gas becomes one species slot of that gas holding the ambient amount, or one atmosphere when the ambient amount is lower, with no phantom air or flow.
+- `EMPTY` is copied with its color and radiance, and the gas becomes phantom air at the ambient amount alone.
+- Any other material is copied with its color and radiance. The cell keeps its species slots, which the [pressure simulation](@/internals/simulation/pressure.md) later pushes out, but loses its phantom air and flows.
 
 Queued pressure edits use atmospheres. Static cells receive signed stored pressure; other cells add to phantom air or proportionally reduce their gas.
 

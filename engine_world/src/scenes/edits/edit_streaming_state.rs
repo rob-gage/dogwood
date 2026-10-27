@@ -38,7 +38,7 @@ use std::collections::{
 /// Inserted and replaced cells, materials, colors, added pressures, temperatures, and added
 /// temperatures of one tile's merged edits
 pub type EditedCellularTile =
-    (u64, u64, [MaterialIdentifier; 64], [u32; 64], [f32; 64], [f32; 64], [f32; 64]);
+    (u64, u64, [MaterialIdentifier; 64], [u32; 64], [u32; 64], [f32; 64], [f32; 64], [f32; 64]);
 
 /// Requested edits awaiting their write into the GPU-resident cellular tiles
 pub struct EditStreamingState {
@@ -78,7 +78,7 @@ impl EditStreamingState {
         if cellular_tiles.len() > EDIT_CELLULAR_TILE_COUNT_MAXIMUM {
             return Err(EditError::CapacityReached);
         }
-        for (coordinates, (cells, material_identifiers, _, temperatures)) in &edit.cellular_tiles {
+        for (coordinates, (cells, material_identifiers, _, _, temperatures)) in &edit.cellular_tiles {
             if !active_region.is_some_and(|region| region.contains(*coordinates)) {
                 return Err(EditError::CellularTileInactive { coordinates: *coordinates });
             }
@@ -104,12 +104,12 @@ impl EditStreamingState {
                 return Err(EditError::CellularTileInactive { coordinates: *coordinates });
             }
         }
-        for (coordinates, (cells, material_identifiers, colors, temperatures)) in
+        for (coordinates, (cells, material_identifiers, colors, radiances, temperatures)) in
             &mut edit.cellular_tiles
         {
-            for (cell_index, (material_identifier, (color, temperature))) in material_identifiers
+            for (cell_index, (material_identifier, ((color, radiance), temperature))) in material_identifiers
                 .iter()
-                .zip(colors.iter_mut().zip(temperatures.iter_mut()))
+                .zip(colors.iter_mut().zip(radiances.iter_mut()).zip(temperatures.iter_mut()))
                 .enumerate()
             {
                 if *cells & 1 << cell_index == 0 { continue; }
@@ -123,6 +123,7 @@ impl EditStreamingState {
                     y: coordinates.y * CELLULAR_TILE_SIZE + cell_index as i64 / CELLULAR_TILE_SIZE,
                 };
                 *color = material_table.cellular_color(*material_identifier, cell, *color);
+                *radiance = material_table.cellular_radiance(*material_identifier, cell, *radiance);
             }
         }
         self.edits.push(edit);
@@ -154,12 +155,12 @@ impl EditStreamingState {
         let mut edited_cellular_tiles: BTreeMap<CellularTileCoordinates, EditedCellularTile> =
             BTreeMap::new();
         let empty_cellular_tile: EditedCellularTile =
-            (0, 0, [MaterialIdentifier::EMPTY; 64], [0; 64], [0.0; 64], [0.0; 64], [0.0; 64]);
+            (0, 0, [MaterialIdentifier::EMPTY; 64], [0; 64], [0; 64], [0.0; 64], [0.0; 64], [0.0; 64]);
         for edit in self.edits.drain(..) {
-            for (coordinates, (cells, material_identifiers, colors, temperatures)) in
+            for (coordinates, (cells, material_identifiers, colors, radiances, temperatures)) in
                 edit.cellular_tiles
             {
-                let (inserted_cells, replaced_cells, edited_materials, edited_colors, _,
+                let (inserted_cells, replaced_cells, edited_materials, edited_colors, edited_radiances, _,
                     edited_temperatures, _): &mut EditedCellularTile =
                     edited_cellular_tiles.entry(coordinates).or_insert(empty_cellular_tile);
                 let blocked_cells: u64 = intersections.get(&coordinates).copied().unwrap_or(0);
@@ -190,21 +191,23 @@ impl EditStreamingState {
                     if material_identifiers[cell_index].form() == MaterialForm::Fluid {
                         edited_materials[cell_index] = MaterialIdentifier::EMPTY;
                         edited_colors[cell_index] = 0;
+                        edited_radiances[cell_index] = 0;
                         edited_temperatures[cell_index] = -1.0;
                     } else {
                         edited_materials[cell_index] = material_identifiers[cell_index];
                         edited_colors[cell_index] = colors[cell_index];
+                        edited_radiances[cell_index] = radiances[cell_index];
                         edited_temperatures[cell_index] = temperatures[cell_index];
                     }
                 }
             }
             for (coordinates, pressures) in edit.pressures {
-                let (_, _, _, _, edited_pressures, _, _): &mut EditedCellularTile =
+                let (_, _, _, _, _, edited_pressures, _, _): &mut EditedCellularTile =
                     edited_cellular_tiles.entry(coordinates).or_insert(empty_cellular_tile);
                 for cell_index in 0..64 { edited_pressures[cell_index] += pressures[cell_index]; }
             }
             for (coordinates, temperatures) in edit.temperatures {
-                let (_, _, _, _, _, _, temperature_changes): &mut EditedCellularTile =
+                let (_, _, _, _, _, _, _, temperature_changes): &mut EditedCellularTile =
                     edited_cellular_tiles.entry(coordinates).or_insert(empty_cellular_tile);
                 for cell_index in 0..64 {
                     temperature_changes[cell_index] += temperatures[cell_index];

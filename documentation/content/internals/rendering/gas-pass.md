@@ -3,7 +3,7 @@ title = "Gas render pass"
 description = "Cell-aligned gas cloud drawing and compositing."
 weight = 36
 [extra]
-sources = ["engine_graphics/src/renders/scene_renderer_gas_pass.rs", "engine_graphics/src/renders/scene_renderer_gas.wgsl", "engine_graphics/src/world/scenes/scene_graphics_gas.rs", "engine_graphics/src/renders/scene_renderer.rs", "engine_world/src/scenes/scene.rs"]
+sources = ["engine_graphics/src/renders/scene_renderer_gas_pass.rs", "engine_graphics/src/renders/scene_renderer_gas.wgsl", "engine_graphics/src/world/scenes/scene_graphics_gas.rs", "engine_graphics/src/renders/scene_renderer.rs", "engine_world/src/scenes/scene.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl"]
 +++
 
 `SceneRendererGasPass` draws the gas held in resident cellular tiles. `Scene::gas_graphics` supplies borrowed gas, material identifier, and gas material-property buffers, camera-relative region placement, ring offsets, tile size, and `GAS_AMOUNT_PER_ATMOSPHERE`. [Scene renderer](@/internals/rendering/scene-renderer.md#pass-order) defines compositing order, and the [tile ring](@/internals/world-streaming/tile-ring.md) defines the gas cell layout.
@@ -30,3 +30,5 @@ A cell's color is empty outside the region or when its material identifier is no
 The fullscreen triangle's fragment stage maps each pixel to its logical cell. It discards the pixel unless that cell's opacity exceeds `0.02`, so cloud edges follow the cell grid. Inside, it blends bilinearly between the four nearest cell centers, weighing only cells above that opacity and normalizing by their weights, so edge cells keep their own color up to the edge. The draw uses premultiplied-alpha blending, between fluid and cellular matter.
 
 > **Limitation:** Gas is drawn per cell from the current gas buffer; it is not lit, shaded by depth, or reconstructed below cell resolution.
+
+Gas appearance uses material-wide radiance and samples the lighting texture. Gas material record 1 stores packed radiance in `.y`; see [lighting pass](@/internals/rendering/lighting-pass.md).

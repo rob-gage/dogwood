@@ -926,7 +926,7 @@ impl<G: Game> Editor<G> {
             };
         let mut edit: Edit = Edit::new(mode);
         let result: Result<(), EditError> = self.brush
-            .fill_stroke(&mut edit, start, end, self.brush_size, material_identifier, color)
+            .fill_stroke(&mut edit, start, end, self.brush_size, material_identifier, color, u32::MAX)
             .and_then(|()| {
                 let Some((scene, _)) = self.game_instance.game_mutable().scene() else {
                     return Ok(());

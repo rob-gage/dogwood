@@ -9,31 +9,15 @@ use engine_host::{
     acceleration::Accelerator,
     processors::Processor,
     system_events::{
-        KeyCode,
-        PhysicalKey,
-        SystemKeyboardEvent,
-        SystemMouseEvent,
-        SystemWindowEvent,
+        KeyCode, PhysicalKey, SystemKeyboardEvent, SystemMouseEvent, SystemWindowEvent,
     },
 };
-use engine_user_interface::{
-    egui,
-    UserInterfaceContext,
-    UserInterfaceRenderer,
-};
+use engine_user_interface::{UserInterfaceContext, UserInterfaceRenderer, egui};
 use engine_world::actors::{
-    components::{
-        ActorIdentityComponent,
-        ActorPawnControlComponent,
-        ActorPawnPossessionComponent,
-    },
     Actor,
+    components::{ActorIdentityComponent, ActorPawnControlComponent, ActorPawnPossessionComponent},
 };
-use std::{
-    collections::HashSet,
-    mem,
-    time::Duration,
-};
+use std::{collections::HashSet, mem, time::Duration};
 
 /// A `Game` running on the `Engine`, drawn with its user interface into any texture
 pub struct GameInstance<G: Game> {
@@ -54,7 +38,6 @@ pub struct GameInstance<G: Game> {
 }
 
 impl<G: Game> GameInstance<G> {
-
     /// Creates a new `GameInstance` of a `Game` drawn with an accelerator
     pub fn new(accelerator: &Accelerator, game: G) -> GameInstance<G> {
         GameInstance {
@@ -69,10 +52,14 @@ impl<G: Game> GameInstance<G> {
     }
 
     /// Returns the `Game` running in this `GameInstance` for modification
-    pub fn game_mutable(&mut self) -> &mut G { &mut self.game }
+    pub fn game_mutable(&mut self) -> &mut G {
+        &mut self.game
+    }
 
     /// Returns the user interface composed by the game
-    pub fn user_interface_context(&self) -> &UserInterfaceContext { &self.user_interface_context }
+    pub fn user_interface_context(&self) -> &UserInterfaceContext {
+        &self.user_interface_context
+    }
 
     /// Sets a camera replacing the game's own camera for streaming and drawing, or `None`
     pub fn set_camera_actor(&mut self, camera_actor: Option<Actor>) {
@@ -92,7 +79,9 @@ impl<G: Game> GameInstance<G> {
 
     /// Handles a host window event, releasing held keys when focus is lost
     pub fn window_event(&mut self, event: SystemWindowEvent) {
-        if let SystemWindowEvent::FocusReleased = event { self.held_keys.clear(); }
+        if let SystemWindowEvent::FocusReleased = event {
+            self.held_keys.clear();
+        }
         self.game.window_event(event);
     }
 
@@ -109,7 +98,9 @@ impl<G: Game> GameInstance<G> {
     }
 
     /// Handles a host mouse event
-    pub fn mouse_event(&mut self, event: SystemMouseEvent) { self.game.mouse_event(event); }
+    pub fn mouse_event(&mut self, event: SystemMouseEvent) {
+        self.game.mouse_event(event);
+    }
 
     /// Advances the game by one fixed update, then streams and simulates its scene
     pub fn update(
@@ -121,7 +112,9 @@ impl<G: Game> GameInstance<G> {
         // the keyboard controls possessed pawns before the game updates them
         if let Some((scene, _)) = self.game.scene() {
             let is_held = |key_codes: [KeyCode; 2]| -> bool {
-                key_codes.iter().any(|key_code| self.held_keys.contains(key_code))
+                key_codes
+                    .iter()
+                    .any(|key_code| self.held_keys.contains(key_code))
             };
             let left: bool = is_held([KeyCode::KeyA, KeyCode::ArrowLeft]);
             let right: bool = is_held([KeyCode::KeyD, KeyCode::ArrowRight]);
@@ -130,29 +123,47 @@ impl<G: Game> GameInstance<G> {
                 is_jumping: is_held([KeyCode::KeyW, KeyCode::ArrowUp]),
                 is_crouching: is_held([KeyCode::KeyS, KeyCode::ArrowDown]),
             };
-            let possessed_actors: Vec<Actor> = scene.actor_registry_mutable()
+            let possessed_actors: Vec<Actor> = scene
+                .actor_registry_mutable()
                 .components::<ActorIdentityComponent, ActorPawnPossessionComponent>()
                 .map(|(actor_identity, _)| actor_identity.actor())
                 .collect();
             for actor in possessed_actors {
-                scene.actor_registry_mutable().insert(actor, pawn_control)
+                scene
+                    .actor_registry_mutable()
+                    .insert(actor, pawn_control)
                     .unwrap_or_else(|error| panic!("Pawn possession failed: {error:?}"));
             }
         }
         self.game.update(elapsed_time);
         let camera_actor: Option<Actor> = self.camera_actor;
-        let Some((scene, game_camera_actor)) = self.game.scene() else { return; };
-        scene.stream(accelerator, processor, camera_actor.unwrap_or(game_camera_actor))
+        let Some((scene, game_camera_actor)) = self.game.scene() else {
+            return;
+        };
+        scene
+            .stream(
+                accelerator,
+                processor,
+                camera_actor.unwrap_or(game_camera_actor),
+            )
             .unwrap_or_else(|error| panic!("Scene streaming failed: {error:?}"));
-        scene.simulate(accelerator)
+        scene
+            .simulate(accelerator)
             .unwrap_or_else(|error| panic!("Scene simulation failed: {error:?}"));
     }
 
     /// Streams the game's scene around its camera without updating or simulating the game
     pub fn stream(&mut self, accelerator: &Accelerator, processor: &Processor) {
         let camera_actor: Option<Actor> = self.camera_actor;
-        let Some((scene, game_camera_actor)) = self.game.scene() else { return; };
-        scene.stream(accelerator, processor, camera_actor.unwrap_or(game_camera_actor))
+        let Some((scene, game_camera_actor)) = self.game.scene() else {
+            return;
+        };
+        scene
+            .stream(
+                accelerator,
+                processor,
+                camera_actor.unwrap_or(game_camera_actor),
+            )
             .unwrap_or_else(|error| panic!("Scene streaming failed: {error:?}"));
     }
 
@@ -164,8 +175,8 @@ impl<G: Game> GameInstance<G> {
         input: egui::RawInput,
     ) -> egui::PlatformOutput {
         let device: &wgpu::Device = accelerator.device();
-        let mut command_encoder: wgpu::CommandEncoder = device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut command_encoder: wgpu::CommandEncoder =
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("`GameInstance::render`"),
             });
         // draw the scene, or clear the frame when the game shows none
@@ -176,7 +187,8 @@ impl<G: Game> GameInstance<G> {
                     .graphics(camera_actor.unwrap_or(game_camera_actor))
                     .unwrap_or_else(|error| panic!("Scene graphics failed: {error:?}"));
                 graphics.overlays.extend(self.overlays.iter().copied());
-                self.scene_renderer.render(accelerator, texture_view, &graphics);
+                self.scene_renderer
+                    .render(accelerator, texture_view, &graphics);
             }
             None => {
                 command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -199,11 +211,13 @@ impl<G: Game> GameInstance<G> {
         }
         // compose the user interface and draw it over the scene
         let game: &mut G = &mut self.game;
-        let mut output: egui::FullOutput = self.user_interface_context
+        let mut output: egui::FullOutput = self
+            .user_interface_context
             .run(input, |user_interface| game.user_interface(user_interface));
         let platform_output: egui::PlatformOutput = mem::take(&mut output.platform_output);
         let texture: &wgpu::Texture = texture_view.texture();
-        let callback_command_buffers: Vec<wgpu::CommandBuffer> = self.user_interface_renderer
+        let callback_command_buffers: Vec<wgpu::CommandBuffer> = self
+            .user_interface_renderer
             .get_or_insert_with(|| UserInterfaceRenderer::new(device, texture.format()))
             .render(
                 self.user_interface_context.egui_context(),
@@ -215,9 +229,10 @@ impl<G: Game> GameInstance<G> {
                 [texture.width(), texture.height()],
             );
         accelerator.queue().submit(
-            callback_command_buffers.into_iter().chain(Some(command_encoder.finish())),
+            callback_command_buffers
+                .into_iter()
+                .chain(Some(command_encoder.finish())),
         );
         platform_output
     }
-
 }

@@ -23,7 +23,11 @@ var<uniform> uniforms: CellularUniforms;
 var<storage, read> material_identifiers: array<u32>;
 
 @group(0) @binding(2)
-var<storage, read> colors: array<u32>;
+var<storage, read> colors: array<vec2<u32>>;
+
+/// Temperature bits then amount of every cell
+@group(0) @binding(3)
+var<storage, read> matter: array<vec2<u32>>;
 
 /// Converts one sRGB channel to linear light
 fn srgb_to_linear(value: f32) -> f32 {
@@ -75,13 +79,19 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     if material_identifier == 0u {
         discard;
     }
-    let srgb_color: vec4<f32> = unpack4x8unorm(colors[cell_index]);
-    let linear_rgb: vec3<f32> = vec3<f32>(
+    let srgb_color: vec4<f32> = unpack4x8unorm(colors[cell_index].x);
+    let linear_color: vec4<f32> = vec4<f32>(
         srgb_to_linear(srgb_color.r),
         srgb_to_linear(srgb_color.g),
         srgb_to_linear(srgb_color.b),
+        srgb_color.a,
     );
-    // each cell keeps the color it was given when created
-    let alpha: f32 = srgb_color.a;
-    return vec4<f32>(linear_rgb * alpha, alpha);
+    // each cell keeps the color and radiance it was given when created, shown through its
+    // material's temperature colors
+    let thermal: u32 = thermal_index(material_identifier);
+    let temperature: f32 = bitcast<f32>(matter[cell_index].x);
+    let color: vec4<f32> = temperature_color(thermal, temperature, linear_color, false);
+    let radiance: vec4<f32> = temperature_color(
+        thermal, temperature, unpack_radiance(colors[cell_index].y), true);
+    return lit_color(color, light_at(local * cellular_tile_size_float), radiance.rgb);
 }

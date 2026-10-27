@@ -23,11 +23,11 @@ use std::collections::BTreeMap;
 pub struct Edit {
     /// Whether filled cells keep or replace existing matter
     pub mode: EditMode,
-    /// Filled cells as bit `y * 8 + x`, material identifiers, packed RGBA colors, and temperatures
-    /// in kelvin of each tile, a NaN temperature taking the material's edit temperature
+    /// Filled cells as bit `y * 8 + x`, material identifiers, packed RGBA colors, radiances, and
+    /// temperatures in kelvin of each tile, a NaN temperature taking the material's edit temperature
     pub cellular_tiles: BTreeMap<
         CellularTileCoordinates,
-        (u64, [MaterialIdentifier; 64], [u32; 64], [f32; 64]),
+        (u64, [MaterialIdentifier; 64], [u32; 64], [u32; 64], [f32; 64]),
     >,
     /// Pressure in atmospheres added to each row-major cell of each tile, negative where removed
     pub pressures: BTreeMap<CellularTileCoordinates, [f32; 64]>,
@@ -48,24 +48,27 @@ impl Edit {
         }
     }
 
-    /// Fills one cell with a material, packed RGBA color, and temperature in kelvin, or the
-    /// material's edit temperature when `None`, replacing an earlier fill of the cell
+    /// Fills one cell with a material, packed RGBA color and radiance (`u32::MAX` selects the
+    /// material's radiance), and temperature in kelvin, or the material's edit temperature when
+    /// `None`, replacing an earlier fill of the cell
     pub fn fill_cell(
         &mut self,
         cell: CellCoordinates,
         material_identifier: MaterialIdentifier,
         color: u32,
+        radiance: u32,
         temperature: Option<f32>,
     ) {
         let cell_index: usize = (cell.y.rem_euclid(CELLULAR_TILE_SIZE) * CELLULAR_TILE_SIZE
             + cell.x.rem_euclid(CELLULAR_TILE_SIZE)) as usize;
-        let (cells, material_identifiers, colors, temperatures):
-            &mut (u64, [MaterialIdentifier; 64], [u32; 64], [f32; 64]) = self.cellular_tiles
+        let (cells, material_identifiers, colors, radiances, temperatures):
+            &mut (u64, [MaterialIdentifier; 64], [u32; 64], [u32; 64], [f32; 64]) = self.cellular_tiles
                 .entry(cell.cellular_tile_coordinates())
-                .or_insert((0, [MaterialIdentifier::EMPTY; 64], [0; 64], [f32::NAN; 64]));
+                .or_insert((0, [MaterialIdentifier::EMPTY; 64], [0; 64], [0; 64], [f32::NAN; 64]));
         *cells |= 1 << cell_index;
         material_identifiers[cell_index] = material_identifier;
         colors[cell_index] = color;
+        radiances[cell_index] = radiance;
         temperatures[cell_index] = temperature.unwrap_or(f32::NAN);
     }
 
@@ -110,7 +113,8 @@ impl Edit {
     }
 
     /// Fills every cell whose center lies within a radius in tiles of a segment with a material,
-    /// packed RGBA color, and temperature in kelvin, or the material's edit temperature when `None`
+    /// packed RGBA color and radiance (`u32::MAX` selects the material's radiance), and temperature
+    /// in kelvin, or the material's edit temperature when `None`
     pub fn fill_segment(
         &mut self,
         start: ScenePosition,
@@ -118,10 +122,11 @@ impl Edit {
         radius: f64,
         material_identifier: MaterialIdentifier,
         color: u32,
+        radiance: u32,
         temperature: Option<f32>,
     ) -> Result<(), EditError> {
         for cell in Self::segment_cells(start, end, radius)? {
-            self.fill_cell(cell, material_identifier, color, temperature);
+            self.fill_cell(cell, material_identifier, color, radiance, temperature);
         }
         Ok(())
     }

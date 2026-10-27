@@ -10,9 +10,11 @@ struct SpriteUniforms {
 struct SpriteInstance {
     position_size: vec4<f32>,
     rotation: f32,
-    padding: f32,
+    depth: f32,
     texture_coordinates: vec4<f32>,
     color: vec4<f32>,
+    radiance_coordinates: vec4<f32>,
+    radiance_intensity: f32,
 };
 
 @group(0) @binding(0)
@@ -24,10 +26,22 @@ var sprite_sampler: sampler;
 @group(1) @binding(0)
 var sprite_texture: texture_2d<f32>;
 
+/// Linear emission and occlusion per tile of the sprite's radiance sprite sheet
+@group(1) @binding(1)
+var radiance_texture: texture_2d<f32>;
+
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) texture_coordinates: vec2<f32>,
     @location(1) color: vec4<f32>,
+    /// Camera-relative position in tiles
+    @location(2) camera_relative_position: vec2<f32>,
+    /// Physical depth behind gameplay in tiles, zero for gameplay sprites
+    @location(3) @interpolate(flat) depth: f32,
+    /// Radiance texture coordinates
+    @location(4) radiance_coordinates: vec2<f32>,
+    /// Multiplier of the radiance emission
+    @location(5) @interpolate(flat) radiance_intensity: f32,
 };
 
 /// Transforms one sprite corner into viewport clip space
@@ -37,6 +51,9 @@ fn vertex(
     @location(1) rotation: f32,
     @location(2) texture_coordinates: vec4<f32>,
     @location(3) color: vec4<f32>,
+    @location(4) depth: f32,
+    @location(5) radiance_coordinates: vec4<f32>,
+    @location(6) radiance_intensity: f32,
     @builtin(vertex_index) vertex_index: u32,
 ) -> VertexOutput {
     let corners: array<vec2<f32>, 4> = array<vec2<f32>, 4>(
@@ -65,10 +82,17 @@ fn vertex(
     output.position = vec4<f32>(clip_position, 0.0, 1.0);
     output.texture_coordinates = output_texture_coordinates;
     output.color = color;
+    output.camera_relative_position = camera_relative_position;
+    output.depth = depth;
+    output.radiance_coordinates = vec2<f32>(
+        mix(radiance_coordinates.x, radiance_coordinates.z, texture_coordinate_fraction.x),
+        mix(radiance_coordinates.w, radiance_coordinates.y, texture_coordinate_fraction.y),
+    );
+    output.radiance_intensity = radiance_intensity;
     return output;
 }
 
-/// Samples and premultiplies one sprite texel
+/// Samples one sprite texel, lit by the light at its depth, and adds its emission
 @fragment
 fn fragment(input: VertexOutput) -> @location(0) vec4<f32> {
     let texel: vec4<f32> = textureSampleLevel(
@@ -77,6 +101,13 @@ fn fragment(input: VertexOutput) -> @location(0) vec4<f32> {
         input.texture_coordinates,
         0.0,
     );
+    let radiance: vec4<f32> = textureSampleLevel(
+        radiance_texture,
+        sprite_sampler,
+        input.radiance_coordinates,
+        0.0,
+    );
     let color: vec4<f32> = texel * input.color;
-    return vec4<f32>(color.rgb * color.a, color.a);
+    let light: vec3<f32> = background_light_at_tiles(input.camera_relative_position, input.depth);
+    return vec4<f32>(color.rgb * light * color.a + radiance.rgb * input.radiance_intensity * input.color.rgb * input.color.a, color.a);
 }

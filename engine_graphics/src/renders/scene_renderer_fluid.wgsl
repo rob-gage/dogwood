@@ -60,6 +60,13 @@ var<storage, read_write> water_cells: array<u32>;
 @group(0) @binding(5)
 var<storage, read_write> shaded_cells: array<vec2<u32>>;
 
+/// Fixed-point heat capacity, energy, conduction, and temperature change of every cell's fluid
+@group(0) @binding(6)
+var<storage, read> fluid_heat: array<vec4<i32>>;
+
+/// Fixed-point scale of fluid radiance emission sums
+const FLUID_EMISSION_SCALE: f32 = 64.0;
+
 /// Rows classified above the shaded rectangle for the depth search
 const DEPTH_SEARCH_ROWS: u32 = 8u;
 
@@ -176,6 +183,7 @@ fn shade(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let region_cell_height: i32 = i32(uniforms.region_height * uniforms.cellular_tile_size);
     var color_mass: f32 = 0.0;
     var weighted_color: vec4<f32> = vec4<f32>(0.0);
+    var weighted_radiance: vec4<f32> = vec4<f32>(0.0);
     for (var offset_y: i32 = -1; offset_y <= 1; offset_y++) {
         for (var offset_x: i32 = -1; offset_x <= 1; offset_x++) {
             let neighbor: vec2<i32> = cell + vec2<i32>(offset_x, offset_y);
@@ -187,14 +195,24 @@ fn shade(@builtin(global_invocation_id) invocation: vec3<u32>) {
             let mass: f32 = f32(max(fluid_raster[neighbor_base], 0));
             if mass <= 0.0 { continue; }
             color_mass += mass;
-            let color_base: u32 = neighbor_index * 4u;
+            let color_base: u32 = neighbor_index * 8u;
             weighted_color += vec4<f32>(
                 f32(fluid_colors[color_base]),
                 f32(fluid_colors[color_base + 1u]),
                 f32(fluid_colors[color_base + 2u]),
                 f32(fluid_colors[color_base + 3u]),
             );
+            weighted_radiance += vec4<f32>(
+                f32(fluid_colors[color_base + 4u]) / FLUID_EMISSION_SCALE,
+                f32(fluid_colors[color_base + 5u]) / FLUID_EMISSION_SCALE,
+                f32(fluid_colors[color_base + 6u]) / FLUID_EMISSION_SCALE,
+                f32(fluid_colors[color_base + 7u]) / 255.0,
+            );
         }
+    }
+    var radiance: vec4<f32> = vec4<f32>(0.0);
+    if color_mass > 0.0 {
+        radiance = weighted_radiance / color_mass;
     }
     var srgb_color: vec4<f32>;
     if color_mass > 0.0 {
@@ -209,16 +227,26 @@ fn shade(@builtin(global_invocation_id) invocation: vec3<u32>) {
             f32((packed_color >> 24u) & 0xffu),
         ) / 255.0;
     }
-    let linear_rgb: vec3<f32> = vec3<f32>(
+    // the fluid shows its material's temperature colors at its cell's temperature
+    let heat: vec4<i32> = fluid_heat[physical_cell_index(cell)];
+    let thermal: u32 = thermal_index(material_identifier);
+    var linear_color: vec4<f32> = vec4<f32>(
         srgb_to_linear(srgb_color.r),
         srgb_to_linear(srgb_color.g),
         srgb_to_linear(srgb_color.b),
+        srgb_color.a,
     );
+    if heat.x > 0 {
+        let temperature: f32 = (f32(heat.y) / 64.0) / (f32(heat.x) / 1024.0) + bitcast<f32>(heat.w);
+        linear_color = temperature_color(thermal, temperature, linear_color, false);
+        radiance = temperature_color(thermal, temperature, radiance, true);
+    }
     let depth_factor: f32 = 1.0 - f32(depth) * 0.035;
     let surface_factor: f32 = select(1.0, 1.08, surface);
-    let alpha: f32 = srgb_color.a;
-    let color: vec3<f32> = linear_rgb * depth_factor * surface_factor;
-    let premultiplied: vec4<f32> = vec4<f32>(color * alpha, alpha);
+    let alpha: f32 = linear_color.a;
+    let color: vec3<f32> = linear_color.rgb * depth_factor * surface_factor
+        * light_at(vec2<f32>(cell) + 0.5);
+    let premultiplied: vec4<f32> = vec4<f32>(color * alpha + radiance.rgb, alpha);
     shaded_cells[index] =
         vec2<u32>(pack2x16float(premultiplied.rg), pack2x16float(premultiplied.ba));
 }

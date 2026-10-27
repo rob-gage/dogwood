@@ -87,7 +87,7 @@ var<storage, read_write> gas_awake: array<atomic<u32>>;
 var<storage, read> transition_colors: array<vec4<f32>>;
 
 @group(0) @binding(13)
-var<storage, read_write> colors: array<u32>;
+var<storage, read_write> colors: array<vec2<u32>>;
 
 @group(0) @binding(14)
 var<storage, read_write> kinematics: array<vec2<u32>>;
@@ -485,7 +485,7 @@ fn convert_cell(
             return is_static(material_identifier);
         }
         material_identifiers[index] = 0u;
-        colors[index] = 0u;
+        colors[index] = vec2<u32>(0u);
         kinematics[index] = vec2<u32>(0u);
         matter[index].y = 0u;
         gas[index * 2u + 1u].w = 0u;
@@ -496,11 +496,15 @@ fn convert_cell(
     if !remove_rigid_body_cell(index) { return false; }
     let converted_material: u32 = conversion_debris(transition.product, cell);
     material_identifiers[index] = converted_material;
-    colors[index] = transition_color(
-        colors[index],
+    let seed: u32 = index ^ (uniforms.tick * 0x9e3779b9u);
+    colors[index].x = transition_color(
+        colors[index].x,
         source,
         transition.is_hot,
-        index ^ (uniforms.tick * 0x9e3779b9u),
+        seed,
+    );
+    colors[index].y = transition_radiance(
+        colors[index].y, source, transition.is_hot, seed,
     );
     matter[index] = vec2<u32>(
         bitcast<u32>(product_temperature),
@@ -587,11 +591,18 @@ fn convert_gas(index: u32, tile: u32, cell: vec2<i32>, temperature: f32) -> bool
         gas[index * 2u] = remaining;
         let converted_material: u32 = conversion_debris(transition.product, cell);
         material_identifiers[index] = converted_material;
-        colors[index] = transition_color(
+        let seed: u32 = index ^ (uniforms.tick * 0x9e3779b9u);
+        colors[index].x = transition_color(
             bitcast<u32>(gas_materials[gas_index * 2u].w),
             source,
             transition.is_hot,
-            index ^ (uniforms.tick * 0x9e3779b9u),
+            seed,
+        );
+        colors[index].y = transition_radiance(
+            bitcast<u32>(gas_materials[gas_index * 2u + 1u].y),
+            source,
+            transition.is_hot,
+            seed,
         );
         matter[index] = vec2<u32>(bitcast<u32>(product_temperature), u32(AMOUNT_PER_UNIT));
         temperature_changes[index].y = bitcast<u32>(i32(round(

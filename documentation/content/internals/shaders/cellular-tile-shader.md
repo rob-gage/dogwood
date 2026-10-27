@@ -47,9 +47,11 @@ Group 0 bindings are declared in WGSL and matched by the Rust layout:
 | Binding | WGSL resource | Use |
 |---:|---|---|
 | 0 | `CellularTileUniforms` | Region dimensions and ring offsets, tick/substep, actor count, gravity, resolve selector, region origin |
-| 1-4 | `material_identifiers`, `colors`, `kinematics`, `awake` | Mutable cell and tile state |
+| 1 | `material_identifiers` | Mutable cell materials |
+| 2 | `colors: array<vec2<u32>>` | Mutable packed color (`.x`) and radiance (`.y`) per cell |
+| 3-4 | `kinematics`, `awake` | Mutable cell motion and tile state |
 | 5 | `materials: array<vec4<f32>>` | Read-only material properties |
-| 6-7 | `motions`, `staged` | Per-cell motion/status and temporary incoming cell records |
+| 6-7 | `motions`, `staged` | Per-cell motion/status and temporary incoming cell records, including color/radiance |
 | 8 | `CellularTileControl` | Atomic active-tile, step and pending-resolve counts plus the active tile list |
 | 9 | `actors: array<CellularTileActor>` | Read-only actor records |
 | 10 | `contacts: array<atomic<i32>>` | Actor contact and impulse accumulators |

@@ -3,7 +3,7 @@ title = "Graphics"
 description = "Sprite sheets, borrowed scene graphics, and the engine_graphics scene renderer API."
 weight = 90
 [extra]
-sources = ["engine_graphics/src/lib.rs", "engine_graphics/src/sprites", "engine_graphics/src/renders/mod.rs", "engine_graphics/src/renders/scene_renderer.rs", "engine_graphics/src/world/scenes", "engine/src/lib.rs", "engine/src/games/game_instance.rs"]
+sources = ["engine_graphics/src/lib.rs", "engine_graphics/src/sprites", "engine_graphics/src/renders/mod.rs", "engine_graphics/src/renders/scene_renderer.rs", "engine_graphics/src/world/scenes", "engine/src/lib.rs", "engine/src/games/game_instance.rs", "engine_graphics/src/sprites/sprite_sheet.rs", "engine_graphics/src/sprites/sprite_sheet_error.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting_blocks.wgsl", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl"]
 +++
 
 Game code generally needs only `SpriteSheet`. Integrators providing their own render loop can use `SceneRenderer` and `SceneGraphics`; the engine also uses them internally. `SceneRenderer`, `SceneRendererViewMode`, `SceneGraphicsOverlay`, `SceneGraphicsOverlayShape`, and `SceneGraphicsTemperature` are re-exported from `engine`; borrowed scene graphics records live in `engine_graphics`.
@@ -28,6 +28,9 @@ Game code generally needs only `SpriteSheet`. Integrators providing their own re
 - the dimensions do not divide evenly into the frame grid;
 - the byte count is not exactly `width * height * 4`.
 
+Uploads generate a complete CPU mip chain. Each level uses a box filter; RGB is averaged in
+linear light and alpha linearly.
+
 `from_png` and `from_tga` return `SpriteSheetError::Decode(image::ImageError)` for decode failures, or `InvalidDimensions` for an invalid decoded frame grid or device dimensions.
 
 ### Accessors
@@ -48,9 +51,10 @@ Game code generally needs only `SpriteSheet`. Integrators providing their own re
 - optional published pressure buffer with ambient pressure and ring placement;
 - optional tile-major matter buffer with ambient temperature and ring placement;
 - actor and host overlays aligned to scene cells, each a circle radius or a rectangle width and height in tiles with a packed RGBA8 color;
-- sprite texture views with position, size, rotation, depth, texture region, and linear color.
+- sprite albedo and radiance texture views with position, size, rotation, depth, independent
+  texture regions, linear color, and radiance intensity.
 
-The actor sprite tuple that feeds the sprite data is documented on [actor components](@/external-api/actor-components.md).
+The actor sprite tuple that feeds the sprite data is documented on [actor components](@/external-api/actor-components.md). In `SceneGraphicsSprites`, each 12-value entry is `(albedo view, radiance view, x, y, width, height, rotation, depth, albedo region, radiance region, color, radiance intensity)`.
 
 `SceneRenderer` is in `engine_graphics::renders`. Create it with `SceneRenderer::new(accelerator)`, then call `render(accelerator, texture_view, &graphics)` on a mutable renderer. `render` submits its command buffer to `accelerator.queue()`.
 
@@ -71,3 +75,6 @@ Each frame is drawn in this order, into a centered letterboxed viewport:
 {{ <rustdoc path="engine_graphics/renders/enum.SceneRendererViewMode.html" text="SceneRendererViewMode" /> }}
 
 Parallax records contain projected centers and sizes plus physical depth. `SceneRenderer` draws these planes farthest first through a separate sprite pass before all gameplay content. See [parallax backgrounds](@/external-api/scenes.md#parallax-backgrounds) for authoring and projection.
+
+Sprite radiance uses a second `SpriteSheet`, independent of the albedo sheet. See
+[Lighting](@/external-api/lighting.md) and the [lighting pass](@/internals/rendering/lighting-pass.md).

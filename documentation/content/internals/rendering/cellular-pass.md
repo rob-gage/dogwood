@@ -3,7 +3,7 @@ title = "Cellular render pass"
 description = "GPU resources and draw setup for resident cellular tile colors."
 weight = 30
 [extra]
-sources = ["engine_graphics/src/renders/scene_renderer_cellular_pass.rs", "engine_graphics/src/renders/scene_renderer_cellular.wgsl", "engine_graphics/src/world/scenes/scene_graphics_cellular.rs"]
+sources = ["engine_graphics/src/renders/scene_renderer_cellular_pass.rs", "engine_graphics/src/renders/scene_renderer_cellular.wgsl", "engine_graphics/src/world/scenes/scene_graphics_cellular.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting_blocks.wgsl", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl", "engine_graphics/src/world/materials/material_radiance.wgsl"]
 +++
 
 ## Resources
@@ -46,3 +46,5 @@ The WGSL defines the matching layout and maps fragments through the tile ring; s
 ### Draw
 
 `draw` selects the pipeline for the current target format, binds the prepared group at index 0, and draws vertices `0..3` for one instance. That range forms a full-screen triangle over the active viewport. The pass runs between sprites of negative depth and sprites of nonnegative depth; see [Scene renderer](@/internals/rendering/scene-renderer.md).
+
+The cellular fragment shader reads radiance from the second word paired with packed color, applies thermal color/radiance transforms, and samples the light texture. The cellular GPU color buffer is therefore two `u32` words per cell. See [lighting pass](@/internals/rendering/lighting-pass.md).

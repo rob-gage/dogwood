@@ -3,7 +3,7 @@ title = "Fluid render pass"
 description = "Raster classification, cell shading, and fluid compositing."
 weight = 35
 [extra]
-sources = ["engine_graphics/src/renders/scene_renderer_fluid_pass.rs", "engine_graphics/src/renders/scene_renderer_fluid.wgsl", "engine_graphics/src/world/scenes/scene_graphics_fluid.rs", "engine_graphics/src/renders/scene_renderer.rs", "engine_world/src/scenes/scene.rs"]
+sources = ["engine_graphics/src/renders/scene_renderer_fluid_pass.rs", "engine_graphics/src/renders/scene_renderer_fluid.wgsl", "engine_graphics/src/world/scenes/scene_graphics_fluid.rs", "engine_graphics/src/renders/scene_renderer.rs", "engine_world/src/scenes/scene.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl"]
 +++
 
 `SceneRendererFluidPass` renders the particle simulation's cell raster. `Scene::fluid_graphics` supplies borrowed raster, material-property, and particle-color buffers, camera-relative region placement, ring offsets, and tile size. [Scene renderer](@/internals/rendering/scene-renderer.md#pass-order) defines compositing order.
@@ -34,3 +34,5 @@ Shading averages summed sRGB color channels over the 3×3 cells with raster mass
 The fullscreen triangle's fragment stage maps pixels to logical cells and fetches their shaded colors. Empty colors are discarded. The draw uses premultiplied-alpha blending, between negative-depth sprites and cellular matter.
 
 Rendering shades the cell raster, not individual particle sprites or a continuous reconstructed surface. Ring lookup reads physical cells; samples outside the region contribute no mass. The eight-row depth search stops at any empty classified cell, regardless of material changes. Scratch buffers grow but do not shrink, and pipelines are retained per target format. See [fluid coupling](@/internals/simulation/fluid-coupling.md#raster-bridge) for how raster mass and material selection are produced.
+
+Fluid appearance uses the radiance accumulated in the fluid raster and samples the lighting texture. The raster cell has eight `u32` words: four existing color sums, three emission sums, and an occlusion sum. Fluid heat records also supply render-time temperature colors. See [lighting pass](@/internals/rendering/lighting-pass.md).

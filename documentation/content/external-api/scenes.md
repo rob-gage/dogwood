@@ -3,7 +3,7 @@ title = "Scenes"
 description = "Scene construction, streaming and simulation contracts, generators, and exact positions."
 weight = 30
 [extra]
-sources = ["engine_world/src/scenes/scene.rs", "engine_world/src/scenes/scene_error.rs", "engine_world/src/scenes/scene_generator.rs", "engine_world/src/scenes/scene_position.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/materials/material_table.rs", "engine/src/lib.rs"]
+sources = ["engine_world/src/scenes/scene.rs", "engine_world/src/scenes/scene_error.rs", "engine_world/src/scenes/scene_generator.rs", "engine_world/src/scenes/scene_position.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/materials/material_table.rs", "engine/src/lib.rs", "engine_world/src/actors/components/actor_light.rs"]
 +++
 
 This page covers the `Scene` type, the `SceneGenerator` trait, `ScenePosition`, and `SceneError`. It is for game programmers who build and drive a scene; games that use `Engine::launch` get the lifecycle calls from `GameInstance` automatically.
@@ -132,7 +132,7 @@ let parallax = ActorParallaxComponent {
 };
 ```
 
-> **Not implemented:** Lighting, radiance textures, parallax light spill, and normal maps. Graphics records retain physical depth separately from integer sprite order for later lighting.
+> **Limitation:** Parallax light spill uses a depth-dependent blur and attenuation approximation. Graphics records retain physical depth separately from integer sprite order for lighting.
 
 ### Independent scroll axes
 
@@ -158,3 +158,7 @@ let mountains = ActorParallaxComponent {
     ..Default::default()
 };
 ```
+
+## Lighting
+
+Scenes expose ambient-light and light-penetration settings. Defaults, validation, and units are listed on [Lighting](@/external-api/lighting.md#scene-and-actor-controls). The renderer consumes them with resident scene graphics.

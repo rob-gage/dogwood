@@ -71,7 +71,7 @@ The control buffer holds four counts (active tiles, volume tiles, gas blocks, bl
 
 A pressure cell's volume word carries the dragged flag and `VOLUME_PARTIAL` for an open pressure cell holding static cells. Tile flags are `TILE_AWAKE` (1), `TILE_ACTIVE` (4), `TILE_BROKEN` (8), `TILE_VOLUME_DEPENDENT` (16), and `TILE_HALO` (32), which marks tiles `coarsen` rebuilds.
 
-Open-volume records use two words per cell. The first stores volume at 65,536 units per whole volume and a high-bit dragged flag; the second stores packed right/top actor drag velocities. `pressure_buffer` stores published gauge pressure. Solid material records are four `f32` values (mass, absorption, strength, padding); gas records are three `f32` values (mass, diffusivity, cohesion) and packed color. See [material table compilation](@/internals/simulation/material-table.md).
+Open-volume records use two words per cell. The first stores volume at 65,536 units per whole volume and a high-bit dragged flag; the second stores packed right/top actor drag velocities. `pressure_buffer` stores published gauge pressure. Solid material records are four `f32` values (mass, absorption, strength, padding); gas material records are 32 bytes: mass, diffusivity, cohesion, and packed color in the first `vec4<f32>`, then opacity, packed radiance bits, and padding in the second. See [material table compilation](@/internals/simulation/material-table.md).
 
 ## Shader constants
 

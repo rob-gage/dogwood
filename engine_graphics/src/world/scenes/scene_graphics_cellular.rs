@@ -5,12 +5,16 @@
 pub struct SceneGraphicsCellular<'a> {
     /// Material identifiers with one `u32` per cell, where zero is an empty cell
     pub material_identifier_buffer: &'a wgpu::Buffer,
-    /// Little-endian packed sRGB RGBA8 colors with one `u32` per cell
+    /// Little-endian packed sRGB RGBA8 color and radiance with two `u32` words per cell
     pub color_buffer: &'a wgpu::Buffer,
     /// Horizontal offset of the region's bottom-left corner from the camera in tiles
     pub region_x: f32,
     /// Vertical offset of the region's bottom-left corner from the camera in tiles
     pub region_y: f32,
+    /// Horizontal tile coordinate of the region's bottom-left tile
+    pub region_tile_x: i64,
+    /// Vertical tile coordinate of the region's bottom-left tile
+    pub region_tile_y: i64,
     /// Region width in tiles
     pub region_width: u32,
     /// Region height in tiles

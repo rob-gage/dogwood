@@ -237,6 +237,17 @@ impl ChunkStreamingState {
         }
     }
 
+    /// Returns one cellular tile's packed radiances from its active chunk
+    pub fn cellular_tile_radiances(
+        &self,
+        coordinates: CellularTileCoordinates,
+    ) -> Option<[u32; 64]> {
+        match self.chunks.get(&coordinates.chunk_coordinates()) {
+            Some(ChunkResident::Active { chunk, .. }) => chunk.cellular_tile_radiances(coordinates).ok(),
+            _ => None,
+        }
+    }
+
     /// Returns one cellular tile's packed kinematics from its active chunk
     pub fn cellular_tile_kinematics(
         &self,
@@ -281,6 +292,7 @@ impl ChunkStreamingState {
         coordinates: CellularTileCoordinates,
         material_identifiers: &[MaterialIdentifier; 64],
         colors: &[u32; 64],
+        radiances: &[u32; 64],
         kinematics: &[u64; 64],
         gas: Option<&[u32; 512]>,
         matter: Option<&[u32; 128]>,
@@ -291,12 +303,14 @@ impl ChunkStreamingState {
         if chunk.cellular_tile_material_identifiers(coordinates).ok().as_ref()
             == Some(material_identifiers)
             && chunk.cellular_tile_colors(coordinates).ok().as_ref() == Some(colors)
+            && chunk.cellular_tile_radiances(coordinates).ok().as_ref() == Some(radiances)
             && chunk.cellular_tile_kinematics(coordinates).ok().as_ref() == Some(kinematics)
             && chunk.cellular_tile_gas(coordinates).ok().as_ref() == Some(&gas.copied())
             && chunk.cellular_tile_matter(coordinates).ok().as_ref() == Some(&matter.copied())
         { return true; }
         if chunk.set_cellular_tile_material_identifiers(coordinates, material_identifiers).is_err()
             || chunk.set_cellular_tile_colors(coordinates, colors).is_err()
+            || chunk.set_cellular_tile_radiances(coordinates, radiances).is_err()
             || chunk.set_cellular_tile_kinematics(coordinates, kinematics).is_err()
             || chunk.set_cellular_tile_gas(coordinates, gas).is_err()
             || chunk.set_cellular_tile_matter(coordinates, matter).is_err()
@@ -1182,12 +1196,13 @@ impl ChunkStreamingState {
                     x: tile_x,
                     y: tile_y,
                 };
-                let (Ok(material_identifiers), Ok(mut colors)) = (
+                let (Ok(material_identifiers), Ok(mut colors), Ok(mut radiances)) = (
                     chunk.cellular_tile_material_identifiers(coordinates),
                     chunk.cellular_tile_colors(coordinates),
+                    chunk.cellular_tile_radiances(coordinates),
                 ) else { continue; };
-                for (cell_index, (material_identifier, color)) in
-                    material_identifiers.iter().zip(colors.iter_mut()).enumerate()
+                for (cell_index, ((material_identifier, color), radiance)) in
+                    material_identifiers.iter().zip(colors.iter_mut()).zip(radiances.iter_mut()).enumerate()
                 {
                     if *material_identifier == MaterialIdentifier::EMPTY { continue; }
                     let cell: CellCoordinates = CellCoordinates {
@@ -1195,8 +1210,10 @@ impl ChunkStreamingState {
                         y: tile_y * CELLULAR_TILE_SIZE + cell_index as i64 / CELLULAR_TILE_SIZE,
                     };
                     *color = material_table.cellular_color(*material_identifier, cell, *color);
+                    *radiance = material_table.cellular_radiance(*material_identifier, cell, *radiance);
                 }
                 let _ = chunk.set_cellular_tile_colors(coordinates, &colors);
+                let _ = chunk.set_cellular_tile_radiances(coordinates, &radiances);
             }
         }
         chunk

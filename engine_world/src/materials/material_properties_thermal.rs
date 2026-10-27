@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-use super::MaterialTransition;
+use super::{MaterialTemperatureColor, MaterialTransition};
 
 /// Thermal properties shared by every material form
 pub struct MaterialPropertiesThermal {
@@ -16,6 +16,8 @@ pub struct MaterialPropertiesThermal {
     pub hot_transition: Option<MaterialTransition>,
     /// Transition of the material at its cold transition temperature, or `None` to stay
     pub cold_transition: Option<MaterialTransition>,
+    /// Visual-only color and radiance transformations selected by temperature
+    pub temperature_colors: Vec<MaterialTemperatureColor>,
 }
 
 impl Default for MaterialPropertiesThermal {
@@ -28,6 +30,7 @@ impl Default for MaterialPropertiesThermal {
             edit_temperature: 293.0,
             hot_transition: None,
             cold_transition: None,
+            temperature_colors: Vec::new(),
         }
     }
 

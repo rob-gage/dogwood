@@ -19,6 +19,7 @@ use crate::{
     scenes::SceneError,
 };
 use engine_host::acceleration::{Accelerator, AcceleratorReadback, AcceleratorReadbackError};
+use engine_graphics::world::materials::MATERIAL_RADIANCE_WGSL;
 use std::collections::HashMap;
 
 /// Number of invocations in one compute workgroup, one per cell of a tile
@@ -144,14 +145,15 @@ impl ThermalCellularTilePass {
                 immediate_size: 0,
             },
         );
+        let shader_source: String = [
+            MATERIAL_RADIANCE_WGSL,
+            include_str!("thermal_cellular_tile.wgsl"),
+            include_str!("thermal_transition.wgsl"),
+        ].join("\n");
         let shader_module: wgpu::ShaderModule = device.create_shader_module(
             wgpu::ShaderModuleDescriptor {
                 label: Some("`ThermalCellularTilePass.shader_module`"),
-                source: wgpu::ShaderSource::Wgsl(concat!(
-                    include_str!("thermal_cellular_tile.wgsl"),
-                    "\n",
-                    include_str!("thermal_transition.wgsl"),
-                ).into()),
+                source: wgpu::ShaderSource::Wgsl(shader_source.into()),
             },
         );
         let mut pipelines: HashMap<&'static str, wgpu::ComputePipeline> = HashMap::new();

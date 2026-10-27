@@ -2,7 +2,8 @@
 
 // Material transitions shared by every shader that changes matter: the shader declares
 // `thermal_materials: array<vec4<u32>>` with four records per thermal index and
-// `transition_colors: array<vec4<f32>>` with seven records per transition
+// `transition_colors: array<vec4<f32>>` with fourteen records per transition: seven color
+// records followed by seven radiance records
 
 /// A material transition a unit of matter is due for
 struct ThermalTransition {
@@ -137,7 +138,7 @@ fn transition_random(seed: u32) -> f32 {
 /// thermal index: transformed in linear light by the transition's matrix and offset, varied by
 /// random amounts from a seed, and clamped when packed
 fn transition_color(color: u32, thermal_index: u32, is_hot: bool, seed: u32) -> u32 {
-    let base: u32 = (thermal_index * 2u + select(1u, 0u, is_hot)) * 7u;
+    let base: u32 = (thermal_index * 2u + select(1u, 0u, is_hot)) * 14u;
     let srgb: vec4<f32> = unpack4x8unorm(color);
     let linear: vec4<f32> = vec4<f32>(
         transition_linear(srgb.r),
@@ -167,4 +168,33 @@ fn transition_color(color: u32, thermal_index: u32, is_hot: bool, seed: u32) -> 
         transition_srgb(clamped.b),
         clamped.a,
     ));
+}
+
+/// Returns packed radiance carried through a transition after its linear transformation and
+/// seeded variances
+fn transition_radiance(radiance: u32, thermal_index: u32, is_hot: bool, seed: u32) -> u32 {
+    let base: u32 = (thermal_index * 2u + select(1u, 0u, is_hot)) * 14u + 7u;
+    let linear: vec4<f32> = unpack_radiance(radiance);
+    var transformed: vec4<f32> = vec4<f32>(
+        dot(transition_colors[base], linear),
+        dot(transition_colors[base + 1u], linear),
+        dot(transition_colors[base + 2u], linear),
+        dot(transition_colors[base + 3u], linear),
+    ) + transition_colors[base + 4u];
+    let channel_variance: vec4<f32> = transition_colors[base + 5u];
+    let intensity_variance: f32 = transition_colors[base + 6u].x;
+    transformed *= 1.0 + intensity_variance * transition_random(seed ^ 0xa511e9b3u);
+    transformed += channel_variance * vec4<f32>(
+        transition_random(seed ^ 0x63d83595u),
+        transition_random(seed ^ 0xb8a74e21u),
+        transition_random(seed ^ 0x9e3779b9u),
+        transition_random(seed ^ 0x4cf5ad43u),
+    );
+    transformed = clamp(
+        transformed,
+        vec4<f32>(0.0),
+        vec4<f32>(MATERIAL_RADIANCE_MAXIMUM, MATERIAL_RADIANCE_MAXIMUM,
+            MATERIAL_RADIANCE_MAXIMUM, 1.0),
+    );
+    return pack_radiance(transformed);
 }

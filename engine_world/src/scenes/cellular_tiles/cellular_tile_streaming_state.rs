@@ -49,8 +49,11 @@ use std::{
 /// Number of cells in one cellular tile
 const CELLULAR_TILE_CELL_COUNT: usize = (CELLULAR_TILE_SIZE * CELLULAR_TILE_SIZE) as usize;
 
-/// Bytes occupied by one cellular tile's cells in the material identifier and color buffers
+/// Bytes occupied by one cellular tile's cells in the material identifier buffer
 const CELLULAR_TILE_BYTE_COUNT: u64 = CELLULAR_TILE_CELL_COUNT as u64 * 4;
+
+/// Bytes occupied by one cellular tile's cells in the packed color and radiance buffer
+const CELLULAR_TILE_COLOR_BYTE_COUNT: u64 = CELLULAR_TILE_CELL_COUNT as u64 * 8;
 
 /// Bytes occupied by one cellular tile's cells in the kinematics buffer
 const CELLULAR_TILE_KINEMATICS_BYTE_COUNT: u64 = CELLULAR_TILE_CELL_COUNT as u64 * 8;
@@ -61,9 +64,10 @@ const CELLULAR_TILE_GAS_BYTE_COUNT: u64 = CELLULAR_TILE_CELL_COUNT as u64 * 32;
 /// Bytes occupied by one cellular tile's cells in the matter buffer
 const CELLULAR_TILE_MATTER_BYTE_COUNT: u64 = CELLULAR_TILE_CELL_COUNT as u64 * 8;
 
-/// Bytes of one tile in a streaming request: its material identifiers, colors, kinematics, gas,
-/// and matter
-const CELLULAR_TILE_STREAMING_BYTE_COUNT: u64 = CELLULAR_TILE_BYTE_COUNT * 2
+/// Bytes of one tile in a streaming request: its material identifiers, colors and radiances,
+/// kinematics, gas, and matter
+const CELLULAR_TILE_STREAMING_BYTE_COUNT: u64 = CELLULAR_TILE_BYTE_COUNT
+    + CELLULAR_TILE_COLOR_BYTE_COUNT
     + CELLULAR_TILE_KINEMATICS_BYTE_COUNT
     + CELLULAR_TILE_GAS_BYTE_COUNT
     + CELLULAR_TILE_MATTER_BYTE_COUNT;
@@ -407,8 +411,8 @@ impl CellularTileStreamingState {
                 let mapped_bytes: wgpu::BufferView = streaming_request.buffer
                     .get_mapped_range(..)
                     .expect("mapped cellular tile streaming buffer should be readable");
-                // each staged tile holds its material identifiers, colors, kinematics, gas, then
-                // matter
+                // each staged tile holds its material identifiers, colors and radiances, kinematics,
+                // gas, then matter
                 let mapped_tile_bytes: ChunksExact<u8> = mapped_bytes
                     .chunks_exact(CELLULAR_TILE_STREAMING_BYTE_COUNT as usize);
                 for (coordinates, tile_bytes) in
@@ -416,13 +420,16 @@ impl CellularTileStreamingState {
                 {
                     let mut material_identifiers: [MaterialIdentifier; CELLULAR_TILE_CELL_COUNT] =
                         [MaterialIdentifier::EMPTY; CELLULAR_TILE_CELL_COUNT];
-                    let mut colors: [u32; CELLULAR_TILE_CELL_COUNT] = [0; CELLULAR_TILE_CELL_COUNT];
+                    let mut colors: [u32; CELLULAR_TILE_CELL_COUNT] =
+                        [0; CELLULAR_TILE_CELL_COUNT];
+                    let mut radiances: [u32; CELLULAR_TILE_CELL_COUNT] =
+                        [0; CELLULAR_TILE_CELL_COUNT];
                     let mut kinematics: [u64; CELLULAR_TILE_CELL_COUNT] =
                         [0; CELLULAR_TILE_CELL_COUNT];
                     let (material_identifier_bytes, tile_bytes): (&[u8], &[u8]) =
                         tile_bytes.split_at(CELLULAR_TILE_BYTE_COUNT as usize);
                     let (color_bytes, tile_bytes): (&[u8], &[u8]) =
-                        tile_bytes.split_at(CELLULAR_TILE_BYTE_COUNT as usize);
+                        tile_bytes.split_at(CELLULAR_TILE_COLOR_BYTE_COUNT as usize);
                     let (kinematics_bytes, tile_bytes): (&[u8], &[u8]) =
                         tile_bytes.split_at(CELLULAR_TILE_KINEMATICS_BYTE_COUNT as usize);
                     let (gas_bytes, matter_bytes): (&[u8], &[u8]) =
@@ -437,13 +444,9 @@ impl CellularTileStreamingState {
                             cell_bytes[3],
                         ]));
                     }
-                    for (color, cell_bytes) in colors.iter_mut().zip(color_bytes.chunks_exact(4)) {
-                        *color = u32::from_le_bytes([
-                            cell_bytes[0],
-                            cell_bytes[1],
-                            cell_bytes[2],
-                            cell_bytes[3],
-                        ]);
+                    for (cell_index, cell_bytes) in color_bytes.chunks_exact(8).enumerate() {
+                        colors[cell_index] = u32::from_le_bytes(cell_bytes[0..4].try_into().unwrap());
+                        radiances[cell_index] = u32::from_le_bytes(cell_bytes[4..8].try_into().unwrap());
                     }
                     for (cell_kinematics, cell_bytes) in
                         kinematics.iter_mut().zip(kinematics_bytes.chunks_exact(8))
@@ -495,6 +498,7 @@ impl CellularTileStreamingState {
                         *coordinates,
                         &material_identifiers,
                         &colors,
+                        &radiances,
                         &kinematics,
                         (!is_gas_default).then_some(&gas),
                         (!is_matter_default).then_some(&matter),
@@ -604,6 +608,7 @@ impl CellularTileStreamingState {
         let mut incoming_cells: Vec<(
             [MaterialIdentifier; CELLULAR_TILE_CELL_COUNT],
             [u32; CELLULAR_TILE_CELL_COUNT],
+            [u32; CELLULAR_TILE_CELL_COUNT],
             [u64; CELLULAR_TILE_CELL_COUNT],
             [u32; CELLULAR_TILE_CELL_COUNT * 8],
             [u32; CELLULAR_TILE_CELL_COUNT * 2],
@@ -612,12 +617,14 @@ impl CellularTileStreamingState {
             let (
                 Some(material_identifiers),
                 Some(colors),
+                Some(radiances),
                 Some(kinematics),
                 Some(gas),
                 Some(matter),
             ) = (
                 chunk_streaming_state.cellular_tile_material_identifiers(*coordinates),
                 chunk_streaming_state.cellular_tile_colors(*coordinates),
+                chunk_streaming_state.cellular_tile_radiances(*coordinates),
                 chunk_streaming_state.cellular_tile_kinematics(*coordinates),
                 chunk_streaming_state.cellular_tile_gas(*coordinates),
                 chunk_streaming_state.cellular_tile_matter(*coordinates),
@@ -632,7 +639,7 @@ impl CellularTileStreamingState {
                     ambient_gas_temperature,
                 )
             });
-            incoming_cells.push((material_identifiers, colors, kinematics, gas, matter));
+            incoming_cells.push((material_identifiers, colors, radiances, kinematics, gas, matter));
         }
         // capture departing tiles under the old ring mapping before their slots are reused
         if let Some(resident_region) = resident_region {
@@ -671,30 +678,31 @@ impl CellularTileStreamingState {
         self.chunk_region_index = self.requested_chunk_region_index.take();
         // queued writes execute after the submitted request copies of the same slots, waking each
         // entering tile so its moving cells continue and its neighbors notice it
-        for (coordinates, (material_identifiers, colors, kinematics, gas, matter)) in
+        for (coordinates, (material_identifiers, colors, radiances, kinematics, gas, matter)) in
             incoming_coordinates.into_iter().zip(incoming_cells)
         {
             let Some(cellular_tile_index) = self.cellular_tile_index(coordinates)
             else { continue; };
             let mut material_identifier_bytes: [u8; CELLULAR_TILE_BYTE_COUNT as usize] =
                 [0; CELLULAR_TILE_BYTE_COUNT as usize];
-            let mut color_bytes: [u8; CELLULAR_TILE_BYTE_COUNT as usize] =
-                [0; CELLULAR_TILE_BYTE_COUNT as usize];
+            let mut color_bytes: [u8; CELLULAR_TILE_COLOR_BYTE_COUNT as usize] =
+                [0; CELLULAR_TILE_COLOR_BYTE_COUNT as usize];
             let mut kinematics_bytes: [u8; CELLULAR_TILE_KINEMATICS_BYTE_COUNT as usize] =
                 [0; CELLULAR_TILE_KINEMATICS_BYTE_COUNT as usize];
-            for (cell_index, ((material_identifier, color), cell_kinematics)) in
-                material_identifiers.iter().zip(colors.iter()).zip(kinematics.iter()).enumerate()
+            for (cell_index, (((material_identifier, color), radiance), cell_kinematics)) in
+                material_identifiers.iter().zip(colors.iter()).zip(radiances.iter()).zip(kinematics.iter()).enumerate()
             {
                 material_identifier_bytes[cell_index * 4..cell_index * 4 + 4]
                     .copy_from_slice(&material_identifier.as_u32().to_le_bytes());
-                color_bytes[cell_index * 4..cell_index * 4 + 4]
-                    .copy_from_slice(&color.to_le_bytes());
+                color_bytes[cell_index * 8..cell_index * 8 + 4].copy_from_slice(&color.to_le_bytes());
+                color_bytes[cell_index * 8 + 4..cell_index * 8 + 8]
+                    .copy_from_slice(&radiance.to_le_bytes());
                 kinematics_bytes[cell_index * 8..cell_index * 8 + 8]
                     .copy_from_slice(&cell_kinematics.to_le_bytes());
             }
             let physical_tile_index: u32 = cellular_tile_index.into();
-            let tile_offset: u64 =
-                u64::from(physical_tile_index) * CELLULAR_TILE_BYTE_COUNT;
+            let tile_offset: u64 = u64::from(physical_tile_index) * CELLULAR_TILE_BYTE_COUNT;
+            let color_tile_offset: u64 = u64::from(physical_tile_index) * CELLULAR_TILE_COLOR_BYTE_COUNT;
             accelerator.queue().write_buffer(
                 cellular_tile_buffers.material_identifier_buffer(),
                 tile_offset,
@@ -702,7 +710,7 @@ impl CellularTileStreamingState {
             );
             accelerator.queue().write_buffer(
                 cellular_tile_buffers.color_buffer(),
-                tile_offset,
+                color_tile_offset,
                 &color_bytes,
             );
             accelerator.queue().write_buffer(
@@ -783,6 +791,7 @@ impl CellularTileStreamingState {
             else { continue; };
             let physical_tile_index: u32 = cellular_tile_index.into();
             let tile_offset: u64 = u64::from(physical_tile_index) * CELLULAR_TILE_BYTE_COUNT;
+            let color_tile_offset: u64 = u64::from(physical_tile_index) * CELLULAR_TILE_COLOR_BYTE_COUNT;
             let staging_offset: u64 = staging_index as u64 * CELLULAR_TILE_STREAMING_BYTE_COUNT;
             command_encoder.copy_buffer_to_buffer(
                 cellular_tile_buffers.material_identifier_buffer(),
@@ -793,30 +802,30 @@ impl CellularTileStreamingState {
             );
             command_encoder.copy_buffer_to_buffer(
                 cellular_tile_buffers.color_buffer(),
-                tile_offset,
+                color_tile_offset,
                 &buffer,
                 staging_offset + CELLULAR_TILE_BYTE_COUNT,
-                CELLULAR_TILE_BYTE_COUNT,
+                CELLULAR_TILE_COLOR_BYTE_COUNT,
             );
             command_encoder.copy_buffer_to_buffer(
                 cellular_tile_buffers.kinematics_buffer(),
                 tile_offset * 2,
                 &buffer,
-                staging_offset + CELLULAR_TILE_BYTE_COUNT * 2,
+                staging_offset + CELLULAR_TILE_BYTE_COUNT + CELLULAR_TILE_COLOR_BYTE_COUNT,
                 CELLULAR_TILE_KINEMATICS_BYTE_COUNT,
             );
             command_encoder.copy_buffer_to_buffer(
                 cellular_tile_buffers.gas_buffer(),
                 tile_offset * 8,
                 &buffer,
-                staging_offset + CELLULAR_TILE_BYTE_COUNT * 2 + CELLULAR_TILE_KINEMATICS_BYTE_COUNT,
+                staging_offset + CELLULAR_TILE_BYTE_COUNT + CELLULAR_TILE_COLOR_BYTE_COUNT + CELLULAR_TILE_KINEMATICS_BYTE_COUNT,
                 CELLULAR_TILE_GAS_BYTE_COUNT,
             );
             command_encoder.copy_buffer_to_buffer(
                 cellular_tile_buffers.matter_buffer(),
                 tile_offset * 2,
                 &buffer,
-                staging_offset + CELLULAR_TILE_BYTE_COUNT * 2 + CELLULAR_TILE_KINEMATICS_BYTE_COUNT
+                staging_offset + CELLULAR_TILE_BYTE_COUNT + CELLULAR_TILE_COLOR_BYTE_COUNT + CELLULAR_TILE_KINEMATICS_BYTE_COUNT
                     + CELLULAR_TILE_GAS_BYTE_COUNT,
                 CELLULAR_TILE_MATTER_BYTE_COUNT,
             );

@@ -17,6 +17,7 @@ pub use engine_graphics::{
             MaterialGraphicsCellularDynamic,
             MaterialGraphicsCellularStatic,
             MaterialGraphicsGas,
+            pack_radiance,
         },
         scenes::{SceneGraphicsOverlay, SceneGraphicsOverlayShape, SceneGraphicsTemperature},
     },

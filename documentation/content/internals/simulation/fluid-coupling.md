@@ -14,7 +14,7 @@ Each particle contributes its material density as mass and mass times velocity a
 
 Queue order makes the prior fluid submission's raster available to kinematics, which computes solid/fluid velocity changes and writes changes into a separate per-cell accumulator. The particle pass applies those changes to particles in the cell before prediction, then clears them. Its final raster is available for the next kinematics submission and current rendering. Idle-swimmer current changes written after rasterization remain for the next particle step.
 
-> **Limitation:** A cell can contain multiple fluid materials, but the raster retains only total mass/momentum and one selected identifier. Downstream density, friction, drag, and color therefore approximate mixed cells using that identifier.
+> **Limitation:** A cell can contain multiple fluid materials, but the raster retains only total mass/momentum and one selected identifier. Downstream density, friction, drag, and color therefore approximate mixed cells using that identifier. Rasterized light accumulates emission and occlusion from all particles in the cell.
 
 ## Dynamic-cell contacts
 

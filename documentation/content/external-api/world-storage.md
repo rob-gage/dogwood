@@ -3,7 +3,7 @@ title = "Coordinates, tiles, and chunks"
 description = "World coordinate types, cellular tile and chunk storage, and their public APIs."
 weight = 40
 [extra]
-sources = ["engine_world/src/scenes/cellular_tiles", "engine_world/src/scenes/chunks", "engine/src/lib.rs"]
+sources = ["engine_world/src/scenes/cellular_tiles", "engine_world/src/scenes/chunks", "engine_world/src/materials/material_table.rs", "engine/src/lib.rs"]
 +++
 
 This page covers the public coordinate types, size constants, and chunk storage API of the world. It is for game programmers who generate, inspect, or persist world data; most games only need the `Scene` methods in [Scenes](@/external-api/scenes.md).
@@ -38,12 +38,12 @@ Euclidean division means negative cell and tile coordinates map to the expected 
 
 ### `Chunk`
 
-`Chunk` has public `coordinates`; its cell arrays are private. `Chunk::new(coordinates)` creates an empty chunk, and `fill(material_identifier, color)` fills cells and resets kinematics to zero.
+`Chunk` has public `coordinates`; its cell arrays are private. `Chunk::new(coordinates)` creates an empty chunk, and `fill(material_identifier, color, radiance)` fills cells and resets kinematics to zero. `u32::MAX` selects the material's default radiance.
 
 Tile access uses absolute `CellularTileCoordinates` and returns `Result`:
 
-- `cellular_tile_material_identifiers`, `cellular_tile_colors`, and `cellular_tile_kinematics` return arrays of 64 entries (`MaterialIdentifier`, packed `u32` RGBA color, or packed `u64` kinematics).
-- `set_cellular_tile_material_identifiers`, `set_cellular_tile_colors`, and `set_cellular_tile_kinematics` replace one tile's matching array.
+- `cellular_tile_material_identifiers`, `cellular_tile_colors`, `cellular_tile_radiances`, and `cellular_tile_kinematics` return arrays of 64 entries (`MaterialIdentifier`, packed `u32` RGBA color, packed `u32` radiance, or packed `u64` kinematics).
+- `set_cellular_tile_material_identifiers`, `set_cellular_tile_colors`, `set_cellular_tile_radiances`, and `set_cellular_tile_kinematics` replace one tile's matching array.
 - Each getter or setter returns `ChunkError::CoordinateMismatch` if the tile belongs to another chunk.
 - Row order is row-major within the tile and chunk.
 

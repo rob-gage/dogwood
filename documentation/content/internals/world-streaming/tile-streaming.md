@@ -48,7 +48,7 @@ Once incoming data is available, the state does the following in order:
 3. Marks the requested region resident.
 4. Queues writes for entering tiles.
 
-The queued writes upload material identifiers, colors, kinematics, and pressure state. A tile without stored gas gets default gas: phantom air at the scene's ambient amount in each empty cell, with no species and no flow. They set the awake value to `CELLULAR_TILE_AWAKE`, set the gas/pressure awake value to `CELLULAR_TILE_GAS_AWAKE`, and clear rigid-body cell data.
+The queued writes upload material identifiers, paired color/radiance words, kinematics, and pressure state. The color/radiance buffer uses 8 bytes per cell. A tile without stored gas gets default gas: phantom air at the scene's ambient amount in each empty cell, with no species and no flow. They set the awake value to `CELLULAR_TILE_AWAKE`, set the gas/pressure awake value to `CELLULAR_TILE_GAS_AWAKE`, and clear rigid-body cell data.
 
 When the ring shifts, the old region's retention moves to the outgoing request. It is released after the departing tiles reach their chunks.
 
@@ -56,7 +56,7 @@ When the ring shifts, the old region's retention moves to the outgoing request. 
 
 ### Readback
 
-Each outgoing request copies the selected tiles' material identifiers, colors, kinematics, and gas into a staging buffer. It submits the GPU copy and requests a read mapping with `map_async`. A callback sends the mapping result over a channel.
+Each outgoing request copies the selected tiles' material identifiers, paired color/radiance words, kinematics, gas, and matter into a staging buffer. Each tile's staging record is 3840 bytes: material IDs at 0–255, color/radiance at 256–767, kinematics at 768–1279, gas at 1280–3327, and matter at 3328–3839. It submits the GPU copy and requests a read mapping with `map_async`. A callback sends the mapping result over a channel.
 
 The regular streaming path polls the device without waiting and incorporates any responses already received. After a mapping failure, response processing immediately requests another mapping. Its result is observed on a later poll.
 

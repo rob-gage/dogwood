@@ -37,6 +37,13 @@ fn register_stone(
     };
     registry.register_cellular_dynamic("gravel", MaterialPropertiesCellularDynamic {
         edit_color: gravel,
+        edit_radiance: MaterialGraphicsCellularDynamic {
+            sprite_sheet: Arc::new(SpriteSheet::from_color(accelerator, 0, 0, 0, 217)?),
+            frame: 0,
+            width: 1.0,
+            height: 1.0,
+        },
+        edit_radiance_intensity: 1.0,
         mass: 1.0,
         friction: 0.8,
         restitution: 0.1,
@@ -51,6 +58,13 @@ fn register_stone(
             width: 1.0,
             height: 1.0,
         },
+        edit_radiance: MaterialGraphicsCellularStatic {
+            sprite_sheet: Arc::new(SpriteSheet::from_color(accelerator, 0, 0, 0, 230)?),
+            frame: 0,
+            width: 1.0,
+            height: 1.0,
+        },
+        edit_radiance_intensity: 1.0,
         mass: 2.0,
         friction: 0.6,
         restitution: 0.1,
@@ -111,6 +125,7 @@ fn register_water(registry: &mut MaterialRegistry) -> Result<(), MaterialError> 
         friction: 0.0,
         restitution: 0.0,
         edit_color: u32::from_le_bytes([40, 110, 200, 200]),
+        edit_radiance: engine::pack_radiance([0.0, 0.0, 0.0, 0.0]),
         thermal: MaterialPropertiesThermal::default(),
     })
 }

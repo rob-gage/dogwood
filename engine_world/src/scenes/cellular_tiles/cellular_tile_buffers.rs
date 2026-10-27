@@ -9,7 +9,7 @@ pub struct CellularTileBuffers {
     accelerator: Accelerator,
     /// Tile-major material identifiers with one `u32` per row-major cell
     material_identifier_buffer: wgpu::Buffer,
-    /// Tile-major packed RGBA colors with one `u32` per row-major cell
+    /// Tile-major packed RGBA color and packed radiance with two `u32` words per row-major cell
     color_buffer: wgpu::Buffer,
     /// Tile-major packed velocities and timing of dynamic cells with two `u32` per row-major cell
     kinematics_buffer: wgpu::Buffer,
@@ -57,7 +57,7 @@ impl CellularTileBuffers {
         let colors: wgpu::Buffer = accelerator.device()
             .create_buffer(&wgpu::BufferDescriptor {
                 label: Some("`CellularTileBuffers.color_buffer`"),
-                size,
+                size: size * 2,
                 usage,
                 mapped_at_creation: false,
             });
@@ -146,7 +146,7 @@ impl CellularTileBuffers {
     /// Returns the material identifier buffer
     pub fn material_identifier_buffer(&self) -> &wgpu::Buffer { &self.material_identifier_buffer }
 
-    /// Returns the packed RGBA color buffer
+    /// Returns the packed RGBA color and radiance buffer, two `u32` words per row-major cell
     pub fn color_buffer(&self) -> &wgpu::Buffer { &self.color_buffer }
 
     /// Returns the packed kinematics buffer

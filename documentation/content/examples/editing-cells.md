@@ -17,12 +17,12 @@ sources = [
 
 ## Build an edit
 
-An `Edit` groups cells by cellular tile (an 8x8 block of cells). Each filled cell carries a material identifier, packed color, and optional temperature in kelvin. Create one with `Edit::new`, then add cells:
+An `Edit` groups cells by cellular tile (an 8x8 block of cells). Each filled cell carries a material identifier, packed color, packed radiance, and optional temperature in kelvin. Create one with `Edit::new`, then add cells:
 
 - `fill_cell`: sets one cell, replacing an earlier fill of the same cell in the same edit.
 - `fill_segment`: takes two scene positions and a radius in tiles, and fills cells whose centers are within the radius of the segment. A negative or non-finite radius produces no fill and returns `Ok(())`.
 
-The color tints the albedo; materials without an albedo use it directly.
+The color tints the albedo; materials without an albedo use it directly. Pass `u32::MAX` as radiance to use the material default.
 
 ```rust
 use engine::materials::MaterialIdentifier;
@@ -35,13 +35,14 @@ use engine::scenes::{
 fn build_edit(material_identifier: MaterialIdentifier) -> Result<Edit, EditError> {
     let mut edit = Edit::new(EditMode::Replace);
     let color = u32::from_le_bytes([180, 120, 60, 255]);
-    edit.fill_cell(CellCoordinates { x: 12, y: 7 }, material_identifier, color, None);
+    edit.fill_cell(CellCoordinates { x: 12, y: 7 }, material_identifier, color, u32::MAX, None);
     edit.fill_segment(
         ScenePosition { tile_x: 2, tile_y: 1, offset_x: 0, offset_y: 0 },
         ScenePosition { tile_x: 3, tile_y: 1, offset_x: 0, offset_y: 0 },
         0.25,
         material_identifier,
         color,
+        u32::MAX,
         None,
     )?;
     Ok(edit)
@@ -53,7 +54,7 @@ The `EditMode` chosen in `Edit::new` controls what an edit overwrites:
 - `EditMode::Insert`: fills only empty cells and skips cells overlapped by colliders in the edit collision group.
 - `EditMode::Replace`: fills every targeted cell and ignores colliders.
 
-To erase, use `Replace` with `MaterialIdentifier::EMPTY` and color `0`.
+To erase, use `Replace` with `MaterialIdentifier::EMPTY`, color `0`, and radiance `0`.
 
 ## Submit edits to a scene
 

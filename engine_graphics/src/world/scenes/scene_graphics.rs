@@ -4,6 +4,7 @@ use super::{
     SceneGraphicsCellular,
     SceneGraphicsFluid,
     SceneGraphicsGas,
+    SceneGraphicsLighting,
     SceneGraphicsOverlay,
     SceneGraphicsPressure,
     SceneGraphicsTemperature,
@@ -37,4 +38,6 @@ pub struct SceneGraphics<'a> {
     pub sprites: SceneGraphicsSprites<'a>,
     /// Cell-aligned areas drawn over the scene
     pub overlays: Vec<SceneGraphicsOverlay>,
+    /// Lighting inputs
+    pub lighting: SceneGraphicsLighting<'a>,
 }

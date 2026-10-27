@@ -76,7 +76,7 @@ Solid material properties provide static `strength` in atmospheres and `absorpti
 
 Each static cell under that pressure cell loses integrity while the load exceeds its material's strength.
 
-After publishing pressure, `damage` breaks cells whose integrity is exhausted. A broken cell becomes its configured dynamic debris material, retaining color and receiving velocity from the pressure push, or becomes empty. Stored pressure is released as phantom air. Rigid-body cells are removed from their body's cell mask, and changed tiles are reported with their remaining static occupancy for later topology updates.
+After publishing pressure, `damage` breaks cells whose integrity is exhausted. A broken cell becomes its configured dynamic debris material, retaining color and radiance and receiving velocity from the pressure push, or becomes empty. Stored pressure is released as phantom air. Rigid-body cells are removed from their body's cell mask, and changed tiles are reported with their remaining static occupancy for later topology updates.
 
 ## Published pressure and consumers
 

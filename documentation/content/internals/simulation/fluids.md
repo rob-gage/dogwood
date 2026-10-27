@@ -3,10 +3,10 @@ title = "Fluid simulation"
 description = "The particle solver, its numerical model, and where to find coupling and persistence details."
 weight = 75
 [extra]
-sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/thermal"]
+sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/thermal", "engine_graphics/src/renders/scene_renderer_fluid_pass.rs", "engine_graphics/src/renders/scene_renderer_fluid.wgsl"]
 +++
 
-Fluids are GPU particles, separate from the cellular tile arrays. A particle represents one cell's fluid mass but can move continuously and share a cell with other particles. `Fluids` owns edits, imports, count reservations, and actor feedback; `FluidParticlePass` owns storage and compute submission.
+Fluids are GPU particles, separate from the cellular tile arrays. A particle represents one cell's fluid mass but can move continuously and share a cell with other particles. Each particle carries packed color and radiance; fluid rasterization accumulates emission and occlusion alongside color. Particle records use 64-byte live state, 48-byte imports, and 56-byte exports; the separate persisted particle record is documented in [chunk format](@/internals/world-streaming/chunk-format.md#fluid-particle-section). `Fluids` owns edits, imports, count reservations, and actor feedback; `FluidParticlePass` owns storage and compute submission.
 
 This page describes the implemented numerical model. See [boundaries and sleeping](@/internals/simulation/fluid-boundaries.md), [system interactions](@/internals/simulation/fluid-coupling.md), [streaming and persistence](@/internals/world-streaming/fluid-streaming.md), and [GPU records and dispatch](@/internals/shaders/fluid-shader.md) for the other parts.
 
@@ -44,6 +44,8 @@ list, or an edit, rebase, or export that requires it. Particle-to-cell conversio
 unowned cell; cell and gas conversions wait for pool capacity. The thermal list holds at most
 `THERMAL_CONVERSION_COUNT_MAXIMUM` entries, and asynchronous count readback keeps the pool awake
 briefly after a nonzero list.
+
+The fluid raster stores color in four words and radiance in four more words per physical cell; the renderer uses the radiance sums for lighting. Fluid temperature for render-time temperature colors comes from the fluid heat raster.
 
 ## Neighbors
 

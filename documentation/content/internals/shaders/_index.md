@@ -5,7 +5,7 @@ weight = 60
 sort_by = "weight"
 template = "section.html"
 [extra]
-sources = ["engine_world/Cargo.toml", "engine_world/src/scenes/pressure/pressure_cellular_tile.wgsl", "engine_world/src/scenes/cellular_tiles/cellular_tile_fluids.wgsl", "engine_graphics/src/renders", "engine_world/src/scenes/cellular_tiles", "engine_world/src/scenes/collisions", "engine_world/src/scenes/edits"]
+sources = ["engine_world/Cargo.toml", "engine_world/src/scenes/pressure/pressure_cellular_tile.wgsl", "engine_world/src/scenes/cellular_tiles/cellular_tile_fluids.wgsl", "engine_graphics/src/renders", "engine_world/src/scenes/cellular_tiles", "engine_world/src/scenes/collisions", "engine_world/src/scenes/edits", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl", "engine_graphics/src/world/materials/material_radiance.wgsl"]
 +++
 
 This section is the reference for Dogwood's embedded WGSL shaders, for engine contributors. Each shader's Rust pass creates the matching pipeline and bind groups, packs CPU-side data where needed, and submits work. Details live in the [render shader reference](@/internals/shaders/render-shaders.md), [cellular tile shader reference](@/internals/shaders/cellular-tile-shader.md), [collision shader reference](@/internals/shaders/collision-shaders.md), [edit shader reference](@/internals/shaders/edit-shader.md), and [pressure shader reference](@/internals/shaders/pressure-shader.md), [thermal shader reference](@/internals/shaders/thermal-shader.md)(@/internals/shaders/pressure-shader.md).
@@ -40,3 +40,5 @@ This section is the reference for Dogwood's embedded WGSL shaders, for engine co
 ## Related pages
 
 Rendering and pass scheduling are covered in [cellular rendering](@/internals/rendering/cellular-pass.md), [sprite rendering](@/internals/rendering/sprite-pass.md), [cellular kinematics](@/internals/simulation/cellular-kinematics.md), [static cell colliders](@/internals/simulation/static-cell-colliders.md), [rigid bodies](@/internals/simulation/rigid-bodies.md), and the [edit pipeline](@/internals/simulation/edit-pipeline.md).
+
+- [Lighting pass](@/internals/rendering/lighting-pass.md): WGSL stages, optical records, cascade uniforms, and light texture.

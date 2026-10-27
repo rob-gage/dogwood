@@ -3,7 +3,7 @@ title = "Graphics internals"
 description = "How the scene renderer prepares and draws cellular content and sprites."
 weight = 50
 [extra]
-sources = ["engine_graphics/src/renders", "engine_graphics/src/world/scenes"]
+sources = ["engine_graphics/src/renders", "engine_graphics/src/world/scenes", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting_blocks.wgsl", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl", "engine_graphics/src/world/materials/material_radiance.wgsl"]
 +++
 
 ## Renderer structure
@@ -43,7 +43,7 @@ Before drawing, two compute dispatches classify and shade visible fluid cells; s
 
 `SceneRendererCellularPass` owns one shader module, pipeline layout, and uniform buffer, plus a `HashMap<TextureFormat, RenderPipeline>`. Pipelines use triangle-list topology, one sample, no depth/stencil, and premultiplied-alpha blending. Its 64-byte uniform buffer is rewritten for each prepared view with viewport origin and size, pixels per tile, camera-relative region origin, region dimensions, ring offsets, and cellular tile size.
 
-The cellular bind group contains the uniform buffer and the material-identifier and color storage buffers. The pass caches the two input buffer handles and rebuilds the bind group only when either differs from the current `SceneGraphicsCellular` buffers (or when no bind group exists). The pipeline and bind group are separate caches: changing target format creates or selects a pipeline without itself rebuilding the data bindings.
+The cellular bind group contains the uniform buffer, material-identifier, paired color/radiance, and matter storage buffers. The pass caches these input buffer handles and rebuilds the bind group when any differs from the current `SceneGraphicsCellular` or temperature data (or when no bind group exists). The pipeline and bind group are separate caches: changing target format creates or selects a pipeline without itself rebuilding the data bindings.
 
 ## Sprite pass resources
 
@@ -51,7 +51,7 @@ There are two `SceneRendererSpritesPass` instances with disjoint inclusive depth
 
 ### Preparation
 
-Preparation filters sprites by the pass's depth range, sorts selected indices in ascending depth order (the stable sort preserves their input order at equal depth), packs per-instance values, and groups adjacent instances that use the same texture view. The instance buffer begins with capacity for 256 instances at 56 bytes each and grows to the next power of two when needed. Preparation creates missing texture bind groups for current batches and removes stale entries.
+Preparation filters sprites by the pass's depth range, sorts selected indices in ascending depth order (the stable sort preserves their input order at equal depth), packs per-instance values, and groups adjacent instances that use the same albedo and radiance texture views. The instance buffer begins with capacity for 256 instances at 80 bytes each and grows to the next power of two when needed. Preparation creates missing texture bind groups for current batches and removes stale entries.
 
 ### Drawing
 
@@ -60,3 +60,5 @@ Drawing binds each batch texture and draws four vertices for its instance range.
 > **Limitation:** Pipelines are cached per target format and never evicted.
 
 For the frame-level order that calls scene and UI rendering, see [frame lifecycle](@/architecture/frame-lifecycle.md). `SceneRenderer` is exposed by `engine_graphics::renders`; its pass types are private, and `SceneRendererViewMode`, `SceneGraphicsOverlay`, and `SceneGraphicsOverlayShape` are re-exported by the `engine` facade.
+
+Lighting is another renderer-owned pass, scheduled before fluid shading and scene drawing. See the [lighting pass](@/internals/rendering/lighting-pass.md).

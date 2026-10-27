@@ -1,6 +1,7 @@
 // Copyright Rob Gage 2026
 
-use crate::world::scenes::SceneGraphicsSprites;
+use super::scene_renderer_lighting_pass::lighting_shader_source;
+use crate::world::scenes::{SceneGraphicsParallax, SceneGraphicsSprites};
 use engine_host::acceleration::Accelerator;
 use std::{
     collections::HashMap,
@@ -39,15 +40,19 @@ pub struct SceneRendererSpritesPass {
     /// Reused packed instance bytes
     instance_bytes: Vec<u8>,
     /// Consecutive sprite batches indexed by instance range
-    batches: Vec<(wgpu::TextureView, Range<u32>)>,
+    batches: Vec<((wgpu::TextureView, wgpu::TextureView), Range<u32>)>,
     /// Cached texture bind groups
-    texture_bind_groups: HashMap<wgpu::TextureView, wgpu::BindGroup>,
+    texture_bind_groups: HashMap<(wgpu::TextureView, wgpu::TextureView), wgpu::BindGroup>,
 }
 
 impl SceneRendererSpritesPass {
 
     /// Creates sprite rendering resources for the sprites within a range of depths
-    pub fn new(accelerator: &Accelerator, depths: RangeInclusive<i32>) -> Self {
+    pub fn new(
+        accelerator: &Accelerator,
+        depths: RangeInclusive<i32>,
+        lighting_bind_group_layout: &wgpu::BindGroupLayout,
+    ) -> Self {
         let device: &wgpu::Device = accelerator.device();
         let bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
@@ -75,22 +80,38 @@ impl SceneRendererSpritesPass {
         let texture_bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`SceneRendererSpritesPass.texture_bind_group_layout`"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                ],
             },
         );
         let pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("`SceneRendererSpritesPass.pipeline_layout`"),
-                bind_group_layouts: &[Some(&bind_group_layout), Some(&texture_bind_group_layout)],
+                bind_group_layouts: &[
+                    Some(&bind_group_layout),
+                    Some(&texture_bind_group_layout),
+                    Some(lighting_bind_group_layout),
+                ],
                 immediate_size: 0,
             },
         );
@@ -98,7 +119,7 @@ impl SceneRendererSpritesPass {
             wgpu::ShaderModuleDescriptor {
                 label: Some("`SceneRendererSpritesPass.shader_module`"),
                 source: wgpu::ShaderSource::Wgsl(
-                    include_str!("scene_renderer_sprites.wgsl").into(),
+                    lighting_shader_source(2, include_str!("scene_renderer_sprites.wgsl")).into(),
                 ),
             },
         );
@@ -119,7 +140,7 @@ impl SceneRendererSpritesPass {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let instance_buffer_capacity: usize = 256 * 56;
+        let instance_buffer_capacity: usize = 256 * 80;
         let instance_buffer: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("`SceneRendererSpritesPass.instance_buffer`"),
             size: instance_buffer_capacity as u64,
@@ -127,8 +148,9 @@ impl SceneRendererSpritesPass {
             mapped_at_creation: false,
         });
         let instance_bytes: Vec<u8> = Vec::with_capacity(instance_buffer_capacity);
-        let batches: Vec<(wgpu::TextureView, Range<u32>)> = Vec::new();
-        let texture_bind_groups: HashMap<wgpu::TextureView, wgpu::BindGroup> = HashMap::new();
+        let batches: Vec<((wgpu::TextureView, wgpu::TextureView), Range<u32>)> = Vec::new();
+        let texture_bind_groups: HashMap<(wgpu::TextureView, wgpu::TextureView), wgpu::BindGroup> =
+            HashMap::new();
         Self {
             depths,
             bind_group_layout,
@@ -159,6 +181,7 @@ impl SceneRendererSpritesPass {
         viewport_height: u32,
         pixels_per_tile: f32,
         sprites: &SceneGraphicsSprites<'_>,
+        backgrounds: &[SceneGraphicsParallax<'_>],
     ) {
         let device: &wgpu::Device = accelerator.device();
         if !self.pipelines.contains_key(&format) {
@@ -171,7 +194,7 @@ impl SceneRendererSpritesPass {
                         entry_point: Some("vertex"),
                         compilation_options: wgpu::PipelineCompilationOptions::default(),
                         buffers: &[Some(wgpu::VertexBufferLayout {
-                            array_stride: 56,
+                            array_stride: 80,
                             step_mode: wgpu::VertexStepMode::Instance,
                             attributes: &[
                                 wgpu::VertexAttribute {
@@ -193,6 +216,21 @@ impl SceneRendererSpritesPass {
                                     format: wgpu::VertexFormat::Float32x4,
                                     offset: 40,
                                     shader_location: 3,
+                                },
+                                wgpu::VertexAttribute {
+                                    format: wgpu::VertexFormat::Float32,
+                                    offset: 20,
+                                    shader_location: 4,
+                                },
+                                wgpu::VertexAttribute {
+                                    format: wgpu::VertexFormat::Float32x4,
+                                    offset: 56,
+                                    shader_location: 5,
+                                },
+                                wgpu::VertexAttribute {
+                                    format: wgpu::VertexFormat::Float32,
+                                    offset: 72,
+                                    shader_location: 6,
                                 },
                             ],
                         })],
@@ -255,37 +293,66 @@ impl SceneRendererSpritesPass {
         // select this pass's sprites in depth order, keeping submission order within a depth
         self.sprite_indices.clear();
         self.sprite_indices.extend((0..sprites.sprites.len()).filter(|sprite_index: &usize| {
-            self.depths.contains(&sprites.sprites[*sprite_index].6)
+            self.depths.contains(&sprites.sprites[*sprite_index].7)
         }));
-        self.sprite_indices.sort_by_key(|sprite_index: &usize| sprites.sprites[*sprite_index].6);
+        self.sprite_indices.sort_by_key(|sprite_index: &usize| sprites.sprites[*sprite_index].7);
         self.instance_bytes.clear();
         self.batches.clear();
-        for (instance_index, sprite_index) in self.sprite_indices.iter().enumerate() {
-            let (texture_view, x, y, width, height, rotation, _, texture_edges, color): (
-                &wgpu::TextureView,
-                f32,
-                f32,
-                f32,
-                f32,
-                f32,
-                i32,
-                [f32; 4],
-                [f32; 4],
+        // gameplay sprites lie in the gameplay plane, and backgrounds keep their physical depth
+        let gameplay = self.sprite_indices.iter().map(|sprite_index: &usize| {
+            let (
+                texture_view, radiance_view, x, y, width, height, rotation, _,
+                region, radiance_region, color, radiance_intensity,
             ) = sprites.sprites[*sprite_index];
-            for value in [x, y, width, height, rotation, 0.0] {
-                self.instance_bytes.extend_from_slice(&value.to_le_bytes());
-            }
-            for value in texture_edges.into_iter().chain(color) {
+            (
+                texture_view,
+                radiance_view,
+                [x, y, width, height, rotation, 0.0],
+                region,
+                color,
+                radiance_region,
+                radiance_intensity,
+            )
+        });
+        let parallax = backgrounds.iter().map(|background: &SceneGraphicsParallax<'_>| (
+            background.texture,
+            background.radiance_texture,
+            [
+                background.center[0], background.center[1],
+                background.size[0], background.size[1],
+                background.rotation, background.depth,
+            ],
+            background.texture_region,
+            background.color,
+            background.radiance_texture_region,
+            background.radiance_intensity,
+        ));
+        for (
+            instance_index,
+            (texture_view, radiance_view, placement, texture_edges, color, radiance_edges, intensity),
+        ) in gameplay.chain(parallax).enumerate()
+        {
+            for value in placement.into_iter()
+                .chain(texture_edges)
+                .chain(color)
+                .chain(radiance_edges)
+                .chain([intensity, 0.0])
+            {
                 self.instance_bytes.extend_from_slice(&value.to_le_bytes());
             }
             let instance_index: u32 = instance_index as u32;
-            if let Some((batch_texture_view, instance_range)) = self.batches.last_mut() {
-                if batch_texture_view == texture_view {
+            if let Some(((batch_texture_view, batch_radiance_view), instance_range)) =
+                self.batches.last_mut()
+            {
+                if batch_texture_view == texture_view && batch_radiance_view == radiance_view {
                     instance_range.end = instance_index + 1;
                     continue;
                 }
             }
-            self.batches.push((texture_view.clone(), instance_index..(instance_index + 1)));
+            self.batches.push((
+                (texture_view.clone(), radiance_view.clone()),
+                instance_index..(instance_index + 1),
+            ));
         }
         let required_capacity: usize = self.instance_bytes.len();
         if required_capacity > self.instance_buffer_capacity {
@@ -302,28 +369,39 @@ impl SceneRendererSpritesPass {
             accelerator.queue().write_buffer(&self.instance_buffer, 0, &self.instance_bytes);
         }
         let texture_bind_group_layout: &wgpu::BindGroupLayout = &self.texture_bind_group_layout;
-        for (texture_view, _) in &self.batches {
-            if !self.texture_bind_groups.contains_key(texture_view) {
+        for (textures, _) in &self.batches {
+            if !self.texture_bind_groups.contains_key(textures) {
                 let texture_bind_group: wgpu::BindGroup =
                     device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("`SceneRendererSpritesPass.texture_bind_groups`"),
                         layout: texture_bind_group_layout,
-                        entries: &[wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(texture_view),
-                        }],
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(&textures.0),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::TextureView(&textures.1),
+                            },
+                        ],
                     });
-                self.texture_bind_groups.insert(texture_view.clone(), texture_bind_group);
+                self.texture_bind_groups.insert(textures.clone(), texture_bind_group);
             }
         }
-        let batches: &Vec<(wgpu::TextureView, Range<u32>)> = &self.batches;
-        self.texture_bind_groups.retain(|texture_view, _| {
-            batches.iter().any(|(batch_texture_view, _)| batch_texture_view == texture_view)
+        let batches: &Vec<((wgpu::TextureView, wgpu::TextureView), Range<u32>)> = &self.batches;
+        self.texture_bind_groups.retain(|textures, _| {
+            batches.iter().any(|(batch_textures, _)| batch_textures == textures)
         });
     }
 
-    /// Draws prepared sprites for one target format
-    pub fn draw(&self, render_pass: &mut wgpu::RenderPass<'_>, format: wgpu::TextureFormat) {
+    /// Draws prepared lit sprites for one target format
+    pub fn draw(
+        &self,
+        render_pass: &mut wgpu::RenderPass<'_>,
+        format: wgpu::TextureFormat,
+        lighting_bind_group: &wgpu::BindGroup,
+    ) {
         let render_pipeline: &wgpu::RenderPipeline = match self.pipelines.get(&format) {
             Some(render_pipeline) => render_pipeline,
             None => return,
@@ -337,10 +415,11 @@ impl SceneRendererSpritesPass {
         }
         render_pass.set_pipeline(render_pipeline);
         render_pass.set_bind_group(0, bind_group, &[]);
+        render_pass.set_bind_group(2, lighting_bind_group, &[]);
         render_pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
-        for (texture_view, instance_range) in &self.batches {
+        for (textures, instance_range) in &self.batches {
             let texture_bind_group: &wgpu::BindGroup =
-                match self.texture_bind_groups.get(texture_view) {
+                match self.texture_bind_groups.get(textures) {
                     Some(texture_bind_group) => texture_bind_group,
                     None => continue,
                 };

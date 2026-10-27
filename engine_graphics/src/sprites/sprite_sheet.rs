@@ -81,11 +81,12 @@ impl SpriteSheet {
             || width % columns != 0 || height % rows != 0
             || pixels.len() as u64 != u64::from(width) * u64::from(height) * 4
         { return Err(SpriteSheetError::InvalidDimensions); }
+        let mip_level_count: u32 = 32 - width.max(height).leading_zeros();
         let size: wgpu::Extent3d = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
         let texture: wgpu::Texture = accelerator.device().create_texture(&wgpu::TextureDescriptor {
             label: Some("`SpriteSheet.texture_view`"),
             size,
-            mip_level_count: 1,
+            mip_level_count,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8UnormSrgb,
@@ -94,16 +95,74 @@ impl SpriteSheet {
                 | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
-        accelerator.queue().write_texture(
-            texture.as_image_copy(),
-            pixels,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(width * 4),
-                rows_per_image: Some(height),
-            },
-            size,
-        );
+        let mut level: Vec<u8> = pixels.to_vec();
+        let mut level_width: u32 = width;
+        let mut level_height: u32 = height;
+        for mip_level in 0..mip_level_count {
+            let mip_size: wgpu::Extent3d = wgpu::Extent3d {
+                width: level_width,
+                height: level_height,
+                depth_or_array_layers: 1,
+            };
+            accelerator.queue().write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &level,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(level_width * 4),
+                    rows_per_image: Some(level_height),
+                },
+                mip_size,
+            );
+            if mip_level + 1 < mip_level_count {
+                let next_width: u32 = (level_width / 2).max(1);
+                let next_height: u32 = (level_height / 2).max(1);
+                let mut next: Vec<u8> = Vec::with_capacity((next_width * next_height * 4) as usize);
+                for y in 0..next_height {
+                    for x in 0..next_width {
+                        let x_start: u32 = x * level_width / next_width;
+                        let x_end: u32 = ((x + 1) * level_width / next_width).max(x_start + 1);
+                        let y_start: u32 = y * level_height / next_height;
+                        let y_end: u32 = ((y + 1) * level_height / next_height).max(y_start + 1);
+                        let mut sum: [f32; 4] = [0.0; 4];
+                        let mut count: f32 = 0.0;
+                        for source_y in y_start..y_end {
+                            for source_x in x_start..x_end {
+                                let index: usize = ((source_y * level_width + source_x) * 4) as usize;
+                                for channel in 0..3 {
+                                    let value: f32 = f32::from(level[index + channel]) / 255.0;
+                                    sum[channel] += if value <= 0.04045 {
+                                        value / 12.92
+                                    } else {
+                                        ((value + 0.055) / 1.055).powf(2.4)
+                                    };
+                                }
+                                sum[3] += f32::from(level[index + 3]) / 255.0;
+                                count += 1.0;
+                            }
+                        }
+                        for channel in 0..3 {
+                            let value: f32 = sum[channel] / count;
+                            let encoded: f32 = if value <= 0.0031308 {
+                                value * 12.92
+                            } else {
+                                1.055 * value.powf(1.0 / 2.4) - 0.055
+                            };
+                            next.push((encoded * 255.0).round().clamp(0.0, 255.0) as u8);
+                        }
+                        next.push(((sum[3] / count) * 255.0).round().clamp(0.0, 255.0) as u8);
+                    }
+                }
+                level = next;
+                level_width = next_width;
+                level_height = next_height;
+            }
+        }
         let texture_view: wgpu::TextureView =
             texture.create_view(&wgpu::TextureViewDescriptor::default());
         Ok(Self { texture_view, columns, rows, width: width / columns, height: height / rows })

@@ -12,9 +12,9 @@ use crate::{
 };
 use engine_host::acceleration::Accelerator;
 
-/// Bytes of one edited tile: its index, ambient gas amount, masks, materials, colors, pressures,
-/// temperatures, and added temperatures
-const EDIT_CELLULAR_TILE_BYTE_COUNT: u64 = (6 + 64 * 5) * 4;
+/// Bytes of one edited tile: its index, ambient gas amount, masks, materials, colors, radiances,
+/// pressures, temperatures, and added temperatures
+const EDIT_CELLULAR_TILE_BYTE_COUNT: u64 = (6 + 64 * 6) * 4;
 
 /// GPU writing of edited cells into the active cellular tiles
 pub struct EditCellularTilePass {
@@ -151,12 +151,11 @@ impl EditCellularTilePass {
         ambient_gas_amount: u32,
     ) {
         if edit_cellular_tiles.is_empty() { return; }
-        // WGSL u32, u32, vec2<u32>, vec2<u32>, two array<u32, 64>, and three array<f32, 64> at
-        // offsets 0, 4, 8, 16, 24, 280, 536, 792, and 1048
+        // WGSL tile header, four 64-word arrays, and three 64-float arrays
         let mut edit_cellular_tile_bytes: Vec<u8> = Vec::with_capacity(
             edit_cellular_tiles.len() * EDIT_CELLULAR_TILE_BYTE_COUNT as usize,
         );
-        for (cellular_tile_index, (inserted_cells, replaced_cells, material_identifiers, colors,
+        for (cellular_tile_index, (inserted_cells, replaced_cells, material_identifiers, colors, radiances,
             pressures, temperatures, temperature_changes)) in edit_cellular_tiles
         {
             let cellular_tile_index: u32 = (*cellular_tile_index).into();
@@ -170,6 +169,9 @@ impl EditCellularTilePass {
             }
             for color in colors {
                 edit_cellular_tile_bytes.extend_from_slice(&color.to_le_bytes());
+            }
+            for radiance in radiances {
+                edit_cellular_tile_bytes.extend_from_slice(&radiance.to_le_bytes());
             }
             for value in pressures.iter().chain(temperatures).chain(temperature_changes) {
                 edit_cellular_tile_bytes.extend_from_slice(&value.to_le_bytes());

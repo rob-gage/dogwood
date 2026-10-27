@@ -3,7 +3,7 @@ title = "Data flow end to end"
 description = "How world cells and input move through streaming, simulation, and rendering."
 weight = 30
 [extra]
-sources = ["engine_world/src/scenes", "engine_world/src/materials/material_table.rs", "engine/src/games/game_instance.rs", "engine_host/src/windows/window.rs", "engine_graphics/src/renders/scene_renderer.rs", "engine_user_interface/src/user_interface_renderer.rs", "engine_graphics/src/world/scenes", "engine_host/src/system_events"]
+sources = ["engine_world/src/scenes", "engine_world/src/materials/material_table.rs", "engine/src/games/game_instance.rs", "engine_host/src/windows/window.rs", "engine_graphics/src/renders/scene_renderer.rs", "engine_user_interface/src/user_interface_renderer.rs", "engine_graphics/src/world/scenes", "engine_host/src/system_events", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting_blocks.wgsl", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl", "engine_graphics/src/world/materials/material_radiance.rs", "engine_world/src/actors/components/actor_light.rs"]
 +++
 
 This page traces two paths through the engine: a world cell from generation to pixels and back to disk, and keyboard input to a rendered frame. It is for contributors who need the big picture before reading the subsystem pages.
@@ -79,3 +79,5 @@ gas edit / chunk gas tile -> tile ring gas (GPU)
 ```
 
 Gas species and stored pressure live in the tile ring with the cells and return to chunks with them. See [pressure simulation](@/internals/simulation/pressure.md), [gas rendering](@/internals/rendering/gas-pass.md), and [chunk format](@/internals/world-streaming/chunk-format.md#gas-tile-section).
+
+Rendered appearance now combines material color, ambient light, resident-domain transported light, and material emission. Cellular and fluid radiance persist with their colors; gas radiance comes from material records. See [Lighting](@/external-api/lighting.md) and the [lighting pass](@/internals/rendering/lighting-pass.md).

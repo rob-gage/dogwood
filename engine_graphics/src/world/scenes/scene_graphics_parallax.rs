@@ -1,10 +1,12 @@
 // Copyright Rob Gage 2026
 
-/// A projected background sprite retaining physical depth for later lighting.
+/// A projected background sprite retaining physical depth for lighting.
 #[derive(Clone, Debug)]
 pub struct SceneGraphicsParallax<'a> {
     /// Shared sprite sheet texture
     pub texture: &'a wgpu::TextureView,
+    /// Shared radiance sprite sheet texture: linear emission and occlusion per tile
+    pub radiance_texture: &'a wgpu::TextureView,
     /// Projected camera-relative center in tiles
     pub center: [f32; 2],
     /// Projected dimensions in tiles
@@ -21,6 +23,10 @@ pub struct SceneGraphicsParallax<'a> {
     pub texture_region: [f32; 4],
     /// Linear RGBA multiplier
     pub color: [f32; 4],
+    /// Left, top, right, and bottom radiance frame texture edges
+    pub radiance_texture_region: [f32; 4],
+    /// Multiplier of the radiance emission
+    pub radiance_intensity: f32,
 }
 
 /// Repetition along one sprite-local axis.

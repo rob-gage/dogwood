@@ -18,6 +18,8 @@ pub struct MaterialTransition {
     /// Transformation of the color the material carries into its product, unused by gases, whose
     /// color belongs to their material
     pub color: MaterialColorTransformation,
+    /// Transformation of the radiance the material carries into its product
+    pub radiance: MaterialColorTransformation,
 }
 
 impl MaterialTransition {
@@ -30,6 +32,7 @@ impl MaterialTransition {
             product: product.into(),
             amount: 1.0,
             color: MaterialColorTransformation::IDENTITY,
+            radiance: MaterialColorTransformation::IDENTITY,
         }
     }
 
@@ -42,6 +45,12 @@ impl MaterialTransition {
     /// Sets the color transformation applied by the transition
     pub fn with_color(mut self, color: MaterialColorTransformation) -> Self {
         self.color = color;
+        self
+    }
+
+    /// Sets the radiance transformation applied by the transition
+    pub fn with_radiance(mut self, radiance: MaterialColorTransformation) -> Self {
+        self.radiance = radiance;
         self
     }
 

@@ -41,7 +41,7 @@ var<uniform> uniforms: CollisionRigidBodyUniforms;
 var<storage, read_write> material_identifiers: array<u32>;
 
 @group(0) @binding(2)
-var<storage, read_write> colors: array<u32>;
+var<storage, read_write> colors: array<vec2<u32>>;
 
 @group(0) @binding(3)
 var<storage, read_write> kinematics: array<vec2<u32>>;
@@ -53,7 +53,7 @@ var<storage, read_write> awake: array<atomic<u32>>;
 var<storage, read_write> rigid_body_cells: array<atomic<u32>>;
 
 @group(0) @binding(6)
-var<storage, read> rigid_body_cellular_tile_cells: array<vec2<u32>>;
+var<storage, read> rigid_body_cellular_tile_cells: array<vec4<u32>>;
 
 @group(0) @binding(7)
 var<storage, read_write> rigid_body_cellular_tiles: array<CollisionRigidBodyCellularTile>;
@@ -217,7 +217,7 @@ fn release(
         let index: u32 = cell_index(cell);
         let rigid_body_cell: u32 = atomicLoad(&rigid_body_cells[index]);
         if rigid_body_cell < first || rigid_body_cell >= first + 64u { continue; }
-        let rigid_cell: vec2<u32> = rigid_body_cellular_tile_cells[rigid_body_cell - 1u];
+        let rigid_cell: vec4<u32> = rigid_body_cellular_tile_cells[rigid_body_cell - 1u];
         let material_identifier: u32 = material_identifiers[index];
         // dynamic cells covered by the body stay where they are
         if uniforms.mode == MODE_CLEAR {
@@ -232,7 +232,7 @@ fn release(
                 // a cell left empty keeps its temperature for the gas that fills it
                 if !is_dynamic(rigid_cell.x) { matter[index].y = 0u; }
                 material_identifiers[index] = select(0u, rigid_cell.x, !is_static(rigid_cell.x));
-                colors[index] = select(0u, rigid_cell.y, is_dynamic(rigid_cell.x));
+                colors[index] = select(vec2<u32>(0u), rigid_cell.yz, is_dynamic(rigid_cell.x));
                 gas[index * 8u + 7u] = 0u;
                 kinematics[index] = select(
                     vec2<u32>(0u),
@@ -310,9 +310,9 @@ fn rasterize(
         }
         if !is_claimed { continue; }
         if material_identifier == 0u {
-            let rigid_cell: vec2<u32> = rigid_body_cellular_tile_cells[rigid_body_cell - 1u];
+            let rigid_cell: vec4<u32> = rigid_body_cellular_tile_cells[rigid_body_cell - 1u];
             material_identifiers[index] = rigid_cell.x;
-            colors[index] = rigid_cell.y;
+            colors[index] = rigid_cell.yz;
             kinematics[index] = pack_velocity(point_velocity(rigid_body, cell));
             let state: vec4<u32> = rigid_body_cell_states[rigid_body_cell - 1u];
             gas[index * 8u + 7u] = state.x;
@@ -342,7 +342,7 @@ fn write_cells(@builtin(global_invocation_id) invocation: vec3<u32>) {
     material_identifiers[index] = cell_write.z;
     // an emptied cell keeps its temperature for the gas that fills it
     if cell_write.z == 0u {
-        colors[index] = 0u;
+        colors[index] = vec2<u32>(0u);
         matter[index].y = 0u;
     }
     gas[index * 8u + 7u] = 0u;
@@ -359,11 +359,11 @@ fn read_cells(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let index: u32 = cell_index(vec2<i32>(cell_write.xy));
     cell_reads[invocation.x * 2u] = vec4<u32>(
         material_identifiers[index],
-        colors[index],
+        colors[index].x,
         gas[index * 8u + 7u],
         kinematics[index].y & 0xffffu,
     );
-    cell_reads[invocation.x * 2u + 1u] = vec4<u32>(matter[index], 0u, 0u);
+    cell_reads[invocation.x * 2u + 1u] = vec4<u32>(matter[index], colors[index].y, 0u);
 }
 
 /// Copies stored pressure, integrity, temperature, and amount from old rigid body cell indices to

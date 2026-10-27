@@ -3,7 +3,7 @@ title = "Glossary and coordinate spaces"
 description = "Definitions and conversions for Dogwood's world, tile-ring, physics, and camera coordinates."
 weight = 70
 [extra]
-sources = ["engine_world/src/scenes/pressure", "engine_world/src/scenes/fluids", "engine_world/src/scenes/thermal", "engine_world/src/scenes/scene_position.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/cellular_tiles", "engine_world/src/scenes/chunks/chunk_coordinates.rs", "engine_world/src/scenes/chunks/chunk_data.rs", "engine_world/src/scenes/chunks/chunk_region.rs", "engine_world/src/scenes/chunks/chunk_resident.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/chunks/mod.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl", "engine_graphics/src/world/scenes", "engine_graphics/src/renders/scene_renderer.rs", "engine_graphics/src/renders/scene_renderer_sprites.wgsl"]
+sources = ["engine_world/src/scenes/pressure", "engine_world/src/scenes/fluids", "engine_world/src/scenes/thermal", "engine_world/src/scenes/scene_position.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/cellular_tiles", "engine_world/src/scenes/chunks/chunk_coordinates.rs", "engine_world/src/scenes/chunks/chunk_data.rs", "engine_world/src/scenes/chunks/chunk_region.rs", "engine_world/src/scenes/chunks/chunk_resident.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/chunks/mod.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl", "engine_graphics/src/world/scenes", "engine_graphics/src/renders/scene_renderer.rs", "engine_graphics/src/renders/scene_renderer_sprites.wgsl", "engine_graphics/src/world/materials/material_radiance.rs"]
 +++
 
 This page defines Dogwood's world terms and coordinate spaces, with the conversion formulas between them. It is a reference for engine contributors.
@@ -96,3 +96,12 @@ clip = 2 * camera_relative_position * pixels_per_tile / vec2(viewport_width, vie
 ```
 
 The `clip` expression is the sprite vertex shader's mapping.
+
+### Lighting terms
+
+- **Radiance:** linear HDR RGB emission per cell of light path plus occlusion, the fraction of light blocked by one tile thickness. Packed radiance is stored with cellular and fluid color; gas radiance belongs to its material.
+- **Extinction:** per-cell attenuation coefficient derived from occlusion for light transport.
+- **Fluence:** directional-average light accumulated at a cell by the finest cascade interval.
+- **Penetration:** scene setting controlling how quickly the spread pass attenuates light moving into occluding cells.
+
+See [Lighting](@/external-api/lighting.md) and the [lighting pass](@/internals/rendering/lighting-pass.md).

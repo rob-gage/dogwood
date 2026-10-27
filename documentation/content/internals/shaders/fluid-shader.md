@@ -3,7 +3,7 @@ title = "Fluid particle shader"
 description = "Compute stages, bind groups, packed records, raster layout, and asynchronous readbacks."
 weight = 35
 [extra]
-sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/thermal/thermal_transition.wgsl"]
+sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/thermal/thermal_transition.wgsl", "engine_graphics/src/world/materials/material_radiance.wgsl"]
 +++
 
 `fluid_particle.wgsl` is driven by `FluidParticlePass`. This page owns the GPU layout and dispatch reference; [fluid simulation](@/internals/simulation/fluids.md) explains the numerical algorithm. Rust substitutes `FLUID_BIN_SIZE` and `FLUID_POSITION_RELAXATION / FLUID_ITERATION_COUNT` for WGSL source placeholders when creating the module; the latter scales the complete Jacobi displacement before its length cap.
@@ -51,6 +51,7 @@ Group 0 binding 0 is a dynamic uniform buffer. The main solver layout has ninete
 | 22 | Packed cellular kinematics |
 | 23–24 | Shared-layout actor records / actor feedback |
 | 25–27 | Import commands, rejection flags, and particle exports |
+| 28–31 | Fluid heat, thermal material data, thermal awake flags, and color/radiance raster sums |
 
 The main solver layout uses its existing storage bindings. The conversion layout adds bindings
 40–53 for writable cellular material, color, kinematics, matter, gas, conversion lists, rigid-body
@@ -65,8 +66,8 @@ All words are serialized little-endian by Rust. Sizes below are record strides, 
 
 | Record | Bytes | Fields |
 | --- | ---: | --- |
-| Particle | 32 | Position xy at 0, velocity xy at 8, material ID at 16, tick-start xy at 20, padding at 28 |
-| Exact-position import | 32 | Position xy, velocity xy, material ID, three padding words |
+| Particle | 64 | Position/velocity xy at 0-15, material ID at 16, tick-start xy at 20-27, temperature at 28, packed color at 32, amount at 36, packed radiance at 40, padding at 44-63 |
+| Exact-position import | 48 | Position/velocity xy at 0-15, material ID at 16, color at 20, temperature at 24, amount at 28, radiance at 32, padding at 36-47 |
 | Spawn command | 16 | Local integer cell xy, material ID, Insert flag |
 | Predicted position | 8 | Two `f32` coordinates |
 | Neighbor | 20 | Old position xy, cohesion, artificial pressure, sleeping flag |
@@ -75,9 +76,9 @@ All words are serialized little-endian by Rust. Sizes below are record strides, 
 | Actor | 64 | Shared [cellular tile actor layout](@/internals/shaders/cellular-tile-shader.md#actors-and-rigid-bodies); word 14 is the idle-swimmer flag |
 | Actor feedback | 32 | Signed fixed-point impulse xy, immersion, current xy, density, drag, unused word |
 | Import result | 4 | Zero accepted, nonzero rejected |
-| Export | 40 | Whole world-cell x/y as four low/high words, fractional xy, velocity xy, material ID, padding |
+| Export | 56 | Whole world-cell x/y as four low/high words, fractional xy, velocity xy, material ID, color, radiance, temperature, amount, padding |
 
-Exports have a leading `u32` count. Resident snapshots instead hold a leading live count plus the packed particle array. The [material table](@/internals/simulation/material-table.md#fluid-property-buffer) owns the 32-byte material layout; [chunk format](@/internals/world-streaming/chunk-format.md#fluid-particle-section) owns the distinct 32-byte disk layout.
+Exports have a leading `u32` count. Resident snapshots instead hold a leading live count plus the packed particle array. A separate live fluid color buffer uses eight `u32` words per physical cell: four color sums followed by three emission sums and one occlusion sum. The [material table](@/internals/simulation/material-table.md#fluid-property-buffer) owns the 32-byte material layout; [chunk format](@/internals/world-streaming/chunk-format.md#fluid-particle-section) owns the distinct 32-byte disk layout.
 
 ### Uniforms
 
@@ -102,6 +103,7 @@ For `C` physical ring cells and `T` tiles, the fluid raster contains:
 
 ```text
 4*C words     mass, momentum x/y, selected material per cell
+8*C words     packed color channel sums, emission channel sums, occlusion sums
 T words       sparse physical-tile flags
 T words       sparse physical-tile list
 1 word        listed-tile count

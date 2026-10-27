@@ -52,6 +52,7 @@ use crate::{
     },
 };
 use engine_host::acceleration::{Accelerator, AcceleratorReadback, AcceleratorReadbackError};
+use engine_graphics::world::materials::MATERIAL_RADIANCE_WGSL;
 use std::{
     borrow::Cow,
     collections::HashMap,
@@ -70,13 +71,13 @@ const UNIFORM_STRIDE: u64 = 256;
 const UNIFORM_BYTE_COUNT: u64 = 152;
 
 /// Bytes in the packed fluid particle state record
-const PARTICLE_BYTE_COUNT: u64 = 48;
+const PARTICLE_BYTE_COUNT: u64 = 64;
 
 /// Bytes in one exact-position particle import command
-const IMPORT_BYTE_COUNT: u64 = 32;
+const IMPORT_BYTE_COUNT: u64 = 48;
 
 /// Words in one exported particle record, excluding the leading count
-const EXPORT_WORD_COUNT: u64 = 13;
+const EXPORT_WORD_COUNT: u64 = 14;
 
 /// Bytes in one compact neighbor record: old position, cohesion, pressure, and sleep flag
 const NEIGHBOR_DATA_BYTE_COUNT: u64 = 20;
@@ -110,6 +111,8 @@ pub(super) struct FluidEdit {
     pub(super) material_identifier: MaterialIdentifier,
     /// Packed sRGB RGBA color of the spawned particle
     pub color: u32,
+    /// Packed linear RGBA16F radiance of the spawned particle
+    pub radiance: u32,
     /// Particle temperature in kelvin
     pub temperature: f32,
     /// One for Insert, zero for Replace
@@ -160,8 +163,9 @@ pub struct FluidParticlePass {
     erasure_mask_buffer: wgpu::Buffer,
     /// Physical cell raster followed by sparse tile flags, list, and count
     fluid_raster_buffer: wgpu::Buffer,
-    /// Packed sRGB red, green, blue, and alpha of the particles in each physical cell, each summed
-    /// weighted by the particles' fixed-point raster mass
+    /// Eight words per physical cell: color at 0..3 is `channel * mass_fixed`; linear emission at
+    /// 4..6 is `round(min(channel, 127) * 64) * mass_fixed`; occlusion at 7 is
+    /// `round(occlusion * 255) * mass_fixed`
     fluid_color_buffer: wgpu::Buffer,
     /// Fixed-point heat capacity, heat, and heat capacity times conduction of the particles in each
     /// physical cell, then the temperature change in kelvin the thermal step leaves them
@@ -448,6 +452,7 @@ impl FluidParticlePass {
         );
         let thermal_offsets: [u32; 4] = material_table.thermal_offsets();
         let shader_source: String = [
+            MATERIAL_RADIANCE_WGSL,
             include_str!("fluid_particle.wgsl"),
             include_str!("../thermal/thermal_transition.wgsl"),
         ].join("\n")
@@ -670,7 +675,7 @@ impl FluidParticlePass {
         );
         let fluid_color_buffer: wgpu::Buffer = create_buffer(
             "`FluidParticlePass.fluid_color_buffer`",
-            cell_count * 16,
+            cell_count * 32,
             wgpu::BufferUsages::STORAGE,
         );
         let fluid_heat_buffer: wgpu::Buffer = create_buffer(
@@ -1232,10 +1237,13 @@ impl FluidParticlePass {
         accelerator.queue().submit(Some(command_encoder.finish()));
     }
 
-    /// Returns the colors of the particles in each physical cell, summed weighted by raster mass
+    /// Eight words per physical cell: words 0..3 are existing mass-weighted packed sRGBA8 channel
+    /// sums; words 4..6 sum `round(min(emission_channel, 127) * 64) * mass_fixed`; word 7 sums
+    /// `round(occlusion * 255) * mass_fixed`
     pub fn fluid_color_buffer(&self) -> &wgpu::Buffer { &self.fluid_color_buffer }
 
-    /// Returns the fluid heat the particles in each physical cell deposit
+    /// Returns one vec4<i32> per physical cell: capacity*1024, energy*64, conduction*1024, and
+    /// temperature change as f32 bits
     pub fn fluid_heat_buffer(&self) -> &wgpu::Buffer { &self.fluid_heat_buffer }
 
     /// Returns every actor sample whose asynchronous mapping completed
@@ -1463,7 +1471,7 @@ impl FluidParticlePass {
                 edit.color,
                 edit.temperature.to_bits(),
                 CELLULAR_TILE_AMOUNT_PER_UNIT,
-                0,
+                edit.radiance,
             ]);
         }
         let has_erasures: bool = erase_words.iter()
@@ -1490,7 +1498,8 @@ impl FluidParticlePass {
             for value in [import.position[0].to_bits(), import.position[1].to_bits(),
                 import.particle.velocity()[0].to_bits(), import.particle.velocity()[1].to_bits(),
                 import.particle.material_identifier().as_u32(), import.particle.color(),
-                import.particle.temperature().to_bits(), import.particle.amount()]
+                import.particle.temperature().to_bits(), import.particle.amount(),
+                import.particle.radiance(), 0, 0, 0]
             { import_bytes.extend_from_slice(&value.to_le_bytes()); }
         }
         if !import_bytes.is_empty() {
@@ -2257,6 +2266,7 @@ fn decode_live_particle_snapshot(
             velocity,
             MaterialIdentifier::from_u32(read(start + 16)),
             read(start + 32),
+            read(start + 40),
             f32::from_bits(read(start + 28)),
             read(start + 36),
         ).map_err(|_| SceneError::FluidParticleExportRecordInvalid)?;

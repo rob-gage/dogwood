@@ -16,10 +16,19 @@ sources = [
     "engine_host/src/windows/mod.rs",
     "engine_world/src/scenes/mod.rs",
     "engine_world/src/scenes/scene.rs",
+    "engine_graphics/src/renders/scene_renderer_lighting_pass.rs",
+    "engine_graphics/src/renders/scene_renderer_lighting.wgsl",
+    "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl",
+    "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl",
+    "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl",
+    "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl",
+    "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl",
+    "engine_graphics/src/world/scenes/scene_graphics_lighting.rs",
+    "engine_world/src/materials/material_temperature_color.rs",
 ]
 +++
 
-An `Engine` bundles the GPU `Accelerator` and the worker-thread `Processor`. Use `Engine::default()` for the default accelerator and processor. This page covers the settings you can change: worker pools, window frame rate, scene gravity, and ambient gas.
+An `Engine` bundles the GPU `Accelerator` and the worker-thread `Processor`. Use `Engine::default()` for the default accelerator and processor. This page covers the settings you can change: worker pools, window frame rate, scene gravity, ambient gas, and scene lighting.
 
 ## Build an engine
 
@@ -80,5 +89,9 @@ Scenes start with downward gravity of `50.0` tiles per second squared. Call `Sce
 ## Ambient gas
 
 Empty cells hold phantom air at `1.0` atmosphere with a mass of `29.0` per atmosphere. Call `Scene::set_ambient_gas_pressure` and `Scene::set_ambient_gas_mass` to replace them; gases lighter than the ambient mass rise and heavier ones sink, and a pressure of zero makes empty cells a vacuum. See [scenes](@/external-api/scenes.md) for validation.
+
+## Scene lighting
+
+`Scene` exposes runtime setters for ambient light and light penetration. The template uses daylight ambient `[0.75, 0.78, 0.85]`; see [lighting](@/external-api/lighting.md) for defaults, validation, and radiance behavior.
 
 {{ <rustdoc path="engine/runtime/struct.Engine.html" text="Engine" /> }}

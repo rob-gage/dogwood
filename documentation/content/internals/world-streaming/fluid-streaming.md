@@ -24,13 +24,15 @@ The cellular edit path substitutes empty material/zero color for written fluid c
 
 The cellular part of fluid Insert uses ordinary edit collision rules. Its independently queued particle spawn checks nonempty cellular matter and an occupancy-generation stamp for existing particles on the GPU; it does not receive the cellular collider mask. Actor overlap is resolved later by particle projection. It creates at most one new particle per occupied cell stamp. GPU capacity is checked again atomically. Imported records may share the same cell to preserve compressed saves; they do not use Insert's one-per-cell rejection.
 
-> **Limitation:** Particle erasures are queued separately from the cellular Insert acceptance test. A non-fluid Insert's particle erasure is not conditioned on the eventual cellular write succeeding. Per-edit fluid color is not persisted per particle; rendering uses the fluid material's color.
+> **Limitation:** Particle erasures are queued separately from the cellular Insert acceptance test. A non-fluid Insert's particle erasure is not conditioned on the eventual cellular write succeeding.
+
+Per-edit fluid color and radiance are carried by particles and persisted; fluid rendering combines their rasterized values.
 
 ## Dormant imports
 
 After streaming, resident tiles are scanned for dormant particles when no save or import handoff blocks admission. Imports take whole tile groups up to the available reservation and the per-tick target; a first tile larger than that target can be selected whole. A GPU import submission is capped to pool capacity; queued excess waits.
 
-Selecting particles removes them from their active CPU chunk and marks it dirty. Integer world/chunk offsets are subtracted before converting to local floats, preserving fractions at large coordinates. The import retains exact position, velocity, and material. The GPU rejects unregistered/non-fluid IDs, out-of-region positions, nonempty cellular cells, or a full pool. An asynchronous flag per import distinguishes acceptance from rejection; rejected original records return to their source chunks and can be retried. If chunk application fails, the rejected list is restored for retry.
+Selecting particles removes them from their active CPU chunk and marks it dirty. Integer world/chunk offsets are subtracted before converting to local floats, preserving fractions at large coordinates. The import record is 48 bytes and retains exact position, velocity, material, color, temperature, amount, and radiance. The GPU rejects unregistered/non-fluid IDs, out-of-region positions, nonempty cellular cells, or a full pool. An asynchronous flag per import distinguishes acceptance from rejection; rejected original records return to their source chunks and can be retried. If chunk application fails, the rejected list is restored for retry.
 
 Ring movement waits while imports remain queued, mapped results remain pending, or rejected records await return. This keeps their local coordinates valid. Rejected records in blocked cells can remain dormant rather than vanish.
 
@@ -38,7 +40,7 @@ Ring movement waits while imports remain queued, mapped results remain pending, 
 
 A ring shift copies outgoing cellular tiles before reusing their slots and allocates a particle export buffer on that request. It refuses another shift while any earlier particle export has not been submitted. During the following simulation, compaction rebases positions by the old-minus-new region origin, erases selected cells, and exports particles outside the new region. Survivors are packed into the other state buffer.
 
-Exports encode signed 64-bit whole world-cell coordinates as low/high words, plus fractional position, velocity, and material. They avoid representing a large absolute world position as one float. The scene marks the oldest export request submitted only after the particle simulation succeeds; mapping starts afterward.
+Exports encode signed 64-bit whole world-cell coordinates as low/high words, plus fractional position, velocity, material, color, amount, and radiance. They avoid representing a large absolute world position as one float. The scene marks the oldest export request submitted only after the particle simulation succeeds; mapping starts afterward.
 
 A request is applied only after both cellular and particle buffers are ready. Old chunk retention remains attached until the data is applied in request order. Re-entry into an outgoing tile waits for its previous return, preventing stale CPU data from being imported over newer exported state.
 

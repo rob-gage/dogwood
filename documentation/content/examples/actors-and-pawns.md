@@ -3,7 +3,7 @@ title = "Actors, cameras, and pawns"
 description = "Spawn scene actors, select a camera, and opt a pawn into keyboard movement."
 weight = 30
 [extra]
-sources = ["engine_world/src/actors", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/scene_position.rs", "engine_world/src/scenes/collisions/collision.rs", "engine/src/games/game_instance.rs", "engine/src/games/game.rs", "engine/src/lib.rs"]
+sources = ["engine_world/src/actors", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/scene_position.rs", "engine_world/src/scenes/collisions/collision.rs", "engine/src/games/game_instance.rs", "engine/src/games/game.rs", "engine/src/lib.rs", "engine_graphics/src/world/scenes/scene_graphics_lighting.rs"]
 +++
 
 ## Spawn actors with components
@@ -50,5 +50,7 @@ See [pawn movement](@/internals/actors/pawn-movement.md) for movement mechanics 
 ## Actor lifetime
 
 Actors outside the active region are despawned unless marked persistent; actor components are not saved with chunk data. See [actor lifetime](@/internals/actors/actor-lifetime.md) for the rules.
+
+Add `ActorLightComponent` alongside an actor position to emit colored light from a disc. Its default is white, intensity `1.0`, radius `0.5` tiles; see [lighting](@/external-api/lighting.md) for details.
 
 {{ <rustdoc path="engine/actors/struct.ActorRegistry.html" text="ActorRegistry" /> }} · {{ <rustdoc path="engine/actors/components/struct.ActorCameraComponent.html" text="ActorCameraComponent" /> }} · {{ <rustdoc path="engine/games/trait.Game.html" text="Game" /> }}

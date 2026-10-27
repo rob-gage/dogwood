@@ -14,6 +14,27 @@ sources = [
     "engine/src/games/game_instance.rs",
     "engine_world/src/scenes/scene.rs",
     "engine/src/lib.rs",
+    "engine_graphics/src/world/materials/material_radiance.rs",
+    "engine_world/src/materials/material_temperature_color.rs",
+    "engine_graphics/src/renders/scene_renderer_lighting_pass.rs",
+    "engine_graphics/src/renders/scene_renderer_lighting.wgsl",
+    "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl",
+    "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl",
+    "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl",
+    "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl",
+    "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl",
+    "template/assets/sprites/glowstone_red.png",
+    "template/assets/sprites/glowstone_green.png",
+    "template/assets/sprites/glowstone_blue.png",
+    "template/assets/sprites/glowstone_cyan.png",
+    "template/assets/sprites/glowstone_magenta.png",
+    "template/assets/sprites/glowstone_yellow.png",
+    "template/assets/sprites/glowstone_gravel_red.png",
+    "template/assets/sprites/glowstone_gravel_green.png",
+    "template/assets/sprites/glowstone_gravel_blue.png",
+    "template/assets/sprites/glowstone_gravel_cyan.png",
+    "template/assets/sprites/glowstone_gravel_magenta.png",
+    "template/assets/sprites/glowstone_gravel_yellow.png",
 ]
 +++
 
@@ -84,6 +105,6 @@ The status bar otherwise reports **Unsaved changes** after accepted editor strok
 
 ## Paint water
 
-The template registers `water` in the material picker. Select it and paint into empty space, then enable Play: particle spawns and erasures are applied by simulation, so they do not appear while the editor is paused. Water uses its material color; the brush color does not tint individual particles. The player's jump/up and crouch/down controls swim vertically once sufficiently immersed.
+The template registers `water` and six colored glowstone materials in the material picker. Their optical properties contribute emitted light and occlusion; see the [template lighting overview](@/getting-started/template-walkthrough.md#materials). Select water and paint into empty space, then enable Play: particle spawns and erasures are applied by simulation, so they do not appear while the editor is paused. Water uses its material color; the brush color does not tint individual particles. The player's jump/up and crouch/down controls swim vertically once sufficiently immersed.
 
 Large requests can report `CapacityReached`; see [fluid capacity](@/external-api/scenes.md#fluid-capacity). Enable Play to apply particle edits before requesting a save, and keep the lifecycle running while imports finish; see [fluid saving](@/internals/world-streaming/fluid-streaming.md#resident-saves). The template deletes its world on launch, as described in [the walkthrough](@/getting-started/template-walkthrough.md#world).

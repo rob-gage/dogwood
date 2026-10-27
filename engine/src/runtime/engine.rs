@@ -1,31 +1,15 @@
 // Copyright Rob Gage 2026
 
 use super::EngineError;
-use crate::games::{
-    Game,
-    GameInstance,
-};
+use crate::games::{Game, GameInstance};
 use engine_host::{
     acceleration::Accelerator,
     processors::Processor,
-    system_events::{
-        SystemKeyboardEvent,
-        SystemMouseEvent,
-        SystemWindowEvent,
-    },
-    windows::{
-        Window,
-        WindowConfiguration,
-    },
+    system_events::{SystemKeyboardEvent, SystemMouseEvent, SystemWindowEvent},
+    windows::{Window, WindowConfiguration},
 };
-use engine_user_interface::{
-    egui,
-    UserInterfaceContext,
-};
-use std::{
-    cell::RefCell,
-    time::Duration,
-};
+use engine_user_interface::{UserInterfaceContext, egui};
+use std::{cell::RefCell, time::Duration};
 
 /// Fixed update frequency in updates per second
 const UPDATES_PER_SECOND: u32 = 60;
@@ -42,17 +26,23 @@ pub struct Engine {
 }
 
 impl Engine {
-
     /// Creates an engine from initialized graphics and CPU processing resources
     pub const fn new(accelerator: Accelerator, processor: Processor) -> Self {
-        Self { accelerator, processor }
+        Self {
+            accelerator,
+            processor,
+        }
     }
 
     /// Returns the shared graphics and compute context
-    pub const fn accelerator(&self) -> &Accelerator { &self.accelerator }
+    pub const fn accelerator(&self) -> &Accelerator {
+        &self.accelerator
+    }
 
     /// Returns the CPU execution pool manager
-    pub const fn processor(&self) -> &Processor { &self.processor }
+    pub const fn processor(&self) -> &Processor {
+        &self.processor
+    }
 
     /// Launches a game using this `Engine`
     pub fn launch<G: Game>(self, game: G) -> Result<(), EngineError> {
@@ -70,16 +60,19 @@ impl Engine {
         let mut mouse_event_handler: Box<dyn FnMut(SystemMouseEvent)> =
             Box::new(|event: SystemMouseEvent| game_instance.borrow_mut().mouse_event(event));
         let mut update_handler: Box<dyn FnMut(Duration)> = Box::new(|elapsed_time: Duration| {
-            game_instance.borrow_mut().update(self.accelerator(), self.processor(), elapsed_time);
+            game_instance
+                .borrow_mut()
+                .update(self.accelerator(), self.processor(), elapsed_time);
         });
         let mut render_handler: Box<
             dyn FnMut(&wgpu::TextureView, egui::RawInput) -> egui::PlatformOutput,
         > = Box::new(|texture_view: &wgpu::TextureView, input: egui::RawInput| {
-            game_instance.borrow_mut().render(self.accelerator(), texture_view, input)
+            game_instance
+                .borrow_mut()
+                .render(self.accelerator(), texture_view, input)
         });
-        let update_interval: Duration = Duration::from_nanos(
-            1_000_000_000 / u64::from(UPDATES_PER_SECOND),
-        );
+        let update_interval: Duration =
+            Duration::from_nanos(1_000_000_000 / u64::from(UPDATES_PER_SECOND));
         let maximum_accumulated_time: Duration = update_interval * MAXIMUM_ACCUMULATED_UPDATES;
         Window::open(
             &mut window_event_handler,
@@ -92,14 +85,14 @@ impl Engine {
             window_configuration,
             update_interval,
             maximum_accumulated_time,
-        ).map_err(EngineError::from)
+        )
+        .map_err(EngineError::from)
     }
-
 }
 
 impl Default for Engine {
-
     /// Creates an engine with the default accelerator and processor, panicking if either fails
-    fn default() -> Self { Self::new(Accelerator::default(), Processor::default()) }
-
+    fn default() -> Self {
+        Self::new(Accelerator::default(), Processor::default())
+    }
 }

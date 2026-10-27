@@ -35,6 +35,7 @@ impl EditorBrush {
         size: u32,
         material_identifier: MaterialIdentifier,
         color: u32,
+        radiance: u32,
     ) -> Result<(), EditError> {
         match self {
             // a segment between cell centers covers exactly the cells a circle passes over
@@ -58,6 +59,7 @@ impl EditorBrush {
                     f64::from(size) / 2.0 / CELLULAR_TILE_SIZE as f64,
                     material_identifier,
                     color,
+                    radiance,
                     None,
                 )
             }
@@ -81,6 +83,7 @@ impl EditorBrush {
                                 CellCoordinates { x: x + offset_x, y: y + offset_y },
                                 material_identifier,
                                 color,
+                                radiance,
                                 None,
                             );
                         }

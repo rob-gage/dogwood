@@ -175,7 +175,7 @@ var<storage, read_write> kinematics: array<vec2<u32>>;
 var<storage, read_write> changed_cellular_tiles: array<atomic<u32>>;
 
 @group(0) @binding(18)
-var<storage, read_write> colors: array<u32>;
+var<storage, read_write> colors: array<vec2<u32>>;
 
 @group(0) @binding(19)
 var<storage, read_write> changed_rigid_body_cells: array<atomic<u32>>;
@@ -2035,7 +2035,7 @@ fn damage(
         material_identifiers[index] = debris;
         // an emptied cell keeps its temperature for the gas that fills it
         if debris == 0u {
-            colors[index] = 0u;
+            colors[index] = vec2<u32>(0u);
             matter[index].y = 0u;
         }
         kinematics[index] = select(

@@ -9,7 +9,7 @@ This page explains how cell edits move from an `Edit` request through validation
 
 ## Request and validation
 
-An `Edit` groups cell fills and pressure changes by cellular tile. Fills carry a bit mask, material identifiers, and packed colors; `pressures` stores per-cell signed pressure deltas in atmospheres. `fill_cell` replaces an earlier fill at the same cell. `fill_segment` rasterizes cells whose centers lie within the requested radius (in tiles) of a segment.
+An `Edit` groups cell fills and pressure changes by cellular tile. Fills carry a bit mask, material identifiers, packed colors, and packed radiance; `pressures` stores per-cell signed pressure deltas in atmospheres. `fill_cell` replaces an earlier fill at the same cell. `fill_segment` rasterizes cells whose centers lie within the requested radius (in tiles) of a segment.
 
 | Limit or rule | Behaviour |
 | --- | --- |
@@ -27,7 +27,7 @@ The first 4096 limit bounds one `fill_segment` call's candidates; the second bou
 
 ### Color
 
-Accepted non-empty colors pass through `MaterialTable::cellular_color`. Cells with available albedo use it tinted by the requested color; materials without albedo retain the requested color.
+Accepted non-empty colors pass through `MaterialTable::cellular_color`. Radiance is resolved through `MaterialTable::cellular_radiance`; the `u32::MAX` fill sentinel selects the material default. Cells with available albedo use it tinted by the requested color; materials without albedo retain the requested color.
 
 ### Edit modes
 
@@ -43,7 +43,7 @@ At stream time, the edit state collects tiles touched by any Insert request and 
 
 This preserves the sequential effect of the queued edits while needing only one merged record per affected tile.
 
-The GPU edit pass uses one 64-invocation workgroup per tile and applies queued pressure deltas. For static cells, edits change stored pressure. For other cells, added pressure becomes phantom air; removed pressure reduces all gas proportionally. Replaced cells always write; inserted cells write only if the GPU cell is still empty. A write stores the material and color, or for a gas leaves the cell empty and fills its gas; it clears the cell's kinematics and marks its tile awake and disturbed and pressure awake. See the [edit shader](@/internals/shaders/edit-shader.md#cell-write-behavior). The edit state clears its queued tile count after processing; an empty merged result requires no GPU pass.
+The GPU edit pass uses one 64-invocation workgroup per tile and applies queued pressure deltas. For static cells, edits change stored pressure. For other cells, added pressure becomes phantom air; removed pressure reduces all gas proportionally. Replaced cells always write; inserted cells write only if the GPU cell is still empty. A write stores the material, color, and radiance, or for a gas leaves the cell empty and fills its gas; it clears the cell's kinematics and marks its tile awake and disturbed and pressure awake. See the [edit shader](@/internals/shaders/edit-shader.md#cell-write-behavior). The edit state clears its queued tile count after processing; an empty merged result requires no GPU pass.
 
 ## Collision and persistence
 

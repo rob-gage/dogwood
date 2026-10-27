@@ -38,7 +38,7 @@ A **material** defines how a kind of cell behaves and looks. A game registers na
 - **cellular dynamic:** cells moved by the kinematics simulation, such as gravel, which falls and piles.
 - **fluid** or **gas.**
 
-See [Defining materials](@/examples/materials-and-sprites.md) for setup.
+Materials also carry optical radiance used for emitted light and occlusion during rendering. See [Defining materials](@/examples/materials-and-sprites.md) and the [lighting overview](@/external-api/lighting.md).
 
 Fluid materials use [GPU particles](@/internals/simulation/fluids.md) separate from cellular slots and render from a cell raster.
 

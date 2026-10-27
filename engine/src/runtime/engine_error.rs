@@ -18,43 +18,37 @@ pub enum EngineError {
 }
 
 impl From<engine_host::acceleration::AcceleratorError> for EngineError {
-
     fn from(error: engine_host::acceleration::AcceleratorError) -> Self {
         EngineError::Accelerator(error)
     }
-
 }
 
 impl From<engine_host::processors::ProcessorError> for EngineError {
-
     fn from(error: engine_host::processors::ProcessorError) -> Self {
         EngineError::Processor(error)
     }
-
 }
 
 impl From<engine_host::windows::WindowError> for EngineError {
-
-    fn from(error: engine_host::windows::WindowError) -> Self { EngineError::Window(error) }
-
+    fn from(error: engine_host::windows::WindowError) -> Self {
+        EngineError::Window(error)
+    }
 }
 
 impl From<engine_graphics::sprites::SpriteSheetError> for EngineError {
-
     fn from(error: engine_graphics::sprites::SpriteSheetError) -> Self {
         EngineError::SpriteSheet(error)
     }
-
 }
 
 impl From<engine_world::materials::MaterialError> for EngineError {
-
-    fn from(error: engine_world::materials::MaterialError) -> Self { EngineError::Material(error) }
-
+    fn from(error: engine_world::materials::MaterialError) -> Self {
+        EngineError::Material(error)
+    }
 }
 
 impl From<engine_world::actors::ActorError> for EngineError {
-
-    fn from(error: engine_world::actors::ActorError) -> Self { EngineError::Actor(error) }
-
+    fn from(error: engine_world::actors::ActorError) -> Self {
+        EngineError::Actor(error)
+    }
 }

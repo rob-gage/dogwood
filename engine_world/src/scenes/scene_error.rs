@@ -27,6 +27,10 @@ pub enum SceneError {
     InvalidAmbientGasMass,
     /// Ambient gas temperature is not finite or is negative
     InvalidAmbientGasTemperature,
+    /// Ambient light has a nonfinite or negative channel
+    InvalidAmbientLight,
+    /// Light penetration is not finite or is less than one
+    InvalidLightPenetration,
     /// Ambient gas heat capacity is not finite or is not positive
     InvalidAmbientGasHeatCapacity,
     /// Ambient gas conduction is not finite or is negative

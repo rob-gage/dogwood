@@ -3,7 +3,7 @@ title = "Materials"
 description = "Material forms, identifiers, registration, compilation, and available material table lookups."
 weight = 70
 [extra]
-sources = ["engine_world/src/materials", "engine_graphics/src/world/materials", "engine/src/lib.rs"]
+sources = ["engine_world/src/materials", "engine_graphics/src/world/materials", "engine_graphics/src/sprites", "engine/src/lib.rs"]
 +++
 
 Materials are registered in a `MaterialRegistry`, compiled into an immutable `MaterialTable`, and referenced by `MaterialIdentifier`. This page is the API reference for defining and querying materials; see [defining materials](@/examples/materials-and-sprites.md) for construction examples. The facade exports the API as `engine::materials`.
@@ -18,15 +18,15 @@ have been registered.
 |---|---|---|
 | `register_cellular_static(name, properties)` | `MaterialPropertiesCellularStatic` | `mass`, `friction`, `restitution`, `strength`, `absorption`, `debris: Option<String>` |
 | `register_cellular_dynamic(name, properties)` | `MaterialPropertiesCellularDynamic` | `mass`, `friction`, `restitution` |
-| `register_fluid(name, properties)` | `MaterialPropertiesFluid` | `density`, `viscosity`, `cohesion`, `artificial_pressure`, `drag`, `friction`, `restitution`, `edit_color` |
-| `register_gas(name, properties)` | `MaterialPropertiesGas` | `mass`, `diffusivity`, `cohesion`, `graphics` (`color`, `opacity`) |
+| `register_fluid(name, properties)` | `MaterialPropertiesFluid` | `density`, `viscosity`, `cohesion`, `artificial_pressure`, `drag`, `friction`, `restitution`, `edit_color`, `edit_radiance` |
+| `register_gas(name, properties)` | `MaterialPropertiesGas` | `mass`, `diffusivity`, `cohesion`, `graphics` (`color`, `opacity`, `radiance`) |
 
 Every form also has `thermal: MaterialPropertiesThermal`, with `heat_capacity`, `conduction`,
-`edit_temperature`, `hot_transition`, and `cold_transition`. Defaults are heat capacity `1.0`,
+`edit_temperature`, `hot_transition`, `cold_transition`, and render-time `temperature_colors`. Defaults are heat capacity `1.0`,
 conduction `0.0`, edit temperature `293.0`, and no transitions. Gas heat capacity is per
 atmosphere. `MaterialTransition::new(temperature, latent_heat, product)` takes a product name,
-then `with_amount` and `with_color` set optional values; defaults are amount `1.0` and identity
-color transformation.
+then `with_amount`, `with_color`, and `with_radiance` set optional values; defaults are amount `1.0`
+and identity color and radiance transformations.
 
 Registration rejects empty trimmed names and duplicate exact names. Names are case-sensitive and
 are not trimmed before lookup. Compilation rejects unknown references, debris that does not name a
@@ -49,14 +49,22 @@ in [the material table page](@/internals/simulation/material-table.md).
 - Thermal heat capacity must be finite and positive; conduction and edit temperature finite and
   nonnegative. Transition temperatures and latent heat must be nonnegative, amount at least
   1/4096, and hot transition temperature above cold transition temperature. Color transformation values must
-  be finite, and color variances nonnegative.
+  be finite, and color variances nonnegative. Temperature color keys require finite, nonnegative, strictly
+  increasing temperatures, finite transforms, and zero variances.
 - Cellular albedo scales must be finite and positive, and each sprite frame must be valid.
 
 ### Graphics properties
 
-`MaterialGraphicsCellularStatic` and `MaterialGraphicsCellularDynamic` share the fields `sprite_sheet: Arc<SpriteSheet>`, `frame` (frame index), and `width` and `height` (repetition scales in cells per pixel). The facade re-exports them as `engine::MaterialGraphicsCellularStatic` and `engine::MaterialGraphicsCellularDynamic`; they are defined in `engine_graphics::world::materials`.
+`MaterialGraphicsCellularStatic` and `MaterialGraphicsCellularDynamic` share the fields `sprite_sheet: Arc<SpriteSheet>`, `frame` (frame index), and `width` and `height` (repetition scales in cells per pixel). Their radiance graphics use the same graphics type in `edit_radiance`, with an independent frame and repetition pattern; `edit_radiance_intensity` scales its decoded RGB emission. The facade re-exports both graphics types as `engine::MaterialGraphicsCellularStatic` and `engine::MaterialGraphicsCellularDynamic`; they are defined in `engine_graphics::world::materials`.
 
-`MaterialPropertiesFluid::edit_color` is packed sRGB RGBA; alpha specifies the opacity of a full cell when edits create fluid particles. `MaterialGraphicsGas` has a packed `color: u32` and an `opacity` multiplier; alpha specifies the opacity of one atmosphere of the gas before that multiplier. It is re-exported as `engine::MaterialGraphicsGas`.
+`MaterialPropertiesFluid::edit_color` is packed sRGB RGBA; alpha specifies the opacity of a full cell when edits create fluid particles. `edit_radiance` supplies packed emission and occlusion for new fluid particles. `MaterialGraphicsGas` has packed `color: u32`, material-wide radiance emission per atmosphere, and an `opacity` multiplier; color alpha is the opacity of one atmosphere before that multiplier. It is re-exported as `engine::MaterialGraphicsGas`.
+
+Radiance is linear HDR emission RGB plus occlusion, the fraction of light blocked by one tile of thickness. Emission is per cell along the optical path: a full-thickness cell shows its emission at the surface, while thin gas or sprites emit along the path. `pack_radiance` clamps emission channels to 0–127 and occlusion to 0–1; its packed `u32` uses three 7-bit emission mantissas in bits 0–20, a shared 4-bit exponent in bits 21–24, and 7-bit occlusion in bits 25–31.
+
+`MaterialTemperatureColor::new(temperature)` creates an identity key; `with_color` and `with_radiance` set its two transforms. `MaterialPropertiesThermal::temperature_colors` stores these keys, which interpolate color and radiance transforms at render time. They change appearance without modifying stored color or radiance; temperature keys require finite, nonnegative, strictly increasing temperatures, finite transforms, and zero variances. With no keys, the transforms are identity. See [thermal simulation](@/internals/simulation/thermal.md) for the render-time behavior.
+
+`SpriteSheet` albedo uploads generate a complete CPU box-filtered mip chain with RGB averaged in
+linear light and linear alpha. See [lighting](@/external-api/lighting.md) for sprite radiance sheets.
 
 Fluid materials use [particle simulation](@/internals/simulation/fluids.md) and [raster-based rendering](@/internals/rendering/fluid-pass.md). Material density supplies physical mass; the pressure solver uses a shared rest spacing.
 
@@ -97,8 +105,7 @@ Registered static materials start at index 1. Dynamic, fluid, and gas indices st
 names. `debris(identifier)` returns the resolved dynamic debris identifier. `material_count()`
 counts all forms.
 
-The table provides `cellular_color(identifier, cell, color)` and the GPU buffer accessors. For
-cellular materials with albedo, `cellular_color` samples the frame at the cell center. The pattern
+The table provides `cellular_color(identifier, cell, color)`, `cellular_radiance(identifier, cell, radiance)`, and GPU buffer accessors. Cellular radiance sampling uses the same frame and repetition math as albedo sampling; the explicit radiance value passes through unchanged. For cellular materials with albedo, `cellular_color` samples the frame at the cell center. The pattern
 repeats from the scene origin with image rows flipped. It applies the packed sRGB tint, multiplying
 RGB in linear light and alpha separately. Colors use RGBA bytes, with red in the least-significant
 byte: `u32::from_le_bytes([r, g, b, a])`.
@@ -114,6 +121,6 @@ details.
 
 Core: {{ <rustdoc path="engine/materials/enum.Material.html" text="Material" /> }} · {{ <rustdoc path="engine/materials/enum.MaterialForm.html" text="MaterialForm" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialIdentifier.html" text="MaterialIdentifier" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialRegistry.html" text="MaterialRegistry" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialTable.html" text="MaterialTable" /> }} · {{ <rustdoc path="engine/materials/enum.MaterialError.html" text="MaterialError" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialTransition.html" text="MaterialTransition" /> }}
 
-Properties: {{ <rustdoc path="engine/materials/struct.MaterialPropertiesCellularStatic.html" text="MaterialPropertiesCellularStatic" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialPropertiesCellularDynamic.html" text="MaterialPropertiesCellularDynamic" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialPropertiesFluid.html" text="MaterialPropertiesFluid" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialPropertiesGas.html" text="MaterialPropertiesGas" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialPropertiesThermal.html" text="MaterialPropertiesThermal" /> }}
+Properties: {{ <rustdoc path="engine/materials/struct.MaterialPropertiesCellularStatic.html" text="MaterialPropertiesCellularStatic" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialPropertiesCellularDynamic.html" text="MaterialPropertiesCellularDynamic" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialPropertiesFluid.html" text="MaterialPropertiesFluid" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialPropertiesGas.html" text="MaterialPropertiesGas" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialPropertiesThermal.html" text="MaterialPropertiesThermal" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialTemperatureColor.html" text="MaterialTemperatureColor" /> }}
 
 Graphics: {{ <rustdoc path="engine/struct.MaterialGraphicsCellularStatic.html" text="MaterialGraphicsCellularStatic" /> }} · {{ <rustdoc path="engine/struct.MaterialGraphicsCellularDynamic.html" text="MaterialGraphicsCellularDynamic" /> }} · {{ <rustdoc path="engine/struct.MaterialGraphicsGas.html" text="MaterialGraphicsGas" /> }}

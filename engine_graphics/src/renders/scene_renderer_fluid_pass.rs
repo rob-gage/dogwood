@@ -1,5 +1,6 @@
 // Copyright Rob Gage 2026
 
+use super::scene_renderer_lighting_pass::lighting_shader_source;
 use crate::world::scenes::SceneGraphicsFluid;
 use engine_host::acceleration::Accelerator;
 use std::collections::HashMap;
@@ -37,12 +38,14 @@ pub struct SceneRendererFluidPass {
     material_properties_buffer: Option<wgpu::Buffer>,
     /// Particle color buffer used by the cached fluid bind group
     color_buffer: Option<wgpu::Buffer>,
+    /// Fluid heat buffer used by the cached fluid bind group
+    heat_buffer: Option<wgpu::Buffer>,
 }
 
 impl SceneRendererFluidPass {
 
     /// Creates fluid rendering resources
-    pub fn new(accelerator: &Accelerator) -> Self {
+    pub fn new(accelerator: &Accelerator, lighting_bind_group_layout: &wgpu::BindGroupLayout) -> Self {
         let device: &wgpu::Device = accelerator.device();
         let bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
@@ -108,13 +111,23 @@ impl SceneRendererFluidPass {
                         },
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             },
         );
         let pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("`SceneRendererFluidPass.pipeline_layout`"),
-                bind_group_layouts: &[Some(&bind_group_layout)],
+                bind_group_layouts: &[Some(&bind_group_layout), Some(lighting_bind_group_layout)],
                 immediate_size: 0,
             },
         );
@@ -122,7 +135,7 @@ impl SceneRendererFluidPass {
             wgpu::ShaderModuleDescriptor {
                 label: Some("`SceneRendererFluidPass.shader_module`"),
                 source: wgpu::ShaderSource::Wgsl(
-                    include_str!("scene_renderer_fluid.wgsl").into(),
+                    lighting_shader_source(1, include_str!("scene_renderer_fluid.wgsl")).into(),
                 ),
             },
         );
@@ -162,6 +175,7 @@ impl SceneRendererFluidPass {
             raster_buffer: None,
             material_properties_buffer: None,
             color_buffer: None,
+            heat_buffer: None,
         }
     }
 
@@ -296,8 +310,10 @@ impl SceneRendererFluidPass {
             != Some(fluid_graphics.material_properties_buffer);
         let color_buffer_differs: bool =
             self.color_buffer.as_ref() != Some(fluid_graphics.color_buffer);
+        let heat_buffer_differs: bool =
+            self.heat_buffer.as_ref() != Some(fluid_graphics.heat_buffer);
         if self.bind_group.is_none() || raster_buffer_differs || materials_buffer_differs
-            || color_buffer_differs || cell_buffers_differ
+            || color_buffer_differs || heat_buffer_differs || cell_buffers_differ
         {
             let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("`SceneRendererFluidPass.bind_group`"),
@@ -339,6 +355,10 @@ impl SceneRendererFluidPass {
                         binding: 5,
                         resource: self.shaded_cell_buffer.as_entire_binding(),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: fluid_graphics.heat_buffer.as_entire_binding(),
+                    },
                 ],
             });
             self.bind_group = Some(bind_group);
@@ -346,11 +366,16 @@ impl SceneRendererFluidPass {
             self.material_properties_buffer =
                 Some(fluid_graphics.material_properties_buffer.clone());
             self.color_buffer = Some(fluid_graphics.color_buffer.clone());
+            self.heat_buffer = Some(fluid_graphics.heat_buffer.clone());
         }
     }
 
-    /// Classifies and shades the prepared view's cells before the view is drawn
-    pub fn shade(&self, command_encoder: &mut wgpu::CommandEncoder) {
+    /// Classifies and shades the prepared view's lit cells before the view is drawn
+    pub fn shade(
+        &self,
+        command_encoder: &mut wgpu::CommandEncoder,
+        lighting_bind_group: &wgpu::BindGroup,
+    ) {
         let Some(bind_group) = self.bind_group.as_ref() else { return; };
         let (shaded_width, shaded_height): (u32, u32) = self.shaded_size;
         if shaded_width == 0 || shaded_height == 0 { return; }
@@ -360,6 +385,7 @@ impl SceneRendererFluidPass {
                 timestamp_writes: None,
             });
         compute_pass.set_bind_group(0, bind_group, &[]);
+        compute_pass.set_bind_group(1, lighting_bind_group, &[]);
         compute_pass.set_pipeline(&self.classify_pipeline);
         compute_pass.dispatch_workgroups(
             shaded_width.div_ceil(8),
@@ -370,8 +396,13 @@ impl SceneRendererFluidPass {
         compute_pass.dispatch_workgroups(shaded_width.div_ceil(8), shaded_height.div_ceil(8), 1);
     }
 
-    /// Draws fluid color for one prepared view
-    pub fn draw(&self, render_pass: &mut wgpu::RenderPass<'_>, format: wgpu::TextureFormat) {
+    /// Draws shaded fluid color for one prepared view
+    pub fn draw(
+        &self,
+        render_pass: &mut wgpu::RenderPass<'_>,
+        format: wgpu::TextureFormat,
+        lighting_bind_group: &wgpu::BindGroup,
+    ) {
         let render_pipeline: &wgpu::RenderPipeline = match self.pipelines.get(&format) {
             Some(render_pipeline) => render_pipeline,
             None => return,
@@ -382,6 +413,7 @@ impl SceneRendererFluidPass {
         };
         render_pass.set_pipeline(render_pipeline);
         render_pass.set_bind_group(0, bind_group, &[]);
+        render_pass.set_bind_group(1, lighting_bind_group, &[]);
         render_pass.draw(0..3, 0..1);
     }
 

@@ -42,6 +42,10 @@ var<storage, read> gas_cells: array<vec4<u32>>;
 @group(0) @binding(3)
 var<storage, read> gas_materials: array<vec4<f32>>;
 
+/// Temperature bits then amount of every cell
+@group(0) @binding(4)
+var<storage, read> matter: array<vec2<u32>>;
+
 /// Opacity below which a cell's gas is not drawn and ends the cloud
 const VISIBLE_ALPHA_MINIMUM: f32 = 0.02;
 
@@ -103,14 +107,30 @@ fn cell_gas_color(cell: vec2<i32>) -> vec4<f32> {
     let properties: vec4<f32> = gas_materials[gas_index * 2u];
     let opacity: f32 = gas_materials[gas_index * 2u + 1u].x;
     let srgb_color: vec4<f32> = unpack4x8unorm(bitcast<u32>(properties.w));
-    let linear_rgb: vec3<f32> = vec3<f32>(
+    let thermal: u32 = lighting_view.thermal_offsets.w + gas_index;
+    let temperature: f32 = bitcast<f32>(matter[cell_index].x);
+    let color: vec4<f32> = temperature_color(thermal, temperature, vec4<f32>(
         srgb_to_linear(srgb_color.r),
         srgb_to_linear(srgb_color.g),
         srgb_to_linear(srgb_color.b),
+        srgb_color.a,
+    ), false);
+    let radiance: vec4<f32> = temperature_color(
+        thermal,
+        temperature,
+        unpack_radiance(bitcast<u32>(gas_materials[gas_index * 2u + 1u].y)),
+        true,
     );
-    let density: f32 = f32(total_amount) / uniforms.amount_per_atmosphere * opacity;
-    let alpha: f32 = clamp(1.0 - pow(1.0 - srgb_color.a, density), 0.0, 1.0);
-    return vec4<f32>(linear_rgb * alpha, alpha);
+    let atmospheres: f32 = f32(total_amount) / uniforms.amount_per_atmosphere;
+    let alpha: f32 = clamp(1.0 - pow(1.0 - color.a, atmospheres * opacity), 0.0, 1.0);
+    // glowing gas shows its emission per atmosphere, however transparent it is
+    let light: vec3<f32> = light_at(vec2<f32>(cell) + 0.5);
+    return vec4<f32>(color.rgb * light * alpha + radiance.rgb * min(atmospheres, 1.0), alpha);
+}
+
+/// Returns whether a premultiplied gas color is visible
+fn is_visible(color: vec4<f32>) -> bool {
+    return max(color.a, max(color.r, max(color.g, color.b))) > VISIBLE_ALPHA_MINIMUM;
 }
 
 /// Draws one gas framebuffer pixel: only inside cells holding visible gas, so cloud edges follow
@@ -125,7 +145,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     );
     let local: vec2<f32> = uniforms.camera_relative_region + world_offset;
     let cell_position: vec2<f32> = local * f32(uniforms.cellular_tile_size);
-    if cell_gas_color(vec2<i32>(floor(cell_position))).a <= VISIBLE_ALPHA_MINIMUM {
+    if !is_visible(cell_gas_color(vec2<i32>(floor(cell_position)))) {
         discard;
     }
     let continuous_cell: vec2<f32> = cell_position - vec2<f32>(0.5);
@@ -137,7 +157,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     for (var corner: u32 = 0u; corner < 4u; corner++) {
         let offset: vec2<u32> = vec2<u32>(corner % 2u, corner / 2u);
         let corner_color: vec4<f32> = cell_gas_color(lower_cell + vec2<i32>(offset));
-        if corner_color.a <= VISIBLE_ALPHA_MINIMUM { continue; }
+        if !is_visible(corner_color) { continue; }
         let weights: vec2<f32> = select(
             1.0 - cell_fraction,
             cell_fraction,

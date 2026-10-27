@@ -1,5 +1,6 @@
 // Copyright Rob Gage 2026
 
+use super::scene_renderer_lighting_pass::lighting_shader_source;
 use crate::world::scenes::SceneGraphicsGas;
 use engine_host::acceleration::Accelerator;
 use std::collections::HashMap;
@@ -24,12 +25,14 @@ pub struct SceneRendererGasPass {
     gas_buffer: Option<wgpu::Buffer>,
     /// Material properties buffer used by the cached gas bind group
     material_properties_buffer: Option<wgpu::Buffer>,
+    /// Matter buffer used by the cached gas bind group
+    matter_buffer: Option<wgpu::Buffer>,
 }
 
 impl SceneRendererGasPass {
 
     /// Creates gas rendering resources
-    pub fn new(accelerator: &Accelerator) -> Self {
+    pub fn new(accelerator: &Accelerator, lighting_bind_group_layout: &wgpu::BindGroupLayout) -> Self {
         let device: &wgpu::Device = accelerator.device();
         let bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
@@ -75,13 +78,23 @@ impl SceneRendererGasPass {
                         },
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             },
         );
         let pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("`SceneRendererGasPass.pipeline_layout`"),
-                bind_group_layouts: &[Some(&bind_group_layout)],
+                bind_group_layouts: &[Some(&bind_group_layout), Some(lighting_bind_group_layout)],
                 immediate_size: 0,
             },
         );
@@ -89,7 +102,7 @@ impl SceneRendererGasPass {
             wgpu::ShaderModuleDescriptor {
                 label: Some("`SceneRendererGasPass.shader_module`"),
                 source: wgpu::ShaderSource::Wgsl(
-                    include_str!("scene_renderer_gas.wgsl").into(),
+                    lighting_shader_source(1, include_str!("scene_renderer_gas.wgsl")).into(),
                 ),
             },
         );
@@ -110,6 +123,7 @@ impl SceneRendererGasPass {
             material_identifier_buffer: None,
             gas_buffer: None,
             material_properties_buffer: None,
+            matter_buffer: None,
         }
     }
 
@@ -124,6 +138,7 @@ impl SceneRendererGasPass {
         viewport_height: u32,
         pixels_per_tile: f32,
         gas_graphics: &SceneGraphicsGas<'_>,
+        matter_buffer: &wgpu::Buffer,
     ) {
         let device: &wgpu::Device = accelerator.device();
         if !self.pipelines.contains_key(&format) {
@@ -200,8 +215,9 @@ impl SceneRendererGasPass {
         let gas_buffers_differ: bool = self.gas_buffer.as_ref() != Some(gas_graphics.gas_buffer);
         let properties_buffers_differ: bool = self.material_properties_buffer.as_ref()
             != Some(gas_graphics.material_properties_buffer);
+        let matter_buffers_differ: bool = self.matter_buffer.as_ref() != Some(matter_buffer);
         if self.bind_group.is_none() || material_buffers_differ || gas_buffers_differ
-            || properties_buffers_differ
+            || properties_buffers_differ || matter_buffers_differ
         {
             let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("`SceneRendererGasPass.bind_group`"),
@@ -235,17 +251,27 @@ impl SceneRendererGasPass {
                             size: None,
                         }),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: matter_buffer.as_entire_binding(),
+                    },
                 ],
             });
             self.bind_group = Some(bind_group);
             self.material_identifier_buffer = Some(gas_graphics.material_identifier_buffer.clone());
             self.gas_buffer = Some(gas_graphics.gas_buffer.clone());
             self.material_properties_buffer = Some(gas_graphics.material_properties_buffer.clone());
+            self.matter_buffer = Some(matter_buffer.clone());
         }
     }
 
-    /// Draws gas cells for one prepared view
-    pub fn draw(&self, render_pass: &mut wgpu::RenderPass<'_>, format: wgpu::TextureFormat) {
+    /// Draws lit gas cells for one prepared view
+    pub fn draw(
+        &self,
+        render_pass: &mut wgpu::RenderPass<'_>,
+        format: wgpu::TextureFormat,
+        lighting_bind_group: &wgpu::BindGroup,
+    ) {
         let render_pipeline: &wgpu::RenderPipeline = match self.pipelines.get(&format) {
             Some(render_pipeline) => render_pipeline,
             None => return,
@@ -256,6 +282,7 @@ impl SceneRendererGasPass {
         };
         render_pass.set_pipeline(render_pipeline);
         render_pass.set_bind_group(0, bind_group, &[]);
+        render_pass.set_bind_group(1, lighting_bind_group, &[]);
         render_pass.draw(0..3, 0..1);
     }
 

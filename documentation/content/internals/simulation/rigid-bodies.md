@@ -30,14 +30,14 @@ These checks avoid detaching groups that may continue beyond the available regio
 
 ## Creation
 
-Detached groups are read from GPU cell storage to retain each cell's material identifier, color, stored pressure, and integrity. The read is copied at the end of the collision tick and applied in the next one. At apply time, cells no longer static are removed from the candidate; the remaining static cells are processed as a group.
+Detached groups are read from GPU cell storage to retain each cell's material identifier, color, radiance, stored pressure, and integrity. The read is copied at the end of the collision tick and applied in the next one. At apply time, cells no longer static are removed from the candidate; the remaining static cells are processed as a group.
 
-- Groups with fewer than 12 cells become debris. Each cell is replaced by its static material's configured debris material (a registered cellular dynamic material), or by empty if none is configured. Cells converted to a debris material keep their color; cells replaced by empty have their color cleared.
+- Groups with fewer than 12 cells become debris. Each cell is replaced by its static material's configured debris material (a registered cellular dynamic material), or by empty if none is configured. Cells converted to a debris material keep their color and radiance; cells replaced by empty have both cleared.
 - Thermal and fluid conversions apply the same isolated-cell debris rule before collision detection, so those products do not first enter static occupancy when all four side-neighbors are non-static.
 - Groups of 12 or more cells become candidate rigid bodies.
 - If body or tile capacity prevents insertion, the group remains static.
 
-Each body stores an 8x8-cell occupancy mask per cellular tile, plus per-cell material identifiers and colors. Rapier receives a dynamic body and a voxel collider. The GPU pass receives tile records and a body record used to rasterize the cells. Each body cell also carries stored pressure and integrity in a GPU state buffer. That state follows cells through release, rasterization, body splits, and detachment. The body tracks the last rasterized pose. The [Rapier collision world](@/internals/simulation/collision-world.md) covers the broader collision step.
+Each body stores an 8x8-cell occupancy mask per cellular tile, plus per-cell material identifiers, colors, and radiance. Each rigid-body cell record stores material, color, radiance, and padding. Rapier receives a dynamic body and a voxel collider. The GPU pass receives tile records and a body record used to rasterize the cells. Each body cell also carries stored pressure and integrity in a GPU state buffer. That state follows cells through release, rasterization, body splits, and detachment. The body tracks the last rasterized pose. The [Rapier collision world](@/internals/simulation/collision-world.md) covers the broader collision step.
 
 ### Mass properties
 

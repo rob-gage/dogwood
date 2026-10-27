@@ -5,8 +5,13 @@
 pub struct SceneGraphicsFluid<'a> {
     /// Fixed-point mass, momentum, and dominant material for each physical ring cell
     pub raster_buffer: &'a wgpu::Buffer,
-    /// Summed sRGB particle color channels weighted by raster mass for each physical ring cell
+    /// Eight words per physical cell: words 0..3 are existing mass-weighted packed sRGBA8 channel
+    /// sums; words 4..6 sum `round(min(emission_channel, 127) * 64) * mass_fixed`; word 7 sums
+    /// `round(occlusion * 255) * mass_fixed`
     pub color_buffer: &'a wgpu::Buffer,
+    /// One `vec4<i32>` per physical cell: capacity*1024, energy*64, conduction*1024, and
+    /// temperature change as f32 bits
+    pub heat_buffer: &'a wgpu::Buffer,
     /// Seven physics values followed by packed sRGB color per 32-byte fluid material record
     pub material_properties_buffer: &'a wgpu::Buffer,
     /// Horizontal offset of the region's bottom-left corner from the camera in tiles

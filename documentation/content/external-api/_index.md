@@ -5,7 +5,7 @@ weight = 3
 sort_by = "weight"
 template = "section.html"
 [extra]
-sources = ["engine/src/lib.rs", "engine_host/src/lib.rs", "engine_graphics/src/lib.rs", "template/Cargo.toml.template", "documentation/site.sh"]
+sources = ["engine/src/lib.rs", "engine_host/src/lib.rs", "engine_graphics/src/lib.rs", "template/Cargo.toml.template", "documentation/site.sh", "engine_graphics/src/world/materials/material_radiance.rs"]
 +++
 
 The `engine` crate is the game-facing facade, and this section documents it together with the `editor` crate and the `dogwood` command-line tool. It is for game programmers who write a `Game` and need exact type, method, and module names. New readers should start with [Engine and Game](@/external-api/engine-and-games.md).
@@ -57,3 +57,7 @@ Browse the {{ <rustdoc path="engine/index.html" text="public engine API" /> }}. 
 The site's references come from `./documentation/site.sh build`, which runs rustdoc twice: a public reference of the library crates (`cargo doc --workspace --exclude cli --no-deps`) and a private one of every crate, including the `dogwood` CLI (`--document-private-items`).
 
 The `engine::scenes::fluids` module exports engine-managed `Fluids` and solver constants. `engine::scenes::chunks::ChunkFluidParticle` represents dormant particles. See [fluid simulation](@/internals/simulation/fluids.md). The `engine::scenes::pressure` module exports engine-managed `Pressure` and pressure constants; see [pressure simulation](@/internals/simulation/pressure.md).
+
+- [Lighting](@/external-api/lighting.md): radiance sheets, scene controls, and actor lights.
+
+The facade also re-exports `pack_radiance`; see [Lighting](@/external-api/lighting.md).

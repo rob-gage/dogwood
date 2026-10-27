@@ -47,7 +47,7 @@ use std::collections::{
 };
 
 /// Bytes in one world-cell particle record written by the compaction export
-const EXPORT_RECORD_BYTE_COUNT: usize = 52;
+const EXPORT_RECORD_BYTE_COUNT: usize = 56;
 
 /// Fluid particle simulation of one scene's active cellular tile ring
 pub struct Fluids {
@@ -128,7 +128,7 @@ impl Fluids {
     /// Returns whether a request's possible fluid spawns fit the reserved particle capacity
     pub fn can_queue_edit(&self, edit: &Edit) -> bool {
         let mut spawn_count: u64 = 0;
-        for (cells, material_identifiers, _, _) in edit.cellular_tiles.values() {
+        for (cells, material_identifiers, _, _, _) in edit.cellular_tiles.values() {
             for (cell_index, material_identifier) in material_identifiers.iter().enumerate() {
                 if cells & (1u64 << cell_index) != 0
                     && *material_identifier != MaterialIdentifier::EMPTY
@@ -143,7 +143,7 @@ impl Fluids {
 
     /// Queues the particle effects of one already validated world-cell edit
     pub fn queue_edit(&mut self, edit: &Edit) {
-        for (coordinates, (cells, material_identifiers, colors, temperatures))
+        for (coordinates, (cells, material_identifiers, colors, radiances, temperatures))
             in &edit.cellular_tiles
         {
             for cell_index in 0..64 {
@@ -163,6 +163,7 @@ impl Fluids {
                     self.queued_edits.insert(cell, FluidEdit {
                         material_identifier,
                         color: colors[cell_index],
+                        radiance: radiances[cell_index],
                         temperature: temperatures[cell_index],
                         mode,
                     });
@@ -476,16 +477,17 @@ impl Fluids {
         self.particle_pass.fluid_raster_buffer()
     }
 
-    /// Returns the fixed-point heat capacity, heat, and heat capacity times conduction of the
-    /// particles in each physical cell, then the temperature change the thermal step leaves them
-    pub fn fluid_heat_buffer(&self) -> &wgpu::Buffer {
-        self.particle_pass.fluid_heat_buffer()
-    }
-
-    /// Returns the packed sRGB red, green, blue, and alpha of the particles in each physical cell,
-    /// each summed weighted by the particles' fixed-point raster mass
+    /// Returns eight words per physical cell: words 0..3 are existing mass-weighted packed sRGBA8
+    /// channel sums; words 4..6 sum `round(min(emission_channel, 127) * 64) * mass_fixed`; word 7
+    /// sums `round(occlusion * 255) * mass_fixed`
     pub fn fluid_color_buffer(&self) -> &wgpu::Buffer {
         self.particle_pass.fluid_color_buffer()
+    }
+
+    /// Returns one `vec4<i32>` per physical cell: capacity*1024, energy*64, conduction*1024, and
+    /// temperature change as f32 bits
+    pub fn fluid_heat_buffer(&self) -> &wgpu::Buffer {
+        self.particle_pass.fluid_heat_buffer()
     }
 
     /// Returns the fixed byte size of one compaction export readback
@@ -535,8 +537,9 @@ pub(crate) fn decode_exported_particle_records(
         let material_identifier: MaterialIdentifier =
             MaterialIdentifier::from_u32(read_u32(record_start + 32));
         let color: u32 = read_u32(record_start + 36);
-        let temperature: f32 = f32::from_bits(read_u32(record_start + 40));
-        let amount: u32 = read_u32(record_start + 44);
+        let radiance: u32 = read_u32(record_start + 40);
+        let temperature: f32 = f32::from_bits(read_u32(record_start + 44));
+        let amount: u32 = read_u32(record_start + 48);
         if !fraction_x.is_finite() || !(0.0..1.0).contains(&fraction_x)
             || !fraction_y.is_finite() || !(0.0..1.0).contains(&fraction_y)
         { return Err(SceneError::FluidParticleExportRecordInvalid); }
@@ -554,6 +557,7 @@ pub(crate) fn decode_exported_particle_records(
             velocity,
             material_identifier,
             color,
+            radiance,
             temperature,
             amount,
         ).map_err(|_| SceneError::FluidParticleExportRecordInvalid)?;

@@ -27,13 +27,13 @@ use std::{
 const CHUNK_FILE_HEADER: [u8; 8] = *b"DOGWOOD\0";
 
 /// Current sparse chunk file format version
-const CHUNK_FILE_VERSION: u16 = 8;
+const CHUNK_FILE_VERSION: u16 = 9;
 
-/// Bytes in one sparse cell entry holding its index, material identifier, color, and kinematics
-const CHUNK_FILE_CELL_BYTE_COUNT: usize = 20;
+/// Bytes in one sparse cell entry holding its index, material identifier, color, radiance, and kinematics
+const CHUNK_FILE_CELL_BYTE_COUNT: usize = 24;
 
-/// Bytes in one persisted fluid particle record with color, temperature, and amount
-const CHUNK_FILE_FLUID_PARTICLE_BYTE_COUNT: usize = 32;
+/// Bytes in one persisted fluid particle record with color, radiance, temperature, and amount
+const CHUNK_FILE_FLUID_PARTICLE_BYTE_COUNT: usize = 36;
 
 /// Bytes in one persisted cellular tile gas record
 const CHUNK_FILE_GAS_TILE_BYTE_COUNT: usize = 4 + 512 * 4;
@@ -53,6 +53,8 @@ pub struct Chunk {
     material_identifiers: Vec<MaterialIdentifier>,
     /// Packed RGBA colors in row-major cell order
     colors: Vec<u32>,
+    /// Packed radiance values in row-major cell order
+    radiances: Vec<u32>,
     /// Packed velocities and timing of dynamic cells in row-major cell order
     kinematics: Vec<u64>,
     /// Sparse fluid particles stored relative to this chunk's origin
@@ -76,6 +78,8 @@ pub struct ChunkFluidParticle {
     material_identifier: MaterialIdentifier,
     /// Packed sRGB RGBA color
     color: u32,
+    /// Packed linear RGBA16F radiance
+    radiance: u32,
     /// IEEE-754 temperature bits in kelvin
     temperature_bits: u32,
     /// Amount in units of `CELLULAR_TILE_AMOUNT_PER_UNIT`
@@ -90,6 +94,7 @@ impl ChunkFluidParticle {
         velocity: [f32; 2],
         material_identifier: MaterialIdentifier,
         color: u32,
+        radiance: u32,
         temperature: f32,
         amount: u32,
     ) -> Result<Self, ChunkError> {
@@ -98,6 +103,7 @@ impl ChunkFluidParticle {
             velocity_bits: [velocity[0].to_bits(), velocity[1].to_bits()],
             material_identifier,
             color,
+            radiance,
             temperature_bits: temperature.to_bits(),
             amount,
         };
@@ -120,6 +126,9 @@ impl ChunkFluidParticle {
 
     /// Returns the packed sRGB RGBA color
     pub fn color(self) -> u32 { self.color }
+
+    /// Returns the packed linear RGBA16F radiance
+    pub fn radiance(self) -> u32 { self.radiance }
 
     /// Returns the particle temperature in kelvin
     pub fn temperature(self) -> f32 { f32::from_bits(self.temperature_bits) }
@@ -158,6 +167,7 @@ impl Chunk {
             coordinates,
             material_identifiers: vec![MaterialIdentifier::EMPTY; CHUNK_CELL_COUNT],
             colors: vec![0; CHUNK_CELL_COUNT],
+            radiances: vec![0; CHUNK_CELL_COUNT],
             kinematics: vec![0; CHUNK_CELL_COUNT],
             fluid_particles: Vec::new(),
             gas_cellular_tiles: BTreeMap::new(),
@@ -165,10 +175,11 @@ impl Chunk {
         }
     }
 
-    /// Fills every cell in this chunk with one material and packed color, at rest
-    pub fn fill(&mut self, material_identifier: MaterialIdentifier, color: u32) {
+    /// Fills every cell in this chunk with one material, packed color and radiance, at rest
+    pub fn fill(&mut self, material_identifier: MaterialIdentifier, color: u32, radiance: u32) {
         self.material_identifiers.fill(material_identifier);
         self.colors.fill(color);
+        self.radiances.fill(radiance);
         self.kinematics.fill(0);
         self.fluid_particles.clear();
         self.gas_cellular_tiles.clear();
@@ -298,21 +309,27 @@ impl Chunk {
                 encoded_cell[10],
                 encoded_cell[11],
             ]);
-            let kinematics: u64 = u64::from_le_bytes([
+            let radiance: u32 = u32::from_le_bytes([
                 encoded_cell[12],
                 encoded_cell[13],
                 encoded_cell[14],
                 encoded_cell[15],
+            ]);
+            let kinematics: u64 = u64::from_le_bytes([
                 encoded_cell[16],
                 encoded_cell[17],
                 encoded_cell[18],
                 encoded_cell[19],
+                encoded_cell[20],
+                encoded_cell[21],
+                encoded_cell[22],
+                encoded_cell[23],
             ]);
             if cell_index as usize >= CHUNK_CELL_COUNT {
                 return Err(ChunkError::CellIndexOutOfRange);
             }
             let identifier: MaterialIdentifier = MaterialIdentifier::from_u32(identifier_value);
-            if identifier == MaterialIdentifier::EMPTY && color == 0 {
+            if identifier == MaterialIdentifier::EMPTY && color == 0 && radiance == 0 {
                 return Err(ChunkError::CellIsEmpty);
             }
             if is_cell_stored[cell_index as usize] {
@@ -321,6 +338,7 @@ impl Chunk {
             is_cell_stored[cell_index as usize] = true;
             chunk.material_identifiers[cell_index as usize] = identifier;
             chunk.colors[cell_index as usize] = color;
+            chunk.radiances[cell_index as usize] = radiance;
             chunk.kinematics[cell_index as usize] = kinematics;
         }
         for encoded_particle in encoded_particles.chunks_exact(
@@ -339,8 +357,9 @@ impl Chunk {
                 velocity_bits: [read_u32(8), read_u32(12)],
                 material_identifier: MaterialIdentifier::from_u32(read_u32(16)),
                 color: read_u32(20),
-                temperature_bits: read_u32(24),
-                amount: read_u32(28),
+                radiance: read_u32(24),
+                temperature_bits: read_u32(28),
+                amount: read_u32(32),
             };
             particle.validate()?;
             chunk.fluid_particles.push(particle);
@@ -402,7 +421,8 @@ impl Chunk {
     pub fn write<W: io::Write>(&self, w: &mut W) -> Result<(), ChunkError> {
         let stored_cell_count: u32 = self.material_identifiers.iter()
             .zip(self.colors.iter())
-            .filter(|(material, color)| **material != MaterialIdentifier::EMPTY || **color != 0)
+            .zip(self.radiances.iter())
+            .filter(|((material, color), radiance)| **material != MaterialIdentifier::EMPTY || **color != 0 || **radiance != 0)
             .count() as u32;
         // write the format header before the sparse cell entries
         let mut header: Vec<u8> = Vec::with_capacity(22);
@@ -414,16 +434,18 @@ impl Chunk {
         w.write_all(&header).map_err(ChunkError::Io)?;
         let mut encoded_cells: Vec<u8> =
             Vec::with_capacity(stored_cell_count as usize * CHUNK_FILE_CELL_BYTE_COUNT);
-        for (cell_index, ((material, color), kinematics)) in self.material_identifiers.iter()
+        for (cell_index, (((material, color), radiance), kinematics)) in self.material_identifiers.iter()
             .zip(self.colors.iter())
+            .zip(self.radiances.iter())
             .zip(self.kinematics.iter())
             .enumerate()
         {
-            if *material == MaterialIdentifier::EMPTY && *color == 0 { continue; }
+            if *material == MaterialIdentifier::EMPTY && *color == 0 && *radiance == 0 { continue; }
             let cell_index: u32 = cell_index as u32;
             encoded_cells.extend_from_slice(&cell_index.to_le_bytes());
             encoded_cells.extend_from_slice(&material.as_u32().to_le_bytes());
             encoded_cells.extend_from_slice(&color.to_le_bytes());
+            encoded_cells.extend_from_slice(&radiance.to_le_bytes());
             encoded_cells.extend_from_slice(&kinematics.to_le_bytes());
         }
         w.write_all(&encoded_cells).map_err(ChunkError::Io)?;
@@ -444,6 +466,7 @@ impl Chunk {
                 .chain([
                     particle.material_identifier.as_u32(),
                     particle.color,
+                    particle.radiance,
                     particle.temperature_bits,
                     particle.amount,
                 ])
@@ -595,6 +618,22 @@ impl Chunk {
         Ok(colors)
     }
 
+    /// Returns the packed radiances of one cellular tile within this chunk
+    pub fn cellular_tile_radiances(
+        &self,
+        coordinates: CellularTileCoordinates,
+    ) -> Result<[u32; 64], ChunkError> {
+        let mut radiances: [u32; 64] = [0; 64];
+        for (tile_row, chunk_row_start) in self.cellular_tile_row_starts(coordinates)?
+            .into_iter()
+            .enumerate()
+        {
+            radiances[tile_row * 8..tile_row * 8 + 8]
+                .copy_from_slice(&self.radiances[chunk_row_start..chunk_row_start + 8]);
+        }
+        Ok(radiances)
+    }
+
     /// Returns the packed kinematics of one cellular tile within this chunk
     pub fn cellular_tile_kinematics(
         &self,
@@ -666,6 +705,22 @@ impl Chunk {
         {
             self.colors[chunk_row_start..chunk_row_start + 8]
                 .copy_from_slice(&colors[tile_row * 8..tile_row * 8 + 8]);
+        }
+        Ok(())
+    }
+
+    /// Replaces the packed radiances of one cellular tile within this chunk
+    pub fn set_cellular_tile_radiances(
+        &mut self,
+        coordinates: CellularTileCoordinates,
+        radiances: &[u32; 64],
+    ) -> Result<(), ChunkError> {
+        for (tile_row, chunk_row_start) in self.cellular_tile_row_starts(coordinates)?
+            .into_iter()
+            .enumerate()
+        {
+            self.radiances[chunk_row_start..chunk_row_start + 8]
+                .copy_from_slice(&radiances[tile_row * 8..tile_row * 8 + 8]);
         }
         Ok(())
     }

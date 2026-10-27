@@ -55,8 +55,8 @@ An `Edit` exposes its `mode`, `cellular_tiles` fills, and `pressures` map of per
 ### Building an edit
 
 - `Edit::new(mode)` starts an empty edit.
-- `fill_cell(cell: CellCoordinates, material_identifier: MaterialIdentifier, color: u32, temperature: Option<f32>)` records a cell and replaces any earlier fill of that cell in the edit. Pack `color` as RGBA with red in the least-significant byte: `u32::from_le_bytes([r, g, b, a])`. The optional fill temperature is supplied in kelvin; omitted temperatures use the material edit temperature.
-- `fill_segment(start: ScenePosition, end: ScenePosition, radius: f64, material_identifier: MaterialIdentifier, color: u32, temperature: Option<f32>) -> Result<(), EditError>` fills cells whose centers fall within `radius` of the segment; `radius` is in tiles.
+- `fill_cell(cell: CellCoordinates, material_identifier: MaterialIdentifier, color: u32, radiance: u32, temperature: Option<f32>)` records a cell and replaces any earlier fill of that cell in the edit. Pack `color` as RGBA with red in the least-significant byte: `u32::from_le_bytes([r, g, b, a])`. The radiance argument is packed linear HDR emission and occlusion (use `pack_radiance`); `u32::MAX` selects material radiance. The optional fill temperature is supplied in kelvin; omitted temperatures use the material edit temperature.
+- `fill_segment(start: ScenePosition, end: ScenePosition, radius: f64, material_identifier: MaterialIdentifier, color: u32, radiance: u32, temperature: Option<f32>) -> Result<(), EditError>` fills cells whose centers fall within `radius` of the segment; `radius` is in tiles.
 - `add_temperature_cell` / `remove_temperature_cell` change everything in one cell by a kelvin amount; segment variants apply the change to cells near a segment. Cooling does not lower a cell below zero kelvin.
 - `add_pressure_cell` / `remove_pressure_cell` change one cell by an atmosphere amount. `add_pressure_segment` / `remove_pressure_segment` apply the change within a segment radius in tiles.
 
@@ -74,7 +74,7 @@ Pending edits are applied in request order before the next stream moves their re
 | `EditMode::Insert` | Fills empty cells not overlapped by physical `ActorCollisionComponent` colliders whose memberships include `COLLISION_GROUP_EDIT`; the collider filter is not checked. Contact sensors do not block inserts. |
 | `EditMode::Replace` | Fills every requested cell and ignores colliders. |
 
-In `Replace` mode, filling with `MaterialIdentifier::EMPTY` clears a cell; `Insert` skips fills with `EMPTY`. Filling with a gas material leaves the cell empty and fills it with that gas at scene ambient gas pressure, or one atmosphere when ambient pressure is lower; emptying leaves phantom air at ambient pressure. Pressure edits add to stored pressure in static cells; other cells add phantom air or reduce all gas proportionally.
+In `Replace` mode, filling with `MaterialIdentifier::EMPTY` clears a cell; set its color and radiance to zero. `Insert` skips fills with `EMPTY`. Filling with a gas material leaves the cell empty and fills it with that gas at scene ambient gas pressure, or one atmosphere when ambient pressure is lower; emptying leaves phantom air at ambient pressure. Pressure edits add to stored pressure in static cells; other cells add phantom air or reduce all gas proportionally.
 
 ### Edit errors
 

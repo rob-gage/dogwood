@@ -10,7 +10,7 @@ This page is for engine contributors. It describes how `CellularTiles` advances 
 
 ## Cell state
 
-Each cell stores its material identifier, packed color, and packed kinematics state. The state holds velocity, progress toward neighboring cells, and two flags: resting and supported.
+Each cell stores its material identifier, packed color and radiance, and packed kinematics state. Live color storage uses two `u32` words per cell: color followed by radiance. The state holds velocity, progress toward neighboring cells, and two flags: resting and supported.
 
 A two-bit material tag distinguishes dynamic cells. The remaining 30 bits select the material's mass, friction, and restitution record. Static identifiers and empty cells do not move.
 
@@ -61,7 +61,7 @@ If the pusher would increase the cell's speed along the escape direction, the sh
 
 ### Rigid bodies
 
-The pass receives rigid-body records and rasterized cells from the collision rigid-body pass. A body moving at or above `RIGID_BODY_RESTING_SPEED` (0.01 cells per tick) pushes covered cells according to its velocity; a slower body pushes them away from its center. Cells leaving a rigid-body cell position restore the body's stored material identifier and color there. See the [rigid-body lifecycle](@/internals/simulation/rigid-bodies.md) for ownership and rasterization.
+The pass receives rigid-body records and rasterized cells from the collision rigid-body pass. A body moving at or above `RIGID_BODY_RESTING_SPEED` (0.01 cells per tick) pushes covered cells according to its velocity; a slower body pushes them away from its center. Cells leaving a rigid-body cell position restore the body's stored material identifier, color, and radiance there. See the [rigid-body lifecycle](@/internals/simulation/rigid-bodies.md) for ownership and rasterization.
 
 The orchestration is in {{ <rustdoc path="engine/scenes/cellular_tiles/struct.CellularTiles.html" text="`CellularTiles`" /> }}. Entry-point order, packed layouts, and dispatch details belong to the [cellular tile shader reference](@/internals/shaders/cellular-tile-shader.md).
 

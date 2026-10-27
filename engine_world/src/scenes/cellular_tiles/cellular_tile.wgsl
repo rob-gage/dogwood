@@ -65,7 +65,7 @@ var<uniform> uniforms: CellularTileUniforms;
 var<storage, read_write> material_identifiers: array<u32>;
 
 @group(0) @binding(2)
-var<storage, read_write> colors: array<u32>;
+var<storage, read_write> colors: array<vec2<u32>>;
 
 @group(0) @binding(3)
 var<storage, read_write> kinematics: array<vec2<u32>>;
@@ -95,7 +95,7 @@ var<storage, read_write> contacts: array<atomic<i32>>;
 var<storage, read> rigid_body_cells: array<u32>;
 
 @group(0) @binding(12)
-var<storage, read> rigid_body_cellular_tile_cells: array<vec2<u32>>;
+var<storage, read> rigid_body_cellular_tile_cells: array<vec4<u32>>;
 
 @group(0) @binding(13)
 var<storage, read> rigid_body_cellular_tiles: array<CellularTileRigidBodyCellularTile>;
@@ -993,15 +993,16 @@ fn stage(
             let packed: vec2<u32> = pack_kinematics(moved);
             payload = vec4<u32>(
                 material_identifiers[claimant_index],
-                colors[claimant_index],
+                colors[claimant_index].x,
                 packed.x,
                 packed.y,
             );
             matter_payload = matter[claimant_index];
+            staged[index * 2u + 1u] = vec4<u32>(matter_payload, colors[claimant_index].y, 0u);
         }
     }
     staged[index * 2u] = payload;
-    staged[index * 2u + 1u] = vec4<u32>(matter_payload, 0u, 0u);
+    if picked == 0u { staged[index * 2u + 1u] = vec4<u32>(matter_payload, 0u, 0u); }
 }
 
 /// Moves staged cells into place, empties the cells they left, gives the dynamic cells that stay
@@ -1019,7 +1020,7 @@ fn commit(
     let motion: vec4<u32> = motions[index];
     if payload.x != 0u {
         material_identifiers[index] = payload.x;
-        colors[index] = payload.y;
+        colors[index] = vec2<u32>(payload.y, staged[index * 2u + 1u].z);
         kinematics[index] = payload.zw;
         matter[index] = staged[index * 2u + 1u].xy;
         atomicOr(&awake[tile], TILE_AWAKE | TILE_DISTURBED);
@@ -1030,9 +1031,9 @@ fn commit(
         // a cell escaping a rigid body leaves the body's cell behind it
         let rigid_body_cell: u32 = rigid_body_cells[index];
         if rigid_body_cell != 0u {
-            let rigid_cell: vec2<u32> = rigid_body_cellular_tile_cells[rigid_body_cell - 1u];
+            let rigid_cell: vec4<u32> = rigid_body_cellular_tile_cells[rigid_body_cell - 1u];
             material_identifiers[index] = rigid_cell.x;
-            colors[index] = rigid_cell.y;
+            colors[index] = rigid_cell.yz;
             kinematics[index] = pack_kinematics(CellKinematics(
                 rigid_body_velocity(cell_rigid_body(index) - 1u, cell),
                 vec2<f32>(0.0),
@@ -1042,7 +1043,7 @@ fn commit(
         } else {
             // the emptied cell keeps its temperature for the gas that fills it
             material_identifiers[index] = 0u;
-            colors[index] = 0u;
+            colors[index] = vec2<u32>(0u);
             kinematics[index] = vec2<u32>(0u);
             matter[index].y = 0u;
         }

@@ -5,7 +5,7 @@ weight = 50
 template = "section.html"
 sort_by = "weight"
 [extra]
-sources = ["engine_graphics/src/renders/scene_renderer.rs", "engine/src/games/game_instance.rs", "engine_user_interface/src/user_interface_renderer.rs"]
+sources = ["engine_graphics/src/renders/scene_renderer.rs", "engine/src/games/game_instance.rs", "engine_user_interface/src/user_interface_renderer.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl"]
 +++
 
 ## Frame composition
@@ -50,3 +50,5 @@ UserInterfaceRenderer::render(target, output)
 - [Editor viewport](@/internals/rendering/editor-viewport.md): offscreen game texture, coordinate mapping, and input routing.
 
 WGSL for scene rendering is in [Render shaders](@/internals/shaders/render-shaders.md).
+
+- [Lighting pass](@/internals/rendering/lighting-pass.md): optical field, radiance cascades, backlight, spread, and light mips.

@@ -74,7 +74,7 @@ The generated private docs expose each type's API and fields. The `Scene` defini
 
 | Boundary | Shared data | Reference |
 | --- | --- | --- |
-| Scene → tile streaming | Tile arrays, retained chunk regions, fluid import/export state | [Tile streaming](@/internals/world-streaming/tile-streaming.md) |
+| Scene → tile streaming | Tile arrays including packed radiance, retained chunk regions, fluid import/export state | [Tile streaming](@/internals/world-streaming/tile-streaming.md) |
 | `CellularTiles` → collision | Actor contacts, rigid-body impulses, fluid moments, fluid moments | [Contact exchange](@/internals/simulation/contact-exchange.md) |
 | `CellularTiles` ↔ particles | Fluid raster/contact deltas, actor records, rigid-body motion | [Fluid interactions](@/internals/simulation/fluid-coupling.md) |
 | Particles ↔ chunks | Dormant imports, outgoing exports, resident-save snapshots | [Fluid persistence](@/internals/world-streaming/fluid-streaming.md) |
