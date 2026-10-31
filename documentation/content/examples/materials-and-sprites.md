@@ -3,7 +3,7 @@ title = "Defining materials"
 description = "Register named materials, resolve their dependencies, and compile them for a scene."
 weight = 10
 [extra]
-sources = ["engine_world/src/materials", "engine_graphics/src/world/materials", "engine_graphics/src/sprites", "template/src/template_game.rs", "engine/src/lib.rs"]
+sources = ["engine_world/src/materials", "engine_graphics/src/world/materials", "engine_graphics/src/sprites", "template/src/template_game.rs", "template/assets/sprites/wood.png", "template/assets/sprites/wood_chips.png", "engine/src/lib.rs"]
 +++
 
 ## Register cellular materials
@@ -138,3 +138,33 @@ identifier in world edits to fill empty cells with gas or spawn fluid particles.
 written directly into a cellular material array does not create particles. See [fluid simulation](@/internals/simulation/fluids.md) and [pressure simulation](@/internals/simulation/pressure.md) for the implemented models.
 
 {{ <rustdoc path="engine/materials/struct.MaterialRegistry.html" text="MaterialRegistry" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialTable.html" text="MaterialTable" /> }} · {{ <rustdoc path="engine/struct.SpriteSheet.html" text="SpriteSheet" /> }}
+
+
+## Tags, amount colors, and reactions
+
+The template gives wood and wood chips the `flammable` tag and uses amount-color keys to darken wood as its amount falls. `corrodible` and `flammable` tags let reactions target groups of materials. A compact example follows the API used by the template:
+
+```rust
+use engine::materials::{
+    MaterialReaction, MaterialReactionProduct, MaterialReactant, MaterialRegistry,
+};
+
+fn register_burning(registry: &mut MaterialRegistry) {
+    registry.register_reaction(
+        MaterialReaction::new(
+            vec![
+                MaterialReactant::material("fire", 0.0),
+                MaterialReactant::tag("flammable", 0.1),
+            ],
+            vec![
+                MaterialReactionProduct::new("fire", 0.3),
+                MaterialReactionProduct::new("smoke", 0.1),
+            ],
+        )
+        .with_rate(1.5)
+        .with_heat(200.0),
+    );
+}
+```
+
+The zero-amount fire reactant is a catalyst; the tagged fuel consumes `0.1` amount per event. The [materials API](@/external-api/materials.md#reaction-properties-and-validation) documents tags, amount-color keys, validation, and the other reaction builders.

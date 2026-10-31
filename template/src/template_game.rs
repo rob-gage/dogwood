@@ -18,6 +18,7 @@ use engine::{
     },
     games::Game,
     materials::{
+        MaterialAmountColor,
         MaterialIdentifier,
         MaterialPropertiesCellularDynamic,
         MaterialPropertiesCellularStatic,
@@ -25,6 +26,9 @@ use engine::{
         MaterialPropertiesFluid,
         MaterialPropertiesGas,
         MaterialPropertiesThermal,
+        MaterialReactant,
+        MaterialReaction,
+        MaterialReactionProduct,
         MaterialRegistry,
         MaterialTable,
         MaterialTemperatureColor,
@@ -85,6 +89,9 @@ impl TemplateGame {
         let water_radiance: [f32; 4] = [0.0, 0.0, 0.0, 0.1];
         let lava_radiance: [f32; 4] = [1.2, 0.35, 0.05, 0.95];
         let ice_radiance: [f32; 4] = [0.0, 0.0, 0.0, 0.15];
+        let acid_color: [f32; 4] = [0.153, 0.716, 0.032, 0.82];
+        let acid_radiance: [f32; 4] = [0.0, 0.15, 0.0, 0.02];
+        let sludge_color: [f32; 4] = [0.114, 0.144, 0.021, 1.0];
         // a transformation keeping a fraction of the carried color and adding the rest of another
         let blend = |kept: f32, color: [f32; 4], channel_variance: f32|
             -> MaterialColorTransformation {
@@ -141,6 +148,53 @@ impl TemplateGame {
                     }),
             ]
         };
+        // wood darkens as it chars and glows orange as it burns
+        let wood_temperature_colors = || -> Vec<MaterialTemperatureColor> {
+            vec![
+                MaterialTemperatureColor::new(550.0),
+                MaterialTemperatureColor::new(700.0)
+                    .with_color(MaterialColorTransformation {
+                        matrix: [
+                            [0.28, 0.0, 0.0, 0.0],
+                            [0.0, 0.08, 0.0, 0.0],
+                            [0.0, 0.0, 0.04, 0.0],
+                            [0.0, 0.0, 0.0, 1.0],
+                        ],
+                        offset: [0.12, 0.012, 0.002, 0.0],
+                        intensity_variance: 0.0,
+                        channel_variance: [0.0; 4],
+                    })
+                    .with_radiance(radiance([0.18, 0.025, 0.002, 0.0])),
+                MaterialTemperatureColor::new(1000.0)
+                    .with_color(MaterialColorTransformation {
+                        matrix: [[0.35, 0.0, 0.0, 0.0], [0.0, 0.18, 0.0, 0.0],
+                            [0.0, 0.0, 0.04, 0.0], [0.0, 0.0, 0.0, 1.0]],
+                        offset: [0.35, 0.12, 0.008, 0.0],
+                        intensity_variance: 0.0,
+                        channel_variance: [0.0; 4],
+                    })
+                    .with_radiance(radiance([1.3, 0.32, 0.025, 0.0])),
+            ]
+        };
+        // wood blackens as it burns away, with the same keys on its debris
+        let charring = |kept: f32| -> MaterialColorTransformation {
+            MaterialColorTransformation {
+                matrix: [
+                    [kept, 0.0, 0.0, 0.0],
+                    [0.0, kept, 0.0, 0.0],
+                    [0.0, 0.0, kept, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ],
+                ..MaterialColorTransformation::IDENTITY
+            }
+        };
+        let wood_amount_colors = || -> Vec<MaterialAmountColor> {
+            vec![
+                MaterialAmountColor::new(0.15).with_color(charring(0.08)),
+                MaterialAmountColor::new(0.5).with_color(charring(0.44)),
+                MaterialAmountColor::new(1.0),
+            ]
+        };
         // cellular dynamic debris that piles at its angle of repose and that players wade through
         material_registry.register_cellular_dynamic("gravel", MaterialPropertiesCellularDynamic {
             edit_color: MaterialGraphicsCellularDynamic {
@@ -172,7 +226,9 @@ impl TemplateGame {
                 temperature_colors: glowing(),
                 ..Default::default()
             },
-            chemical: MaterialPropertiesChemical::default(),
+            chemical: MaterialPropertiesChemical {
+                tags: vec![String::from("corrodible")], amount_colors: Vec::new(),
+            },
         })?;
         // loose ice that breaks off frozen water and melts back into it
         material_registry.register_cellular_dynamic("snow", MaterialPropertiesCellularDynamic {
@@ -239,7 +295,9 @@ impl TemplateGame {
                 temperature_colors: glowing(),
                 ..Default::default()
             },
-            chemical: MaterialPropertiesChemical::default(),
+            chemical: MaterialPropertiesChemical {
+                tags: vec![String::from("corrodible")], amount_colors: Vec::new(),
+            },
         })?;
         material_registry.register_cellular_static("ice", MaterialPropertiesCellularStatic {
             edit_color: MaterialGraphicsCellularStatic {
@@ -358,6 +416,215 @@ impl TemplateGame {
             },
             chemical: MaterialPropertiesChemical::default(),
         })?;
+        // static wood burns into chips when broken
+        material_registry.register_cellular_static("wood", MaterialPropertiesCellularStatic {
+            edit_color: MaterialGraphicsCellularStatic {
+                sprite_sheet: Arc::new(SpriteSheet::from_png(
+                    accelerator,
+                    include_bytes!("../assets/sprites/wood.png"),
+                    1,
+                    1,
+                )?),
+                frame: 0,
+                width: 1.0,
+                height: 1.0,
+            },
+            edit_radiance: MaterialGraphicsCellularStatic {
+                sprite_sheet: Arc::new(SpriteSheet::from_color(accelerator, 0, 0, 0, 230)?),
+                frame: 0,
+                width: 1.0,
+                height: 1.0,
+            },
+            edit_radiance_intensity: 1.0,
+            mass: 0.7,
+            friction: 0.7,
+            restitution: 0.1,
+            strength: 6.0,
+            absorption: 0.3,
+            debris: Some(String::from("wood chips")),
+            thermal: MaterialPropertiesThermal {
+                heat_capacity: 1.5,
+                conduction: 0.1,
+                edit_temperature: 293.0,
+                temperature_colors: wood_temperature_colors(),
+                ..Default::default()
+            },
+            chemical: MaterialPropertiesChemical {
+                tags: vec![String::from("corrodible"), String::from("flammable")],
+                amount_colors: wood_amount_colors(),
+            },
+        })?;
+        // loose wood flakes that pile at their angle of repose
+        material_registry.register_cellular_dynamic(
+            "wood chips",
+            MaterialPropertiesCellularDynamic {
+                edit_color: MaterialGraphicsCellularDynamic {
+                    sprite_sheet: Arc::new(SpriteSheet::from_png(
+                        accelerator,
+                        include_bytes!("../assets/sprites/wood_chips.png"),
+                        1,
+                        1,
+                    )?),
+                    frame: 0,
+                    width: 1.0,
+                    height: 1.0,
+                },
+                edit_radiance: MaterialGraphicsCellularDynamic {
+                    sprite_sheet: Arc::new(SpriteSheet::from_color(accelerator, 0, 0, 0, 230)?),
+                    frame: 0,
+                    width: 1.0,
+                    height: 1.0,
+                },
+                edit_radiance_intensity: 1.0,
+                mass: 0.4,
+                friction: 0.8,
+                restitution: 0.0,
+                thermal: MaterialPropertiesThermal {
+                    heat_capacity: 1.5,
+                    conduction: 0.1,
+                    edit_temperature: 293.0,
+                    temperature_colors: wood_temperature_colors(),
+                    ..Default::default()
+                },
+                chemical: MaterialPropertiesChemical {
+                    tags: vec![String::from("corrodible"), String::from("flammable")],
+                    amount_colors: wood_amount_colors(),
+                },
+            },
+        )?;
+        // bright green liquid acid that evaporates into a heavier gas
+        material_registry.register_fluid("acid", MaterialPropertiesFluid {
+            density: 0.65,
+            viscosity: 0.03,
+            cohesion: 0.2,
+            artificial_pressure: 0.001,
+            drag: 1.0,
+            friction: 0.0,
+            restitution: 0.0,
+            edit_color: u32::from_le_bytes([110, 220, 50, 210]),
+            edit_radiance: pack_radiance(acid_radiance),
+            thermal: MaterialPropertiesThermal {
+                heat_capacity: 3.0,
+                conduction: 0.5,
+                edit_temperature: 293.0,
+                hot_transition: Some(MaterialTransition::new(390.0, 600.0, "acid gas")),
+                ..Default::default()
+            },
+            chemical: MaterialPropertiesChemical {
+                tags: vec![String::from("flammable")], amount_colors: Vec::new(),
+            },
+        })?;
+        // dense green vapor that condenses back into acid
+        material_registry.register_gas("acid gas", MaterialPropertiesGas {
+            mass: 40.0,
+            diffusivity: 0.15,
+            cohesion: 0.0,
+            graphics: MaterialGraphicsGas {
+                color: u32::from_le_bytes([170, 230, 60, 90]),
+                radiance: pack_radiance([0.0, 0.12, 0.0, 0.01]),
+                opacity: 1.0,
+            },
+            thermal: MaterialPropertiesThermal {
+                heat_capacity: 1.0,
+                conduction: 0.05,
+                edit_temperature: 400.0,
+                cold_transition: Some(
+                    MaterialTransition::new(385.0, 600.0, "acid")
+                        .with_color(blend(0.0, acid_color, 0.0))
+                        .with_radiance(radiance(acid_radiance)),
+                ),
+                ..Default::default()
+            },
+            chemical: MaterialPropertiesChemical {
+                tags: vec![String::from("flammable")], amount_colors: Vec::new(),
+            },
+        })?;
+        // inert olive sludge formed when acid mixes with water
+        material_registry.register_cellular_dynamic(
+            "acid sludge",
+            MaterialPropertiesCellularDynamic {
+                edit_color: MaterialGraphicsCellularDynamic {
+                    sprite_sheet: Arc::new(SpriteSheet::from_color(accelerator, 95, 105, 40, 255)?),
+                    frame: 0,
+                    width: 1.0,
+                    height: 1.0,
+                },
+                edit_radiance: MaterialGraphicsCellularDynamic {
+                    sprite_sheet: Arc::new(SpriteSheet::from_color(accelerator, 0, 0, 0, 220)?),
+                    frame: 0,
+                    width: 1.0,
+                    height: 1.0,
+                },
+                edit_radiance_intensity: 1.0,
+                mass: 1.2,
+                friction: 0.9,
+                restitution: 0.0,
+                thermal: MaterialPropertiesThermal {
+                    heat_capacity: 2.0,
+                    conduction: 0.3,
+                    ..Default::default()
+                },
+                chemical: MaterialPropertiesChemical::default(),
+            },
+        )?;
+        // hot fire gas releases light and eventually fades into smoke
+        material_registry.register_gas("fire", MaterialPropertiesGas {
+            mass: 20.0,
+            diffusivity: 0.3,
+            cohesion: 0.0,
+            graphics: MaterialGraphicsGas {
+                color: u32::from_le_bytes([255, 170, 60, 150]),
+                radiance: pack_radiance([3.0, 1.2, 0.2, 0.01]),
+                opacity: 1.0,
+            },
+            thermal: MaterialPropertiesThermal {
+                heat_capacity: 1.0,
+                conduction: 0.1,
+                edit_temperature: 1300.0,
+                cold_transition: Some(
+                    MaterialTransition::new(600.0, 0.0, "smoke")
+                        .with_amount(0.3),
+                ),
+                // dull red where fire cools toward smoke, orange, then yellow-white when hottest
+                temperature_colors: vec![
+                    MaterialTemperatureColor::new(650.0)
+                        .with_color(MaterialColorTransformation {
+                            matrix: [[0.6, 0.0, 0.0, 0.0], [0.0, 0.12, 0.0, 0.0],
+                                [0.0, 0.0, 0.05, 0.0], [0.0, 0.0, 0.0, 0.7]],
+                            ..MaterialColorTransformation::IDENTITY
+                        })
+                        .with_radiance(radiance([0.4, 0.05, 0.0, 0.0])),
+                    MaterialTemperatureColor::new(1000.0)
+                        .with_radiance(radiance([2.5, 0.9, 0.15, 0.0])),
+                    MaterialTemperatureColor::new(1400.0)
+                        .with_color(MaterialColorTransformation {
+                            offset: [0.0, 0.35, 0.3, 0.1],
+                            ..MaterialColorTransformation::IDENTITY
+                        })
+                        .with_radiance(radiance([4.0, 3.0, 1.2, 0.0])),
+                ],
+                ..Default::default()
+            },
+            chemical: MaterialPropertiesChemical::default(),
+        })?;
+        // dim gas left behind when fire cools or flammable material burns
+        material_registry.register_gas("smoke", MaterialPropertiesGas {
+            mass: 30.0,
+            diffusivity: 0.2,
+            cohesion: 0.05,
+            graphics: MaterialGraphicsGas {
+                color: u32::from_le_bytes([55, 55, 60, 110]),
+                radiance: pack_radiance([0.0, 0.0, 0.0, 0.0]),
+                opacity: 1.0,
+            },
+            thermal: MaterialPropertiesThermal {
+                heat_capacity: 1.0,
+                conduction: 0.05,
+                edit_temperature: 350.0,
+                ..Default::default()
+            },
+            chemical: MaterialPropertiesChemical::default(),
+        })?;
         // glowing crystal of each color, its dimmer debris, and its brighter gas, which melts
         // well below rock and condenses back as easily
         for (color_name, color, stone_png, gravel_png) in [
@@ -434,7 +701,9 @@ impl TemplateGame {
                     hot_transition: Some(MaterialTransition::new(1100.0, 200.0, &glowstone_gas)),
                     ..Default::default()
                 },
-                chemical: MaterialPropertiesChemical::default(),
+                chemical: MaterialPropertiesChemical {
+                    tags: vec![String::from("corrodible")], amount_colors: Vec::new(),
+                },
             })?;
             material_registry.register_cellular_dynamic(
                 &glowstone_gravel,
@@ -464,7 +733,9 @@ impl TemplateGame {
                         hot_transition: Some(MaterialTransition::new(1100.0, 200.0, &glowstone_gas)),
                         ..Default::default()
                     },
-                    chemical: MaterialPropertiesChemical::default(),
+                    chemical: MaterialPropertiesChemical {
+                        tags: vec![String::from("corrodible")], amount_colors: Vec::new(),
+                    },
                 },
             )?;
             material_registry.register_gas(&glowstone_gas, MaterialPropertiesGas {
@@ -486,9 +757,126 @@ impl TemplateGame {
                     ),
                     ..Default::default()
                 },
-                chemical: MaterialPropertiesChemical::default(),
+                chemical: MaterialPropertiesChemical {
+                    tags: vec![String::from("corrodible")], amount_colors: Vec::new(),
+                },
             })?;
         }
+        // Fire has no oxidizer: flammable matter burns when hot or touching fire, then fire fades
+        // into smoke and smoke fades away.
+        material_registry.register_reaction(
+            MaterialReaction::new(
+                vec![
+                    MaterialReactant::material("fire", 0.0),
+                    MaterialReactant::material("acid gas", 1.0),
+                ],
+                vec![MaterialReactionProduct::new("fire", 2.0)],
+            )
+                .with_heat(700.0)
+                .with_rate(30.0),
+        );
+        material_registry.register_reaction(
+            MaterialReaction::new(
+                vec![MaterialReactant::material("acid gas", 1.0)],
+                vec![MaterialReactionProduct::new("fire", 2.0)],
+            )
+                .with_temperature_range(500.0, f32::INFINITY)
+                .with_heat(700.0)
+                .with_rate(10.0),
+        );
+        // burning acid flares up where it touches fire and keeps burning at its surface while
+        // the flames keep it hot, boiling into acid gas that flashes
+        material_registry.register_reaction(
+            MaterialReaction::new(
+                vec![
+                    MaterialReactant::material("fire", 0.0),
+                    MaterialReactant::material("acid", 0.04),
+                ],
+                vec![
+                    MaterialReactionProduct::new("fire", 0.3),
+                    MaterialReactionProduct::new("smoke", 0.03),
+                ],
+            )
+                .with_heat(500.0)
+                .with_rate(2.0),
+        );
+        material_registry.register_reaction(
+            MaterialReaction::new(
+                vec![MaterialReactant::material("acid", 0.04)],
+                vec![
+                    MaterialReactionProduct::new("fire", 0.3),
+                    MaterialReactionProduct::new("smoke", 0.03),
+                ],
+            )
+                .with_temperature_range(380.0, f32::INFINITY)
+                .with_heat(500.0)
+                .with_rate(0.5),
+        );
+        material_registry.register_reaction(
+            MaterialReaction::new(
+                vec![
+                    MaterialReactant::material("fire", 0.0),
+                    MaterialReactant::tag("flammable", 0.1),
+                ],
+                vec![
+                    MaterialReactionProduct::new("fire", 0.3),
+                    MaterialReactionProduct::new("smoke", 0.1),
+                ],
+            )
+                .with_heat(200.0)
+                .with_rate(1.5),
+        );
+        material_registry.register_reaction(
+            MaterialReaction::new(
+                vec![MaterialReactant::tag("flammable", 0.1)],
+                vec![
+                    MaterialReactionProduct::new("fire", 0.3),
+                    MaterialReactionProduct::new("smoke", 0.1),
+                ],
+            )
+                .with_temperature_range(570.0, f32::INFINITY)
+                .with_heat(200.0)
+                .with_rate(1.0),
+        );
+        material_registry.register_reaction(
+            MaterialReaction::new(
+                vec![
+                    MaterialReactant::material("acid", 0.5),
+                    MaterialReactant::material("water", 0.5),
+                ],
+                vec![MaterialReactionProduct::new("acid sludge", 1.0)
+                    .with_color(MaterialColorTransformation {
+                        matrix: [[0.0; 4]; 4],
+                        offset: sludge_color,
+                        intensity_variance: 0.0,
+                        channel_variance: [0.01, 0.01, 0.01, 0.0],
+                    })],
+            )
+                .with_heat(50.0)
+                .with_rate(4.0),
+        );
+        material_registry.register_reaction(
+            MaterialReaction::new(
+                vec![
+                    MaterialReactant::material("acid", 0.05),
+                    MaterialReactant::tag("corrodible", 0.34),
+                ],
+                Vec::new(),
+            )
+                .with_heat(10.0)
+                .with_rate(8.0),
+        );
+        material_registry.register_reaction(
+            MaterialReaction::new(
+                vec![MaterialReactant::material("fire", 0.5)],
+                vec![MaterialReactionProduct::new("smoke", 0.2)],
+            )
+                .with_rate(2.0),
+        );
+        material_registry.register_reaction(
+            MaterialReaction::new(vec![MaterialReactant::material("smoke", 0.25)], Vec::new())
+                .with_rate(0.5),
+        );
         // the template starts from its generated world on every launch
         let world_path: PathBuf = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("world");
         let _ = std::fs::remove_dir_all(&world_path);
