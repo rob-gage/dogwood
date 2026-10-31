@@ -134,14 +134,8 @@ impl LightingCache {
             layout: &layout,
             entries: &[
                 buffer_binding(0, &params),
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(optical),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(backlight),
-                },
+                texture_binding(1, optical),
+                texture_binding(2, backlight),
                 buffer_binding(3, &previous),
                 buffer_binding(4, &dirty),
                 buffer_binding(5, &sources),
@@ -183,10 +177,7 @@ impl LightingCache {
             entries: &[
                 buffer_binding(0, &params),
                 buffer_binding(1, fluence),
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(light),
-                },
+                texture_binding(2, light),
             ],
         });
         let clear_module = d.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -449,6 +440,11 @@ fn storage_texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
 /// Returns a bind group entry for a whole buffer
 fn buffer_binding(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
     wgpu::BindGroupEntry { binding, resource: buffer.as_entire_binding() }
+}
+
+/// Returns a bind group entry for a texture view
+fn texture_binding(binding: u32, view: &wgpu::TextureView) -> wgpu::BindGroupEntry<'_> {
+    wgpu::BindGroupEntry { binding, resource: wgpu::BindingResource::TextureView(view) }
 }
 
 /// Returns a bind group entry for one dynamic uniform record
@@ -1006,14 +1002,8 @@ impl SceneRendererLightingPass {
             label: Some("`LightingDomain.block_bind_group`"),
             layout: &self.block_bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&optical_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&block_view),
-                },
+                texture_binding(0, &optical_view),
+                texture_binding(1, &block_view),
             ],
         });
         let light_mip_count: u32 = 32 - width.max(height).leading_zeros();
@@ -1035,14 +1025,8 @@ impl SceneRendererLightingPass {
                 label: Some("`LightingDomain.mip_bind_groups`"),
                 layout: &self.mip_bind_group_layout,
                 entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&mip_view(level - 1)),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&mip_view(level)),
-                    },
+                    texture_binding(0, &mip_view(level - 1)),
+                    texture_binding(1, &mip_view(level)),
                 ],
             }));
             mip_sizes.push([(width >> level).max(1), (height >> level).max(1)]);
@@ -1098,17 +1082,11 @@ impl SceneRendererLightingPass {
                     layout: &self.cascade_bind_group_layout,
                     entries: &[
                         uniform_record_binding(0, &self.cascade_buffer),
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::TextureView(&optical_view),
-                        },
+                        texture_binding(1, &optical_view),
                         buffer_binding(2, upper),
                         buffer_binding(3, &interval_buffers[level]),
                         buffer_binding(4, &light_buffers[0]),
-                        wgpu::BindGroupEntry {
-                            binding: 5,
-                            resource: wgpu::BindingResource::TextureView(&block_view),
-                        },
+                        texture_binding(5, &block_view),
                         buffer_binding(6, &cache.dirty),
                     ],
                 })
@@ -1120,20 +1098,11 @@ impl SceneRendererLightingPass {
                 layout: &self.spread_bind_group_layout,
                 entries: &[
                     uniform_record_binding(0, &self.spread_buffer),
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&optical_view),
-                    },
+                    texture_binding(1, &optical_view),
                     buffer_binding(2, &light_buffers[input]),
                     buffer_binding(3, &light_buffers[output]),
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: wgpu::BindingResource::TextureView(&light_storage_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 5,
-                        resource: wgpu::BindingResource::TextureView(&backlight_view),
-                    },
+                    texture_binding(4, &light_storage_view),
+                    texture_binding(5, &backlight_view),
                     wgpu::BindGroupEntry {
                         binding: 6,
                         resource: wgpu::BindingResource::Sampler(&self.light_sampler),
@@ -1277,7 +1246,7 @@ impl SceneRendererLightingPass {
             layout: &self.lighting_bind_group_layout,
             entries: &[
                 buffer_binding(0, &self.view_buffer),
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(light_view) },
+                texture_binding(1, light_view),
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(&self.light_sampler),
@@ -1378,10 +1347,7 @@ impl SceneRendererLightingPass {
                 let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("`SceneRendererLightingPass.texture_bind_groups`"),
                     layout: &self.sprite_texture_bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(view),
-                    }],
+                    entries: &[texture_binding(0, view)],
                 });
                 self.texture_bind_groups.insert((*view).clone(), bind_group);
             }
@@ -1423,14 +1389,8 @@ impl SceneRendererLightingPass {
                 buffer_binding(7, fluid.map_or(empty_buffer, |fluid| fluid.material_properties_buffer)),
                 buffer_binding(8, gas.map_or(empty_buffer, |gas| gas.gas_buffer)),
                 buffer_binding(9, gas.map_or(empty_buffer, |gas| gas.material_properties_buffer)),
-                wgpu::BindGroupEntry {
-                    binding: 10,
-                    resource: wgpu::BindingResource::TextureView(&domain.actor_optics_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 11,
-                    resource: wgpu::BindingResource::TextureView(&domain.optical_view),
-                },
+                texture_binding(10, &domain.actor_optics_view),
+                texture_binding(11, &domain.optical_view),
                 wgpu::BindGroupEntry {
                     binding: 12,
                     resource: wgpu::BindingResource::Buffer(fluid.map_or(
