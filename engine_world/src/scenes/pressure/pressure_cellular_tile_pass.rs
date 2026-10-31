@@ -114,7 +114,7 @@ impl PressureCellularTilePass {
                         count: None,
                     },
                     storage_entry(1, false),
-                    storage_entry(2, true),
+                    storage_entry(2, false),
                     storage_entry(3, false),
                     storage_entry(4, false),
                     storage_entry(5, false),

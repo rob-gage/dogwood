@@ -124,7 +124,7 @@ var<uniform> uniforms: PressureUniforms;
 var<storage, read_write> material_identifiers: array<u32>;
 
 @group(0) @binding(2)
-var<storage, read> gas_in: array<vec4<u32>>;
+var<storage, read_write> gas_in: array<vec4<u32>>;
 
 @group(0) @binding(3)
 var<storage, read_write> gas_out: array<vec4<u32>>;
@@ -217,12 +217,16 @@ const HALO_TRANSFER_SIZE: u32 = 10u;
 const STEP_WORKGROUP_SIZE: u32 = 104u;
 
 /// Lists in the control words before the four words of each pressure cell that stay fixed through
-/// a tick's substeps: its volume word, packed drag, solid word, and density bits
+/// a tick's substeps: its volume word (including `VOLUME_HELD_BACK` in bit 30), packed drag, solid
+/// word, and density bits
 const COARSE_CONSTANT_START: u32 = 3u;
 
 /// Flag of a pressure cell's volume word for an open pressure cell holding static cells, whose
 /// gas presses on them
 const VOLUME_PARTIAL: u32 = 0x20000000u;
+
+/// Flag in the spare high bit of the coarse volume word for a cell with held-back gas
+const VOLUME_HELD_BACK: u32 = 0x40000000u;
 
 /// Phantom air, flow bits, and open volume words with the activity flag of the cells in the halo
 var<workgroup> halo_words: array<vec4<u32>, 196>;
@@ -1708,8 +1712,9 @@ var<workgroup> coarsened_tile_flags: u32;
 /// Rebuilds the pressure cells of every tile a listed block's halo reaches from the cells under
 /// them, one workgroup per tile of the region and one invocation per pressure cell, and clears
 /// their flags: a pressure cell holds its cells' phantom air and gases, merged into at most four
-/// species, the flows its first cell keeps, their mean open volume and drag, and, when all its
-/// cells are static, their summed stored pressure, mean density, and the first one's solid word
+/// species, excess gas remains in its fine cell for this tick, the flows its first cell keeps,
+/// their mean open volume and drag, and, when all its cells are static, their summed stored
+/// pressure, mean density, and the first one's solid word
 @compute @workgroup_size(16)
 fn coarsen(
     @builtin(workgroup_id) workgroup: vec3<u32>,
@@ -1735,7 +1740,9 @@ fn coarsen(
     var drag_count: u32 = 0u;
     var gases: array<u32, 4>;
     var amounts: array<u32, 4>;
+    var held_cells: array<vec4<u32>, 4>;
     var species_count: u32 = 0u;
+    var has_held_back: bool = false;
     // the gas of the empty cells gives the pressure cell its temperature, weighed by heat capacity
     var heat: f32 = 0.0;
     var heat_capacity: f32 = 0.0;
@@ -1754,8 +1761,9 @@ fn coarsen(
             empty_temperature += temperature;
             empty_count += 1.0;
         }
-        phantom = min(phantom + words.x, AMOUNT_MAXIMUM);
+        phantom += words.x;
         if offset == 0u { flows = words.yz; }
+        var held_back: vec4<u32> = vec4<u32>(0u);
         for (var slot: u32 = 0u; slot < 4u; slot++) {
             let amount: u32 = slot_amount(slots[slot]);
             if amount == 0u { continue; }
@@ -1764,15 +1772,22 @@ fn coarsen(
             for (var species: u32 = 0u; species < species_count; species++) {
                 if gases[species] == gas { held = species; }
             }
-            // a fifth species in one pressure cell is lost
             if held == 4u && species_count < 4u {
                 held = species_count;
                 gases[held] = gas;
                 amounts[held] = 0u;
                 species_count += 1u;
             }
-            if held < 4u { amounts[held] = min(amounts[held] + amount, AMOUNT_MAXIMUM); }
+            var remaining: u32 = amount;
+            if held < 4u {
+                let merged: u32 = min(AMOUNT_MAXIMUM - amounts[held], remaining);
+                amounts[held] += merged;
+                remaining -= merged;
+            }
+            if remaining > 0u { held_back[slot] = (gas << 24u) | remaining; }
         }
+        has_held_back = has_held_back || any(held_back != vec4<u32>(0u));
+        held_cells[offset] = held_back;
         let volume_word: vec2<u32> = volumes[index];
         let material_identifier: u32 = material_identifiers[index];
         if is_static(material_identifier) {
@@ -1801,6 +1816,15 @@ fn coarsen(
         temperature = empty_temperature / empty_count;
     }
     let index: u32 = coarse_index(cell);
+    let holds_gas: bool = has_held_back
+        && (workgroupUniformLoad(&coarsened_tile_flags) & TILE_ACTIVE) != 0u;
+    if holds_gas {
+        for (var offset: u32 = 0u; offset < 4u; offset++) {
+            let fine_index: u32 =
+                cell_index(cell * 2 + vec2<i32>(i32(offset % 2u), i32(offset / 2u)));
+            gas_in[fine_index * 2u] = held_cells[offset];
+        }
+    }
     gas_out[index * 2u] = slots;
     gas_out[index * 2u + 1u] = vec4<u32>(
         phantom,
@@ -1811,7 +1835,8 @@ fn coarsen(
     let base: u32 = coarse_constant_index(index);
     control.active_tiles[base] = open_volume / 4u
         | select(0u, VOLUME_DRAGGED, drag_count > 0u)
-        | select(0u, VOLUME_PARTIAL, static_count > 0u && !is_solid);
+        | select(0u, VOLUME_PARTIAL, static_count > 0u && !is_solid)
+        | select(0u, VOLUME_HELD_BACK, holds_gas);
     control.active_tiles[base + 1u] =
         pack2x16snorm(0.5 * drag / f32(max(drag_count, 1u)));
     control.active_tiles[base + 2u] = select(0u, solid, is_solid);
@@ -1821,8 +1846,9 @@ fn coarsen(
 /// Spreads the pressure cells of a listed block's active tiles back over the cells under them,
 /// one invocation per cell: phantom air and each gas go to the open cells by open volume, or
 /// evenly to closed ones, with the remainder to the most open cell so nothing is lost, every
-/// cell keeps its pressure cell's flows, static cells of a solid pressure cell a quarter of its
-/// stored pressure, and empty cells of an open one its gas temperature
+/// cell keeps its pressure cell's flows, held-back gas returns to its fine cell, static cells of a
+/// solid pressure cell a quarter of its stored pressure, and empty cells of an open one its gas
+/// temperature
 @compute @workgroup_size(256)
 fn refine(
     @builtin(workgroup_id) workgroup: vec3<u32>,
@@ -1859,16 +1885,88 @@ fn refine(
     let index: u32 = coarse_index(cell);
     let coarse_slots: vec4<u32> = gas_in[index * 2u];
     let words: vec4<u32> = gas_in[index * 2u + 1u];
-    var slots: vec4<u32> = vec4<u32>(0u);
-    for (var slot: u32 = 0u; slot < 4u; slot++) {
-        let amount: u32 = share(slot_amount(coarse_slots[slot]), &weights, weight_sum, heaviest, own);
-        if amount > 0u { slots[slot] = (coarse_slots[slot] & 0xff000000u) | amount; }
-    }
     let fine_index: u32 = cell_index(vec2<i32>(fine_cell));
+    let constants: vec4<u32> = coarse_constants(index);
+    let has_held_back: bool = (constants.x & VOLUME_HELD_BACK) != 0u;
+    var slots: vec4<u32> = vec4<u32>(0u);
+    if !has_held_back {
+        for (var slot: u32 = 0u; slot < 4u; slot++) {
+            let amount: u32 =
+                share(slot_amount(coarse_slots[slot]), &weights, weight_sum, heaviest, own);
+            if amount > 0u { slots[slot] = (coarse_slots[slot] & 0xff000000u) | amount; }
+        }
+    } else {
+        var held_cells: array<vec4<u32>, 4>;
+        for (var offset: u32 = 0u; offset < 4u; offset++) {
+            let source: vec2<i32> = cell * 2 + vec2<i32>(i32(offset % 2u), i32(offset / 2u));
+            held_cells[offset] = gas_out[cell_index(source) * 2u];
+        }
+        var refined_cells: array<vec4<u32>, 4> = held_cells;
+        for (var coarse_slot: u32 = 0u; coarse_slot < 4u; coarse_slot++) {
+            let gas: u32 = slot_gas(coarse_slots[coarse_slot]);
+            let amount: u32 = slot_amount(coarse_slots[coarse_slot]);
+            if amount == 0u { continue; }
+            var capacities: array<u32, 4>;
+            var capacity_sum: u32 = 0u;
+            var capacity_heaviest: u32 = 0u;
+            for (var offset: u32 = 0u; offset < 4u; offset++) {
+                var target_slot: u32 = 4u;
+                for (var slot: u32 = 0u; slot < 4u; slot++) {
+                    if slot_amount(refined_cells[offset][slot]) > 0u
+                        && slot_gas(refined_cells[offset][slot]) == gas
+                    { target_slot = slot; }
+                }
+                if target_slot == 4u {
+                    for (var slot: u32 = 0u; slot < 4u; slot++) {
+                        if slot_amount(refined_cells[offset][slot]) == 0u {
+                            target_slot = slot;
+                            break;
+                        }
+                    }
+                }
+                if target_slot < 4u {
+                    capacities[offset] =
+                        AMOUNT_MAXIMUM - slot_amount(refined_cells[offset][target_slot]);
+                } else {
+                    capacities[offset] = 0u;
+                }
+                capacity_sum += capacities[offset];
+                if capacities[offset] > capacities[capacity_heaviest] {
+                    capacity_heaviest = offset;
+                }
+            }
+            if capacity_sum == 0u { continue; }
+            for (var offset: u32 = 0u; offset < 4u; offset++) {
+                let given: u32 =
+                    share(amount, &capacities, capacity_sum, capacity_heaviest, offset);
+                if given == 0u { continue; }
+                var target_slot: u32 = 4u;
+                for (var slot: u32 = 0u; slot < 4u; slot++) {
+                    if slot_amount(refined_cells[offset][slot]) > 0u
+                        && slot_gas(refined_cells[offset][slot]) == gas
+                    { target_slot = slot; }
+                }
+                if target_slot == 4u {
+                    for (var slot: u32 = 0u; slot < 4u; slot++) {
+                        if slot_amount(refined_cells[offset][slot]) == 0u {
+                            target_slot = slot;
+                            break;
+                        }
+                    }
+                }
+                if target_slot < 4u {
+                    if slot_amount(refined_cells[offset][target_slot]) == 0u {
+                        refined_cells[offset][target_slot] = gas << 24u;
+                    }
+                    refined_cells[offset][target_slot] += given;
+                }
+            }
+        }
+        slots = refined_cells[own];
+    }
     // a static cell takes its share of a solid pressure cell's stored pressure, or bears the gas
     // pressure of an open one, so broken cells and the pressure view see the load on it
     var stored: i32 = 0;
-    let constants: vec4<u32> = coarse_constants(index);
     if is_static(material_identifiers[fine_index]) {
         if constants.z != 0u {
             stored = bitcast<i32>(words.w) / 4;

@@ -20,7 +20,7 @@ Dynamic cells, actor-covered cells, and other closed cells reflect pressure. Flu
 
 A pressure cell covers 2×2 cells, and a pressure tile of 8×8 pressure cells covers a block of 2×2 cellular tiles. At the start of each tick, `coarsen` rebuilds the pressure cells that the listed blocks' halos reach:
 
-- Phantom air and gas species are summed, merged into at most four species.
+- Phantom air and gas species are summed. Excess gas that does not fit the four pressure-cell species slots remains in its original fine cell for that tick; `refine` returns it there instead of deleting it.
 - Open volume is the mean of the cells' open volumes, and drag is the mean drag of the dragged cells.
 - Face flows are those of the bottom-left cell.
 - A pressure cell whose four cells are all static is solid. It sums their stored pressure, averages their density, and takes the first cell's owner and absorption.
@@ -34,7 +34,7 @@ The substeps then simulate the pressure cells with the same flow, transfer, and 
 
 Edits, streaming, rendering, and saves see only cells.
 
-> **Limitation:** A wall one cell thick shares pressure cells with the open cells beside it, so pressure leaks through it. A fifth gas species in one pressure cell is lost when it is rebuilt. Pressure detail smaller than a pressure cell averages out, so a broken cell's released pressure throws its debris less than it would at cell resolution.
+> **Limitation:** A wall one cell thick shares pressure cells with the open cells beside it, so pressure leaks through it. Pressure detail smaller than a pressure cell averages out, so a broken cell's released pressure throws its debris less than it would at cell resolution.
 
 ## Flows, volume, and sleeping
 
@@ -44,7 +44,7 @@ The pass measures open volume per cell from cellular occupancy, fluid raster occ
 
 A tile stays awake while one of its pressure cells changes a species slot, changes its phantom air by more than 64 amount units in a substep, changes its stored pressure, relaxes, or keeps a face flow of at least 16 amount units. Smaller changes let the tile sleep. Flow below its minimum becomes zero. A flow reaching a sleeping neighbor wakes it for a later tick.
 
-Gas pressure relaxes toward the ambient pressure. Each substep, a pressure cell more than 0.01 atm from the ambient pressure moves toward it by `PRESSURE_OPEN_RELAXATION` of the difference beyond that tolerance, and by at least `PRESSURE_OPEN_RELAXATION_MINIMUM`. Excess pressure removes phantom air first, then all species in proportion. A deficit adds phantom air. A closed pressure cell only loses the overpressure of the gas it traps. Sealed pockets and the low pressure behind a passing wave therefore settle within about a second.
+Gas pressure relaxes toward the ambient pressure. Each substep, a pressure cell more than 0.01 atm from the ambient pressure moves toward it by `PRESSURE_OPEN_RELAXATION` of the difference beyond that tolerance, and by at least `PRESSURE_OPEN_RELAXATION_MINIMUM`. Excess pressure removes phantom air first, then all species in proportion. A deficit adds phantom air. A closed pressure cell only loses the overpressure of the gas it traps. Sealed pockets and the low pressure behind a passing wave therefore settle within about a second. Held-back species are reintroduced when pressure cells are rebuilt and are not discarded.
 
 Each tick has 3 fixed substeps (`PRESSURE_SUBSTEP_COUNT`) over `PRESSURE_TIME_STEP = 1/60 s`. The pass derives its per-substep coefficients from these per-second constants, converting tiles to pressure cells:
 
