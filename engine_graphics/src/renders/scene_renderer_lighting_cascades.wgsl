@@ -25,6 +25,8 @@ struct CascadeLevel {
     upper_spacing: f32,
     /// Whether a coarser level exists to merge with
     has_upper: u32,
+    /// Number of consecutive invocations that split each ray of one interval between them
+    lanes: u32,
 };
 
 @group(0) @binding(0)
@@ -68,6 +70,9 @@ const CHANGED: u32 = 0xffff0000u;
 const CHANGE_MARGIN: f32 = 9.0;
 
 const TAU: f32 = 6.283185307179586;
+
+/// The radiance and transmission each invocation of a workgroup traced along its ray segment
+var<workgroup> segments: array<vec4<f32>, 64>;
 
 /// Returns the radiance gathered along a ray and the fraction of light passing through it,
 /// crossing uniform blocks of 8x8 cells in one step
@@ -120,6 +125,29 @@ fn trace(origin: vec2<f32>, direction: vec2<f32>, start: f32, end: f32) -> vec4<
     return vec4<f32>(radiance, transmission);
 }
 
+/// Traces a ray split into equal segments across the `level.lanes` invocations sharing one
+/// interval, then composes the segments in order. Every invocation of the workgroup must call it.
+fn trace_lanes(local: u32, origin: vec2<f32>, direction: vec2<f32>, start: f32, end: f32) -> vec4<f32> {
+    let lane: u32 = local % level.lanes;
+    let share: f32 = (end - start) / f32(level.lanes);
+    let segment_start: f32 = start + share * f32(lane);
+    let segment_end: f32 = select(segment_start + share, end, lane == level.lanes - 1u);
+    segments[local] = trace(origin, direction, segment_start, segment_end);
+    workgroupBarrier();
+    var radiance: vec3<f32> = vec3<f32>(0.0);
+    var transmission: f32 = 1.0;
+    for (var segment: u32 = local - lane; segment <= local - lane + level.lanes - 1u; segment++) {
+        radiance += transmission * segments[segment].rgb;
+        transmission *= segments[segment].a;
+        if transmission < 1e-3 {
+            transmission = 0.0;
+            break;
+        }
+    }
+    workgroupBarrier();
+    return vec4<f32>(radiance, transmission);
+}
+
 /// Unpacks one merged interval's radiance
 fn unpack_interval(packed: vec2<u32>) -> vec3<f32> {
     return vec3<f32>(unpack2x16float(packed.x), unpack2x16float(packed.y).x);
@@ -128,18 +156,20 @@ fn unpack_interval(packed: vec2<u32>) -> vec3<f32> {
 /// Returns the radiance arriving at a domain position along a direction through one interval,
 /// merged with the coarser level. Each of the four surrounding coarser probes gets its own ray,
 /// from where this interval starts to where that probe's interval starts, so occluders between
-/// the probes do not leak light across.
-fn merged_radiance(position: vec2<f32>, direction: u32) -> vec3<f32> {
+/// the probes do not leak light across. Every invocation of the workgroup must call it; one whose
+/// result is unused passes `is_traced` false to trace nothing while it takes part in the barriers.
+fn merged_radiance(local: u32, position: vec2<f32>, direction: u32, is_traced: bool) -> vec3<f32> {
     let angle: f32 = (f32(direction) + 0.5) * TAU / f32(level.direction_count);
     let ray: vec2<f32> = vec2<f32>(cos(angle), sin(angle));
+    let interval_end: f32 = select(level.interval_start, level.interval_end, is_traced);
     if level.has_upper == 0u {
-        return trace(position, ray, level.interval_start, level.interval_end).rgb;
+        return trace_lanes(local, position, ray, level.interval_start, interval_end).rgb;
     }
     let start: vec2<f32> = position + ray * level.interval_start;
     let upper_direction_count: u32 = level.direction_count * 2u;
     // where the interval crosses nothing, the four rays would see nothing either, so one ray and
     // interpolated coarser probes suffice
-    let plain: vec4<f32> = trace(position, ray, level.interval_start, level.interval_end);
+    let plain: vec4<f32> = trace_lanes(local, position, ray, level.interval_start, interval_end);
     let is_clear: bool = plain.a >= 0.9999 && all(plain.rgb <= vec3<f32>(1e-6));
     let lattice: vec2<f32> = (position - level.upper_probe_origin) / level.upper_spacing;
     let maximum: vec2<i32> = max(vec2<i32>(level.upper_probe_count) - vec2<i32>(2), vec2<i32>(0));
@@ -150,16 +180,19 @@ fn merged_radiance(position: vec2<f32>, direction: u32) -> vec3<f32> {
         let offset: vec2<i32> = vec2<i32>(i32(corner & 1u), i32(corner >> 1u));
         let corner_weight: f32 = select(1.0 - weight.x, weight.x, offset.x == 1)
             * select(1.0 - weight.y, weight.y, offset.y == 1);
-        if corner_weight <= 0.0 {
-            continue;
-        }
         let probe: vec2<u32> = vec2<u32>(min(base + offset, vec2<i32>(level.upper_probe_count) - vec2<i32>(1)));
         let upper_position: vec2<f32> = level.upper_probe_origin + vec2<f32>(probe) * level.upper_spacing;
-        var near: vec4<f32> = plain;
-        if !is_clear {
-            let segment: vec2<f32> = upper_position + ray * level.interval_end - start;
-            let length: f32 = max(length(segment), 1e-6);
-            near = trace(start, segment / length, 0.0, length);
+        // corners that do not contribute trace nothing, but still take part in the lane barriers
+        let segment: vec2<f32> = upper_position + ray * level.interval_end - start;
+        let length: f32 = max(length(segment), 1e-6);
+        let is_corner_traced: bool = is_traced && !is_clear && corner_weight > 0.0;
+        var near: vec4<f32> =
+            trace_lanes(local, start, segment / length, 0.0, select(0.0, length, is_corner_traced));
+        if is_clear {
+            near = plain;
+        }
+        if corner_weight <= 0.0 {
+            continue;
         }
         var corner_radiance: vec3<f32> = near.rgb;
         if near.a > 0.0 {
@@ -284,22 +317,26 @@ fn summarize(
 @compute @workgroup_size(64, 1, 1)
 fn trace_merge(
     @builtin(global_invocation_id) invocation: vec3<u32>,
+    @builtin(local_invocation_index) local: u32,
     @builtin(num_workgroups) workgroups: vec3<u32>,
 ) {
-    let index: u32 = invocation.x + invocation.y * workgroups.x * 64u;
-    let probe_total: u32 = level.probe_count.x * level.probe_count.y;
-    if index >= probe_total * level.direction_count {
-        return;
-    }
-    let direction: u32 = index % level.direction_count;
-    let probe_index: u32 = index / level.direction_count;
+    let interval_total: u32 = level.probe_count.x * level.probe_count.y * level.direction_count;
+    let index: u32 = (invocation.x + invocation.y * workgroups.x * 64u) / level.lanes;
+    // invocations past the last interval trace a clamped one to keep the lane barriers uniform
+    let traced: u32 = min(index, interval_total - 1u);
+    let direction: u32 = traced % level.direction_count;
+    let probe_index: u32 = traced / level.direction_count;
     let probe: vec2<u32> = vec2<u32>(probe_index % level.probe_count.x, probe_index / level.probe_count.x);
     let position: vec2<f32> = level.probe_origin + vec2<f32>(probe) * level.spacing;
-    if !interval_inputs_changed(position, direction) {
+    let is_changed: bool = index < interval_total && interval_inputs_changed(position, direction);
+    let radiance: vec3<f32> = merged_radiance(local, position, direction, is_changed);
+    if index >= interval_total || local % level.lanes != 0u {
+        return;
+    }
+    if !is_changed {
         intervals[index].y = intervals[index].y & ~CHANGED;
         return;
     }
-    let radiance: vec3<f32> = merged_radiance(position, direction);
     let packed: vec2<u32> = vec2<u32>(pack2x16float(radiance.rg), pack2x16float(vec2<f32>(radiance.b, 0.0)));
     let previous: vec2<u32> = vec2<u32>(intervals[index].x, intervals[index].y & ~CHANGED);
     intervals[index] = vec2<u32>(packed.x, packed.y | select(0u, 0x10000u, any(packed != previous)));
@@ -308,17 +345,20 @@ fn trace_merge(
 /// Gathers the fluence of every cell from its finest intervals merged with the stored levels,
 /// keeping the previous fluence of cells where nothing changed
 @compute @workgroup_size(8, 8, 1)
-fn integrate(@builtin(global_invocation_id) invocation: vec3<u32>) {
-    if any(invocation.xy >= level.domain_size) {
-        return;
-    }
-    let position: vec2<f32> = vec2<f32>(invocation.xy) + 0.5;
-    if !cell_inputs_changed(position) {
-        return;
-    }
+fn integrate(
+    @builtin(global_invocation_id) invocation: vec3<u32>,
+    @builtin(local_invocation_index) local: u32,
+) {
+    // invocations outside the domain gather a clamped cell to keep the lane barriers uniform
+    let traced: vec2<u32> = min(invocation.xy, level.domain_size - vec2<u32>(1u));
+    let position: vec2<f32> = vec2<f32>(traced) + 0.5;
+    let is_changed: bool = all(invocation.xy < level.domain_size) && cell_inputs_changed(position);
     var radiance: vec3<f32> = vec3<f32>(0.0);
     for (var direction: u32 = 0u; direction < level.direction_count; direction++) {
-        radiance += merged_radiance(position, direction);
+        radiance += merged_radiance(local, position, direction, is_changed);
+    }
+    if !is_changed {
+        return;
     }
     let cell: u32 = invocation.y * level.domain_size.x + invocation.x;
     let light: vec3<f32> = min(radiance / f32(level.direction_count), vec3<f32>(60000.0));

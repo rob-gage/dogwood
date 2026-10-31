@@ -25,6 +25,9 @@ const LIGHTING_UNIFORM_STRIDE: u64 = 256;
 /// Largest number of cascade levels
 const LIGHTING_LEVEL_MAXIMUM: usize = 16;
 
+/// Invocations a cascade level aims to fill by splitting its rays, up to 16 per interval
+const LIGHTING_TRACE_INVOCATIONS: u32 = 1 << 18;
+
 /// Bytes of one sprite instance, matching the sprite pass
 const LIGHTING_INSTANCE_SIZE: usize = 64;
 
@@ -43,6 +46,8 @@ struct LightingLevel {
     interval_start: f32,
     /// Distance from a probe where its intervals end in lighting texels
     interval_end: f32,
+    /// Number of invocations that split each ray of one interval between them
+    lanes: u32,
 }
 
 /// Exact optical/backlight cache. Indirect zero dispatches retain the previous light field, and
@@ -239,8 +244,10 @@ impl LightingCache {
         self.key = Some(key);
         let mut counts = vec![[width.div_ceil(8), height.div_ceil(8), 1, 1]];
         for l in levels.iter().skip(1).rev() {
-            let (x, y) =
-                workgroup_counts(l.probe_count[0] * l.probe_count[1] * l.direction_count, 64);
+            let (x, y) = workgroup_counts(
+                l.probe_count[0] * l.probe_count[1] * l.direction_count * l.lanes,
+                64,
+            );
             counts.push([x, y, 1, 1]);
         }
         if let Some(l) = levels.get(1) {
@@ -448,7 +455,7 @@ fn uniform_record_binding(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGrou
         resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
             buffer,
             offset: 0,
-            size: wgpu::BufferSize::new(64),
+            size: wgpu::BufferSize::new(80),
         }),
     }
 }
@@ -1175,6 +1182,14 @@ impl SceneRendererLightingPass {
                 direction_count: LIGHTING_DIRECTIONS << level,
                 interval_start,
                 interval_end,
+                // levels too coarse to fill the GPU split each ray between more invocations
+                lanes: match level {
+                    0 => 1,
+                    _ => {
+                        let intervals: u32 = probe_count[0] * probe_count[1] * (LIGHTING_DIRECTIONS << level);
+                        1 << (LIGHTING_TRACE_INVOCATIONS / intervals).clamp(1, 16).ilog2()
+                    }
+                },
             });
             if interval_end >= diagonal {
                 break;
@@ -1423,7 +1438,7 @@ impl SceneRendererLightingPass {
         for (index, level) in self.levels.iter().enumerate() {
             let upper: Option<&LightingLevel> = self.levels.get(index + 1);
             let record: &mut [u8] = &mut cascade_bytes[index * LIGHTING_UNIFORM_STRIDE as usize..];
-            let words: [[u8; 4]; 16] = [
+            let words: [[u8; 4]; 17] = [
                 width.to_le_bytes(),
                 height.to_le_bytes(),
                 level.probe_count[0].to_le_bytes(),
@@ -1440,6 +1455,7 @@ impl SceneRendererLightingPass {
                 upper.map_or(0.0, |upper| upper.probe_origin[1]).to_le_bytes(),
                 upper.map_or(1.0, |upper| upper.spacing).to_le_bytes(),
                 u32::from(upper.is_some()).to_le_bytes(),
+                level.lanes.to_le_bytes(),
             ];
             for (word_index, word) in words.iter().enumerate() {
                 record[word_index * 4..word_index * 4 + 4].copy_from_slice(word);
@@ -1596,7 +1612,8 @@ impl SceneRendererLightingPass {
             let level: &LightingLevel = &self.levels[index];
             let offset: u32 = (index as u64 * LIGHTING_UNIFORM_STRIDE) as u32;
             compute_pass.set_bind_group(0, &domain.cascade_bind_groups[index], &[offset]);
-            let count: u32 = level.probe_count[0] * level.probe_count[1] * level.direction_count;
+            let count: u32 =
+                level.probe_count[0] * level.probe_count[1] * level.direction_count * level.lanes;
             let (x, y): (u32, u32) = workgroup_counts(count, 64);
             dispatch(&mut compute_pass,x, y, 1);
         }
