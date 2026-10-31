@@ -21,6 +21,7 @@ use engine::{
         MaterialIdentifier,
         MaterialPropertiesCellularDynamic,
         MaterialPropertiesCellularStatic,
+        MaterialPropertiesChemical,
         MaterialPropertiesFluid,
         MaterialPropertiesGas,
         MaterialPropertiesThermal,
@@ -171,6 +172,7 @@ impl TemplateGame {
                 temperature_colors: glowing(),
                 ..Default::default()
             },
+            chemical: MaterialPropertiesChemical::default(),
         })?;
         // loose ice that breaks off frozen water and melts back into it
         material_registry.register_cellular_dynamic("snow", MaterialPropertiesCellularDynamic {
@@ -202,6 +204,7 @@ impl TemplateGame {
                 hot_transition: thawing("water"),
                 ..Default::default()
             },
+            chemical: MaterialPropertiesChemical::default(),
         })?;
         material_registry.register_cellular_static("stone", MaterialPropertiesCellularStatic {
             edit_color: MaterialGraphicsCellularStatic {
@@ -236,6 +239,7 @@ impl TemplateGame {
                 temperature_colors: glowing(),
                 ..Default::default()
             },
+            chemical: MaterialPropertiesChemical::default(),
         })?;
         material_registry.register_cellular_static("ice", MaterialPropertiesCellularStatic {
             edit_color: MaterialGraphicsCellularStatic {
@@ -269,6 +273,7 @@ impl TemplateGame {
                 hot_transition: thawing("water"),
                 ..Default::default()
             },
+            chemical: MaterialPropertiesChemical::default(),
         })?;
         material_registry.register_fluid("water", MaterialPropertiesFluid {
             density: 0.6,
@@ -293,6 +298,7 @@ impl TemplateGame {
                 ),
                 temperature_colors: Vec::new(),
             },
+            chemical: MaterialPropertiesChemical::default(),
         })?;
         // molten rock that cools into stone, or into gravel where too little of it freezes
         // together to stay put
@@ -327,6 +333,7 @@ impl TemplateGame {
                 ),
                 ..Default::default()
             },
+            chemical: MaterialPropertiesChemical::default(),
         })?;
         material_registry.register_gas("water vapor", MaterialPropertiesGas {
             mass: 18.0,
@@ -349,6 +356,7 @@ impl TemplateGame {
                 ),
                 ..Default::default()
             },
+            chemical: MaterialPropertiesChemical::default(),
         })?;
         // glowing crystal of each color, its dimmer debris, and its brighter gas, which melts
         // well below rock and condenses back as easily
@@ -426,6 +434,7 @@ impl TemplateGame {
                     hot_transition: Some(MaterialTransition::new(1100.0, 200.0, &glowstone_gas)),
                     ..Default::default()
                 },
+                chemical: MaterialPropertiesChemical::default(),
             })?;
             material_registry.register_cellular_dynamic(
                 &glowstone_gravel,
@@ -455,6 +464,7 @@ impl TemplateGame {
                         hot_transition: Some(MaterialTransition::new(1100.0, 200.0, &glowstone_gas)),
                         ..Default::default()
                     },
+                    chemical: MaterialPropertiesChemical::default(),
                 },
             )?;
             material_registry.register_gas(&glowstone_gas, MaterialPropertiesGas {
@@ -476,6 +486,7 @@ impl TemplateGame {
                     ),
                     ..Default::default()
                 },
+                chemical: MaterialPropertiesChemical::default(),
             })?;
         }
         // the template starts from its generated world on every launch

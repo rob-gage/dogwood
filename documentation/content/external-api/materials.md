@@ -21,7 +21,7 @@ have been registered.
 | `register_fluid(name, properties)` | `MaterialPropertiesFluid` | `density`, `viscosity`, `cohesion`, `artificial_pressure`, `drag`, `friction`, `restitution`, `edit_color`, `edit_radiance` |
 | `register_gas(name, properties)` | `MaterialPropertiesGas` | `mass`, `diffusivity`, `cohesion`, `graphics` (`color`, `opacity`, `radiance`) |
 
-Every form also has `thermal: MaterialPropertiesThermal`, with `heat_capacity`, `conduction`,
+Every form also has `chemical: MaterialPropertiesChemical`, with reaction-selection `tags`. Every form also has `thermal: MaterialPropertiesThermal`, with `heat_capacity`, `conduction`,
 `edit_temperature`, `hot_transition`, `cold_transition`, and render-time `temperature_colors`. Defaults are heat capacity `1.0`,
 conduction `0.0`, edit temperature `293.0`, and no transitions. Gas heat capacity is per
 atmosphere. `MaterialTransition::new(temperature, latent_heat, product)` takes a product name,
@@ -72,6 +72,14 @@ Gas species use the shared [pressure substrate](@/internals/simulation/pressure.
 
 Placing a fluid identifier directly in a cellular array does not create a particle; use edits or chunk particle records.
 
+## Reaction properties and validation
+
+`MaterialPropertiesChemical::tags` names material groups that reaction reactants can select.
+
+`MaterialReaction` takes one or two `MaterialReactant` entries and zero to three `MaterialReactionProduct` entries. Reactants select an exact material name or tag and specify consumed amount per event; amount zero marks a catalyst. Products specify material name and amount, with optional color and radiance transforms. Builder methods set event rate, inclusive temperature and pressure ranges, heat per event, and pressure added per event. Use `with_temperature_range`, `with_pressure_range`, `with_heat`, and `with_pressure`.
+
+`MaterialRegistry::register_reaction` appends a reaction; registration order determines priority for a matching contact. Use `with_rate`, `with_temperature_range`, `with_pressure_range`, `with_heat`, and `with_pressure` to set its conditions and outputs. Compilation supports at most 64 reactions and 255 entries in each reaction lookup list. It rejects unknown reactant materials (`UnknownReactantMaterial`), tags carried by no material (`UnknownTag`), unknown products (`UnknownProduct`), and invalid counts, amounts (consumed amounts below 1/4096), ranges, rates, pressure, or transformations (`InvalidReaction`). A reaction requires at least one consumed reactant. A single-reactant catalyst is invalid.
+
 ## Identifiers
 
 `MaterialIdentifier` is an internal simulation handle that wraps a `u32`. Games should obtain
@@ -94,8 +102,8 @@ Registered static materials start at index 1. Dynamic, fluid, and gas indices st
 - `compile(self, accelerator)` assigns identifiers in registration order within each form, resolves
   name references, validates properties, and reads sprite-sheet albedo frames.
 - Registration errors include `EmptyName` and `DuplicateName`; compilation can return
-  `UnknownMaterial`, `InvalidDebris`, `InvalidTransition`, capacity errors, or
-  `Compilation(String)`.
+  `UnknownMaterial`, `InvalidDebris`, `InvalidTransition`, `UnknownReactantMaterial`, `UnknownTag`,
+  `UnknownProduct`, `InvalidReaction`, capacity errors, or `Compilation(String)`.
 
 ## MaterialTable
 
@@ -105,7 +113,7 @@ Registered static materials start at index 1. Dynamic, fluid, and gas indices st
 names. `debris(identifier)` returns the resolved dynamic debris identifier. `material_count()`
 counts all forms.
 
-The table provides `cellular_color(identifier, cell, color)`, `cellular_radiance(identifier, cell, radiance)`, and GPU buffer accessors. Cellular radiance sampling uses the same frame and repetition math as albedo sampling; the explicit radiance value passes through unchanged. For cellular materials with albedo, `cellular_color` samples the frame at the cell center. The pattern
+The table provides reaction records, reaction product color transforms, and reaction lookup buffers. It also provides `cellular_color(identifier, cell, color)`, `cellular_radiance(identifier, cell, radiance)`, and GPU buffer accessors. Cellular radiance sampling uses the same frame and repetition math as albedo sampling; the explicit radiance value passes through unchanged. For cellular materials with albedo, `cellular_color` samples the frame at the cell center. The pattern
 repeats from the scene origin with image rows flipped. It applies the packed sRGB tint, multiplying
 RGB in linear light and alpha separately. Colors use RGBA bytes, with red in the least-significant
 byte: `u32::from_le_bytes([r, g, b, a])`.
@@ -120,6 +128,8 @@ details.
 ## Rustdoc
 
 Core: {{ <rustdoc path="engine/materials/enum.Material.html" text="Material" /> }} · {{ <rustdoc path="engine/materials/enum.MaterialForm.html" text="MaterialForm" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialIdentifier.html" text="MaterialIdentifier" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialRegistry.html" text="MaterialRegistry" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialTable.html" text="MaterialTable" /> }} · {{ <rustdoc path="engine/materials/enum.MaterialError.html" text="MaterialError" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialTransition.html" text="MaterialTransition" /> }}
+
+Chemistry: {{ <rustdoc path="engine/materials/struct.MaterialPropertiesChemical.html" text="MaterialPropertiesChemical" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialReaction.html" text="MaterialReaction" /> }} · {{ <rustdoc path="engine/materials/enum.MaterialReactant.html" text="MaterialReactant" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialReactionProduct.html" text="MaterialReactionProduct" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialRegistry.html#method.register_reaction" text="register_reaction" /> }}
 
 Properties: {{ <rustdoc path="engine/materials/struct.MaterialPropertiesCellularStatic.html" text="MaterialPropertiesCellularStatic" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialPropertiesCellularDynamic.html" text="MaterialPropertiesCellularDynamic" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialPropertiesFluid.html" text="MaterialPropertiesFluid" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialPropertiesGas.html" text="MaterialPropertiesGas" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialPropertiesThermal.html" text="MaterialPropertiesThermal" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialTemperatureColor.html" text="MaterialTemperatureColor" /> }}
 

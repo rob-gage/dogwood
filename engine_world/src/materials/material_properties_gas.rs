@@ -1,7 +1,7 @@
 // Copyright Rob Gage 2026
 
 use engine_graphics::world::materials::MaterialGraphicsGas;
-use super::MaterialPropertiesThermal;
+use super::{MaterialPropertiesChemical, MaterialPropertiesThermal};
 
 /// Properties for a gas material
 pub struct MaterialPropertiesGas {
@@ -17,4 +17,6 @@ pub struct MaterialPropertiesGas {
     pub graphics: MaterialGraphicsGas,
     /// Thermal and phase-transition properties; heat capacity is per atmosphere
     pub thermal: MaterialPropertiesThermal,
+    /// Chemical reaction tags
+    pub chemical: MaterialPropertiesChemical,
 }

@@ -10,6 +10,7 @@ use super::{
     MaterialPropertiesFluid,
     MaterialPropertiesGas,
     MaterialTemperatureColor,
+    MaterialReactant,
     MaterialRegistry,
     MaterialTransition,
 };
@@ -82,8 +83,21 @@ pub struct MaterialTable {
     /// Color then radiance transformations of the hot and cold transitions as 28 `vec4<f32>` per
     /// material, indexed by its thermal index
     transition_color_buffer: wgpu::Buffer,
+    /// Five `vec4<u32>` records per reaction: conditions and counts, ranges, reactant amounts,
+    /// then three product identifiers and amounts
+    reaction_buffer: wgpu::Buffer,
+    /// Forty-two `vec4<f32>` records per reaction: seven color and seven radiance vectors per
+    /// product slot
+    reaction_color_buffer: wgpu::Buffer,
+    /// Pair headers, unary headers, then reaction index lists; list entries set bit 31 when
+    /// reactant order is swapped
+    reaction_lookup_buffer: wgpu::Buffer,
     /// Temperature color headers and keys as `vec4<u32>` then `vec4<f32>` records
     temperature_color_buffer: wgpu::Buffer,
+    /// Number of registered reactions
+    reaction_count: u32,
+    /// Whether any reaction product is a fluid
+    has_fluid_reaction_products: bool,
     /// First thermal index of the static, dynamic, fluid, and gas forms, static index zero being
     /// empty
     thermal_offsets: [u32; 4],
@@ -105,6 +119,193 @@ pub struct MaterialTable {
 
 impl MaterialTable {
 
+    /// Creates a storage buffer from a nonempty byte array
+    fn create_storage_buffer(
+        device: &wgpu::Device,
+        label: &'static str,
+        bytes: &[u8],
+    ) -> wgpu::Buffer {
+        let bytes: &[u8] = if bytes.is_empty() { &[0; 16] } else { bytes };
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size: bytes.len() as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    }
+
+    /// Serializes reactions and their thermal-index lookup lists
+    fn new_reactions(
+        registry: &MaterialRegistry,
+        identifiers_by_name: &HashMap<String, MaterialIdentifier>,
+        thermal_offsets: [u32; 4],
+        reactions: &[super::MaterialReaction],
+    ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>, u32, bool), MaterialError> {
+        let thermal_count: usize = registry.material_count() + 1;
+        let mut reaction_bytes: Vec<u8> = Vec::new();
+        let mut reaction_color_bytes: Vec<u8> = Vec::new();
+        let mut unary_lists: Vec<Vec<u32>> = vec![Vec::new(); thermal_count];
+        let mut pair_lists: Vec<Vec<u32>> = vec![Vec::new(); thermal_count * thermal_count];
+        let mut has_fluid_products: bool = false;
+        for (reaction_index, reaction) in reactions.iter().enumerate() {
+            let matches: Vec<Vec<MaterialIdentifier>> = reaction.reactants.iter().map(|reactant| {
+                let mut identifiers: Vec<MaterialIdentifier> = Vec::new();
+                match reactant {
+                    MaterialReactant::Material { name, .. } => {
+                        if let Some(identifier) = identifiers_by_name.get(name) {
+                            identifiers.push(*identifier);
+                        }
+                    }
+                    MaterialReactant::Tag { tag, .. } => {
+                        for form in [
+                            MaterialForm::CellularStatic,
+                            MaterialForm::CellularDynamic,
+                            MaterialForm::Fluid,
+                            MaterialForm::Gas,
+                        ]
+                        {
+                            let first: u32 = u32::from(form == MaterialForm::CellularStatic);
+                            for index in first.. {
+                                let Ok(identifier) = MaterialIdentifier::new(form, index) else {
+                                    break;
+                                };
+                                let Some(material) = registry.get(identifier) else { break; };
+                                let chemical = match material {
+                                    Material::CellularStatic { properties, .. } => {
+                                        &properties.chemical
+                                    }
+                                    Material::CellularDynamic { properties, .. } => {
+                                        &properties.chemical
+                                    }
+                                    Material::Fluid { properties, .. } => &properties.chemical,
+                                    Material::Gas { properties, .. } => &properties.chemical,
+                                };
+                                if chemical.tags.iter().any(|candidate| candidate == tag) {
+                                    identifiers.push(identifier);
+                                }
+                            }
+                        }
+                    }
+                }
+                identifiers
+            }).collect();
+            if reaction.reactants.len() == 1 {
+                for identifier in &matches[0] {
+                    let thermal: usize =
+                        (identifier.index() + thermal_offsets[identifier.form() as usize]) as usize;
+                    unary_lists[thermal].push(reaction_index as u32);
+                }
+            } else {
+                for first in &matches[0] {
+                    for second in &matches[1] {
+                        let a: usize =
+                            (first.index() + thermal_offsets[first.form() as usize]) as usize;
+                        let b: usize =
+                            (second.index() + thermal_offsets[second.form() as usize]) as usize;
+                        let list_index: usize = a * thermal_count + b;
+                        pair_lists[list_index].push(reaction_index as u32);
+                    }
+                }
+                for first in &matches[1] {
+                    for second in &matches[0] {
+                        let a: usize =
+                            (first.index() + thermal_offsets[first.form() as usize]) as usize;
+                        let b: usize =
+                            (second.index() + thermal_offsets[second.form() as usize]) as usize;
+                        // a pair matching both orders already has its unswapped entry
+                        if matches[0].contains(first) && matches[1].contains(second) {
+                            continue;
+                        }
+                        pair_lists[a * thermal_count + b].push((reaction_index as u32) | (1 << 31));
+                    }
+                }
+            }
+            for product in &reaction.products {
+                has_fluid_products |=
+                    identifiers_by_name[&product.product].form() == MaterialForm::Fluid;
+            }
+            let counts: u32 =
+                reaction.reactants.len() as u32 | ((reaction.products.len() as u32) << 2);
+            for word in [
+                reaction.rate.to_bits(),
+                reaction.heat.to_bits(),
+                reaction.pressure.to_bits(),
+                counts,
+                finite_max_bits(reaction.temperature_minimum),
+                finite_max_bits(reaction.temperature_maximum),
+                finite_max_bits(reaction.pressure_minimum),
+                finite_max_bits(reaction.pressure_maximum),
+                reactant_amount(&reaction.reactants[0]).to_bits(),
+                reaction.reactants.get(1).map_or(0.0, reactant_amount).to_bits(),
+                0,
+                0,
+            ]
+            {
+                reaction_bytes.extend_from_slice(&word.to_le_bytes());
+            }
+            for slot in 0..3 {
+                let product = reaction.products.get(slot);
+                let identifier: u32 = product.map_or(0, |product| {
+                    identifiers_by_name[&product.product].as_u32()
+                });
+                let amount: u32 = product.map_or(0.0, |product| product.amount).to_bits();
+                reaction_bytes.extend_from_slice(&identifier.to_le_bytes());
+                reaction_bytes.extend_from_slice(&amount.to_le_bytes());
+            }
+            reaction_bytes.extend_from_slice(&[0; 8]);
+            for product in &reaction.products {
+                append_transform(&mut reaction_color_bytes, &product.color);
+                append_transform(&mut reaction_color_bytes, &product.radiance);
+            }
+            for _ in reaction.products.len()..3 {
+                append_transform(&mut reaction_color_bytes, &MaterialColorTransformation::IDENTITY);
+                append_transform(&mut reaction_color_bytes, &MaterialColorTransformation::IDENTITY);
+            }
+        }
+        // pair headers, unary headers, each thermal index's reaction flags (bit 0 when it has
+        // unary reactions, bit 1 when it takes part in a two-reactant reaction), then its partner
+        // classes: bit `partner % 32` for every thermal index it reacts with
+        let headers: usize = thermal_count * thermal_count + 3 * thermal_count;
+        let mut lookup_words: Vec<u32> = vec![0; headers];
+        for thermal in 0..thermal_count {
+            let row: &[Vec<u32>] =
+                &pair_lists[thermal * thermal_count..(thermal + 1) * thermal_count];
+            let has_unary: bool = !unary_lists[thermal].is_empty();
+            let has_pair: bool = row.iter().any(|list| !list.is_empty());
+            lookup_words[thermal_count * thermal_count + thermal_count + thermal] =
+                u32::from(has_unary) | u32::from(has_pair) << 1;
+            lookup_words[thermal_count * thermal_count + 2 * thermal_count + thermal] = row.iter()
+                .enumerate()
+                .filter(|(_, list)| !list.is_empty())
+                .fold(0, |classes, (partner, _)| classes | 1 << (partner % 32));
+        }
+        let mut list_word: usize = headers;
+        for (list_base, lists) in [(0usize, &pair_lists),
+            (thermal_count * thermal_count, &unary_lists)]
+        {
+            for (list_index, list) in lists.iter().enumerate() {
+                if list.len() > 255 || list_word > 0x00ff_ffff {
+                    return Err(MaterialError::InvalidReaction {
+                        message: String::from(
+                            "reaction lookup lists exceed their GPU encoding capacity",
+                        ),
+                    });
+                }
+                let header_index: usize = list_base + list_index;
+                if !list.is_empty() {
+                    lookup_words[header_index] = ((list_word as u32) << 8) | list.len() as u32;
+                    lookup_words.extend_from_slice(list);
+                    list_word += list.len();
+                }
+            }
+        }
+        if lookup_words.is_empty() { lookup_words.push(0); }
+        let mut lookup_bytes: Vec<u8> = Vec::with_capacity(lookup_words.len() * 4);
+        for word in lookup_words { lookup_bytes.extend_from_slice(&word.to_le_bytes()); }
+        Ok((reaction_bytes, reaction_color_bytes, lookup_bytes, reactions.len() as u32,
+            has_fluid_products))
+    }
+
     /// Compiles registered properties and reads every cellular albedo and radiance frame once
     #[doc(hidden)]
     pub fn new(
@@ -113,6 +314,7 @@ impl MaterialTable {
         identifiers_by_name: HashMap<String, MaterialIdentifier>,
         debris_by_identifier: HashMap<MaterialIdentifier, MaterialIdentifier>,
         transition_products: HashMap<(MaterialIdentifier, bool), MaterialIdentifier>,
+        reactions: Vec<super::MaterialReaction>,
     ) -> Result<Self, MaterialError> {
         let device: &wgpu::Device = accelerator.device();
         // collect the albedo frames of static materials after empty index zero, then dynamic ones
@@ -318,6 +520,10 @@ impl MaterialTable {
             has_fluid_transitions,
         ): (Vec<u8>, Vec<u8>, Vec<u8>, [u32; 4], bool) =
             Self::new_thermal_properties(&material_registry, &transition_products)?;
+        let (reaction_bytes, reaction_color_bytes, reaction_lookup_bytes, reaction_count,
+            has_fluid_reaction_products) = Self::new_reactions(
+                &material_registry, &identifiers_by_name, thermal_offsets, &reactions,
+            )?;
         let thermal_properties_buffer: wgpu::Buffer = device.create_buffer(
             &wgpu::BufferDescriptor {
                 label: Some("`MaterialTable.thermal_properties_buffer`"),
@@ -349,6 +555,18 @@ impl MaterialTable {
             0,
             &temperature_color_bytes,
         );
+        let reaction_buffer: wgpu::Buffer = Self::create_storage_buffer(
+            device, "`MaterialTable.reaction_buffer`", &reaction_bytes,
+        );
+        accelerator.queue().write_buffer(&reaction_buffer, 0, &reaction_bytes);
+        let reaction_color_buffer: wgpu::Buffer = Self::create_storage_buffer(
+            device, "`MaterialTable.reaction_color_buffer`", &reaction_color_bytes,
+        );
+        accelerator.queue().write_buffer(&reaction_color_buffer, 0, &reaction_color_bytes);
+        let reaction_lookup_buffer: wgpu::Buffer = Self::create_storage_buffer(
+            device, "`MaterialTable.reaction_lookup_buffer`", &reaction_lookup_bytes,
+        );
+        accelerator.queue().write_buffer(&reaction_lookup_buffer, 0, &reaction_lookup_bytes);
         // copy every frame into a readable buffer with rows padded to the copy alignment
         let mut command_encoder: wgpu::CommandEncoder = device.create_command_encoder(
             &wgpu::CommandEncoderDescriptor {
@@ -597,7 +815,12 @@ impl MaterialTable {
             gas_properties_buffer,
             thermal_properties_buffer,
             transition_color_buffer,
+            reaction_buffer,
+            reaction_color_buffer,
+            reaction_lookup_buffer,
             temperature_color_buffer,
+            reaction_count,
+            has_fluid_reaction_products,
             thermal_offsets,
             has_fluid_transitions,
             cellular_static_albedos: albedos,
@@ -1034,6 +1257,19 @@ impl MaterialTable {
         &self.transition_color_buffer
     }
 
+    /// Returns five `vec4<u32>` records per reaction: rate, heat, pressure, and counts; condition
+    /// ranges; reactant amounts; then the three product identifier and amount pairs
+    pub fn reaction_buffer(&self) -> &wgpu::Buffer { &self.reaction_buffer }
+
+    /// Returns 42 `vec4<f32>` records per reaction, with seven color and seven radiance vectors
+    /// for each of three product slots
+    pub fn reaction_color_buffer(&self) -> &wgpu::Buffer { &self.reaction_color_buffer }
+
+    /// Returns `N*N` pair headers, `N` unary headers, `N` reaction flags (bit 0 unary, bit 1
+    /// paired), and `N` partner class masks (bit `partner % 32` per reacting partner) followed by
+    /// reaction indices in registration order; each header packs the first list word and count
+    pub fn reaction_lookup_buffer(&self) -> &wgpu::Buffer { &self.reaction_lookup_buffer }
+
     /// Returns temperature-key headers and key data: one `vec4<u32>` per thermal index containing
     /// the first key vector index, key count, and two zero words, then eleven `vec4<f32>` per key
     /// containing temperature, color matrix rows and offset, then radiance matrix rows and offset;
@@ -1043,10 +1279,42 @@ impl MaterialTable {
         &self.temperature_color_buffer
     }
 
+    /// Returns the number of compiled reactions
+    pub fn reaction_count(&self) -> u32 { self.reaction_count }
+
+    /// Returns whether any reaction is registered
+    pub fn has_reactions(&self) -> bool { self.reaction_count > 0 }
+
+    /// Returns whether any reaction product is a fluid
+    pub fn has_fluid_reaction_products(&self) -> bool { self.has_fluid_reaction_products }
+
     /// Returns the first thermal index of the static, dynamic, fluid, and gas forms
     pub fn thermal_offsets(&self) -> [u32; 4] { self.thermal_offsets }
 
     /// Returns whether any registered transition starts or ends in a fluid
     pub fn has_fluid_transitions(&self) -> bool { self.has_fluid_transitions }
 
+}
+
+/// Appends the seven `vec4<f32>` records of a color transformation
+fn append_transform(bytes: &mut Vec<u8>, transformation: &MaterialColorTransformation) {
+    for value in transformation.matrix.iter().flatten()
+        .chain(&transformation.offset)
+        .chain(&transformation.channel_variance)
+        .chain([&transformation.intensity_variance, &0.0, &0.0, &0.0])
+    {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+}
+
+/// Stores an unbounded maximum as the largest finite float in the reaction table
+fn finite_max_bits(value: f32) -> u32 {
+    if value == f32::INFINITY { f32::MAX.to_bits() } else { value.to_bits() }
+}
+
+/// Returns the amount consumed by a reaction reactant
+fn reactant_amount(reactant: &MaterialReactant) -> f32 {
+    match reactant {
+        MaterialReactant::Material { amount, .. } | MaterialReactant::Tag { amount, .. } => *amount,
+    }
 }

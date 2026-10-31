@@ -1,7 +1,7 @@
 // Copyright Rob Gage 2026
 
 use engine_graphics::world::materials::MaterialGraphicsCellularDynamic;
-use super::MaterialPropertiesThermal;
+use super::{MaterialPropertiesChemical, MaterialPropertiesThermal};
 
 /// Properties for a cellular dynamic material
 pub struct MaterialPropertiesCellularDynamic {
@@ -20,4 +20,6 @@ pub struct MaterialPropertiesCellularDynamic {
     pub restitution: f32,
     /// Thermal and phase-transition properties
     pub thermal: MaterialPropertiesThermal,
+    /// Chemical reaction properties
+    pub chemical: MaterialPropertiesChemical,
 }

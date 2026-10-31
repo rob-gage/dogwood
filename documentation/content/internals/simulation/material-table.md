@@ -93,3 +93,8 @@ The cellular tile pass binds the dynamic property buffer as `array<vec4<f32>>` a
 `MaterialTable` creates static cellular, dynamic cellular, fluid, and gas property buffers. The fluid solver and cellular kinematics consume the fluid buffer for particle constraints and fluid/body coupling. The fluid renderer reads density and packed color from the same buffer. The [pressure simulation](@/internals/simulation/pressure.md) reads mass, diffusivity, and cohesion from the gas buffer, and [gas rendering](@/internals/rendering/gas-pass.md) reads its packed color and radiance.
 
 The albedo and radiance readback and material buffer setup are implemented in {{ <rustdoc path="engine/materials/struct.MaterialTable.html" text="MaterialTable" /> }}.
+
+
+## Chemistry buffers
+
+Material compilation resolves reaction names and tags into thermal indices. It builds per-material unary lists and a two-material pair lookup whose entries are ordered by registration priority. Each lookup list holds at most 255 reaction indices; at most 64 reactions are accepted. Reaction records hold rates, heat, pressure, requirement bounds, reactant counts, and product indices and amounts. A companion record buffer stores product color/radiance transforms. The lookup includes per-material unary/paired flags used by chemistry tile selection.

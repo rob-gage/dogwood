@@ -21,6 +21,21 @@ pub enum MaterialError {
         /// The material definition containing the reference
         referenced_by: String,
     },
+    /// A reaction names a material that is not registered
+    UnknownReactantMaterial {
+        /// The referenced material name
+        name: String,
+    },
+    /// No registered material carries a reaction tag
+    UnknownTag {
+        /// The tag carried by no material
+        tag: String,
+    },
+    /// A reaction product names a material that is not registered
+    UnknownProduct {
+        /// The referenced product name
+        name: String,
+    },
     /// A debris reference does not identify a cellular dynamic material
     InvalidDebris {
         /// The debris name that did not identify a dynamic cellular material
@@ -33,6 +48,11 @@ pub enum MaterialError {
         /// The material definition containing the invalid transition
         name: String,
         /// Description of the invalid transition data
+        message: String,
+    },
+    /// A reaction contains invalid data
+    InvalidReaction {
+        /// Description of the invalid reaction data
         message: String,
     },
     /// Graphics resources could not be compiled for a material table

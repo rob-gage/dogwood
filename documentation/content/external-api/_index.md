@@ -5,7 +5,7 @@ weight = 3
 sort_by = "weight"
 template = "section.html"
 [extra]
-sources = ["engine/src/lib.rs", "engine_host/src/lib.rs", "engine_graphics/src/lib.rs", "template/Cargo.toml.template", "documentation/site.sh", "engine_graphics/src/world/materials/material_radiance.rs"]
+sources = ["engine/src/lib.rs", "engine_world/src/materials/mod.rs", "engine_host/src/lib.rs", "engine_graphics/src/lib.rs", "template/Cargo.toml.template", "documentation/site.sh", "engine_graphics/src/world/materials/material_radiance.rs"]
 +++
 
 The `engine` crate is the game-facing facade, and this section documents it together with the `editor` crate and the `dogwood` command-line tool. It is for game programmers who write a `Game` and need exact type, method, and module names. New readers should start with [Engine and Game](@/external-api/engine-and-games.md).
@@ -34,7 +34,7 @@ The facade re-exports selected types from the host, graphics, world, and user-in
 | `engine::games` | `Game`, `GameInstance` | [Engine and Game](@/external-api/engine-and-games.md) |
 | `engine::runtime` | `Engine`, `EngineError` | [Engine and Game](@/external-api/engine-and-games.md) |
 | `engine::actors` | World actor module and its selected exports | [Actors](@/external-api/actors.md), [Actor components](@/external-api/actor-components.md) |
-| `engine::materials` | World material module and its selected exports | [Materials](@/external-api/materials.md) |
+| `engine::materials` | World material module and its selected exports, including chemical material properties and reaction types | [Materials](@/external-api/materials.md) |
 | `engine::scenes` | `Scene`, `SceneError`, `SceneGenerator`, `ScenePosition`, and scene submodules | [Scenes](@/external-api/scenes.md), [Coordinates, tiles, and chunks](@/external-api/world-storage.md), [Collisions and edits](@/external-api/collisions-and-edits.md) |
 | `engine::system_events` | Keyboard, mouse, and window events; `KeyCode`, `PhysicalKey` | [Host types](@/external-api/host.md) |
 | `engine::Accelerator`, `engine::AcceleratorError` | GPU context and initialization error | [Host types](@/external-api/host.md) |

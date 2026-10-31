@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-use super::MaterialPropertiesThermal;
+use super::{MaterialPropertiesChemical, MaterialPropertiesThermal};
 
 /// Properties for a fluid material
 pub struct MaterialPropertiesFluid {
@@ -28,4 +28,6 @@ pub struct MaterialPropertiesFluid {
     pub edit_radiance: u32,
     /// Thermal and phase-transition properties
     pub thermal: MaterialPropertiesThermal,
+    /// Chemical reaction properties
+    pub chemical: MaterialPropertiesChemical,
 }

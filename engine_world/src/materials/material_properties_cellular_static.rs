@@ -1,7 +1,7 @@
 // Copyright Rob Gage 2026
 
 use engine_graphics::world::materials::MaterialGraphicsCellularStatic;
-use super::MaterialPropertiesThermal;
+use super::{MaterialPropertiesChemical, MaterialPropertiesThermal};
 
 /// Properties for a cellular static material
 pub struct MaterialPropertiesCellularStatic {
@@ -29,4 +29,6 @@ pub struct MaterialPropertiesCellularStatic {
     pub debris: Option<String>,
     /// Thermal and phase-transition properties
     pub thermal: MaterialPropertiesThermal,
+    /// Chemical reaction properties
+    pub chemical: MaterialPropertiesChemical,
 }
