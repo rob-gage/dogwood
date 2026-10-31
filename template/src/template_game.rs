@@ -492,6 +492,37 @@ impl TemplateGame {
                 },
             },
         )?;
+        // dark grains that flash into hot fire and a burst of pressure
+        material_registry.register_cellular_dynamic(
+            "gunpowder",
+            MaterialPropertiesCellularDynamic {
+                edit_color: MaterialGraphicsCellularDynamic {
+                    sprite_sheet: Arc::new(SpriteSheet::from_color(accelerator, 45, 42, 40, 255)?),
+                    frame: 0,
+                    width: 1.0,
+                    height: 1.0,
+                },
+                edit_radiance: MaterialGraphicsCellularDynamic {
+                    sprite_sheet: Arc::new(SpriteSheet::from_color(accelerator, 0, 0, 0, 240)?),
+                    frame: 0,
+                    width: 1.0,
+                    height: 1.0,
+                },
+                edit_radiance_intensity: 1.0,
+                mass: 0.9,
+                friction: 0.7,
+                restitution: 0.0,
+                thermal: MaterialPropertiesThermal {
+                    heat_capacity: 1.0,
+                    conduction: 0.2,
+                    ..Default::default()
+                },
+                chemical: MaterialPropertiesChemical {
+                    tags: vec![String::from("explosive")],
+                    amount_colors: Vec::new(),
+                },
+            },
+        )?;
         // bright green liquid acid that evaporates into a heavier gas
         material_registry.register_fluid("acid", MaterialPropertiesFluid {
             density: 0.65,
@@ -812,32 +843,35 @@ impl TemplateGame {
                 .with_heat(500.0)
                 .with_rate(0.5),
         );
-        material_registry.register_reaction(
-            MaterialReaction::new(
-                vec![
-                    MaterialReactant::material("fire", 0.0),
-                    MaterialReactant::tag("flammable", 0.1),
-                ],
-                vec![
-                    MaterialReactionProduct::new("fire", 0.3),
-                    MaterialReactionProduct::new("smoke", 0.1),
-                ],
-            )
-                .with_heat(200.0)
-                .with_rate(1.5),
-        );
-        material_registry.register_reaction(
-            MaterialReaction::new(
-                vec![MaterialReactant::tag("flammable", 0.1)],
-                vec![
-                    MaterialReactionProduct::new("fire", 0.3),
-                    MaterialReactionProduct::new("smoke", 0.1),
-                ],
-            )
-                .with_temperature_range(570.0, f32::INFINITY)
-                .with_heat(200.0)
-                .with_rate(1.0),
-        );
+        // flammable matter chars slowly and evenly, while explosive matter flashes and pushes
+        for (tag, amount, fire, smoke, heat, pressure, rate) in [
+            ("flammable", 0.02, 0.04, 0.03, 30.0, 0.0, 0.6),
+            ("explosive", 0.1, 0.3, 0.1, 300.0, 6.0, 1.5),
+        ] {
+            let products = || vec![
+                MaterialReactionProduct::new("fire", fire),
+                MaterialReactionProduct::new("smoke", smoke),
+            ];
+            material_registry.register_reaction(
+                MaterialReaction::new(
+                    vec![
+                        MaterialReactant::material("fire", 0.0),
+                        MaterialReactant::tag(tag, amount),
+                    ],
+                    products(),
+                )
+                    .with_heat(heat)
+                    .with_pressure(pressure)
+                    .with_rate(rate),
+            );
+            material_registry.register_reaction(
+                MaterialReaction::new(vec![MaterialReactant::tag(tag, amount)], products())
+                    .with_temperature_range(570.0, f32::INFINITY)
+                    .with_heat(heat)
+                    .with_pressure(pressure)
+                    .with_rate(rate * 2.0 / 3.0),
+            );
+        }
         material_registry.register_reaction(
             MaterialReaction::new(
                 vec![

@@ -142,7 +142,7 @@ written directly into a cellular material array does not create particles. See [
 
 ## Tags, amount colors, and reactions
 
-The template gives wood and wood chips the `flammable` tag and uses amount-color keys to darken wood as its amount falls. `corrodible` and `flammable` tags let reactions target groups of materials. A compact example follows the API used by the template:
+The template gives wood and wood chips the `flammable` tag, gives gunpowder the `explosive` tag, and uses amount-color keys to darken wood as its amount falls. `corrodible`, `flammable`, and `explosive` tags let reactions target groups of materials. A compact example follows the API used by the template:
 
 ```rust
 use engine::materials::{
@@ -154,7 +154,7 @@ fn register_burning(registry: &mut MaterialRegistry) {
         MaterialReaction::new(
             vec![
                 MaterialReactant::material("fire", 0.0),
-                MaterialReactant::tag("flammable", 0.1),
+                MaterialReactant::tag("explosive", 0.1),
             ],
             vec![
                 MaterialReactionProduct::new("fire", 0.3),
@@ -162,9 +162,10 @@ fn register_burning(registry: &mut MaterialRegistry) {
             ],
         )
         .with_rate(1.5)
-        .with_heat(200.0),
+        .with_heat(300.0)
+        .with_pressure(6.0),
     );
 }
 ```
 
-The zero-amount fire reactant is a catalyst; the tagged fuel consumes `0.1` amount per event. The [materials API](@/external-api/materials.md#reaction-properties-and-validation) documents tags, amount-color keys, validation, and the other reaction builders.
+The zero-amount fire reactant is a catalyst; the tagged fuel consumes `0.1` amount per event, and each event adds `6` atmospheres of pressure. The [materials API](@/external-api/materials.md#reaction-properties-and-validation) documents tags, amount-color keys, validation, and the other reaction builders.
