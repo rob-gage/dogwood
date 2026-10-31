@@ -12,8 +12,8 @@ struct SpriteOptics {
     domain_size: vec2<f32>,
     /// Number of cells along each side of a tile
     cellular_tile_size: f32,
-    /// Alignment padding
-    padding_0: f32,
+    /// Cells along each side of a lighting texel
+    texel_size: f32,
     /// Alignment padding
     padding_1: f32,
     /// Alignment padding
@@ -83,21 +83,23 @@ fn vertex(@builtin(vertex_index) vertex_index: u32, instance: SpriteInstance) ->
     output.color = vec4<f32>(instance.color.rgb * instance.radiance_intensity, instance.color.a);
     let texture_size: vec2<f32> = vec2<f32>(textureDimensions(radiance_texture, 0));
     let region_size: vec2<f32> = abs(instance.radiance_region.zw - instance.radiance_region.xy) * texture_size;
-    output.texels_per_tile = max(region_size.x / max(instance.center_size.z, 1e-6), 1e-6);
+    output.texels_per_tile = max(region_size.x / max(instance.center_size.z, 1e-6), 1e-6)
+        / sprite_optics.texel_size;
     return output;
 }
 
-/// Adds a gameplay sprite's emission per cell and its transmission per cell
+/// Adds a gameplay sprite's emission and transmission over one lighting texel
 @fragment
 fn actor_fragment(input: SpriteVarying) -> @location(0) vec4<f32> {
     let radiance: vec4<f32> = textureSampleLevel(radiance_texture, radiance_sampler, input.coordinates, 0.0);
     let occlusion: f32 = clamp(radiance.a * input.color.a, 0.0, 1.0);
-    // occlusion is per tile of thickness, and each texel of this target is one cell
-    let transmission: f32 = pow(1.0 - occlusion, 1.0 / sprite_optics.cellular_tile_size);
-    return vec4<f32>(radiance.rgb * input.color.rgb, 1.0 - transmission);
+    // occlusion is per tile of thickness, and each texel spans `texel_size` cells
+    let transmission: f32 =
+        pow(1.0 - occlusion, sprite_optics.texel_size / sprite_optics.cellular_tile_size);
+    return vec4<f32>(radiance.rgb * input.color.rgb * sprite_optics.texel_size, 1.0 - transmission);
 }
 
-/// Adds a light's emission per cell over a disc
+/// Adds a light's emission over each lighting texel of a disc
 @fragment
 fn light_fragment(input: SpriteVarying) -> @location(0) vec4<f32> {
     let distance: f32 = length(input.coordinates - vec2<f32>(0.5));

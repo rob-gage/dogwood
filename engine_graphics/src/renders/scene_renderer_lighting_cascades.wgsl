@@ -1,13 +1,13 @@
 // Copyright Rob Gage 2026
 
 /// One cascade level: probes `spacing` cells apart, each tracing `direction_count` intervals from
-/// `interval_start` to `interval_end` cells, merged with the next coarser level
+/// `interval_start` to `interval_end` lighting texels, merged with the next coarser level
 struct CascadeLevel {
-    /// Lighting domain size in cells
+    /// Lighting domain size in texels
     domain_size: vec2<u32>,
     /// Number of probes along each axis
     probe_count: vec2<u32>,
-    /// Domain position of the first probe's center in cells
+    /// Domain position of the first probe's center in lighting texels
     probe_origin: vec2<f32>,
     /// Distance between neighboring probes in cells
     spacing: f32,

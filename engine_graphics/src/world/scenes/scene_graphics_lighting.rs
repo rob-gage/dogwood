@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+use super::LightingQuality;
+
 /// Lighting inputs of one scene for one rendered frame
 #[derive(Clone, Debug)]
 pub struct SceneGraphicsLighting<'a> {
@@ -7,6 +9,8 @@ pub struct SceneGraphicsLighting<'a> {
     pub ambient: [f32; 3],
     /// Divisor of matter's extinction while light spreads into it, at least one
     pub penetration: f32,
+    /// Resolution used to calculate radiance cascade lighting
+    pub quality: LightingQuality,
     /// Temperature color keys of every material, as `MaterialTable::temperature_color_buffer`
     /// describes
     pub temperature_color_buffer: &'a wgpu::Buffer,

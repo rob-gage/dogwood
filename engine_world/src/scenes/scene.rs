@@ -65,6 +65,7 @@ use crate::{
     materials::MaterialTable,
 };
 use engine_graphics::world::scenes::{
+    LightingQuality,
     SceneGraphics,
     SceneGraphicsCellular,
     SceneGraphicsFluid,
@@ -141,6 +142,8 @@ pub struct Scene {
     ambient_light: [f32; 3],
     /// Divisor of matter's extinction while light spreads into occluding matter
     light_penetration: f32,
+    /// Resolution used to calculate radiance cascade lighting
+    lighting_quality: LightingQuality,
     /// ECS world and fixed-tick systems of every live actor
     actor_registry: ActorRegistry,
     /// Materials of every cell in this scene, shared with chunk generation to color new cells
@@ -184,6 +187,7 @@ impl Scene {
             ambient_gas_conduction: SCENE_AMBIENT_GAS_CONDUCTION_DEFAULT,
             ambient_light: [1.0, 1.0, 1.0],
             light_penetration: 8.0,
+            lighting_quality: LightingQuality::High,
             actor_registry: ActorRegistry::new(),
             material_table: Arc::new(material_table),
             generator,
@@ -277,6 +281,14 @@ impl Scene {
         }
         self.ambient_light = color;
         Ok(())
+    }
+
+    /// Returns the radiance cascade lighting resolution
+    pub fn lighting_quality(&self) -> LightingQuality { self.lighting_quality }
+
+    /// Sets the radiance cascade lighting resolution
+    pub fn set_lighting_quality(&mut self, quality: LightingQuality) {
+        self.lighting_quality = quality;
     }
 
     /// Returns the divisor of matter's extinction while light spreads into occluding matter
@@ -845,6 +857,7 @@ impl Scene {
             lighting: SceneGraphicsLighting {
                 ambient: self.ambient_light,
                 penetration: self.light_penetration,
+                quality: self.lighting_quality,
                 temperature_color_buffer: self.material_table.temperature_color_buffer(),
                 amount_color_buffer: self.material_table.amount_color_buffer(),
                 thermal_offsets: self.material_table.thermal_offsets(),

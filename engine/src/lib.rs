@@ -19,7 +19,12 @@ pub use engine_graphics::{
             MaterialGraphicsGas,
             pack_radiance,
         },
-        scenes::{SceneGraphicsOverlay, SceneGraphicsOverlayShape, SceneGraphicsTemperature},
+        scenes::{
+            LightingQuality,
+            SceneGraphicsOverlay,
+            SceneGraphicsOverlayShape,
+            SceneGraphicsTemperature,
+        },
     },
 };
 pub use engine_host::{

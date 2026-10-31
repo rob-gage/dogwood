@@ -1,12 +1,12 @@
 // Copyright Rob Gage 2026
 
-/// One spread pass along every row or every column of the lighting domain
+/// One spread pass along every row or every column of the lighting texel domain
 struct Spread {
-    /// Lighting domain size in cells
+    /// Lighting domain size in texels
     domain_size: vec2<u32>,
     /// Zero spreads along rows, one along columns
     axis: u32,
-    /// Divisor of a cell's extinction while light spreads into it, at least one
+    /// Divisor of a texel's extinction while light spreads into it, at least one
     penetration: f32,
     /// Number of cells along each side of a tile
     cellular_tile_size: f32,

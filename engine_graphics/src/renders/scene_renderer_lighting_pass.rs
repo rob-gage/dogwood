@@ -10,7 +10,7 @@ use crate::world::{
 use engine_host::acceleration::Accelerator;
 use std::collections::HashMap;
 
-/// Length of the finest cascade intervals in cells
+/// Length of the finest cascade intervals in lighting texels
 const LIGHTING_INTERVAL: f32 = 2.0;
 
 /// Directions traced by the finest cascade level
@@ -33,15 +33,15 @@ const LIGHTING_INSTANCE_SIZE: usize = 64;
 struct LightingLevel {
     /// Number of probes along each axis
     probe_count: [u32; 2],
-    /// Domain position of the first probe center in cells
+    /// Domain position of the first probe center in lighting texels
     probe_origin: [f32; 2],
-    /// Distance between neighboring probes in cells
+    /// Distance between neighboring probes in lighting texels
     spacing: f32,
     /// Number of directions traced from each probe
     direction_count: u32,
-    /// Distance from a probe where its intervals start in cells
+    /// Distance from a probe where its intervals start in lighting texels
     interval_start: f32,
-    /// Distance from a probe where its intervals end in cells
+    /// Distance from a probe where its intervals end in lighting texels
     interval_end: f32,
 }
 
@@ -379,6 +379,8 @@ pub struct SceneRendererLightingPass {
     domain: Option<LightingDomain>,
     /// Whether the prepared view lights a domain
     is_lit: bool,
+    /// Cells along each side of a lighting texel
+    texel_size: u32,
 }
 
 /// Returns an appearance shader's source with the lighting functions bound at a group prepended
@@ -936,6 +938,7 @@ impl SceneRendererLightingPass {
             mip_pipeline,
             domain: None,
             is_lit: false,
+            texel_size: 1,
         }
     }
 
@@ -1142,7 +1145,7 @@ impl SceneRendererLightingPass {
         }
     }
 
-    /// Returns the cascade levels of a domain whose bottom-left cell has a world position,
+    /// Returns the cascade levels of a domain whose bottom-left texel has a world position,
     /// keeping every level's probes at fixed world positions as the domain moves
     fn domain_levels(width: u32, height: u32, world_origin: [i64; 2]) -> Vec<LightingLevel> {
         let diagonal: f32 = (width as f32).hypot(height as f32);
@@ -1191,14 +1194,17 @@ impl SceneRendererLightingPass {
         let device: &wgpu::Device = accelerator.device();
         let queue: &wgpu::Queue = accelerator.queue();
         let lighting = &graphics.lighting;
+        let texel_size: u32 = lighting.quality.texel_size();
+        let quality_changed: bool = self.texel_size != texel_size;
+        self.texel_size = texel_size;
         let cellular = graphics.cellular.as_ref().filter(|cellular| {
             cellular.region_width > 0 && cellular.region_height > 0 && cellular.cellular_tile_size > 0
         });
         let temperature = graphics.temperature.as_ref();
         let maximum_dimension: u32 = device.limits().max_texture_dimension_2d;
         let domain_size: Option<[u32; 2]> = cellular.and_then(|cellular| {
-            let width: u32 = cellular.region_width * cellular.cellular_tile_size;
-            let height: u32 = cellular.region_height * cellular.cellular_tile_size;
+            let width: u32 = cellular.region_width * cellular.cellular_tile_size / texel_size;
+            let height: u32 = cellular.region_height * cellular.cellular_tile_size / texel_size;
             (width <= maximum_dimension && height <= maximum_dimension && temperature.is_some())
                 .then_some([width, height])
         });
@@ -1207,7 +1213,11 @@ impl SceneRendererLightingPass {
         let mut view_bytes: [u8; 64] = [0; 64];
         let mut domain_origin: [f32; 2] = [0.0; 2];
         if let (Some([width, height]), Some(cellular)) = (domain_size, cellular) {
-            if self.domain.as_ref().is_none_or(|domain| domain.width != width || domain.height != height) {
+            if quality_changed
+                || self.domain.as_ref().is_none_or(|domain| {
+                    domain.width != width || domain.height != height
+                })
+            {
                 self.domain = Some(self.create_domain(accelerator, width, height));
             }
             domain_origin = [cellular.region_x, cellular.region_y];
@@ -1228,6 +1238,7 @@ impl SceneRendererLightingPass {
             .filter(|_| self.is_lit)
             .map_or(1.0, |domain| domain.light_mip_count as f32);
         view_bytes[52..56].copy_from_slice(&light_mip_count.to_le_bytes());
+        view_bytes[56..60].copy_from_slice(&texel_size.to_le_bytes());
         queue.write_buffer(&self.view_buffer, 0, &view_bytes);
         let light_view: &wgpu::TextureView = match self.domain.as_ref().filter(|_| self.is_lit) {
             Some(domain) => &domain.light_view,
@@ -1260,6 +1271,7 @@ impl SceneRendererLightingPass {
         sprite_bytes[8..12].copy_from_slice(&(width as f32 / cellular_tile_size).to_le_bytes());
         sprite_bytes[12..16].copy_from_slice(&(height as f32 / cellular_tile_size).to_le_bytes());
         sprite_bytes[16..20].copy_from_slice(&cellular_tile_size.to_le_bytes());
+        sprite_bytes[20..24].copy_from_slice(&(texel_size as f32).to_le_bytes());
         queue.write_buffer(&self.sprite_buffer, 0, &sprite_bytes);
         self.instance_bytes.clear();
         self.actor_batches.clear();
@@ -1366,6 +1378,7 @@ impl SceneRendererLightingPass {
         optical_bytes[28..32].copy_from_slice(&amount_per_atmosphere.to_le_bytes());
         optical_bytes[32..36].copy_from_slice(&u32::from(fluid.is_some()).to_le_bytes());
         optical_bytes[36..40].copy_from_slice(&u32::from(gas.is_some()).to_le_bytes());
+        optical_bytes[40..44].copy_from_slice(&texel_size.to_le_bytes());
         queue.write_buffer(&self.optical_buffer, 0, &optical_bytes);
         let empty_buffer: &wgpu::Buffer = &self.empty_buffer;
         self.optical_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1401,8 +1414,8 @@ impl SceneRendererLightingPass {
         }));
         // cascades, whose probes stay at fixed world cells as the domain moves
         let world_origin: [i64; 2] = [
-            cellular.region_tile_x * cellular.cellular_tile_size as i64,
-            cellular.region_tile_y * cellular.cellular_tile_size as i64,
+            cellular.region_tile_x * cellular.cellular_tile_size as i64 / texel_size as i64,
+            cellular.region_tile_y * cellular.cellular_tile_size as i64 / texel_size as i64,
         ];
         self.levels = Self::domain_levels(width, height, world_origin);
         let mut cascade_bytes: Vec<u8> =
@@ -1444,7 +1457,7 @@ impl SceneRendererLightingPass {
                 height.to_le_bytes(),
                 axis.to_le_bytes(),
                 lighting.penetration.max(1.0).to_le_bytes(),
-                cellular_tile_size.to_le_bytes(),
+                (cellular_tile_size / texel_size as f32).to_le_bytes(),
                 adds_backlight.to_le_bytes(),
                 writes_light.to_le_bytes(),
                 0u32.to_le_bytes(),

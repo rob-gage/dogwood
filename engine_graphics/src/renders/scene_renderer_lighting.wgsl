@@ -5,7 +5,7 @@
 
 /// Lighting values shared by every appearance pass in one view
 struct LightingView {
-    /// Lighting domain size in cells
+    /// Lighting domain size in texels
     domain_size: vec2<f32>,
     /// Camera-relative position of the domain's bottom-left corner in tiles
     domain_origin: vec2<f32>,
@@ -19,8 +19,8 @@ struct LightingView {
     has_light: u32,
     /// Number of mip levels of the light texture
     light_mip_count: f32,
-    /// Alignment padding
-    padding_0: u32,
+    /// Cells along each side of a lighting texel
+    texel_size: u32,
     /// Alignment padding
     padding_1: u32,
 };
@@ -50,7 +50,8 @@ fn light_at(domain_position: vec2<f32>) -> vec3<f32> {
     if lighting_view.has_light == 0u {
         return lighting_view.ambient;
     }
-    let coordinates: vec2<f32> = domain_position / lighting_view.domain_size;
+    let coordinates: vec2<f32> = domain_position / f32(lighting_view.texel_size)
+        / lighting_view.domain_size;
     return lighting_view.ambient
         + textureSampleLevel(light_texture, light_sampler, coordinates, 0.0).rgb;
 }
@@ -67,10 +68,12 @@ fn background_light_at_tiles(camera_relative: vec2<f32>, depth: f32) -> vec3<f32
     if lighting_view.has_light == 0u {
         return lighting_view.ambient;
     }
-    let depth_cells: f32 = max(depth, 0.0) * lighting_view.cellular_tile_size;
+    let depth_cells: f32 = max(depth, 0.0) * lighting_view.cellular_tile_size
+        / f32(lighting_view.texel_size);
     let level: f32 = clamp(log2(max(depth_cells, 1.0)), 0.0, lighting_view.light_mip_count - 1.0);
     let coordinates: vec2<f32> = (camera_relative - lighting_view.domain_origin)
-        * lighting_view.cellular_tile_size / lighting_view.domain_size;
+        * lighting_view.cellular_tile_size / f32(lighting_view.texel_size)
+        / lighting_view.domain_size;
     let radius: f32 = 0.5 * min(lighting_view.domain_size.x, lighting_view.domain_size.y);
     let coverage: f32 = 1.0 - depth_cells / sqrt(radius * radius + depth_cells * depth_cells);
     return lighting_view.ambient
