@@ -31,6 +31,13 @@ pub enum MaterialError {
         /// The tag carried by no material
         tag: String,
     },
+    /// A reaction reads a tag parameter that none of its reactants' materials sets
+    UnknownParameter {
+        /// The `tag.parameter` name read by the reaction
+        parameter: String,
+        /// The reactants' materials that set no such parameter
+        materials: Vec<String>,
+    },
     /// A reaction product names a material that is not registered
     UnknownProduct {
         /// The referenced product name

@@ -1,5 +1,6 @@
 // Copyright Rob Gage 2026
 
+use super::MaterialValue;
 use engine_graphics::world::materials::MaterialColorTransformation;
 
 /// A material produced by a reaction
@@ -7,7 +8,7 @@ pub struct MaterialReactionProduct {
     /// Exact, case-sensitive product material name
     pub product: String,
     /// Amount produced per event, with gas amount in atmospheres of one cell
-    pub amount: f32,
+    pub amount: MaterialValue,
     /// Transformation of the reactants' stored color
     pub color: MaterialColorTransformation,
     /// Transformation of the reactants' stored radiance
@@ -17,10 +18,10 @@ pub struct MaterialReactionProduct {
 impl MaterialReactionProduct {
 
     /// Creates a reaction product with identity color and radiance transformations
-    pub fn new(product: impl Into<String>, amount: f32) -> Self {
+    pub fn new(product: impl Into<String>, amount: impl Into<MaterialValue>) -> Self {
         Self {
             product: product.into(),
-            amount,
+            amount: amount.into(),
             color: MaterialColorTransformation::IDENTITY,
             radiance: MaterialColorTransformation::IDENTITY,
         }

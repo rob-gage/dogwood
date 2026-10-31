@@ -44,7 +44,7 @@ The enums identify failures; they do not decide whether a caller can recover.
 | Error type | Failures covered |
 | --- | --- |
 | `ActorError` | Exhausted identifiers, unloaded or despawned actors, and missing components. |
-| `MaterialError` | Capacity, empty or duplicate names, unknown material references, invalid debris or transitions, identifier range, and compilation. Chemistry adds `UnknownReactantMaterial`, `UnknownTag`, `UnknownProduct`, and `InvalidReaction` for unresolved reaction references and invalid reaction definitions. |
+| `MaterialError` | Capacity, empty or duplicate names, unknown material references, invalid debris or transitions, identifier range, and compilation. Chemistry adds `UnknownReactantMaterial`, `UnknownTag`, `UnknownParameter`, `UnknownProduct`, and `InvalidReaction` for unresolved reaction references and invalid reaction definitions. |
 | `SpriteSheetError` | Image decoding and invalid dimensions. |
 | `AcceleratorError` / `ProcessorError` | Graphics initialization (including unsupported adapter limits) and pool configuration or build failures. |
 | `WindowError` | Event-loop, OS, surface creation, unsupported surface, and surface validation failures. |

@@ -190,68 +190,37 @@ impl MaterialRegistry {
             });
         }
         for reaction in &self.reactions {
-            if !(1..=2).contains(&reaction.reactants.len())
-                || reaction.products.len() > 3
-                || !reaction.rate.is_finite() || reaction.rate <= 0.0
-                || !valid_range(reaction.temperature_minimum, reaction.temperature_maximum)
-                || !valid_range(reaction.pressure_minimum, reaction.pressure_maximum)
-                || !reaction.heat.is_finite()
-                || !reaction.pressure.is_finite() || reaction.pressure < 0.0
-            {
+            if !(1..=2).contains(&reaction.reactants.len()) || reaction.products.len() > 3 {
                 return Err(MaterialError::InvalidReaction {
                     message: String::from(
-                        "reaction counts, rate, ranges, heat, or pressure are invalid",
+                        "a reaction needs one or two reactants and at most three products",
                     ),
                 });
             }
-            let mut consumed: bool = false;
             for reactant in &reaction.reactants {
-                let (amount, name): (f32, Option<&str>) = match reactant {
-                    MaterialReactant::Material { name, amount } => (*amount, Some(name)),
-                    MaterialReactant::Tag { amount, .. } => (*amount, None),
-                };
-                // a consumed amount below a gas amount unit would round to nothing
-                if !amount.is_finite() || amount < 0.0 || (amount > 0.0 && amount < 1.0 / 4096.0) {
-                    return Err(MaterialError::InvalidReaction {
-                        message: String::from(
-                            "reactant amounts must be zero or finite and at least 1/4096",
-                        ),
-                    });
+                match reactant {
+                    MaterialReactant::Material { name, .. }
+                        if !identifiers_by_name.contains_key(name) =>
+                    {
+                        return Err(MaterialError::UnknownReactantMaterial { name: name.clone() });
+                    }
+                    MaterialReactant::Tag { tag, .. }
+                        if self.materials_with_tag(tag).next().is_none() =>
+                    {
+                        return Err(MaterialError::UnknownTag { tag: tag.clone() });
+                    }
+                    _ => {}
                 }
-                consumed |= amount > 0.0;
-                if let Some(name) = name && !identifiers_by_name.contains_key(name) {
-                    return Err(MaterialError::UnknownReactantMaterial { name: name.to_owned() });
-                }
-                if let MaterialReactant::Tag { tag, .. } = reactant
-                    && !self.materials_with_tag(tag).next().is_some()
-                {
-                    return Err(MaterialError::UnknownTag { tag: tag.clone() });
-                }
-            }
-            if reaction.reactants.len() == 1 && match &reaction.reactants[0] {
-                MaterialReactant::Material { amount, .. }
-                | MaterialReactant::Tag { amount, .. } => *amount == 0.0,
-            }
-                || reaction.reactants.len() == 2 && !consumed
-            {
-                return Err(MaterialError::InvalidReaction {
-                    message: String::from(
-                        "a catalyst requires two reactants and at least one consumed reactant",
-                    ),
-                });
             }
             for product in &reaction.products {
                 if !identifiers_by_name.contains_key(&product.product) {
                     return Err(MaterialError::UnknownProduct { name: product.product.clone() });
                 }
-                if !product.amount.is_finite() || product.amount < 1.0 / 4096.0
-                    || !valid_reaction_transformation(&product.color)
+                if !valid_reaction_transformation(&product.color)
                     || !valid_reaction_transformation(&product.radiance)
                 {
                     return Err(MaterialError::InvalidReaction {
-                        message: String::from(
-                            "product amounts and color transformations are invalid",
-                        ),
+                        message: String::from("product color transformations are invalid"),
                     });
                 }
             }
@@ -353,18 +322,10 @@ impl MaterialRegistry {
                     Material::Fluid { properties, .. } => &properties.chemical,
                     Material::Gas { properties, .. } => &properties.chemical,
                 };
-                chemical.tags.iter().any(|candidate| candidate == tag)
+                chemical.tags.iter().any(|candidate| candidate.name == tag)
             })
     }
 
-}
-
-/// Returns whether a reaction range has valid nonnegative bounds
-fn valid_range(minimum: f32, maximum: f32) -> bool {
-    !minimum.is_nan() && !maximum.is_nan()
-        && (minimum.is_finite() || minimum == f32::INFINITY) && minimum >= 0.0
-        && (maximum.is_finite() || maximum == f32::INFINITY) && maximum >= 0.0
-        && minimum <= maximum
 }
 
 /// Returns whether a reaction color transformation can be serialized

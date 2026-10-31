@@ -11,8 +11,11 @@ use super::{
     MaterialPropertiesGas,
     MaterialTemperatureColor,
     MaterialAmountColor,
+    MaterialPropertiesChemical,
     MaterialReactant,
+    MaterialReaction,
     MaterialRegistry,
+    MaterialValue,
     MaterialTransition,
 };
 use crate::scenes::cellular_tiles::CellCoordinates;
@@ -142,7 +145,7 @@ impl MaterialTable {
         registry: &MaterialRegistry,
         identifiers_by_name: &HashMap<String, MaterialIdentifier>,
         thermal_offsets: [u32; 4],
-        reactions: &[super::MaterialReaction],
+        reactions: &[MaterialReaction],
     ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>, u32, bool), MaterialError> {
         let thermal_count: usize = registry.material_count() + 1;
         let mut reaction_bytes: Vec<u8> = Vec::new();
@@ -150,7 +153,11 @@ impl MaterialTable {
         let mut unary_lists: Vec<Vec<u32>> = vec![Vec::new(); thermal_count];
         let mut pair_lists: Vec<Vec<u32>> = vec![Vec::new(); thermal_count * thermal_count];
         let mut has_fluid_products: bool = false;
-        for (reaction_index, reaction) in reactions.iter().enumerate() {
+        let thermal = |identifier: &MaterialIdentifier| -> usize {
+            (identifier.index() + thermal_offsets[identifier.form() as usize]) as usize
+        };
+        let mut record_count: u32 = 0;
+        for reaction in reactions {
             let matches: Vec<Vec<MaterialIdentifier>> = reaction.reactants.iter().map(|reactant| {
                 let mut identifiers: Vec<MaterialIdentifier> = Vec::new();
                 match reactant {
@@ -173,17 +180,9 @@ impl MaterialTable {
                                     break;
                                 };
                                 let Some(material) = registry.get(identifier) else { break; };
-                                let chemical = match material {
-                                    Material::CellularStatic { properties, .. } => {
-                                        &properties.chemical
-                                    }
-                                    Material::CellularDynamic { properties, .. } => {
-                                        &properties.chemical
-                                    }
-                                    Material::Fluid { properties, .. } => &properties.chemical,
-                                    Material::Gas { properties, .. } => &properties.chemical,
-                                };
-                                if chemical.tags.iter().any(|candidate| candidate == tag) {
+                                if material_chemical(material).tags.iter()
+                                    .any(|candidate| candidate.name == *tag)
+                                {
                                     identifiers.push(identifier);
                                 }
                             }
@@ -192,34 +191,51 @@ impl MaterialTable {
                 }
                 identifiers
             }).collect();
+            // each reacting material, or pair of materials, takes the record of the reaction's
+            // values read from its tags, which materials reading the same values share
+            let mut values: Vec<ReactionValues> = Vec::new();
+            let mut records: HashMap<(MaterialIdentifier, Option<MaterialIdentifier>), u32> =
+                HashMap::new();
+            let pairs: Vec<(MaterialIdentifier, Option<MaterialIdentifier>)> =
+                if reaction.reactants.len() == 1 {
+                    matches[0].iter().map(|first| (*first, None)).collect()
+                } else {
+                    matches[0].iter().flat_map(|first| {
+                        matches[1].iter().map(move |second| (*first, Some(*second)))
+                    }).collect()
+                };
+            for (first, second) in pairs {
+                let materials: Vec<&Material> = [Some(first), second].into_iter().flatten()
+                    .filter_map(|identifier| registry.get(identifier)).collect();
+                let resolved: ReactionValues = ReactionValues::new(reaction, &materials)?;
+                let position: usize = match values.iter().position(|known| *known == resolved) {
+                    Some(position) => position,
+                    None => {
+                        values.push(resolved);
+                        values.len() - 1
+                    }
+                };
+                records.insert((first, second), record_count + position as u32);
+            }
             if reaction.reactants.len() == 1 {
-                for identifier in &matches[0] {
-                    let thermal: usize =
-                        (identifier.index() + thermal_offsets[identifier.form() as usize]) as usize;
-                    unary_lists[thermal].push(reaction_index as u32);
+                for first in &matches[0] {
+                    unary_lists[thermal(first)].push(records[&(*first, None)]);
                 }
             } else {
                 for first in &matches[0] {
                     for second in &matches[1] {
-                        let a: usize =
-                            (first.index() + thermal_offsets[first.form() as usize]) as usize;
-                        let b: usize =
-                            (second.index() + thermal_offsets[second.form() as usize]) as usize;
-                        let list_index: usize = a * thermal_count + b;
-                        pair_lists[list_index].push(reaction_index as u32);
+                        pair_lists[thermal(first) * thermal_count + thermal(second)]
+                            .push(records[&(*first, Some(*second))]);
                     }
                 }
                 for first in &matches[1] {
                     for second in &matches[0] {
-                        let a: usize =
-                            (first.index() + thermal_offsets[first.form() as usize]) as usize;
-                        let b: usize =
-                            (second.index() + thermal_offsets[second.form() as usize]) as usize;
                         // a pair matching both orders already has its unswapped entry
                         if matches[0].contains(first) && matches[1].contains(second) {
                             continue;
                         }
-                        pair_lists[a * thermal_count + b].push((reaction_index as u32) | (1 << 31));
+                        pair_lists[thermal(first) * thermal_count + thermal(second)]
+                            .push(records[&(*second, Some(*first))] | (1 << 31));
                     }
                 }
             }
@@ -227,42 +243,48 @@ impl MaterialTable {
                 has_fluid_products |=
                     identifiers_by_name[&product.product].form() == MaterialForm::Fluid;
             }
-            let counts: u32 =
-                reaction.reactants.len() as u32 | ((reaction.products.len() as u32) << 2);
-            for word in [
-                reaction.rate.to_bits(),
-                reaction.heat.to_bits(),
-                reaction.pressure.to_bits(),
-                counts,
-                finite_max_bits(reaction.temperature_minimum),
-                finite_max_bits(reaction.temperature_maximum),
-                finite_max_bits(reaction.pressure_minimum),
-                finite_max_bits(reaction.pressure_maximum),
-                reactant_amount(&reaction.reactants[0]).to_bits(),
-                reaction.reactants.get(1).map_or(0.0, reactant_amount).to_bits(),
-                0,
-                0,
-            ]
-            {
-                reaction_bytes.extend_from_slice(&word.to_le_bytes());
-            }
-            for slot in 0..3 {
-                let product = reaction.products.get(slot);
-                let identifier: u32 = product.map_or(0, |product| {
-                    identifiers_by_name[&product.product].as_u32()
-                });
-                let amount: u32 = product.map_or(0.0, |product| product.amount).to_bits();
-                reaction_bytes.extend_from_slice(&identifier.to_le_bytes());
-                reaction_bytes.extend_from_slice(&amount.to_le_bytes());
-            }
-            reaction_bytes.extend_from_slice(&[0; 8]);
-            for product in &reaction.products {
-                append_transform(&mut reaction_color_bytes, &product.color);
-                append_transform(&mut reaction_color_bytes, &product.radiance);
-            }
-            for _ in reaction.products.len()..3 {
-                append_transform(&mut reaction_color_bytes, &MaterialColorTransformation::IDENTITY);
-                append_transform(&mut reaction_color_bytes, &MaterialColorTransformation::IDENTITY);
+            record_count += values.len() as u32;
+            for resolved in values {
+                let counts: u32 =
+                    reaction.reactants.len() as u32 | ((reaction.products.len() as u32) << 2);
+                for word in [
+                    resolved.rate.to_bits(),
+                    resolved.heat.to_bits(),
+                    resolved.pressure.to_bits(),
+                    counts,
+                    finite_max_bits(resolved.temperatures[0]),
+                    finite_max_bits(resolved.temperatures[1]),
+                    finite_max_bits(resolved.pressures[0]),
+                    finite_max_bits(resolved.pressures[1]),
+                    resolved.reactant_amounts[0].to_bits(),
+                    resolved.reactant_amounts[1].to_bits(),
+                    0,
+                    0,
+                ]
+                {
+                    reaction_bytes.extend_from_slice(&word.to_le_bytes());
+                }
+                for slot in 0..3 {
+                    let identifier: u32 = reaction.products.get(slot).map_or(0, |product| {
+                        identifiers_by_name[&product.product].as_u32()
+                    });
+                    reaction_bytes.extend_from_slice(&identifier.to_le_bytes());
+                    reaction_bytes
+                        .extend_from_slice(&resolved.product_amounts[slot].to_bits().to_le_bytes());
+                }
+                reaction_bytes.extend_from_slice(&[0; 8]);
+                for product in &reaction.products {
+                    append_transform(&mut reaction_color_bytes, &product.color);
+                    append_transform(&mut reaction_color_bytes, &product.radiance);
+                }
+                for _ in reaction.products.len()..3 {
+                    append_transform(
+                        &mut reaction_color_bytes, &MaterialColorTransformation::IDENTITY,
+                    );
+                    append_transform(
+                        &mut reaction_color_bytes, &MaterialColorTransformation::IDENTITY,
+                    );
+                }
             }
         }
         // pair headers, unary headers, each thermal index's reaction flags (bit 0 when it has
@@ -305,7 +327,7 @@ impl MaterialTable {
         if lookup_words.is_empty() { lookup_words.push(0); }
         let mut lookup_bytes: Vec<u8> = Vec::with_capacity(lookup_words.len() * 4);
         for word in lookup_words { lookup_bytes.extend_from_slice(&word.to_le_bytes()); }
-        Ok((reaction_bytes, reaction_color_bytes, lookup_bytes, reactions.len() as u32,
+        Ok((reaction_bytes, reaction_color_bytes, lookup_bytes, record_count,
             has_fluid_products))
     }
 
@@ -1399,9 +1421,109 @@ fn finite_max_bits(value: f32) -> u32 {
     if value == f32::INFINITY { f32::MAX.to_bits() } else { value.to_bits() }
 }
 
-/// Returns the amount consumed by a reaction reactant
-fn reactant_amount(reactant: &MaterialReactant) -> f32 {
-    match reactant {
-        MaterialReactant::Material { amount, .. } | MaterialReactant::Tag { amount, .. } => *amount,
+/// Returns the chemical properties of a material
+fn material_chemical(material: &Material) -> &MaterialPropertiesChemical {
+    match material {
+        Material::CellularStatic { properties, .. } => &properties.chemical,
+        Material::CellularDynamic { properties, .. } => &properties.chemical,
+        Material::Fluid { properties, .. } => &properties.chemical,
+        Material::Gas { properties, .. } => &properties.chemical,
     }
+}
+
+/// Returns a reaction value for its reactants' materials, reading a parameter from the first
+/// material whose tag sets it
+fn material_value(value: &MaterialValue, materials: &[&Material]) -> Result<f32, MaterialError> {
+    let name: &str = match value {
+        MaterialValue::Constant(value) => return Ok(*value),
+        MaterialValue::Parameter(name) => name,
+    };
+    name.split_once('.').and_then(|(tag, parameter)| materials.iter().find_map(|material| {
+        material_chemical(material).tags.iter()
+            .filter(|candidate| candidate.name == tag)
+            .flat_map(|candidate| &candidate.parameters)
+            .find(|(candidate, _)| candidate == parameter)
+            .map(|(_, value)| *value)
+    })).ok_or_else(|| MaterialError::UnknownParameter {
+        parameter: name.to_owned(),
+        materials: materials.iter().map(|material| material.name().to_owned()).collect(),
+    })
+}
+
+/// Returns whether a reaction range has valid nonnegative bounds
+fn valid_range(minimum: f32, maximum: f32) -> bool {
+    !minimum.is_nan() && !maximum.is_nan()
+        && (minimum.is_finite() || minimum == f32::INFINITY) && minimum >= 0.0
+        && (maximum.is_finite() || maximum == f32::INFINITY) && maximum >= 0.0
+        && minimum <= maximum
+}
+
+/// The numbers of a reaction for the materials one of its records reacts
+#[derive(PartialEq)]
+struct ReactionValues {
+    rate: f32,
+    heat: f32,
+    pressure: f32,
+    temperatures: [f32; 2],
+    pressures: [f32; 2],
+    reactant_amounts: [f32; 2],
+    product_amounts: [f32; 3],
+}
+
+impl ReactionValues {
+
+    /// Reads and validates a reaction's values for its reactants' materials
+    fn new(reaction: &MaterialReaction, materials: &[&Material]) -> Result<Self, MaterialError> {
+        let value = |value: &MaterialValue| material_value(value, materials);
+        let mut reactant_amounts: [f32; 2] = [0.0; 2];
+        for (slot, reactant) in reaction.reactants.iter().enumerate() {
+            let (MaterialReactant::Material { amount, .. } | MaterialReactant::Tag { amount, .. }) =
+                reactant;
+            reactant_amounts[slot] = value(amount)?;
+        }
+        let mut product_amounts: [f32; 3] = [0.0; 3];
+        for (slot, product) in reaction.products.iter().enumerate() {
+            product_amounts[slot] = value(&product.amount)?;
+        }
+        let values: Self = Self {
+            rate: value(&reaction.rate)?,
+            heat: value(&reaction.heat)?,
+            pressure: value(&reaction.pressure)?,
+            temperatures: [
+                value(&reaction.temperature_minimum)?,
+                value(&reaction.temperature_maximum)?,
+            ],
+            pressures: [value(&reaction.pressure_minimum)?, value(&reaction.pressure_maximum)?],
+            reactant_amounts,
+            product_amounts,
+        };
+        let invalid = |message: &str| Err(MaterialError::InvalidReaction {
+            message: message.to_owned(),
+        });
+        if !values.rate.is_finite() || values.rate <= 0.0
+            || !valid_range(values.temperatures[0], values.temperatures[1])
+            || !valid_range(values.pressures[0], values.pressures[1])
+            || !values.heat.is_finite()
+            || !values.pressure.is_finite() || values.pressure < 0.0
+        {
+            return invalid("reaction rate, ranges, heat, or pressure are invalid");
+        }
+        let amounts: &[f32] = &values.reactant_amounts[..reaction.reactants.len()];
+        // a consumed amount below a gas amount unit would round to nothing
+        if amounts.iter().any(|amount| {
+            !amount.is_finite() || *amount < 0.0 || (*amount > 0.0 && *amount < 1.0 / 4096.0)
+        }) {
+            return invalid("reactant amounts must be zero or finite and at least 1/4096");
+        }
+        if amounts.iter().all(|amount| *amount == 0.0) {
+            return invalid("a catalyst requires two reactants and at least one consumed reactant");
+        }
+        if values.product_amounts[..reaction.products.len()].iter()
+            .any(|amount| !amount.is_finite() || *amount < 1.0 / 4096.0)
+        {
+            return invalid("product amounts are invalid");
+        }
+        Ok(values)
+    }
+
 }

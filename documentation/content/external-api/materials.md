@@ -74,11 +74,13 @@ Placing a fluid identifier directly in a cellular array does not create a partic
 
 ## Reaction properties and validation
 
-`MaterialPropertiesChemical::tags` names material groups that reaction reactants can select. `amount_colors` is a render-time list of `MaterialAmountColor` keys for cellular and fluid material; each key selects a color and radiance transformation at an amount per full cell or particle. Amount colors are applied before temperature colors. They do not alter stored simulation color or radiance.
+`MaterialPropertiesChemical::tags` lists `MaterialTag` entries that reaction reactants can select by name. `MaterialTag::new(name)` creates a tag, and `with_parameter(name, value)` sets a named number on it, replacing an earlier value of that name; reactions read it as `tag.parameter`, such as `combustion.ignition`. `amount_colors` is a render-time list of `MaterialAmountColor` keys for cellular and fluid material; each key selects a color and radiance transformation at an amount per full cell or particle. Amount colors are applied before temperature colors. They do not alter stored simulation color or radiance.
 
 `MaterialReaction` takes one or two `MaterialReactant` entries and zero to three `MaterialReactionProduct` entries. Reactants select an exact material name or tag and specify consumed amount per event; amount zero marks a catalyst. Products specify material name and amount, with optional color and radiance transforms. Builder methods set event rate, inclusive temperature and pressure ranges, heat per event, and pressure added per event. Use `with_temperature_range`, `with_pressure_range`, `with_heat`, and `with_pressure`.
 
-`MaterialRegistry::register_reaction` appends a reaction; registration order determines priority for a matching contact. Use `with_rate`, `with_temperature_range`, `with_pressure_range`, `with_heat`, and `with_pressure` to set its conditions and outputs. Compilation supports at most 64 reactions and 255 entries in each reaction lookup list. It rejects unknown reactant materials (`UnknownReactantMaterial`), tags carried by no material (`UnknownTag`), unknown products (`UnknownProduct`), and invalid counts, amounts (consumed amounts below 1/4096), ranges, rates, pressure, or transformations (`InvalidReaction`). A reaction requires at least one consumed reactant. A single-reactant catalyst is invalid.
+Every number of a reaction, its reactant and product amounts included, is a `MaterialValue`: a constant, which an `f32` converts into, or `MaterialValue::parameter("tag.parameter")`. A parameter is read from the first reactant whose material carries that tag with that parameter, so one reaction selecting a tag can react each tagged material by that material's own values.
+
+`MaterialRegistry::register_reaction` appends a reaction; registration order determines priority for a matching contact. Use `with_rate`, `with_temperature_range`, `with_pressure_range`, `with_heat`, and `with_pressure` to set its conditions and outputs. Compilation supports at most 64 registered reactions and 255 entries in each reaction lookup list. It reads a reaction's values for every material, or pair of materials, its reactants select, and compiles one record for each distinct set of values. It rejects unknown reactant materials (`UnknownReactantMaterial`), tags carried by no material (`UnknownTag`), parameters no reactant's material sets (`UnknownParameter`), unknown products (`UnknownProduct`), and invalid counts, amounts (consumed amounts below 1/4096), ranges, rates, pressure, or transformations (`InvalidReaction`), checking values after reading them. A reaction requires at least one consumed reactant. A single-reactant catalyst is invalid.
 
 ## Identifiers
 
@@ -103,7 +105,7 @@ Registered static materials start at index 1. Dynamic, fluid, and gas indices st
   name references, validates properties, and reads sprite-sheet albedo frames.
 - Registration errors include `EmptyName` and `DuplicateName`; compilation can return
   `UnknownMaterial`, `InvalidDebris`, `InvalidTransition`, `UnknownReactantMaterial`, `UnknownTag`,
-  `UnknownProduct`, `InvalidReaction`, capacity errors, or `Compilation(String)`.
+  `UnknownParameter`, `UnknownProduct`, `InvalidReaction`, capacity errors, or `Compilation(String)`.
 
 ## MaterialTable
 

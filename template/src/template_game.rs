@@ -31,6 +31,7 @@ use engine::{
         MaterialReactionProduct,
         MaterialRegistry,
         MaterialTable,
+        MaterialTag,
         MaterialTemperatureColor,
         MaterialTransition,
     },
@@ -227,7 +228,7 @@ impl TemplateGame {
                 ..Default::default()
             },
             chemical: MaterialPropertiesChemical {
-                tags: vec![String::from("corrodible")], amount_colors: Vec::new(),
+                tags: vec![MaterialTag::new("corrodible")], amount_colors: Vec::new(),
             },
         })?;
         // loose ice that breaks off frozen water and melts back into it
@@ -296,7 +297,7 @@ impl TemplateGame {
                 ..Default::default()
             },
             chemical: MaterialPropertiesChemical {
-                tags: vec![String::from("corrodible")], amount_colors: Vec::new(),
+                tags: vec![MaterialTag::new("corrodible")], amount_colors: Vec::new(),
             },
         })?;
         material_registry.register_cellular_static("ice", MaterialPropertiesCellularStatic {
@@ -450,7 +451,7 @@ impl TemplateGame {
                 ..Default::default()
             },
             chemical: MaterialPropertiesChemical {
-                tags: vec![String::from("corrodible"), String::from("flammable")],
+                tags: vec![MaterialTag::new("corrodible"), MaterialTag::new("flammable")],
                 amount_colors: wood_amount_colors(),
             },
         })?;
@@ -487,7 +488,7 @@ impl TemplateGame {
                     ..Default::default()
                 },
                 chemical: MaterialPropertiesChemical {
-                    tags: vec![String::from("corrodible"), String::from("flammable")],
+                    tags: vec![MaterialTag::new("corrodible"), MaterialTag::new("flammable")],
                     amount_colors: wood_amount_colors(),
                 },
             },
@@ -518,7 +519,7 @@ impl TemplateGame {
                     ..Default::default()
                 },
                 chemical: MaterialPropertiesChemical {
-                    tags: vec![String::from("explosive")],
+                    tags: vec![MaterialTag::new("explosive")],
                     amount_colors: Vec::new(),
                 },
             },
@@ -542,7 +543,7 @@ impl TemplateGame {
                 ..Default::default()
             },
             chemical: MaterialPropertiesChemical {
-                tags: vec![String::from("flammable")], amount_colors: Vec::new(),
+                tags: vec![MaterialTag::new("flammable")], amount_colors: Vec::new(),
             },
         })?;
         // dense green vapor that condenses back into acid
@@ -567,7 +568,7 @@ impl TemplateGame {
                 ..Default::default()
             },
             chemical: MaterialPropertiesChemical {
-                tags: vec![String::from("flammable")], amount_colors: Vec::new(),
+                tags: vec![MaterialTag::new("flammable")], amount_colors: Vec::new(),
             },
         })?;
         // inert olive sludge formed when acid mixes with water
@@ -733,7 +734,7 @@ impl TemplateGame {
                     ..Default::default()
                 },
                 chemical: MaterialPropertiesChemical {
-                    tags: vec![String::from("corrodible")], amount_colors: Vec::new(),
+                    tags: vec![MaterialTag::new("corrodible")], amount_colors: Vec::new(),
                 },
             })?;
             material_registry.register_cellular_dynamic(
@@ -765,7 +766,7 @@ impl TemplateGame {
                         ..Default::default()
                     },
                     chemical: MaterialPropertiesChemical {
-                        tags: vec![String::from("corrodible")], amount_colors: Vec::new(),
+                        tags: vec![MaterialTag::new("corrodible")], amount_colors: Vec::new(),
                     },
                 },
             )?;
@@ -789,7 +790,7 @@ impl TemplateGame {
                     ..Default::default()
                 },
                 chemical: MaterialPropertiesChemical {
-                    tags: vec![String::from("corrodible")], amount_colors: Vec::new(),
+                    tags: vec![MaterialTag::new("corrodible")], amount_colors: Vec::new(),
                 },
             })?;
         }

@@ -29,6 +29,7 @@ A block cell in a tile thermal did not list this tick counts as empty, so every 
 | Limit | Value |
 |---|---:|
 | Registered reactions | 64 |
+| Records of one reaction | one per distinct set of values its materials read |
 | Reactants per reaction | 1–2 |
 | Products per reaction | 0–3 |
 | Entries per unary or pair lookup list | 255 |
@@ -36,7 +37,7 @@ A block cell in a tile thermal did not list this tick counts as empty, so every 
 | Fluid species slots per cell | 2 |
 | Queued fluid products | 4096 |
 
-Material compilation rejects invalid reaction counts, ranges, amounts, or transformations, unknown reactant names or tags, and unknown product names. See [material registration](@/external-api/materials.md#reaction-properties-and-validation) and [errors](@/architecture/errors.md).
+A reaction value can be a parameter of the reactants' material tags; compilation reads it for every material or pair of materials the reaction selects and stores one reaction record per distinct set of values, so lookups point each material at its own record. Material compilation rejects invalid reaction counts, ranges, amounts, or transformations, unknown reactant names or tags, and unknown product names. See [material registration](@/external-api/materials.md#reaction-properties-and-validation) and [errors](@/architecture/errors.md).
 
 > **Limitation:** Contacts crossing the active-region edge are ignored.
 
