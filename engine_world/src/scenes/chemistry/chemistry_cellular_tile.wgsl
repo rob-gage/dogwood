@@ -518,9 +518,7 @@ fn react(
     let probability: f32 =
         1.0 - exp(-bitcast<f32>(header.x) * rate_scale * uniforms.time_step);
     if chemistry_random(seed) >= probability { return; }
-    // products, heat, and pressure go where the consumed reactants were, never to a catalyst: gas
-    // into the first consumed gas reactant's cell or the first consumed reactant's, and other
-    // matter into cells the reaction leaves without cellular matter
+    // products go where the consumed reactants were, never to a catalyst outside the block
     var gas_slot: u32 = CELL_OUTSIDE;
     var first_consumed: u32 = CELL_OUTSIDE;
     for (var reactant: u32 = 0u; reactant < reactant_count; reactant++) {
@@ -529,7 +527,6 @@ fn react(
         if gas_slot == CELL_OUTSIDE && is_gas_unit(units[reactant]) { gas_slot = slots[reactant]; }
     }
     if first_consumed == CELL_OUTSIDE { return; }
-    if gas_slot == CELL_OUTSIDE { gas_slot = first_consumed; }
     // a cell is free for cellular matter when it holds none, or its reactant is used up
     var is_free: array<bool, 2>;
     for (var reactant: u32 = 0u; reactant < reactant_count; reactant++) {
@@ -541,6 +538,29 @@ fn react(
                 < cells[slot].matter.y;
         }
         is_free[reactant] = !has_cellular;
+    }
+    // gas and pressure go into the first consumed gas reactant's cell, or else a free cell: a
+    // reactant's, then one of the block beside the first consumed reactant, so matter burns at
+    // its surfaces; without one, a reaction making gas or pressure waits
+    for (var reactant: u32 = 0u; reactant < reactant_count; reactant++) {
+        if gas_slot == CELL_OUTSIDE && slots[reactant] < 4u && is_free[reactant] {
+            gas_slot = slots[reactant];
+        }
+    }
+    for (var side: u32 = 1u; side <= 2u; side++) {
+        let slot: u32 = first_consumed ^ side;
+        if gas_slot == CELL_OUTSIDE && cells[slot].index != CELL_OUTSIDE
+            && cells[slot].material_identifier == 0u
+        { gas_slot = slot; }
+    }
+    if gas_slot == CELL_OUTSIDE {
+        var makes_gas: bool = header.z != 0u;
+        for (var product: u32 = 0u; product < product_count; product++) {
+            makes_gas = makes_gas
+                || reactions[base + 3u + product / 2u][(product % 2u) * 2u] >> 30u == 3u;
+        }
+        if makes_gas { return; }
+        gas_slot = first_consumed;
     }
     // every product fits before anything changes
     var gas_slots: vec4<u32> = cells[gas_slot].slots;
@@ -666,23 +686,27 @@ fn react(
         cells[slot].changes |= CHANGED_CELLULAR
             | select(0u, CHANGED_STATIC, is_static(material));
     }
-    // heat spreads over the consumed reactants' cells by the heat capacity left in them, so a
-    // cell the reaction empties takes none
+    // heat spreads over the consumed reactants' cells and the gas cell by the heat capacity
+    // left in them, so a cell the reaction empties takes none
     let heat: f32 = bitcast<f32>(header.y) * extent;
     if heat != 0.0 {
-        var capacities: array<f32, 2>;
+        let heated: array<u32, 3> = array<u32, 3>(slots[0], slots[1], gas_slot);
+        var capacities: array<f32, 3>;
         var capacity_sum: f32 = 0.0;
-        for (var reactant: u32 = 0u; reactant < reactant_count; reactant++) {
-            if slots[reactant] >= 4u || amounts[reactant] <= 0.0 { continue; }
-            if reactant == 1u && slots[1] == slots[0] { continue; }
-            capacities[reactant] =
-                cell_heat_capacity(slots[reactant]) + fluid_heat_capacity(slots[reactant]);
-            capacity_sum += capacities[reactant];
+        var counted: u32 = 0u;
+        for (var place: u32 = 0u; place < 3u; place++) {
+            let slot: u32 = heated[place];
+            if slot >= 4u || (place < 2u && (place >= reactant_count || amounts[place] <= 0.0))
+                || ((counted >> slot) & 1u) != 0u
+            { continue; }
+            counted |= 1u << slot;
+            capacities[place] = cell_heat_capacity(slot) + fluid_heat_capacity(slot);
+            capacity_sum += capacities[place];
         }
-        for (var reactant: u32 = 0u; reactant < reactant_count; reactant++) {
-            if capacities[reactant] <= 0.0 { continue; }
-            cells[slots[reactant]].heat +=
-                i32(round(heat * capacities[reactant] / capacity_sum * uniforms.heat_scale));
+        for (var place: u32 = 0u; place < 3u; place++) {
+            if capacities[place] <= 0.0 { continue; }
+            cells[heated[place]].heat +=
+                i32(round(heat * capacities[place] / capacity_sum * uniforms.heat_scale));
         }
     }
     let added_pressure: u32 = u32(round(bitcast<f32>(header.z) * extent * AMOUNT_PER_ATMOSPHERE));
