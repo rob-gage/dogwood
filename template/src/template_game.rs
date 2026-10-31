@@ -455,13 +455,13 @@ impl TemplateGame {
                 tags: vec![
                     MaterialTag::new("corrodible"),
                     MaterialTag::new("combustion")
-                        .with_parameter("ignition", 500.0)
-                        .with_parameter("flame", 1300.0)
-                        .with_parameter("rate", 2.0)
+                        .with_parameter("ignition", 380.0)
+                        .with_parameter("flame", 1100.0)
+                        .with_parameter("rate", 1.5)
                         .with_parameter("amount", 0.02)
-                        .with_parameter("fire", 0.3)
+                        .with_parameter("fire", 2.0)
                         .with_parameter("smoke", 0.1)
-                        .with_parameter("heat", 150.0)
+                        .with_parameter("heat", 750.0)
                         .with_parameter("pressure", 0.0),
                 ],
                 amount_colors: wood_amount_colors(),
@@ -503,13 +503,13 @@ impl TemplateGame {
                     tags: vec![
                         MaterialTag::new("corrodible"),
                         MaterialTag::new("combustion")
-                            .with_parameter("ignition", 450.0)
-                            .with_parameter("flame", 1300.0)
-                            .with_parameter("rate", 4.0)
+                            .with_parameter("ignition", 350.0)
+                            .with_parameter("flame", 1100.0)
+                            .with_parameter("rate", 3.0)
                             .with_parameter("amount", 0.02)
-                            .with_parameter("fire", 0.3)
+                            .with_parameter("fire", 2.0)
                             .with_parameter("smoke", 0.1)
-                            .with_parameter("heat", 150.0)
+                            .with_parameter("heat", 750.0)
                             .with_parameter("pressure", 0.0),
                     ],
                     amount_colors: wood_amount_colors(),
@@ -547,11 +547,11 @@ impl TemplateGame {
                             .with_parameter("ignition", 400.0)
                             .with_parameter("flame", f32::INFINITY)
                             .with_parameter("rate", 60.0)
-                            .with_parameter("amount", 1.0)
+                            .with_parameter("amount", 0.25)
                             .with_parameter("fire", 1.0)
                             .with_parameter("smoke", 0.5)
                             .with_parameter("heat", 4000.0)
-                            .with_parameter("pressure", 40.0),
+                            .with_parameter("pressure", 200.0),
                     ],
                     amount_colors: Vec::new(),
                 },
@@ -657,12 +657,12 @@ impl TemplateGame {
         // hot fire gas releases light and eventually fades into smoke
         material_registry.register_gas("fire", MaterialPropertiesGas {
             mass: 20.0,
-            diffusivity: 0.3,
-            cohesion: 0.0,
+            diffusivity: 0.1,
+            cohesion: 0.1,
             graphics: MaterialGraphicsGas {
                 color: u32::from_le_bytes([255, 170, 60, 150]),
                 radiance: pack_radiance([3.0, 1.2, 0.2, 0.01]),
-                opacity: 1.0,
+                opacity: 4.0,
             },
             thermal: MaterialPropertiesThermal {
                 heat_capacity: 1.0,
@@ -868,6 +868,31 @@ impl TemplateGame {
                 .with_heat(combustion("heat"))
                 .with_pressure(combustion("pressure")),
         );
+        // water puts out fire, flashing to steam as it draws the flame's heat away
+        material_registry.register_reaction(
+            MaterialReaction::new(
+                vec![
+                    MaterialReactant::material("fire", 0.5),
+                    MaterialReactant::material("water", 0.02),
+                ],
+                vec![MaterialReactionProduct::new("water vapor", 0.3)],
+            )
+                .with_heat(-150.0)
+                .with_rate(10.0),
+        );
+        // and quenches hot fuel it wets, boiling off as it draws the fuel's heat
+        material_registry.register_reaction(
+            MaterialReaction::new(
+                vec![
+                    MaterialReactant::tag("combustion", 0.001),
+                    MaterialReactant::material("water", 0.05),
+                ],
+                vec![MaterialReactionProduct::new("water vapor", 0.5)],
+            )
+                .with_temperature_range(350.0, f32::INFINITY)
+                .with_heat(-400.0)
+                .with_rate(10.0),
+        );
         material_registry.register_reaction(
             MaterialReaction::new(
                 vec![
@@ -901,7 +926,7 @@ impl TemplateGame {
                 vec![MaterialReactant::material("fire", 0.5)],
                 vec![MaterialReactionProduct::new("smoke", 0.2)],
             )
-                .with_rate(2.0),
+                .with_rate(0.5),
         );
         material_registry.register_reaction(
             MaterialReaction::new(vec![MaterialReactant::material("smoke", 0.25)], Vec::new())
