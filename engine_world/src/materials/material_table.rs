@@ -371,13 +371,10 @@ impl MaterialTable {
                 static_property_bytes.extend_from_slice(&value.to_le_bytes());
             }
         }
-        let cellular_static_properties_buffer: wgpu::Buffer = device.create_buffer(
-            &wgpu::BufferDescriptor {
-                label: Some("`MaterialTable.cellular_static_properties_buffer`"),
-                size: static_property_bytes.len() as u64,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            },
+        let cellular_static_properties_buffer: wgpu::Buffer = Self::create_storage_buffer(
+            device,
+            "`MaterialTable.cellular_static_properties_buffer`",
+            &static_property_bytes,
         );
         accelerator.queue().write_buffer(
             &cellular_static_properties_buffer,
@@ -422,13 +419,10 @@ impl MaterialTable {
         }
         // a zeroed record satisfies the storage binding when no dynamic material is registered
         if property_bytes.is_empty() { property_bytes.resize(16, 0); }
-        let cellular_dynamic_properties_buffer: wgpu::Buffer = device.create_buffer(
-            &wgpu::BufferDescriptor {
-                label: Some("`MaterialTable.cellular_dynamic_properties_buffer`"),
-                size: property_bytes.len() as u64,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            },
+        let cellular_dynamic_properties_buffer: wgpu::Buffer = Self::create_storage_buffer(
+            device,
+            "`MaterialTable.cellular_dynamic_properties_buffer`",
+            &property_bytes,
         );
         accelerator.queue().write_buffer(&cellular_dynamic_properties_buffer, 0, &property_bytes);
         // serialize fluid records as density, viscosity, cohesion, and artificial pressure, then
@@ -464,13 +458,10 @@ impl MaterialTable {
         }
         // keep the storage binding valid when the registry has no fluid materials
         if fluid_property_bytes.is_empty() { fluid_property_bytes.resize(32, 0); }
-        let fluid_properties_buffer: wgpu::Buffer = device.create_buffer(
-            &wgpu::BufferDescriptor {
-                label: Some("`MaterialTable.fluid_properties_buffer`"),
-                size: fluid_property_bytes.len() as u64,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            },
+        let fluid_properties_buffer: wgpu::Buffer = Self::create_storage_buffer(
+            device,
+            "`MaterialTable.fluid_properties_buffer`",
+            &fluid_property_bytes,
         );
         accelerator.queue().write_buffer(&fluid_properties_buffer, 0, &fluid_property_bytes);
         // serialize gas records as mass, diffusivity, cohesion, and color bits
@@ -506,13 +497,10 @@ impl MaterialTable {
         }
         // keep the storage binding valid when the registry has no gas materials
         if gas_property_bytes.is_empty() { gas_property_bytes.resize(32, 0); }
-        let gas_properties_buffer: wgpu::Buffer = device.create_buffer(
-            &wgpu::BufferDescriptor {
-                label: Some("`MaterialTable.gas_properties_buffer`"),
-                size: gas_property_bytes.len() as u64,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            },
+        let gas_properties_buffer: wgpu::Buffer = Self::create_storage_buffer(
+            device,
+            "`MaterialTable.gas_properties_buffer`",
+            &gas_property_bytes,
         );
         accelerator.queue().write_buffer(&gas_properties_buffer, 0, &gas_property_bytes);
         let (
@@ -546,31 +534,22 @@ impl MaterialTable {
             thermal_property_bytes[word_offset..word_offset + 4]
                 .copy_from_slice(&word.to_le_bytes());
         }
-        let thermal_properties_buffer: wgpu::Buffer = device.create_buffer(
-            &wgpu::BufferDescriptor {
-                label: Some("`MaterialTable.thermal_properties_buffer`"),
-                size: thermal_property_bytes.len() as u64,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            },
+        let thermal_properties_buffer: wgpu::Buffer = Self::create_storage_buffer(
+            device,
+            "`MaterialTable.thermal_properties_buffer`",
+            &thermal_property_bytes,
         );
         accelerator.queue().write_buffer(&thermal_properties_buffer, 0, &thermal_property_bytes);
-        let transition_color_buffer: wgpu::Buffer = device.create_buffer(
-            &wgpu::BufferDescriptor {
-                label: Some("`MaterialTable.transition_color_buffer`"),
-                size: transition_color_bytes.len() as u64,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            },
+        let transition_color_buffer: wgpu::Buffer = Self::create_storage_buffer(
+            device,
+            "`MaterialTable.transition_color_buffer`",
+            &transition_color_bytes,
         );
         accelerator.queue().write_buffer(&transition_color_buffer, 0, &transition_color_bytes);
-        let temperature_color_buffer: wgpu::Buffer = device.create_buffer(
-            &wgpu::BufferDescriptor {
-                label: Some("`MaterialTable.temperature_color_buffer`"),
-                size: temperature_color_bytes.len() as u64,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            },
+        let temperature_color_buffer: wgpu::Buffer = Self::create_storage_buffer(
+            device,
+            "`MaterialTable.temperature_color_buffer`",
+            &temperature_color_bytes,
         );
         accelerator.queue().write_buffer(
             &temperature_color_buffer,
@@ -934,19 +913,12 @@ impl MaterialTable {
                 let first_key_vector_index: u32 = (temperature_color_key_bytes.len() / 16) as u32;
                 let mut previous_temperature: Option<f32> = None;
                 for key in temperature_colors {
-                    let valid_transformation = |transformation: &MaterialColorTransformation| {
-                        transformation.matrix.iter().flatten()
-                            .chain(&transformation.offset)
-                            .all(|value| value.is_finite())
-                            && transformation.intensity_variance == 0.0
-                            && transformation.channel_variance.iter().all(|value| *value == 0.0)
-                    };
                     if !key.temperature.is_finite() || key.temperature < 0.0
                         || previous_temperature.is_some_and(|temperature| {
                             key.temperature <= temperature
                         })
-                        || !valid_transformation(&key.color)
-                        || !valid_transformation(&key.radiance)
+                        || !valid_visual_transform(&key.color, true)
+                        || !valid_visual_transform(&key.radiance, true)
                     {
                         return Err(MaterialError::InvalidTransition {
                             name: material.name().to_owned(),
@@ -1041,20 +1013,13 @@ impl MaterialTable {
                     };
                     let color: &MaterialColorTransformation = &transition.color;
                     let radiance: &MaterialColorTransformation = &transition.radiance;
-                    let valid_transformation = |transformation: &MaterialColorTransformation| {
-                        transformation.matrix.iter().flatten().chain(&transformation.offset)
-                            .all(|value| value.is_finite())
-                            && transformation.channel_variance.iter()
-                                .chain([&transformation.intensity_variance])
-                                .all(|value| value.is_finite() && *value >= 0.0)
-                    };
                     if !transition.temperature.is_finite() || transition.temperature < 0.0
                         || !transition.latent_heat.is_finite() || transition.latent_heat < 0.0
                         // the smallest product amount is one gas amount unit, a 4096th of an
                         // atmosphere, so no unit changes into nothing
                         || !transition.amount.is_finite() || transition.amount < 1.0 / 4096.0
-                        || !valid_transformation(color)
-                        || !valid_transformation(radiance)
+                        || !valid_visual_transform(color, false)
+                        || !valid_visual_transform(radiance, false)
                     {
                         return Err(MaterialError::InvalidTransition {
                             name: material.name().to_owned(),
