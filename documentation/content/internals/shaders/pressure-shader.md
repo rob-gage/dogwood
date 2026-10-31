@@ -60,7 +60,7 @@ The cellular gas state is eight `u32` words per cell (32 bytes):
 | 6 | Top-face flow as `f32` bits |
 | 7 | Signed stored pressure in amount units for solid cells; solver state for other cell kinds |
 
-The two pressure cell buffers use the same eight-word record, one per pressure cell, each a quarter of the cellular gas buffer. They are indexed by region position rather than ring position. During coarsening, gas that exceeds the four pressure-cell species slots remains in its source fine cell and is restored there by refinement.
+The two pressure cell buffers use the same eight-word record, one per pressure cell, each a quarter of the cellular gas buffer. They are indexed by region position rather than ring position. For open pressure cells, word 7 carries the pressure cell temperature used by the temperature-pressure factor; for solid cells it carries stored pressure. During coarsening, gas that exceeds the four pressure-cell species slots remains in its source fine cell and is restored there by refinement.
 
 The control buffer holds four counts (active tiles, volume tiles, gas blocks, blocks), then 268 bytes per region tile:
 

@@ -8,7 +8,7 @@ sources = ["engine_world/src/scenes/thermal", "engine_world/src/scenes/scene.rs"
 
 Thermal simulation stores temperature and amount per cellular cell. Cellular cells, fluid particles, and fluid rasters carry packed radiance with their color; transitions transform both values. Material heat capacity converts these values into heat; material conduction controls exchange with neighboring cells. Fluid particles carry their own temperature, amount, and color, and contribute heat to their occupied cells.
 
-Each thermal step processes awake tiles. Heat transfer is accumulated in fixed-point units, applied to matter, and shared with fluids and gas. Thermal sleeping flags allow unchanged tiles to skip work; edits, collisions, fluid motion, and heat exchange wake affected tiles. Exposed gas cells relax toward the scene's ambient gas temperature and conduction.
+Each thermal step processes awake tiles. Gas transfers set `gas_awake`, which thermal collects into its active work. Gas pressure uses temperature-dependent pressure state. Heat transfer is accumulated in fixed-point units, applied to matter, and shared with fluids and gas. Thermal sleeping flags allow unchanged tiles to skip work; edits, collisions, fluid motion, and heat exchange wake affected tiles. Exposed gas cells relax toward the scene's ambient gas temperature and conduction.
 
 ## Transitions and latent heat
 
@@ -16,7 +16,7 @@ Materials can define hot and cold transitions with a transition temperature, lat
 
 Fluid particles due for transition are converted before compaction. Thermal lists cells and gas slots that become fluid; `convert_cells` reserves particles and clears the source, while `convert_particles` changes existing particle material, amount, temperature, and color. When a conversion would create a static cell with no static material in its four side-neighbors, it uses the product's configured debris material as a dynamic cell when one exists. Thermal conversions place that debris at rest; fluid conversions carry the particle velocity. Both keep the carried color and transformed radiance. Products without debris remain static. Fluid particles then receive the cell temperature delta from the thermal step. Pressure transport carries gas heat with moved gas.
 
-> **Limitation:** Pressure flow is not temperature-dependent. Condensation leaves residual vapor below one particle's worth. Conversions can wait when the fluid pool or gas slots are full. Collision sees converted terrain one tick later.
+> **Limitation:** Condensation leaves residual vapor below one particle's worth. Conversions can wait when the fluid pool or gas slots are full. Collision sees converted terrain one tick later.
 
 Temperature-color keys are a render-time appearance transform: neighboring keys interpolate by temperature, values outside the range use the nearest key, and no keys means identity. They do not modify stored color or radiance. Fluid keys apply only where the fluid heat raster has heat; see [material table compilation](@/internals/simulation/material-table.md).
 

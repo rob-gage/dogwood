@@ -44,7 +44,7 @@ The pass measures open volume per cell from cellular occupancy, fluid raster occ
 
 A tile stays awake while one of its pressure cells changes a species slot, changes its phantom air by more than 64 amount units in a substep, changes its stored pressure, relaxes, or keeps a face flow of at least 16 amount units. Smaller changes let the tile sleep. Flow below its minimum becomes zero. A flow reaching a sleeping neighbor wakes it for a later tick.
 
-Gas pressure relaxes toward the ambient pressure. Each substep, a pressure cell more than 0.01 atm from the ambient pressure moves toward it by `PRESSURE_OPEN_RELAXATION` of the difference beyond that tolerance, and by at least `PRESSURE_OPEN_RELAXATION_MINIMUM`. Excess pressure removes phantom air first, then all species in proportion. A deficit adds phantom air. A closed pressure cell only loses the overpressure of the gas it traps. Sealed pockets and the low pressure behind a passing wave therefore settle within about a second. Held-back species are reintroduced when pressure cells are rebuilt and are not discarded.
+Gas pressure is computed from gas amount and temperature, including phantom air at the ambient temperature and heat capacity. Gas pressure relaxes toward ambient pressure. Each substep, a pressure cell more than 0.01 atm from ambient moves toward it by `PRESSURE_OPEN_RELAXATION` of the difference beyond that tolerance, and by at least `PRESSURE_OPEN_RELAXATION_MINIMUM`. Excess pressure removes phantom air first, then species in proportion; a deficit adds phantom air. A closed pressure cell only loses the overpressure of the gas it traps. Sealed pockets and the low pressure behind a passing wave therefore settle within about a second. Held-back species are reintroduced when pressure cells are rebuilt and are not discarded.
 
 Each tick has 3 fixed substeps (`PRESSURE_SUBSTEP_COUNT`) over `PRESSURE_TIME_STEP = 1/60 s`. The pass derives its per-substep coefficients from these per-second constants, converting tiles to pressure cells:
 
@@ -97,8 +97,8 @@ Each face push uses `PRESSURE_IMPULSE` and the 0.02-atmosphere minimum. See [cel
 
 Active-region edges act as walls: gas never leaves the region, so pressure from explosions and pressure edits stays and builds up inside it, and waves reflect at the edges.
 
-Gas pressure carries heat: gas amount and material heat capacity determine its thermal contribution, and pressure transport moves gas heat between cells.
+Gas pressure is temperature-dependent: each pressure cell scales its amount-based pressure by its temperature relative to the scene ambient gas temperature. Phantom air is included using the ambient temperature and heat capacity. Gas amount and material heat capacity determine its thermal contribution, and pressure transport moves gas heat between cells.
 
-> **Limitation:** Pressure flow is not temperature-dependent. Momentum is not exactly conserved across the substrate and its consumers. Faces between terrain and a body, or between different bodies, reflect. Contact impulses do not yet load the pressure substrate.
+> **Limitation:** Momentum is not exactly conserved across the substrate and its consumers. Faces between terrain and a body, or between different bodies, reflect. Contact impulses do not yet load the pressure substrate.
 
 > **Limitation:** Pure species gas without phantom air does not enter solids. Static occupancy refresh on region/ring movement and edits, edit changed-cell reads, saves, and streaming still use blocking occupancy reads. Collision-owned changed-cell feedback is asynchronous and applied incrementally; see [collision ordering](@/internals/simulation/collision-world.md).

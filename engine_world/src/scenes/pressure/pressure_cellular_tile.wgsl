@@ -55,7 +55,8 @@ struct PressureUniforms {
     ambient_heat_capacity: f32,
     /// First thermal index of the gas materials
     gas_thermal_offset: u32,
-    padding_0: u32,
+    /// Reciprocal ambient temperature, used to scale gas pressure
+    ambient_temperature_reciprocal: f32,
     padding_1: u32,
     padding_2: u32,
 };
@@ -115,6 +116,8 @@ struct PressureCell {
     /// Temperature in kelvin of an open pressure cell's gas and phantom air, which the word of a
     /// solid one's stored pressure holds instead
     temperature: f32,
+    /// Temperature multiplier applied to gas pressure
+    pressure_factor: f32,
 };
 
 @group(0) @binding(0)
@@ -236,6 +239,9 @@ var<workgroup> halo_solids: array<vec2<u32>, 196>;
 
 /// Density of the cells in the halo
 var<workgroup> halo_densities: array<f32, 196>;
+
+/// Temperature multiplier applied to gas pressure in the halo
+var<workgroup> halo_pressure_factors: array<f32, 196>;
 
 /// New right and top face flows of the pressure tile and the two rings around it
 var<workgroup> halo_flows: array<vec2<f32>, 144>;
@@ -374,6 +380,12 @@ const RELAXATION_TOLERANCE: f32 = 0.01;
 /// pressure at rest never wakes them
 const PRESSURE_PUSH_MINIMUM: f32 = 0.02;
 
+/// Returns the ideal-gas-like pressure multiplier of gas at a temperature
+fn temperature_pressure_factor(temperature: f32) -> f32 {
+    if uniforms.ambient_temperature <= 0.0 { return 1.0; }
+    return max(temperature, 0.0) * uniforms.ambient_temperature_reciprocal;
+}
+
 /// Returns the buffer index of a tile position inside the active region
 fn tile_index(tile: vec2<u32>) -> u32 {
     let physical_x: u32 = (tile.x + uniforms.ring_offset_x) % uniforms.region_width;
@@ -458,9 +470,10 @@ fn load_coarse_cell(cell: vec2<i32>, is_active: bool) -> PressureCell {
     }
     let volume: f32 = max(pressure_cell.volume, VOLUME_MINIMUM);
     pressure_cell.total = total;
-    pressure_cell.pressure = total / volume;
-    pressure_cell.density = mass / volume;
     pressure_cell.temperature = bitcast<f32>(words.w);
+    pressure_cell.pressure_factor = temperature_pressure_factor(pressure_cell.temperature);
+    pressure_cell.pressure = total / volume * pressure_cell.pressure_factor;
+    pressure_cell.density = mass / volume;
     // a pressure cell of only static cells carries stored pressure instead
     if constants.z != 0u {
         pressure_cell.solid = constants.z;
@@ -468,6 +481,7 @@ fn load_coarse_cell(cell: vec2<i32>, is_active: bool) -> PressureCell {
         pressure_cell.stored = bitcast<i32>(words.w);
         pressure_cell.pressure = f32(uniforms.ambient_amount) + f32(pressure_cell.stored);
         pressure_cell.density = bitcast<f32>(constants.w);
+        pressure_cell.pressure_factor = 1.0;
     }
     return pressure_cell;
 }
@@ -548,6 +562,7 @@ fn load_cell_with_activity(cell: vec2<i32>, is_active: bool) -> PressureCell {
     pressure_cell.drag = unpack2x16snorm(volume_word.y) * ACTOR_VELOCITY_MAXIMUM
         * uniforms.actor_velocity_scale;
     pressure_cell.is_active = is_active;
+    pressure_cell.temperature = bitcast<f32>(matter[index].x);
     var mass: f32 = f32(pressure_cell.phantom) * uniforms.ambient_mass;
     var total: f32 = f32(pressure_cell.phantom);
     for (var slot: u32 = 0u; slot < 4u; slot++) {
@@ -558,7 +573,8 @@ fn load_cell_with_activity(cell: vec2<i32>, is_active: bool) -> PressureCell {
     }
     let volume: f32 = max(pressure_cell.volume, VOLUME_MINIMUM);
     pressure_cell.total = total;
-    pressure_cell.pressure = total / volume;
+    pressure_cell.pressure_factor = temperature_pressure_factor(pressure_cell.temperature);
+    pressure_cell.pressure = total / volume * pressure_cell.pressure_factor;
     pressure_cell.density = mass / volume;
     // static cells, of the cellular tiles or of a rigid body, carry stored pressure instead
     let material_identifier: u32 = material_identifiers[index];
@@ -575,6 +591,7 @@ fn load_cell_with_activity(cell: vec2<i32>, is_active: bool) -> PressureCell {
         pressure_cell.stored = bitcast<i32>(words.w);
         pressure_cell.pressure = f32(uniforms.ambient_amount) + f32(pressure_cell.stored);
         pressure_cell.density = material.x;
+        pressure_cell.pressure_factor = 1.0;
     }
     return pressure_cell;
 }
@@ -620,6 +637,7 @@ fn load_halo(tile: u32, local_cell: u32) -> vec2<i32> {
                 | select(0u, VOLUME_ACTIVE, pressure_cell.is_active),
         );
         halo_densities[halo_index] = pressure_cell.density;
+        halo_pressure_factors[halo_index] = pressure_cell.pressure_factor;
         halo_solids[halo_index] = vec2<u32>(
             pressure_cell.solid,
             select(
@@ -683,6 +701,7 @@ fn halo_cell(cell: vec2<i32>) -> PressureCell {
     }
     pressure_cell.is_active = (words.w & VOLUME_ACTIVE) != 0u;
     pressure_cell.density = halo_densities[index];
+    pressure_cell.pressure_factor = halo_pressure_factors[index];
     pressure_cell.solid = solids.x;
     if pressure_cell.solid != 0u {
         pressure_cell.stored = bitcast<i32>(solids.y);
@@ -696,9 +715,11 @@ fn halo_cell(cell: vec2<i32>) -> PressureCell {
         total += amount;
     }
     pressure_cell.total = total;
-    pressure_cell.pressure = total / max(pressure_cell.volume, VOLUME_MINIMUM);
+    pressure_cell.pressure = total / max(pressure_cell.volume, VOLUME_MINIMUM)
+        * pressure_cell.pressure_factor;
     if pressure_cell.solid != 0u {
         pressure_cell.pressure = f32(uniforms.ambient_amount) + f32(pressure_cell.stored);
+        pressure_cell.pressure_factor = 1.0;
     }
     return pressure_cell;
 }
@@ -1602,11 +1623,14 @@ fn simulate_substep(cell: vec2<i32>, local_cell: u32) {
     var gas_total: u32 = 0u;
     for (var slot: u32 = 0u; slot < 4u; slot++) { gas_total += amounts[slot]; }
     let volume: f32 = max(center.volume, VOLUME_MINIMUM);
-    let excess: f32 = f32(phantom + gas_total) / volume - f32(uniforms.ambient_amount);
-    if center.solid == 0u && (center.volume > 0.0 || excess > 0.0) {
+    let excess: f32 = f32(phantom + gas_total) / volume * center.pressure_factor
+        - f32(uniforms.ambient_amount);
+    if center.solid == 0u && center.pressure_factor > 0.0
+        && (center.volume > 0.0 || excess > 0.0)
+    {
         let beyond: f32 =
             abs(excess) - RELAXATION_TOLERANCE * AMOUNT_PER_ATMOSPHERE / uniforms.diffusion_scale;
-        var change: u32 = u32(volume * clamp(
+        var change: u32 = u32(volume / center.pressure_factor * clamp(
             max(beyond * uniforms.open_relaxation, uniforms.open_relaxation_minimum),
             0.0,
             beyond,
@@ -1975,8 +1999,9 @@ fn refine(
             for (var slot: u32 = 0u; slot < 4u; slot++) {
                 total += f32(slot_amount(coarse_slots[slot]));
             }
-            let pressure: f32 =
-                total / max(f32(constants.x & 0x1ffffu) / VOLUME_SCALE, VOLUME_MINIMUM);
+            let pressure: f32 = total
+                / max(f32(constants.x & 0x1ffffu) / VOLUME_SCALE, VOLUME_MINIMUM)
+                * temperature_pressure_factor(bitcast<f32>(words.w));
             stored = i32(round(0.25 * (pressure - f32(uniforms.ambient_amount))));
         }
     }
@@ -2028,8 +2053,11 @@ fn coarse_gauge(cell: vec2<i32>) -> vec2<f32> {
     var total: f32 = f32(words.x);
     for (var slot: u32 = 0u; slot < 4u; slot++) { total += f32(slot_amount(slots[slot])); }
     let volume: f32 = f32(constants.x & 0x1ffffu) / VOLUME_SCALE;
-    if volume <= 0.0 { return vec2<f32>(0.25 * max(total - ambient, 0.0), 0.0); }
-    return vec2<f32>(0.25 * (total / max(volume, VOLUME_MINIMUM) - ambient), 1.0);
+    let pressure_factor: f32 = temperature_pressure_factor(bitcast<f32>(words.w));
+    if volume <= 0.0 {
+        return vec2<f32>(0.25 * max(total * pressure_factor - ambient, 0.0), 0.0);
+    }
+    return vec2<f32>(0.25 * (total / max(volume, VOLUME_MINIMUM) * pressure_factor - ambient), 1.0);
 }
 
 /// Publishes the pressure above the ambient pressure of every cell of the active tiles, in

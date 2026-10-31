@@ -457,7 +457,11 @@ impl PressureCellularTilePass {
                 ambient_temperature.to_bits(),
                 ambient_heat_capacity.to_bits(),
                 self.gas_thermal_offset,
-                0,
+                if ambient_temperature > 0.0 {
+                    ambient_temperature.recip().to_bits()
+                } else {
+                    0
+                },
                 0,
                 0,
             ] {

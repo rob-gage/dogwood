@@ -153,6 +153,10 @@ var<workgroup> is_static_changed: atomic<u32>;
 /// Static cells of the workgroup's tile outside rigid bodies after its changes, as two masks
 var<workgroup> static_occupancy: array<atomic<u32>, 2>;
 
+/// Whether the temperature of gas or phantom air in the workgroup's tile changed this tick, which
+/// changes its pressure
+var<workgroup> is_gas_heated: atomic<u32>;
+
 /// Returns the buffer index of a tile position inside the active region
 fn tile_index(tile: vec2<u32>) -> u32 {
     let physical_x: u32 = (tile.x + uniforms.ring_offset_x) % uniforms.region_width;
@@ -636,6 +640,7 @@ fn apply(
         atomicStore(&is_static_changed, flags & TILE_STATIC_CHANGED);
     }
     if local_cell < 2u { atomicStore(&static_occupancy[local_cell], 0u); }
+    if local_cell == 0u { atomicStore(&is_gas_heated, 0u); }
     workgroupBarrier();
     let cell: vec2<i32> = tile * 8 + vec2<i32>(i32(local_cell % 8u), i32(local_cell / 8u));
     let index: u32 = cell_index(cell);
@@ -655,6 +660,11 @@ fn apply(
     {
         atomicOr(&thermal_awake[physical_tile], TILE_AWAKE);
     }
+    if abs(temperature - previous) > uniforms.sleep_temperature
+        && material_identifiers[index] == 0u
+    {
+        atomicStore(&is_gas_heated, 1u);
+    }
     // matter past its transition's latent heat bank changes
     let material_identifier: u32 = material_identifiers[index];
     var is_changed: bool;
@@ -669,6 +679,9 @@ fn apply(
         atomicOr(&static_occupancy[local_cell / 32u], 1u << (local_cell % 32u));
     }
     workgroupBarrier();
+    if local_cell == 0u && atomicLoad(&is_gas_heated) != 0u {
+        atomicOr(&gas_awake[physical_tile], 1u);
+    }
     // the tile and its remaining static cells, three words per listed tile
     if local_cell == 0u && atomicLoad(&is_static_changed) != 0u {
         let count: u32 = atomicAdd(&changed_cellular_tiles[0], 1u);
