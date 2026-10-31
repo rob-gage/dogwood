@@ -3,7 +3,7 @@ title = "Core concepts"
 description = "Understand how games, scenes, cells, actors, and updates fit together in Dogwood."
 weight = 30
 [extra]
-sources = ["engine_world/src/scenes/mod.rs", "engine_world/src/scenes/scene_position.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/cellular_tiles/mod.rs", "engine_world/src/scenes/chunks/mod.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine_world/src/materials/material_table.rs", "engine_graphics/src/renders/scene_renderer_cellular.wgsl", "engine/src/games/game.rs", "engine/src/games/game_instance.rs", "engine_world/src/actors/actor.rs", "engine_world/src/actors/actor_registry.rs", "engine_world/src/actors/components", "engine_world/src/materials/material.rs", "engine_world/src/materials/material_registry.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_pass.rs", "engine/src/lib.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl", "engine/src/runtime/engine.rs"]
+sources = ["engine_world/src/scenes/mod.rs", "engine_world/src/scenes/scene_position.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chemistry", "engine_world/src/scenes/cellular_tiles/mod.rs", "engine_world/src/scenes/chunks/mod.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine_world/src/materials/material_table.rs", "engine_graphics/src/renders/scene_renderer_cellular.wgsl", "engine/src/games/game.rs", "engine/src/games/game_instance.rs", "engine_world/src/actors/actor.rs", "engine_world/src/actors/actor_registry.rs", "engine_world/src/actors/components", "engine_world/src/materials/material.rs", "engine_world/src/materials/material_registry.rs", "engine_world/src/materials/material_properties_chemical.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_pass.rs", "engine/src/lib.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl", "engine/src/runtime/engine.rs"]
 +++
 
 This page gives game programmers the short mental model of Dogwood: games, scenes, the cell grid, materials, actors, and the update loop. Each section links to the page that covers it in depth.
@@ -32,7 +32,7 @@ The **tile ring** is a GPU buffer holding tiles near the camera. The **active re
 
 ### Materials
 
-A **material** defines how a kind of cell behaves and looks. A game registers named material definitions in a `MaterialRegistry` and compiles them into a `MaterialTable`, which it passes to the scene. The table resolves dependency names and supplies identifiers through `lookup` for edits and generators. A material has one form:
+A **material** defines how a kind of cell behaves and looks. A game registers named material definitions in a `MaterialRegistry` and compiles them into a `MaterialTable`, which it passes to the scene. The table resolves dependency names and supplies identifiers through `lookup` for edits and generators. Materials can also carry tags used by registered reactions; see [chemistry simulation](@/internals/simulation/chemistry.md). A material has one form:
 
 - **cellular static:** static cells that the dynamic-cell simulation does not move, such as stone.
 - **cellular dynamic:** cells moved by the kinematics simulation, such as gravel, which falls and piles.

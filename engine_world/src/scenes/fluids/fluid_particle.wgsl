@@ -238,11 +238,23 @@ var<storage, read> conversion_gas_materials: array<vec4<f32>>;
 @group(0) @binding(54)
 var<storage, read> cellular_static_materials: array<vec4<f32>>;
 
+@group(0) @binding(55)
+var<storage, read_write> fluid_spawn_records: array<atomic<u32>>;
+
+@group(1) @binding(1)
+var<storage, read_write> fluid_spawn_products: array<atomic<u32>>;
+
 /// First thermal index of the static, dynamic, fluid, and gas materials
 const THERMAL_OFFSETS: vec4<u32> = __THERMAL_OFFSETS__;
 
+/// Number of words the fluid raster section alignment requires
+const FLUID_RASTER_ALIGNMENT_WORDS: u32 = __FLUID_RASTER_ALIGNMENT_WORDS__;
+
 /// Fixed-point units per heat capacity unit in the fluid heat
 const THERMAL_FLUID_CAPACITY_SCALE: f32 = __THERMAL_FLUID_CAPACITY_SCALE__;
+
+/// Thermal record flag of fluids whose species the raster tracks, because they react
+const THERMAL_FLAG_TRACKED: u32 = 4u;
 
 /// Fixed-point units per heat unit in the fluid heat
 const THERMAL_FLUID_ENERGY_SCALE: f32 = __THERMAL_FLUID_ENERGY_SCALE__;
@@ -256,6 +268,9 @@ const THERMAL_HEAT_SCALE: f32 = __THERMAL_HEAT_SCALE__;
 /// Amount of a particle holding one whole unit of its material, matching
 /// `CELLULAR_TILE_AMOUNT_PER_UNIT`
 const AMOUNT_PER_UNIT: f32 = 65536.0;
+
+/// Maximum number of chemistry fluid products queued for one fluid tick
+const FLUID_SPAWN_COUNT_MAXIMUM: u32 = 4096u;
 
 /// Rigid-body tile record shared with cellular kinematics
 struct FluidRigidBodyCellularTile {
@@ -628,6 +643,13 @@ fn fluid_contact_tile_count_offset() -> u32 {
     return fluid_contact_tile_list_offset() + uniforms.region_width * uniforms.region_height;
 }
 
+/// Returns the first word in the aligned per-cell fluid species section
+fn fluid_species_offset() -> u32 {
+    let raster_end: u32 = fluid_contact_tile_count_offset() + 1u;
+    return ((raster_end + FLUID_RASTER_ALIGNMENT_WORDS - 1u)
+        / FLUID_RASTER_ALIGNMENT_WORDS) * FLUID_RASTER_ALIGNMENT_WORDS;
+}
+
 /// Adds a physical tile to the solid-contact list once
 fn add_fluid_contact_tile(physical_tile: u32) {
     let flag_index: u32 = fluid_contact_tile_flags_offset() + physical_tile;
@@ -660,10 +682,46 @@ fn clear_raster_cell(index: u32) {
     atomicStore(&fluid_heat[base + 1u], 0);
     atomicStore(&fluid_heat[base + 2u], 0);
     atomicStore(&fluid_heat[base + 3u], 0);
+    let species_base: u32 = fluid_species_offset() + index * 4u;
+    for (var word: u32 = 0u; word < 4u; word++) {
+        atomicStore(&fluid_raster[species_base + word], 0u);
+    }
     let color_base: u32 = index * 8u;
     for (var word: u32 = 0u; word < 8u; word++) {
         atomicStore(&fluid_colors[color_base + word], 0u);
     }
+}
+
+/// Claims or finds one of the two per-cell fluid species slots
+fn fluid_species_slot(cell_index: u32, material_index: u32) -> u32 {
+    if material_index >= 65535u { return 0xffffffffu; }
+    let identifier: u32 = material_index + 1u;
+    let word_index: u32 = fluid_species_offset() + cell_index * 4u;
+    var packed: u32 = atomicLoad(&fluid_raster[word_index]);
+    loop {
+        let slot_0: u32 = packed & 0xffffu;
+        let slot_1: u32 = packed >> 16u;
+        if slot_0 == identifier { return 0u; }
+        if slot_1 == identifier { return 1u; }
+        if slot_0 == 0u {
+            let exchange = atomicCompareExchangeWeak(
+                &fluid_raster[word_index], packed, packed | identifier,
+            );
+            if exchange.exchanged { return 0u; }
+            packed = exchange.old_value;
+            continue;
+        }
+        if slot_1 == 0u {
+            let exchange = atomicCompareExchangeWeak(
+                &fluid_raster[word_index], packed, packed | (identifier << 16u),
+            );
+            if exchange.exchanged { return 1u; }
+            packed = exchange.old_value;
+            continue;
+        }
+        return 0xffffffffu;
+    }
+    return 0xffffffffu;
 }
 
 /// Adds a signed fixed-point value while clamping to the i32 range
@@ -1263,6 +1321,18 @@ fn prepare() {
     dispatch_arguments[2] = 1u;
 }
 
+/// Writes an indirect particle dispatch from the pending chemistry fluid products
+@compute @workgroup_size(1)
+fn prepare_fluid_spawn_dispatch() {
+    let count: u32 = min(
+        atomicLoad(&fluid_spawn_records[0]), FLUID_SPAWN_COUNT_MAXIMUM,
+    );
+    dispatch_arguments[0] = max(1u, (count + PARTICLE_WORKGROUP_SIZE - 1u)
+        / PARTICLE_WORKGROUP_SIZE);
+    dispatch_arguments[1] = 1u;
+    dispatch_arguments[2] = 1u;
+}
+
 /// Writes one indirect workgroup for every compactly listed tile
 @compute @workgroup_size(1)
 fn prepare_boundary() {
@@ -1510,6 +1580,7 @@ fn rasterize_fluid(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let particle_count: u32 = atomicLoad(&control[0]);
     if invocation.x >= particle_count { return; }
     let particle: FluidParticle = load_particle(invocation.x, uniforms.state_side);
+    if particle.amount == 0u { return; }
     let source: u32 = thermal_index(particle.material_identifier, THERMAL_OFFSETS);
     if due_transition(particle.temperature, source, true).is_due {
         atomicAdd(&control[conversion_count_offset()], 1u);
@@ -1531,6 +1602,17 @@ fn rasterize_fluid(@builtin(global_invocation_id) invocation: vec3<u32>) {
     )));
     let physical_cell: u32 = cell_index(cell);
     let base: u32 = physical_cell * 4u;
+    // only fluids that react are tracked by species
+    let thermal_flags: u32 = thermal_materials[(THERMAL_OFFSETS.z + material_index) * 4u + 2u].z;
+    if (thermal_flags & THERMAL_FLAG_TRACKED) != 0u {
+        let species_slot: u32 = fluid_species_slot(physical_cell, material_index);
+        if species_slot != 0xffffffffu {
+            atomicAdd(
+                &fluid_raster[fluid_species_offset() + physical_cell * 4u + 1u + species_slot],
+                particle.amount,
+            );
+        }
+    }
     atomic_saturating_add(base, mass_fixed);
     atomic_saturating_add(base + 1u, momentum_fixed.x);
     atomic_saturating_add(base + 2u, momentum_fixed.y);
@@ -1592,11 +1674,40 @@ fn heat(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let particle_count: u32 = atomicLoad(&control[0]);
     if invocation.x >= particle_count { return; }
     var particle: FluidParticle = load_particle(invocation.x, uniforms.state_side);
+    if particle.amount == 0u { return; }
     let cell: vec2<i32> = vec2<i32>(floor(particle.state.xy));
     if !cell_inside(cell) { return; }
+    let physical_cell: u32 = cell_index(cell);
+    let species_base: u32 = fluid_species_offset() + physical_cell * 4u;
+    if atomicLoad(&fluid_raster[species_base]) != 0u {
+        let consumed: u32 = atomicLoad(&fluid_raster[species_base + 3u]);
+        if consumed != 0u {
+            let material_index: u32 = particle.material_identifier & 0x3fffffffu;
+            let packed: u32 = atomicLoad(&fluid_raster[species_base]);
+            let identifier: u32 = material_index + 1u;
+            var fraction: u32 = 0u;
+            if (packed & 0xffffu) == identifier { fraction = consumed & 0xffffu; }
+            if (packed >> 16u) == identifier { fraction = consumed >> 16u; }
+            if fraction == 65535u {
+                particle.amount = 0u;
+            } else if fraction > 0u {
+                let amount_whole: u32 = particle.amount / 65535u;
+                let amount_remainder: u32 = particle.amount % 65535u;
+                let loss: u32 = amount_whole * fraction
+                    + (amount_remainder * fraction + 32767u) / 65535u;
+                particle.amount -= loss;
+            }
+            if particle.amount == 0u {
+                atomicAdd(&control[conversion_count_offset() + 1u], 1u);
+            }
+        }
+    }
     let temperature_change: f32 =
-        bitcast<f32>(atomicLoad(&fluid_heat[cell_index(cell) * 4u + 3u]));
-    if temperature_change == 0.0 { return; }
+        bitcast<f32>(atomicLoad(&fluid_heat[physical_cell * 4u + 3u]));
+    if temperature_change == 0.0 {
+        store_particle(invocation.x, uniforms.state_side, particle);
+        return;
+    }
     particle.temperature = max(particle.temperature + temperature_change, 0.0);
     store_particle(invocation.x, uniforms.state_side, particle);
 }
@@ -1844,6 +1955,7 @@ fn compact(@builtin(global_invocation_id) invocation: vec3<u32>) {
         + vec2<f32>(uniforms.rebase_x, uniforms.rebase_y);
     if uniforms.erasure_count != 0u && particle_is_erased(position) { return; }
     if particle.material_identifier == 0u { return; }
+    if particle.amount == 0u { return; }
     if any(position < vec2<f32>(0.0))
         || position.x >= f32(uniforms.cell_width)
         || position.y >= f32(uniforms.cell_height)
@@ -1917,6 +2029,7 @@ fn convert_particles(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let particle_count: u32 = atomicLoad(&control[0]);
     if invocation.x >= particle_count { return; }
     var particle: FluidParticle = load_particle(invocation.x, uniforms.state_side);
+    if particle.amount == 0u { return; }
     let source: u32 = thermal_index(particle.material_identifier, THERMAL_OFFSETS);
     let transition: ThermalTransition = due_transition(particle.temperature, source, true);
     if !transition.is_due { return; }
@@ -2157,6 +2270,52 @@ fn convert_cells(@builtin(global_invocation_id) invocation: vec3<u32>) {
     atomicOr(&thermal_awake[tile], 1u);
 }
 
+/// Spawns queued chemistry fluid products at their physical cells
+@compute @workgroup_size(PARTICLE_WORKGROUP_SIZE)
+fn spawn_fluid_products(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    let count: u32 = min(
+        atomicLoad(&fluid_spawn_products[0]), FLUID_SPAWN_COUNT_MAXIMUM,
+    );
+    if invocation.x >= count { return; }
+    let base: u32 = 1u + invocation.x * 8u;
+    let cell_index: u32 = atomicLoad(&fluid_spawn_products[base]);
+    let material_identifier: u32 = atomicLoad(&fluid_spawn_products[base + 1u]);
+    let amount: u32 = atomicLoad(&fluid_spawn_products[base + 2u]);
+    let material_index: u32 = material_identifier & 0x3fffffffu;
+    if material_identifier >> 30u != 2u || material_index >= uniforms.fluid_material_count
+        || amount == 0u
+    { return; }
+    let cell: vec2<i32> = conversion_cell_position(cell_index);
+    if !cell_inside(cell) { return; }
+    let slot: u32 = reserve_conversion_particle();
+    if slot == 0xffffffffu { return; }
+    let position: vec2<f32> = conversion_position(cell) - vec2<f32>(
+        uniforms.rebase_x, uniforms.rebase_y,
+    );
+    let temperature: f32 = bitcast<f32>(atomicLoad(&fluid_spawn_products[base + 3u]));
+    let color: u32 = atomicLoad(&fluid_spawn_products[base + 4u]);
+    let radiance: u32 = atomicLoad(&fluid_spawn_products[base + 5u]);
+    let particle: FluidParticle = FluidParticle(
+        vec4<f32>(position, vec2<f32>(0.0)),
+        material_identifier,
+        position.x,
+        position.y,
+        temperature,
+        color,
+        amount,
+        radiance,
+        0u,
+        0u,
+        0u,
+        0u,
+        0u,
+    );
+    store_particle(slot, uniforms.state_side, particle);
+    let tile: u32 = tile_index(vec2<u32>(cell) / 8u);
+    wake_tile(tile);
+    atomicOr(&thermal_awake[tile], 1u);
+}
+
 /// Replaces the live count with the number of survivors after compaction
 @compute @workgroup_size(1)
 fn finish_compaction() {
@@ -2272,6 +2431,7 @@ fn mark_occupancy(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let particle_count: u32 = atomicLoad(&control[0]);
     if invocation.x >= particle_count { return; }
     let particle: FluidParticle = load_particle(invocation.x, uniforms.state_side);
+    if particle.amount == 0u { return; }
     let cell: vec2<i32> = vec2<i32>(floor(particle.state.xy));
     if cell_inside(cell) {
         let logical_index: u32 = u32(cell.y) * uniforms.cell_width + u32(cell.x);

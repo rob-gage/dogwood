@@ -69,6 +69,8 @@ pub struct Fluids {
     particle_count: Option<u32>,
     /// Number of particles due for a thermal transition in the newest completed readback
     transition_count: u32,
+    /// Number of particles consumed by chemistry in the newest completed readback
+    kill_count: u32,
     /// Spawn revision represented by the newest count readback
     particle_count_revision: u64,
     /// Submission number represented by the newest count readback
@@ -115,6 +117,7 @@ impl Fluids {
             spawn_revision: 0,
             particle_count: None,
             transition_count: 0,
+            kill_count: 0,
             particle_count_revision: 0,
             particle_count_tick: 0,
             previous_region_origin: None,
@@ -346,7 +349,9 @@ impl Fluids {
         conversion_buffer: &wgpu::Buffer,
         changed_rigid_body_cell_buffer: &wgpu::Buffer,
         is_converting: bool,
+        has_fluid_spawns: bool,
     ) -> Result<(), SceneError> {
+        let is_converting: bool = is_converting || self.has_pending_fluid_conversions();
         let origin: (i64, i64) = (
             active_region.bottom_left.x * CELLULAR_TILE_SIZE,
             active_region.bottom_left.y * CELLULAR_TILE_SIZE,
@@ -364,6 +369,7 @@ impl Fluids {
             && export_target.is_none()
             && self.previous_region_origin == Some(origin)
             && !is_converting
+            && !has_fluid_spawns
         {
             return Ok(());
         }
@@ -425,7 +431,7 @@ impl Fluids {
             .collect();
         self.spawn_revision = self.spawn_revision.saturating_add(import_count as u64);
         let result: (
-            Option<(u32, u32, u64, u64)>,
+            Option<(u32, u32, u32, u64, u64)>,
             Vec<FluidParticleImport>,
             usize,
         ) = self.particle_pass.simulate(
@@ -451,6 +457,7 @@ impl Fluids {
             export_target,
             self.tick,
             self.spawn_revision,
+            has_fluid_spawns,
         )?;
         let (count_result, rejected_imports, submitted_import_count) = result;
         if !edits.is_empty() || !erasures.is_empty() || submitted_import_count > 0 {
@@ -460,11 +467,12 @@ impl Fluids {
             self.queued_imports.drain(..submitted_import_count);
         }
         self.rejected_imports.extend(rejected_imports);
-        if let Some((particle_count, transition_count, tick, revision)) = count_result
+        if let Some((particle_count, transition_count, kill_count, tick, revision)) = count_result
             && tick >= self.particle_count_tick
         {
             self.particle_count = Some(particle_count);
             self.transition_count = transition_count;
+            self.kill_count = kill_count;
             self.particle_count_tick = tick;
             self.particle_count_revision = revision;
         }
@@ -476,8 +484,10 @@ impl Fluids {
         Ok(())
     }
 
-    /// Returns whether a recent GPU sample found fluid particles due for conversion
-    pub fn has_pending_fluid_conversions(&self) -> bool { self.transition_count > 0 }
+    /// Returns whether a recent GPU sample found particles due for conversion or removal
+    pub fn has_pending_fluid_conversions(&self) -> bool {
+        self.transition_count > 0 || self.kill_count > 0
+    }
 
     /// Gives the particles of the newest simulated tick the temperature changes the thermal step
     /// left in their cells, without waiting for the GPU
@@ -528,6 +538,20 @@ impl Fluids {
     /// temperature change as f32 bits
     pub fn fluid_heat_buffer(&self) -> &wgpu::Buffer {
         self.particle_pass.fluid_heat_buffer()
+    }
+
+    /// Returns four words per physical cell: word 0 packs two 16-bit material index+1 slots,
+    /// words 1 and 2 hold their amounts in `AMOUNT_PER_UNIT`, and word 3 packs their 16-bit
+    /// consumed fractions
+    pub fn fluid_species_buffer(&self) -> wgpu::BufferBinding<'_> {
+        self.particle_pass.fluid_species_buffer()
+    }
+
+    /// Returns a count and up to 4096 eight-word records: physical cell index, material identifier,
+    /// amount in `AMOUNT_PER_UNIT`, temperature f32 bits, packed sRGB color, packed radiance, and
+    /// two zero words
+    pub fn fluid_spawn_buffer(&self) -> &wgpu::Buffer {
+        self.particle_pass.fluid_spawn_buffer()
     }
 
     /// Returns the fixed byte size of one compaction export readback

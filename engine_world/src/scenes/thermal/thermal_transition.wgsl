@@ -2,8 +2,8 @@
 
 // Material transitions shared by every shader that changes matter: the shader declares
 // `thermal_materials: array<vec4<u32>>` with four records per thermal index and
-// `transition_colors: array<vec4<f32>>` with fourteen records per transition: seven color
-// records followed by seven radiance records
+// `transition_colors: array<vec4<f32>>` with fourteen records per transformed product: seven
+// color records followed by seven radiance records
 
 /// A material transition a unit of matter is due for
 struct ThermalTransition {
@@ -135,10 +135,15 @@ fn transition_random(seed: u32) -> f32 {
 }
 
 /// Returns a packed sRGB color carried through the hot or cold transition of the material at a
-/// thermal index: transformed in linear light by the transition's matrix and offset, varied by
-/// random amounts from a seed, and clamped when packed
+/// thermal index
 fn transition_color(color: u32, thermal_index: u32, is_hot: bool, seed: u32) -> u32 {
-    let base: u32 = (thermal_index * 2u + select(1u, 0u, is_hot)) * 14u;
+    return transformed_color(color, (thermal_index * 2u + select(1u, 0u, is_hot)) * 14u, seed);
+}
+
+/// Returns a packed sRGB color transformed by the seven records from a base in
+/// `transition_colors`: in linear light by their matrix and offset, varied by random amounts from
+/// a seed, and clamped when packed
+fn transformed_color(color: u32, base: u32, seed: u32) -> u32 {
     let srgb: vec4<f32> = unpack4x8unorm(color);
     let linear: vec4<f32> = vec4<f32>(
         transition_linear(srgb.r),
@@ -173,7 +178,14 @@ fn transition_color(color: u32, thermal_index: u32, is_hot: bool, seed: u32) -> 
 /// Returns packed radiance carried through a transition after its linear transformation and
 /// seeded variances
 fn transition_radiance(radiance: u32, thermal_index: u32, is_hot: bool, seed: u32) -> u32 {
-    let base: u32 = (thermal_index * 2u + select(1u, 0u, is_hot)) * 14u + 7u;
+    return transformed_radiance(
+        radiance, (thermal_index * 2u + select(1u, 0u, is_hot)) * 14u + 7u, seed,
+    );
+}
+
+/// Returns packed radiance transformed by the seven records from a base in `transition_colors`,
+/// with seeded variances
+fn transformed_radiance(radiance: u32, base: u32, seed: u32) -> u32 {
     let linear: vec4<f32> = unpack_radiance(radiance);
     var transformed: vec4<f32> = vec4<f32>(
         dot(transition_colors[base], linear),

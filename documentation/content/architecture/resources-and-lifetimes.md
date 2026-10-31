@@ -3,7 +3,7 @@ title = "Resources and lifetimes"
 description = "How a scene creates, shares, saves, and releases its world resources."
 weight = 50
 [extra]
-sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/pressure", "engine_world/src/scenes/thermal", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl", "engine_host/src/acceleration/accelerator.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting_clear.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cache.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_blocks.wgsl", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl", "engine_graphics/src/world/materials/material_radiance.rs", "engine_world/src/materials/material_table.rs", "engine_world/src/materials/material_temperature_color.rs"]
+sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/pressure", "engine_world/src/scenes/thermal", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl", "engine_host/src/acceleration/accelerator.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting_clear.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cache.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_blocks.wgsl", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl", "engine_graphics/src/world/materials/material_radiance.rs", "engine_world/src/materials/material_table.rs", "engine_world/src/materials/material_temperature_color.rs", "engine_world/src/scenes/chemistry"]
 +++
 
 This page describes what a `Scene` owns, when its GPU and streaming state is created, the fixed capacity constants, and what happens on save and drop. It is for engine contributors.
@@ -24,6 +24,7 @@ Scene
 ├── CellularTileStreamingState
 ├── Collision
 ├── Thermal ── fluid heat, collision change lists, conversion list
+├── Chemistry ── reacting-tile list and indirect dispatch (when reactions exist)
 └── CellularTiles
 ```
 
@@ -124,6 +125,10 @@ Public solver constants in `engine_world/src/scenes/fluids/mod.rs`:
 
 The private `FLUID_ACTOR_CONTACT_SCALE` is `1024`. Count, actor, and import readbacks each have three staging slots; the resident save has one separate snapshot slot. [GPU layouts](@/internals/shaders/fluid-shader.md) document record sizes and region/pool scaling. The collision-side `RIGID_BODY_FLUID_CURRENT_COUPLING` is `1.0`.
 
+## Chemistry resources
+
+Chemistry allocates one 80-byte uniform record, one reacting-tile index per tile slot, a four-byte reacting count, and a 12-byte indirect dispatch record. Material compilation supplies reaction, lookup, and product-transform buffers; the fluid raster carries 16 additional bytes per cell for two species indices and amounts. The fluid spawn list holds 4096 eight-word product records (128 KiB plus its four-byte count). Reactions are limited to 64, with at most 255 entries per lookup list. `HEAT_CAPACITY_MINIMUM` is 0.01. See [chemistry simulation](@/internals/simulation/chemistry.md) and [chemistry shader](@/internals/shaders/chemistry-shader.md).
+
 ## Thermal resources
 
 Thermal simulation is created before the first fluid simulation so it can provide the prior tick's
@@ -137,6 +142,8 @@ Public fixed-point scales in `engine_world/src/scenes/thermal/mod.rs` are:
 | `THERMAL_FLUID_ENERGY_SCALE` | 64 | Units per heat unit in fluid heat records |
 | `THERMAL_FLUID_CONDUCTION_SCALE` | 1024 | Units per heat-capacity and conduction product in fluid heat records |
 | `THERMAL_HEAT_SCALE` | 64 | Units per heat unit added to cells by matter changes |
+
+Thermal uses the `TILE_LISTED` bit (`4`) to mark tiles included in its current dispatch; chemistry writes only to listed tiles. `HEAT_CAPACITY_MINIMUM` (`0.01`) is the minimum cell heat capacity that accepts reaction heat.
 
 ## Pressure resources
 

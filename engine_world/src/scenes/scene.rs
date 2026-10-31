@@ -22,6 +22,7 @@ use super::{
         EditError,
         EditStreamingState,
     },
+    chemistry::Chemistry,
     fluids::{
         FluidActorContact,
         Fluids,
@@ -110,6 +111,9 @@ pub struct Scene {
     pressure: Option<Pressure>,
     /// GPU simulation of the heat in the active cellular tiles, absent until simulated
     thermal: Option<Thermal>,
+    /// GPU simulation of the reactions in the active cellular tiles, absent until simulated or
+    /// without reactions
+    chemistry: Option<Chemistry>,
     /// Requested edits awaiting their write into the GPU-resident cellular tiles
     edit_streaming_state: EditStreamingState,
     /// Whether the next stream advance must start a resident particle save snapshot
@@ -166,6 +170,7 @@ impl Scene {
             fluids: None,
             pressure: None,
             thermal: None,
+            chemistry: None,
             edit_streaming_state: EditStreamingState::new(),
             is_fluid_save_requested: false,
             fluid_snapshot_chunk_region_index: None,
@@ -624,6 +629,7 @@ impl Scene {
                 conversion_buffer,
                 collision.changed_rigid_body_cell_buffer(),
                 is_converting,
+                self.material_table.has_fluid_reaction_products(),
             );
         particle_simulation_result?;
         // pressure moves last, through the cells the other simulations and actors left open
@@ -656,19 +662,44 @@ impl Scene {
             self.ambient_gas_heat_capacity,
             cellular_tiles.fluid_actors().len() as u32,
         )?;
-        // heat moves through every cell after the matter carrying it has moved
+        // heat moves through every cell after the matter carrying it has moved, and the matter
+        // of the tiles it lists reacts first, so the reactions' heat and products take part
+        let thermal: &mut Thermal = self.thermal.as_mut()
+            .expect("thermal simulation exists before fluid conversions");
+        if self.material_table.has_reactions() {
+            let fluids: &Fluids = self.fluids.as_ref()
+                .expect("fluid storage exists with the tile buffers");
+            self.chemistry
+                .get_or_insert_with(|| Chemistry::new(
+                    accelerator,
+                    cellular_tile_buffers,
+                    &self.material_table,
+                    fluids.fluid_species_buffer(),
+                    fluids.fluid_heat_buffer(),
+                    fluids.fluid_spawn_buffer(),
+                    collision.rigid_body_pass().cellular_tile_buffer(),
+                    collision.changed_rigid_body_cell_buffer(),
+                    thermal.control_buffer(),
+                ))
+                .prepare_chemistry(
+                    accelerator,
+                    active_region,
+                    cellular_tile_streaming_state.cellular_tile_ring_offset(),
+                    ambient_gas_amount,
+                    self.ambient_gas_heat_capacity,
+                );
+        }
+        thermal.simulate_thermal(
+            accelerator,
+            active_region,
+            cellular_tile_streaming_state.cellular_tile_ring_offset(),
+            self.ambient_gas_temperature,
+            self.ambient_gas_heat_capacity,
+            self.ambient_gas_conduction,
+            self.chemistry.as_ref(),
+        );
         let fluids: &mut Fluids = self.fluids.as_mut()
             .expect("fluid storage exists with the tile buffers");
-        self.thermal.as_mut()
-            .expect("thermal simulation exists before fluid conversions")
-            .simulate_thermal(
-                accelerator,
-                active_region,
-                cellular_tile_streaming_state.cellular_tile_ring_offset(),
-                self.ambient_gas_temperature,
-                self.ambient_gas_heat_capacity,
-                self.ambient_gas_conduction,
-            );
         fluids.simulate_heat(accelerator);
         collision.request_changed_cells(
             accelerator,

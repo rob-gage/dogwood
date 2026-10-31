@@ -11,6 +11,7 @@ use super::{
 };
 use crate::{
     materials::MaterialTable,
+    scenes::chemistry::Chemistry,
     scenes::cellular_tiles::{
         CellularTileBuffers,
         CellularTileRegion,
@@ -149,6 +150,7 @@ impl ThermalCellularTilePass {
             MATERIAL_RADIANCE_WGSL,
             include_str!("thermal_cellular_tile.wgsl"),
             include_str!("thermal_transition.wgsl"),
+            include_str!("thermal_conversion.wgsl"),
         ].join("\n");
         let shader_module: wgpu::ShaderModule = device.create_shader_module(
             wgpu::ShaderModuleDescriptor {
@@ -328,7 +330,8 @@ impl ThermalCellularTilePass {
     }
 
     /// Conducts one tick of heat through the active tiles without waiting for the GPU, with
-    /// phantom air of an ambient temperature, heat capacity per amount unit, and conduction
+    /// phantom air of an ambient temperature, heat capacity per amount unit, and conduction,
+    /// reacting the matter of the tiles first when chemistry is given
     pub fn simulate_cellular_tiles(
         &mut self,
         accelerator: &Accelerator,
@@ -337,6 +340,7 @@ impl ThermalCellularTilePass {
         ambient_temperature: f32,
         ambient_heat_capacity: f32,
         ambient_conduction: f32,
+        chemistry: Option<&Chemistry>,
     ) {
         let width: u32 = active_region.width() as u32;
         let height: u32 = active_region.height() as u32;
@@ -390,6 +394,12 @@ impl ThermalCellularTilePass {
             compute_pass.set_pipeline(&pipelines["prepare"]);
             compute_pass.set_bind_group(1, &self.dispatch_bind_group, &[]);
             compute_pass.dispatch_workgroups(1, 1, 1);
+            // the listed tiles' matter reacts before the step, which takes in the reactions'
+            // heat and changes their products
+            if let Some(chemistry) = chemistry {
+                chemistry.record_chemistry(&mut compute_pass, &self.dispatch_buffer);
+                compute_pass.set_bind_group(0, &self.bind_group, &[]);
+            }
             // every cell steps from the temperatures before the step, then writes its result
             compute_pass.set_pipeline(&pipelines["step"]);
             compute_pass.dispatch_workgroups_indirect(&self.dispatch_buffer, 0);
@@ -411,6 +421,9 @@ impl ThermalCellularTilePass {
 
     /// Returns the cells and gases queued for conversion into fluid particles
     pub fn conversion_buffer(&self) -> &wgpu::Buffer { &self.conversion_buffer }
+
+    /// Returns the active tile count, then the buffer index of every active tile
+    pub fn control_buffer(&self) -> &wgpu::Buffer { &self.control_buffer }
 
     /// Returns whether a recent completed sample contains fluid conversions
     pub fn has_fluid_conversions(&mut self, accelerator: &Accelerator) -> Result<bool, SceneError> {

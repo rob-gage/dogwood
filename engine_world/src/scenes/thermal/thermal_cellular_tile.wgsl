@@ -127,6 +127,10 @@ const TILE_STATIC_CHANGED: u32 = 2u;
 /// `CELLULAR_TILE_AWAKE`
 const CELLULAR_TILE_AWAKE: u32 = 3u;
 
+/// Tile flag: this tick's collect listed the tile, so changes written into it before the apply
+/// pass are applied this tick
+const TILE_LISTED: u32 = 4u;
+
 /// Gas amount in one atmosphere
 const AMOUNT_PER_ATMOSPHERE: f32 = 4096.0;
 
@@ -140,6 +144,9 @@ const AMOUNT_PER_UNIT: f32 = 65536.0;
 /// Number of heat exchanges of one cell per step: its four faces and its surroundings, each
 /// limited to this fraction of the smaller heat capacity so no cell overshoots
 const EXCHANGE_COUNT: f32 = 5.0;
+
+/// Heat capacity below which heat added to a cell is lost rather than heating it beyond reason
+const HEAT_CAPACITY_MINIMUM: f32 = 0.01;
 
 /// Conversion kind of a cell changing into fluid particles
 const CONVERSION_CELL: u32 = 0u;
@@ -253,25 +260,29 @@ fn collect(@builtin(global_invocation_id) invocation: vec3<u32>) {
                 || neighbor.y >= i32(uniforms.region_height)
             { continue; }
             let index: u32 = tile_index(vec2<u32>(neighbor));
-            if atomicLoad(&thermal_awake[index]) != 0u || atomicLoad(&awake[index]) != 0u
+            if (atomicLoad(&thermal_awake[index]) & ~TILE_LISTED) != 0u
+                || atomicLoad(&awake[index]) != 0u
                 || atomicLoad(&gas_awake[index]) != 0u
             {
                 is_active = true;
             }
         }
     }
+    let physical_tile: u32 = tile_index(vec2<u32>(tile));
     if is_active {
-        control.active_tiles[atomicAdd(&control.active_tile_count, 1u)] =
-            tile_index(vec2<u32>(tile));
+        control.active_tiles[atomicAdd(&control.active_tile_count, 1u)] = physical_tile;
+        atomicOr(&thermal_awake[physical_tile], TILE_LISTED);
+    } else {
+        atomicAnd(&thermal_awake[physical_tile], ~TILE_LISTED);
     }
 }
 
 /// Clears the awake flag of every tile once collected, for this tick's step to set, keeping
-/// whether its static cells changed for the apply pass
+/// whether its static cells changed for the apply pass and whether it is listed
 @compute @workgroup_size(64)
 fn clear(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if invocation.x >= uniforms.region_width * uniforms.region_height { return; }
-    atomicAnd(&thermal_awake[invocation.x], TILE_STATIC_CHANGED);
+    atomicAnd(&thermal_awake[invocation.x], TILE_STATIC_CHANGED | TILE_LISTED);
 }
 
 /// Writes the indirect dispatch of one workgroup per active tile
@@ -359,24 +370,6 @@ fn step(
     steps[index] = vec2<f32>(cell_temperature, fluid_change);
 }
 
-/// Removes a rigid body cell from its body, which then leaves the cell where it is, and reports
-/// it for its body to lose it, or returns false when no more cells fit this tick
-fn remove_rigid_body_cell(index: u32) -> bool {
-    let rigid_body_cell: u32 = atomicLoad(&rigid_body_cells[index]);
-    if rigid_body_cell == 0u { return true; }
-    let count: u32 = atomicAdd(&changed_rigid_body_cells[0], 1u);
-    if count + 1u >= arrayLength(&changed_rigid_body_cells) { return false; }
-    atomicStore(&changed_rigid_body_cells[count + 1u], rigid_body_cell - 1u);
-    let body_cell: u32 = rigid_body_cell - 1u;
-    let bit: u32 = body_cell % 64u;
-    atomicAnd(
-        &rigid_body_cellular_tiles[body_cell / 64u * 8u + 4u + bit / 32u],
-        ~(1u << (bit % 32u)),
-    );
-    atomicStore(&rigid_body_cells[index], 0u);
-    return true;
-}
-
 /// Adds an amount of a gas at a temperature to a cell's species slots, mixing it into the cell's
 /// temperature by heat capacity, or returns false when no slot holds it
 fn add_gas(index: u32, gas_index: u32, amount: u32, temperature: f32) -> bool {
@@ -420,33 +413,6 @@ fn list_conversion(index: u32, kind: u32) {
     if 2u + count * 2u + 1u >= arrayLength(&conversions) { return; }
     atomicStore(&conversions[2u + count * 2u], index);
     atomicStore(&conversions[2u + count * 2u + 1u], kind);
-}
-
-/// Changes a cellular cell due for a transition in place: into another cellular material, or into
-/// a gas left in the cell, carrying its color, amount, and heat, or lists it to become a fluid
-/// particle. Returns whether the cell's static occupancy changed
-fn has_static_neighbor(cell: vec2<i32>) -> bool {
-    for (var direction: u32 = 0u; direction < 4u; direction++) {
-        var neighbor: vec2<i32> = cell;
-        if direction == 0u { neighbor.x += 1; }
-        if direction == 1u { neighbor.x -= 1; }
-        if direction == 2u { neighbor.y += 1; }
-        if direction == 3u { neighbor.y -= 1; }
-        if !is_cell_inside(neighbor) { continue; }
-        let neighbor_index: u32 = cell_index(neighbor);
-        if is_static(material_identifiers[neighbor_index])
-            || atomicLoad(&rigid_body_cells[neighbor_index]) != 0u
-        { return true; }
-    }
-    return false;
-}
-
-/// Returns a static product as dynamic debris when it has no static side-neighbor
-fn conversion_debris(product: u32, cell: vec2<i32>) -> u32 {
-    if product >> 30u != 0u || has_static_neighbor(cell) { return product; }
-    let properties: vec4<f32> = cellular_static_materials[product & 0x3fffffffu];
-    let debris: u32 = bitcast<u32>(properties.w);
-    return select(product, debris, debris != 0u);
 }
 
 /// Changes a cell due for a thermal transition in place, or lists it for fluid conversion
@@ -649,9 +615,13 @@ fn apply(
     if any(changes != vec2<u32>(0u)) { temperature_changes[index] = vec2<u32>(0u); }
     let step: vec2<f32> = steps[index];
     let previous: f32 = bitcast<f32>(matter[index].x);
-    let heat_capacity: f32 = max(cell_node(cell).heat_capacity, 1.0e-6);
-    let added_heat: f32 = f32(bitcast<i32>(changes.y))
-        / (uniforms.heat_scale * heat_capacity);
+    // heat added to a cell holding almost nothing has nothing to warm, and is lost
+    let heat_capacity: f32 = cell_node(cell).heat_capacity;
+    let added_heat: f32 = select(
+        0.0,
+        f32(bitcast<i32>(changes.y)) / (uniforms.heat_scale * heat_capacity),
+        heat_capacity >= HEAT_CAPACITY_MINIMUM,
+    );
     let temperature: f32 = max(step.x + edited + added_heat, 0.0);
     matter[index].x = bitcast<u32>(temperature);
     fluid_heat[index].w = bitcast<i32>(step.y + edited + added_heat);

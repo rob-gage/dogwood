@@ -4,6 +4,7 @@ use super::thermal_cellular_tile_pass::ThermalCellularTilePass;
 use crate::{
     materials::MaterialTable,
     scenes::{
+        chemistry::Chemistry,
         cellular_tiles::{
             CellularTileBuffers,
             CellularTileRegion,
@@ -58,8 +59,12 @@ impl Thermal {
         self.pass.has_fluid_conversions(accelerator)
     }
 
+    /// Returns the active tile count, then the buffer index of every active tile
+    pub fn control_buffer(&self) -> &wgpu::Buffer { self.pass.control_buffer() }
+
     /// Simulates one tick of the heat in the active tiles without waiting for the GPU, with
-    /// phantom air of an ambient temperature, heat capacity per atmosphere, and conduction
+    /// phantom air of an ambient temperature, heat capacity per atmosphere, and conduction,
+    /// reacting the matter of the tiles first when chemistry is given
     pub fn simulate_thermal(
         &mut self,
         accelerator: &Accelerator,
@@ -68,6 +73,7 @@ impl Thermal {
         ambient_temperature: f32,
         ambient_heat_capacity: f32,
         ambient_conduction: f32,
+        chemistry: Option<&Chemistry>,
     ) {
         // the shader weighs phantom air by its amount units
         self.pass.simulate_cellular_tiles(
@@ -77,6 +83,7 @@ impl Thermal {
             ambient_temperature,
             ambient_heat_capacity / GAS_AMOUNT_PER_ATMOSPHERE,
             ambient_conduction,
+            chemistry,
         );
     }
 

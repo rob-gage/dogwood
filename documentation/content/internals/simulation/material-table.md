@@ -61,7 +61,7 @@ Compilation validates positive finite mass, diffusivity in `[0, 0.4]`, and cohes
 Thermal records use sixteen little-endian `u32` words per thermal index, with indices assigned in
 four consecutive groups ordered static, dynamic, fluid, and gas. Each record stores heat capacity,
 conduction, hot and cold transition temperatures and latent heat, resolved product identifiers
-and amounts, and transition flags. Static index zero is reserved for empty. `thermal_offsets()` returns the first
+and amounts, and flags: bit 0 for a hot transition, bit 1 for a cold one, and bit 2 for materials whose amount the fluid raster tracks per cell because they react. Static index zero is reserved for empty. `thermal_offsets()` returns the first
 thermal index for each form. A parallel buffer stores fourteen `vec4<f32>` values per hot or cold transition: seven color-transform vectors followed by seven radiance-transform vectors.
 
 Compilation stores `has_fluid_transitions` once: it is true when a fluid material has a transition

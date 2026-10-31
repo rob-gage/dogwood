@@ -3,7 +3,7 @@ title = "Glossary and coordinate spaces"
 description = "Definitions and conversions for Dogwood's world, tile-ring, physics, and camera coordinates."
 weight = 70
 [extra]
-sources = ["engine_world/src/scenes/pressure", "engine_world/src/scenes/fluids", "engine_world/src/scenes/thermal", "engine_world/src/scenes/scene_position.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/cellular_tiles", "engine_world/src/scenes/chunks/chunk_coordinates.rs", "engine_world/src/scenes/chunks/chunk_data.rs", "engine_world/src/scenes/chunks/chunk_region.rs", "engine_world/src/scenes/chunks/chunk_resident.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/chunks/mod.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl", "engine_graphics/src/world/scenes", "engine_graphics/src/renders/scene_renderer.rs", "engine_graphics/src/renders/scene_renderer_sprites.wgsl", "engine_graphics/src/world/materials/material_radiance.rs"]
+sources = ["engine_world/src/scenes/pressure", "engine_world/src/scenes/chemistry", "engine_world/src/scenes/fluids", "engine_world/src/scenes/thermal", "engine_world/src/scenes/scene_position.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/cellular_tiles", "engine_world/src/scenes/chunks/chunk_coordinates.rs", "engine_world/src/scenes/chunks/chunk_data.rs", "engine_world/src/scenes/chunks/chunk_region.rs", "engine_world/src/scenes/chunks/chunk_resident.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/chunks/mod.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl", "engine_graphics/src/world/scenes", "engine_graphics/src/renders/scene_renderer.rs", "engine_graphics/src/renders/scene_renderer_sprites.wgsl", "engine_graphics/src/world/materials/material_radiance.rs"]
 +++
 
 This page defines Dogwood's world terms and coordinate spaces, with the conversion formulas between them. It is a reference for engine contributors.
@@ -16,7 +16,11 @@ This page defines Dogwood's world terms and coordinate spaces, with the conversi
 - **Gas cell:** a cell's gas state in the tile ring: four species slots of a gas index and an amount, phantom air, and face flows. `GAS_AMOUNT_PER_ATMOSPHERE` (4096) amount units make one atmosphere; see [pressure simulation](@/internals/simulation/pressure.md).
 - **Phantom air:** the ambient gas held as a separate amount in each cell's gas, filling empty cells at the scene's ambient gas pressure; see [tile ring](@/internals/world-streaming/tile-ring.md).
 - **Pressure cell:** a 2 × 2 group of cells on which pressure is simulated each tick, rebuilt from and written back to their gas cells; see [pressure simulation](@/internals/simulation/pressure.md#pressure-cells).
-- **Fluid raster:** per-physical-ring-cell mass, momentum, and selected material derived from particles, shared by simulation and rendering.
+- **Fluid raster:** per-physical-ring-cell mass, momentum, and selected material derived from particles, shared by simulation and rendering; an aligned species section holds two fluid material indices and amounts per cell.
+- **Reactant unit:** one cellular-matter slot, gas species slot, or fluid species slot that a reaction can require or consume; see [chemistry simulation](@/internals/simulation/chemistry.md).
+- **Catalyst:** a reaction reactant with amount zero; it is required and selects contact behavior but is not consumed.
+- **Reacting tile:** a thermal-listed tile selected because its cells can match a reaction during the current tick.
+- **Block:** a 2×2 cell group owned by one chemistry workgroup invocation; offset alternates each tick.
 - **Dormant particle:** a chunk-owned record awaiting admission to the live GPU pool; a resident-save copy is distinct from dormant state.
 - **Cellular tile (tile):** an 8 × 8 group of cells (`CELLULAR_TILE_SIZE = 8`).
 - **Chunk:** 512 × 512 cells, or 64 × 64 tiles (`CHUNK_SIZE = 512`). Chunks are CPU-side storage and persistence units.

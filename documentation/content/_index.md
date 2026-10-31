@@ -10,6 +10,9 @@ sources = [
     "engine_host/src/lib.rs",
     "engine_world/src/lib.rs",
     "engine_world/src/scenes/scene.rs",
+    "engine_world/src/scenes/chemistry",
+    "engine_world/src/materials/material_registry.rs",
+    "engine_world/src/materials/material_properties_chemical.rs",
     "engine_world/src/materials/material_form.rs",
     "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs",
     "engine_world/src/scenes/collisions/collision.rs",
@@ -41,6 +44,8 @@ Dogwood is a Rust engine for 2D cellular worlds. Its current implementation comb
 Fluids use [GPU particle simulation](@/internals/simulation/fluids.md) and [raster-based rendering](@/internals/rendering/fluid-pass.md).
 
 Gas species flow within the shared [GPU pressure substrate](@/internals/simulation/pressure.md) in the cellular tiles and [cell-aligned rendering](@/internals/rendering/gas-pass.md).
+
+Registered material reactions can consume cellular matter, gas, or fluid species; see [chemistry simulation](@/internals/simulation/chemistry.md).
 
 ## How these docs are organized
 

@@ -8,6 +8,8 @@ use crate::scenes::chunks::{
 mod fluid_particle_pass;
 mod fluids;
 
+pub use fluid_particle_pass::FLUID_SPAWN_COUNT_MAXIMUM;
+
 pub(crate) use fluids::decode_exported_particle_records;
 pub use fluids::Fluids;
 

@@ -12,7 +12,7 @@ This page is for engine contributors. It describes the private state a `Scene` o
 
 `Scene` coordinates actor data, material lookup, persistence, tile residency, and simulation. Its private state is split by lifecycle:
 
-- Chunk streaming, GPU tile buffers, tile streaming, fluids, collision, cellular tile simulation, and pressure start absent.
+- Chunk streaming, GPU tile buffers, tile streaming, fluids, collision, cellular tile simulation, pressure, thermal simulation, and chemistry start absent.
 - Edit streaming is initialized immediately with an empty queue.
 - The material table and generator are shared with chunk work through `Arc` handles.
 
@@ -35,8 +35,12 @@ Scene
 │   └── CollisionRigidBodyPass
 ├── Option<CellularTiles>         first Scene::simulate with active region
 │   └── CellularTilePass
-└── Option<Pressure>              first Scene::simulate with active region, after fluids
-    └── PressureCellularTilePass
+├── Option<Pressure>              first Scene::simulate with active region, after fluids
+│   └── PressureCellularTilePass
+├── Option<Thermal>               first Scene::simulate with active region
+│   └── ThermalCellularTilePass
+└── Option<Chemistry>              when the material table contains reactions
+    └── ChemistryCellularTilePass
 ```
 
 The pass objects are owned by their parent systems:
@@ -45,6 +49,8 @@ The pass objects are owned by their parent systems:
 - `CellularTiles` manages dynamic-cell motion and cellular/fluid coupling through `CellularTilePass`.
 - `Fluids` manages particle admission, simulation, and fluid actor feedback through `FluidParticlePass`.
 - `Pressure` manages the shared pressure substrate through `PressureCellularTilePass`, reading tile buffers, fluid raster, actor records, and rigid-body cell records.
+- `Thermal` manages conduction, transitions, and fluid heat through `ThermalCellularTilePass`.
+- `Chemistry` selects and applies material reactions inside the thermal compute pass when the compiled material table contains reactions.
 
 `Scene` passes shared tile buffers to these systems and, when creating `CellularTiles`, the collision system's rigid-body pass. For ordering and resource lifetime, see [Scene update pipeline](@/architecture/scene-pipeline.md) and [Resources and lifetimes](@/architecture/resources-and-lifetimes.md).
 
@@ -56,7 +62,7 @@ The pass objects are owned by their parent systems:
 
 ### Simulation
 
-`Scene::simulate` returns early until an active region exists, then lazily creates `Collision` and `CellularTiles`. It first calls `CellularTiles::simulate_cellular_tiles`, which returns cellular and rigid-body contact maps. It polls fluid actor feedback, passes the contact maps to `Collision::simulate_collisions`, runs the particle solver, then creates `Pressure` if needed and advances pressure. See [pressure simulation](@/internals/simulation/pressure.md) and [scene ordering](@/architecture/scene-pipeline.md#simulation-order).
+`Scene::simulate` returns early until an active region exists, then lazily creates its simulation systems. It advances cellular tiles and collision, runs the fluid solver, then pressure. If reactions exist, it prepares chemistry uniforms; thermal then records chemistry selection and reaction work between its prepare and step stages, before fluid heat is applied. See [chemistry simulation](@/internals/simulation/chemistry.md), [pressure simulation](@/internals/simulation/pressure.md), and [scene ordering](@/architecture/scene-pipeline.md#simulation-order).
 
 [Collision world](@/internals/simulation/collision-world.md), [Cellular kinematics](@/internals/simulation/cellular-kinematics.md), and [Edit pipeline](@/internals/simulation/edit-pipeline.md) describe those systems in depth.
 

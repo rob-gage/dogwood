@@ -91,6 +91,9 @@ const ACTOR_CONTACT_BYTE_COUNT: u64 = 32;
 /// Bytes in one shared cellular tile actor record
 const ACTOR_BYTE_COUNT: u64 = 64;
 
+/// Maximum number of chemistry fluid products queued for one fluid tick
+pub const FLUID_SPAWN_COUNT_MAXIMUM: u32 = 4096;
+
 /// Number of readbacks that can be in flight for live particle counts
 const READBACK_COUNT: usize = 3;
 
@@ -135,6 +138,10 @@ pub struct FluidParticlePass {
     boundary_motion_bind_group_layout: wgpu::BindGroupLayout,
     /// Layout for particle and cellular thermal conversions
     conversion_bind_group_layout: wgpu::BindGroupLayout,
+    /// Layout for chemistry fluid products spawned from conversion entry points
+    conversion_spawn_bind_group_layout: wgpu::BindGroupLayout,
+    /// Bind group layout for preparing indirect chemistry fluid spawns
+    prepare_fluid_spawn_bind_group_layout: wgpu::BindGroupLayout,
     /// Boundary motion resources shared with cellular kinematics and rigid-body rasterization
     boundary_motion_bind_group: Option<wgpu::BindGroup>,
     /// Actor records copied from the cellular tile simulation for projection and immersion sampling
@@ -161,8 +168,12 @@ pub struct FluidParticlePass {
     particle_state_b: wgpu::Buffer,
     /// Per-physical-tile masks selecting particles erased by cell edits
     erasure_mask_buffer: wgpu::Buffer,
-    /// Physical cell raster followed by sparse tile flags, list, and count
+    /// Physical cell raster, sparse tile and contact data, and aligned fluid species words
     fluid_raster_buffer: wgpu::Buffer,
+    /// Byte offset of the aligned per-cell fluid species section
+    fluid_species_offset: u64,
+    /// Byte size of the per-cell fluid species section
+    fluid_species_byte_count: u64,
     /// Eight words per physical cell: color at 0..3 is `channel * mass_fixed`; linear emission at
     /// 4..6 is `round(min(channel, 127) * 64) * mass_fixed`; occlusion at 7 is
     /// `round(occlusion * 255) * mass_fixed`
@@ -170,6 +181,9 @@ pub struct FluidParticlePass {
     /// Fixed-point heat capacity, heat, and heat capacity times conduction of the particles in each
     /// physical cell, then the temperature change in kelvin the thermal step leaves them
     fluid_heat_buffer: wgpu::Buffer,
+    /// Count followed by eight-word records: physical cell, material ID, amount, temperature bits,
+    /// packed color, packed radiance, and two reserved words
+    fluid_spawn_buffer: wgpu::Buffer,
     /// Per-cell Akinci weights and moving-boundary velocity
     boundary_psi_buffer: wgpu::Buffer,
     /// Sparse boundary tile list and packed solid-cell occupancy
@@ -376,6 +390,16 @@ impl FluidParticlePass {
                     storage_entry(54, true),
                 ],
             });
+        let conversion_spawn_bind_group_layout: wgpu::BindGroupLayout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("`FluidParticlePass.conversion_spawn_bind_group_layout`"),
+                entries: &[storage_entry(1, false)],
+            });
+        let prepare_fluid_spawn_bind_group_layout: wgpu::BindGroupLayout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("`FluidParticlePass.prepare_fluid_spawn_bind_group_layout`"),
+                entries: &[storage_entry(55, false)],
+            });
         let prepare_bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`FluidParticlePass.prepare_bind_group_layout`"),
@@ -446,10 +470,22 @@ impl FluidParticlePass {
         let conversion_pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("`FluidParticlePass.conversion_pipeline_layout`"),
-                bind_group_layouts: &[Some(&conversion_bind_group_layout)],
+                bind_group_layouts: &[
+                    Some(&conversion_bind_group_layout),
+                    Some(&conversion_spawn_bind_group_layout),
+                ],
                 immediate_size: 0,
             },
         );
+        let prepare_fluid_spawn_pipeline_layout: wgpu::PipelineLayout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("`FluidParticlePass.prepare_fluid_spawn_pipeline_layout`"),
+                bind_group_layouts: &[
+                    Some(&prepare_fluid_spawn_bind_group_layout),
+                    Some(&dispatch_bind_group_layout),
+                ],
+                immediate_size: 0,
+            });
         let thermal_offsets: [u32; 4] = material_table.thermal_offsets();
         let shader_source: String = [
             MATERIAL_RADIANCE_WGSL,
@@ -474,6 +510,10 @@ impl FluidParticlePass {
             .replace(
                 "__THERMAL_FLUID_CONDUCTION_SCALE__",
                 &format!("{:?}", THERMAL_FLUID_CONDUCTION_SCALE),
+            )
+            .replace(
+                "__FLUID_RASTER_ALIGNMENT_WORDS__",
+                &(device.limits().min_storage_buffer_offset_alignment / 4).to_string(),
             );
         let shader_module: wgpu::ShaderModule = device.create_shader_module(
             wgpu::ShaderModuleDescriptor {
@@ -491,6 +531,8 @@ impl FluidParticlePass {
             "compact",
             "convert_particles",
             "convert_cells",
+            "prepare_fluid_spawn_dispatch",
+            "spawn_fluid_products",
             "finish_compaction",
             "begin_occupancy",
             "spawn",
@@ -536,8 +578,11 @@ impl FluidParticlePass {
             "apply_xsph",
             "commit_actor_velocity",
         ] {
-            let layout: &wgpu::PipelineLayout = if entry_point == "convert_particles"
+            let layout: &wgpu::PipelineLayout = if entry_point == "prepare_fluid_spawn_dispatch" {
+                &prepare_fluid_spawn_pipeline_layout
+            } else if entry_point == "convert_particles"
                 || entry_point == "convert_cells"
+                || entry_point == "spawn_fluid_products"
             {
                 &conversion_pipeline_layout
             } else if entry_point == "boundary_motion" {
@@ -629,7 +674,7 @@ impl FluidParticlePass {
         );
         let control_buffer: wgpu::Buffer = create_buffer(
             "`FluidParticlePass.control_buffer`",
-            24 + cell_count * 4 + tile_count * 28,
+            28 + cell_count * 4 + tile_count * 28,
             wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
@@ -666,9 +711,14 @@ impl FluidParticlePass {
             tile_count * 8,
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         );
+        let raster_byte_count: u64 = cell_count * 24 + (tile_count * 4 + 2) * 4;
+        let fluid_species_offset: u64 = raster_byte_count.div_ceil(
+            u64::from(device.limits().min_storage_buffer_offset_alignment),
+        ) * u64::from(device.limits().min_storage_buffer_offset_alignment);
+        let fluid_species_byte_count: u64 = cell_count * 16;
         let fluid_raster_buffer: wgpu::Buffer = create_buffer(
             "`FluidParticlePass.fluid_raster_buffer`",
-            cell_count * 24 + (tile_count * 4 + 2) * 4,
+            fluid_species_offset + fluid_species_byte_count,
             wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
@@ -682,6 +732,11 @@ impl FluidParticlePass {
             "`FluidParticlePass.fluid_heat_buffer`",
             cell_count * 16,
             wgpu::BufferUsages::STORAGE,
+        );
+        let fluid_spawn_buffer: wgpu::Buffer = create_buffer(
+            "`FluidParticlePass.fluid_spawn_buffer`",
+            4 + u64::from(FLUID_SPAWN_COUNT_MAXIMUM) * 32,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         );
         let boundary_tile_data_buffer: wgpu::Buffer = create_buffer(
             "`FluidParticlePass.boundary_tile_data_buffer`",
@@ -1028,6 +1083,8 @@ impl FluidParticlePass {
             prepare_raster_bind_group,
             boundary_motion_bind_group_layout,
             conversion_bind_group_layout,
+            conversion_spawn_bind_group_layout,
+            prepare_fluid_spawn_bind_group_layout,
             boundary_motion_bind_group: None,
             actor_buffer,
             actor_contact_buffer,
@@ -1042,8 +1099,11 @@ impl FluidParticlePass {
             particle_state_b,
             erasure_mask_buffer,
             fluid_raster_buffer,
+            fluid_species_offset,
+            fluid_species_byte_count,
             fluid_color_buffer,
             fluid_heat_buffer,
+            fluid_spawn_buffer,
             boundary_psi_buffer,
             boundary_tile_data_buffer,
             uniform_buffer,
@@ -1246,6 +1306,18 @@ impl FluidParticlePass {
     /// temperature change as f32 bits
     pub fn fluid_heat_buffer(&self) -> &wgpu::Buffer { &self.fluid_heat_buffer }
 
+    /// Returns the aligned four-word per-cell fluid species section
+    pub fn fluid_species_buffer(&self) -> wgpu::BufferBinding<'_> {
+        wgpu::BufferBinding {
+            buffer: &self.fluid_raster_buffer,
+            offset: self.fluid_species_offset,
+            size: wgpu::BufferSize::new(self.fluid_species_byte_count),
+        }
+    }
+
+    /// Returns the count and eight-word records for chemistry fluid products
+    pub fn fluid_spawn_buffer(&self) -> &wgpu::Buffer { &self.fluid_spawn_buffer }
+
     /// Returns every actor sample whose asynchronous mapping completed
     pub(super) fn read_actor_contacts(
         &mut self,
@@ -1311,8 +1383,10 @@ impl FluidParticlePass {
         export_target: Option<&wgpu::Buffer>,
         tick: u64,
         spawn_revision: u64,
-    ) -> Result<(Option<(u32, u32, u64, u64)>, Vec<FluidParticleImport>, usize), SceneError> {
-        let newest_count: Option<(u32, u32, u64, u64)> = self.read_count_readbacks(accelerator)?;
+        has_fluid_spawns: bool,
+    ) -> Result<(Option<(u32, u32, u32, u64, u64)>, Vec<FluidParticleImport>, usize), SceneError> {
+        let newest_count: Option<(u32, u32, u32, u64, u64)> =
+            self.read_count_readbacks(accelerator)?;
         let device: &wgpu::Device = accelerator.device();
         let conversion_bind_group: wgpu::BindGroup = device.create_bind_group(
             &wgpu::BindGroupDescriptor {
@@ -1413,6 +1487,26 @@ impl FluidParticlePass {
                             .as_entire_binding(),
                     },
                 ],
+            },
+        );
+        let conversion_spawn_bind_group: wgpu::BindGroup = device.create_bind_group(
+            &wgpu::BindGroupDescriptor {
+                label: Some("`FluidParticlePass.conversion_spawn_bind_group`"),
+                layout: &self.conversion_spawn_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.fluid_spawn_buffer.as_entire_binding(),
+                }],
+            },
+        );
+        let prepare_fluid_spawn_bind_group: wgpu::BindGroup = device.create_bind_group(
+            &wgpu::BindGroupDescriptor {
+                label: Some("`FluidParticlePass.prepare_fluid_spawn_bind_group`"),
+                layout: &self.prepare_fluid_spawn_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 55,
+                    resource: self.fluid_spawn_buffer.as_entire_binding(),
+                }],
             },
         );
         let width: u32 = active_region.width() as u32;
@@ -1831,10 +1925,21 @@ impl FluidParticlePass {
                 compute_pass.set_bind_group(1, &self.dispatch_bind_group, &[]);
                 compute_pass.dispatch_workgroups(1, 1, 1);
                 compute_pass.set_bind_group(0, &conversion_bind_group, &[0]);
+                compute_pass.set_bind_group(1, &conversion_spawn_bind_group, &[]);
                 compute_pass.set_pipeline(&pipelines["convert_particles"]);
                 compute_pass.dispatch_workgroups_indirect(&self.dispatch_buffer, 0);
                 compute_pass.set_pipeline(&pipelines["convert_cells"]);
                 compute_pass.dispatch_workgroups(16384u32.div_ceil(FLUID_WORKGROUP_SIZE), 1, 1);
+            }
+            if has_fluid_spawns {
+                compute_pass.set_bind_group(0, &prepare_fluid_spawn_bind_group, &[]);
+                compute_pass.set_pipeline(&pipelines["prepare_fluid_spawn_dispatch"]);
+                compute_pass.set_bind_group(1, &self.dispatch_bind_group, &[]);
+                compute_pass.dispatch_workgroups(1, 1, 1);
+                compute_pass.set_bind_group(0, &conversion_bind_group, &[0]);
+                compute_pass.set_bind_group(1, &conversion_spawn_bind_group, &[]);
+                compute_pass.set_pipeline(&pipelines["spawn_fluid_products"]);
+                compute_pass.dispatch_workgroups_indirect(&self.dispatch_buffer, 0);
             }
             if needs_compaction {
                 set_prepare_slot(&mut compute_pass, 0);
@@ -2077,6 +2182,9 @@ impl FluidParticlePass {
                 );
             }
         }
+        if has_fluid_spawns {
+            command_encoder.clear_buffer(&self.fluid_spawn_buffer, 0, Some(4));
+        }
         let readback: Option<usize> = self.count_readbacks.iter()
             .position(|(_, submission)| submission.is_none());
         if let Some(readback) = readback {
@@ -2093,6 +2201,18 @@ impl FluidParticlePass {
                 &self.count_readbacks[readback].0,
                 4,
                 4,
+            );
+            command_encoder.copy_buffer_to_buffer(
+                &self.control_buffer,
+                conversion_count_offset + 4,
+                &self.count_readbacks[readback].0,
+                8,
+                4,
+            );
+            command_encoder.clear_buffer(
+                &self.control_buffer,
+                conversion_count_offset + 4,
+                Some(4),
             );
         }
         let actor_readback: bool = if actors.is_empty() { false } else {
@@ -2147,7 +2267,7 @@ impl FluidParticlePass {
             *submission = Some((tick, spawn_revision));
             let response_sender: Sender<(usize, Result<(), wgpu::BufferAsyncError>)> =
                 self.response_sender.clone();
-            buffer.slice(..8).map_async(
+            buffer.slice(..12).map_async(
                 wgpu::MapMode::Read,
                 move |result: Result<(), wgpu::BufferAsyncError>| {
                     let _ = response_sender.send((readback, result));
@@ -2203,26 +2323,27 @@ impl FluidParticlePass {
     fn read_count_readbacks(
         &mut self,
         accelerator: &Accelerator,
-    ) -> Result<Option<(u32, u32, u64, u64)>, SceneError> {
+    ) -> Result<Option<(u32, u32, u32, u64, u64)>, SceneError> {
         accelerator.device().poll(wgpu::PollType::Poll)
             .map_err(|_| SceneError::FluidParticlePoll)?;
-        let mut newest: Option<(u32, u32, u64, u64)> = None;
+        let mut newest: Option<(u32, u32, u32, u64, u64)> = None;
         while let Ok((readback, result)) = self.response_receiver.try_recv() {
             let (buffer, submission): &mut (wgpu::Buffer, Option<(u64, u64)>) =
                 &mut self.count_readbacks[readback];
             let Some((tick, revision)) = submission.take() else { continue; };
             result.map_err(|error| SceneError::FluidParticleResponse { error })?;
-            let (particle_count, conversion_count): (u32, u32) = {
-                let bytes: wgpu::BufferView = buffer.get_mapped_range(..8)
+            let (particle_count, conversion_count, kill_count): (u32, u32, u32) = {
+                let bytes: wgpu::BufferView = buffer.get_mapped_range(..12)
                     .expect("mapped fluid particle counts should be readable");
                 (
                     u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
                     u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]),
+                    u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]),
                 )
             };
             buffer.unmap();
-            if newest.is_none_or(|(_, _, newest_tick, _)| tick >= newest_tick) {
-                newest = Some((particle_count, conversion_count, tick, revision));
+            if newest.is_none_or(|(_, _, _, newest_tick, _)| tick >= newest_tick) {
+                newest = Some((particle_count, conversion_count, kill_count, tick, revision));
             }
         }
         Ok(newest)

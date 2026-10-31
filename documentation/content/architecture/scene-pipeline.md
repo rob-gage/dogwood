@@ -3,7 +3,7 @@ title = "Scene update pipeline"
 description = "The ordered streaming and simulation stages performed by a scene update."
 weight = 20
 [extra]
-sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/pressure", "engine_world/src/scenes/thermal", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_pass.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/collision_cellular_tile_pass.rs", "engine_world/src/scenes/collisions/collision_rigid_body.wgsl"]
+sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/pressure", "engine_world/src/scenes/chemistry", "engine_world/src/scenes/thermal", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_pass.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/collision_cellular_tile_pass.rs", "engine_world/src/scenes/collisions/collision_rigid_body.wgsl"]
 +++
 
 This page defines the ordered work inside `Scene::stream` and `Scene::simulate`. The [frame lifecycle](@/architecture/frame-lifecycle.md) calls both after `Game::update`; rendering is a separate redraw operation.
@@ -58,9 +58,10 @@ When the active region is resident, `Scene::simulate` runs these steps in order.
 9. **Collect pressure work.** `collect`, `clear`, `collect_blocks`, and `prepare` build sparse dispatches for awake pressure tiles, their neighbors, and the blocks of 2×2 tiles holding them.
 10. **Step pressure.** `coarsen` rebuilds [pressure cells](@/internals/simulation/pressure.md#pressure-cells) of 2×2 cells from the cellular gas. Three fixed substeps of `step` and `step_gas` update staggered gas/solid face flows, pressure cell state, and gas relaxation, double-buffered between two pressure cell buffers. Solid load also reduces integrity in each substep. `refine` writes the result back over the cells of the active tiles.
 11. **Publish and damage.** `publish` writes gauge atmospheres to the shared pressure buffer and wakes dynamic cells next to pushing pressure. `damage` releases broken-cell pressure as phantom air; topology changes are reported through the collision-owned changed-cell list.
-12. **Simulate thermal conduction.** Thermal follows pressure and updates cell temperatures, conversion lists, and changed-cell lists.
-13. **Apply fluid particle heat.** The fluid pass applies the thermal temperature changes to particles.
-14. **Request changed-cell copies.** `Collision::request_changed_cells` copies thermal and collision changes without waiting. Collision reads them next tick. The scene marks a particle export submitted only after successful fluid simulation.
+12. **Prepare chemistry.** If the material table has reactions, `Scene` prepares chemistry uniforms after pressure.
+13. **Simulate thermal conduction and reactions.** Thermal records `collect`, `clear`, and `prepare`, then chemistry tile selection, reaction preparation, and reaction work, then thermal `step` and `apply`. Reaction heat and products therefore participate in this thermal step.
+14. **Apply fluid particle heat.** The fluid pass applies the thermal temperature changes and chemistry consumption to particles.
+15. **Request changed-cell copies.** `Collision::request_changed_cells` copies thermal and collision changes without waiting. Collision reads them next tick. The scene marks a particle export submitted only after successful fluid simulation.
 
 ## Ownership
 

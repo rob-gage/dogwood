@@ -513,7 +513,7 @@ impl MaterialTable {
         );
         accelerator.queue().write_buffer(&gas_properties_buffer, 0, &gas_property_bytes);
         let (
-            thermal_property_bytes,
+            mut thermal_property_bytes,
             transition_color_bytes,
             temperature_color_bytes,
             thermal_offsets,
@@ -524,6 +524,24 @@ impl MaterialTable {
             has_fluid_reaction_products) = Self::new_reactions(
                 &material_registry, &identifiers_by_name, thermal_offsets, &reactions,
             )?;
+        // the fluid raster also tracks the species of materials that react
+        let thermal_count: usize = thermal_property_bytes.len() / 64;
+        let flags_base: usize = thermal_count * thermal_count + thermal_count;
+        for thermal in 0..thermal_count {
+            let flag_offset: usize = (flags_base + thermal) * 4;
+            let flags: u32 = u32::from_le_bytes(
+                reaction_lookup_bytes[flag_offset..flag_offset + 4].try_into()
+                    .expect("reaction flags are four bytes"),
+            );
+            if flags == 0 { continue; }
+            let word_offset: usize = thermal * 64 + 40;
+            let word: u32 = u32::from_le_bytes(
+                thermal_property_bytes[word_offset..word_offset + 4].try_into()
+                    .expect("thermal flags are four bytes"),
+            ) | THERMAL_FLAG_TRACKED;
+            thermal_property_bytes[word_offset..word_offset + 4]
+                .copy_from_slice(&word.to_le_bytes());
+        }
         let thermal_properties_buffer: wgpu::Buffer = device.create_buffer(
             &wgpu::BufferDescriptor {
                 label: Some("`MaterialTable.thermal_properties_buffer`"),
@@ -1244,8 +1262,9 @@ impl MaterialTable {
     }
 
     /// Returns thermal GPU properties as heat capacity, conduction, then temperature, latent heat,
-    /// product identifier bits, and amount of the hot and cold transitions, transition flags with
-    /// bit zero for hot and bit one for cold, and padding, indexed by thermal index
+    /// product identifier bits, and amount of the hot and cold transitions, flags with bit zero
+    /// for a hot transition, bit one for a cold one, and bit two for materials whose amount the
+    /// fluid raster tracks, and padding, indexed by thermal index
     pub fn thermal_properties_buffer(&self) -> &wgpu::Buffer {
         &self.thermal_properties_buffer
     }
@@ -1295,6 +1314,10 @@ impl MaterialTable {
     pub fn has_fluid_transitions(&self) -> bool { self.has_fluid_transitions }
 
 }
+
+/// Thermal record flag of materials whose amount a fluid raster tracks per cell, because they
+/// react
+const THERMAL_FLAG_TRACKED: u32 = 4;
 
 /// Appends the seven `vec4<f32>` records of a color transformation
 fn append_transform(bytes: &mut Vec<u8>, transformation: &MaterialColorTransformation) {

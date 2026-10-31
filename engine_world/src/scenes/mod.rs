@@ -1,6 +1,7 @@
 // Copyright Rob Gage 2026
 
 pub mod cellular_tiles;
+pub mod chemistry;
 pub mod chunks;
 pub mod collisions;
 pub mod edits;

@@ -3,7 +3,7 @@ title = "Fluid particle shader"
 description = "Compute stages, bind groups, packed records, raster layout, and asynchronous readbacks."
 weight = 35
 [extra]
-sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/thermal/thermal_transition.wgsl", "engine_graphics/src/world/materials/material_radiance.wgsl"]
+sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/thermal/thermal_transition.wgsl", "engine_world/src/scenes/thermal/thermal_conversion.wgsl", "engine_graphics/src/world/materials/material_radiance.wgsl"]
 +++
 
 `fluid_particle.wgsl` is driven by `FluidParticlePass`. This page owns the GPU layout and dispatch reference; [fluid simulation](@/internals/simulation/fluids.md) explains the numerical algorithm. Rust substitutes `FLUID_BIN_SIZE` and `FLUID_POSITION_RELAXATION / FLUID_ITERATION_COUNT` for WGSL source placeholders when creating the module; the latter scales the complete Jacobi displacement before its length cap.
@@ -60,6 +60,12 @@ properties. Thermal materials and awake flags reuse bindings 29 and 30; static m
 records use binding 54. Only conversion entry points use this reduced layout, which stays within
 the per-stage storage binding limit.
 
+Chemistry fluid products use a separate 4096-entry spawn list. Conversion and spawn-preparation
+pipelines use dedicated bind-group layouts that bind this list; the normal solver group keeps its
+existing binding count. Each spawn record is eight `u32` words (32 bytes): cell index, material,
+amount, temperature, color, radiance, and padding. The spawn list is consumed by the next fluid
+simulation tick.
+
 ## Packed records
 
 All words are serialized little-endian by Rust. Sizes below are record strides, not native Rust struct layouts.
@@ -103,12 +109,19 @@ For `C` physical ring cells and `T` tiles, the fluid raster contains:
 
 ```text
 4*C words     mass, momentum x/y, selected material per cell
-8*C words     packed color channel sums, emission channel sums, occlusion sums
 T words       sparse physical-tile flags
 T words       sparse physical-tile list
 1 word        listed-tile count
 2*C words     signed fixed-point contact velocity delta x/y per cell
+alignment     padding to the minimum storage-buffer offset alignment
+4*C words     aligned chemistry species section: two material indices and two amounts per cell
 ```
+
+The separate fluid color buffer stores eight `u32` sums per cell: four color channels, three
+emission channels, and occlusion. Chemistry can identify and consume at most two fluid species in a cell. Its heat pass scales
+particle amounts from the updated species-section amounts. Amount-zero particles are counted as
+kills; the asynchronous particle-count readback reports the kill count, and a later tick compacts
+them from the live pool.
 
 Mass/momentum/contact deltas use scale `4096`; actor feedback uses scale `1024`. Mass/momentum and actor-feedback additions saturate to signed 32-bit range. Contact-delta accumulators use ordinary atomic integer addition, with individual contributions clamped before conversion.
 
@@ -122,6 +135,6 @@ The first `predict` substep reads the pressure buffer published by the prior tic
 
 ## Readback policy
 
-Count, import status, and actor feedback each have three staging slots. Count and actor copies are skipped when all slots are busy; their previous CPU state remains. Import submissions wait for a status slot so every submitted record can be accepted or returned. Particle counts retain submission tick and spawn revision; actor slots retain identities and collision settings. The particle count staging copy includes both live-particle count and due-transition count. [Fluid streaming](@/internals/world-streaming/fluid-streaming.md) explains reservations and record ownership.
+Count, import status, and actor feedback each have three staging slots. Count and actor copies are skipped when all slots are busy; their previous CPU state remains. Import submissions wait for a status slot so every submitted record can be accepted or returned. Particle counts retain submission tick and spawn revision; actor slots retain identities and collision settings. The particle count staging copy includes live-particle, due-transition, and chemistry-kill counts. [Fluid streaming](@/internals/world-streaming/fluid-streaming.md) explains reservations and record ownership.
 
 One separate resident snapshot may be mapped at a time. Ordinary reads use `Poll`; import draining and final live-pool reads use `wait_indefinitely` during teardown. Mapping or polling failures propagate as [scene errors](@/architecture/errors.md#fluid-failures).
