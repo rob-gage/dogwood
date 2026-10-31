@@ -74,9 +74,17 @@ const TAU: f32 = 6.283185307179586;
 /// The radiance and transmission each invocation of a workgroup traced along its ray segment
 var<workgroup> segments: array<vec4<f32>, 64>;
 
+/// Least radiance a ray segment gathers once its whole ray can no longer be clear, even after an
+/// earlier segment passing at least `CLEAR_TRANSMISSION` of the light
+const LIT_RADIANCE: f32 = 1.00011e-6;
+
+/// Least transmission of a ray that crosses nothing
+const CLEAR_TRANSMISSION: f32 = 0.9999;
+
 /// Returns the radiance gathered along a ray and the fraction of light passing through it,
-/// crossing uniform blocks of 8x8 cells in one step
-fn trace(origin: vec2<f32>, direction: vec2<f32>, start: f32, end: f32) -> vec4<f32> {
+/// crossing uniform blocks of 8x8 cells in one step. A ray that `stops_when_lit` ends as soon as
+/// it gathers light or loses transmission, because only whether it crossed nothing matters.
+fn trace(origin: vec2<f32>, direction: vec2<f32>, start: f32, end: f32, stops_when_lit: bool) -> vec4<f32> {
     let size: vec2<f32> = vec2<f32>(level.domain_size);
     let is_moving: vec2<bool> = abs(direction) > vec2<f32>(1e-9);
     let inverse: vec2<f32> = 1.0 / select(vec2<f32>(1.0), direction, is_moving);
@@ -121,18 +129,28 @@ fn trace(origin: vec2<f32>, direction: vec2<f32>, start: f32, end: f32) -> vec4<
             transmission = 0.0;
             break;
         }
+        if stops_when_lit && (transmission < CLEAR_TRANSMISSION || any(radiance >= vec3<f32>(LIT_RADIANCE))) {
+            break;
+        }
     }
     return vec4<f32>(radiance, transmission);
 }
 
 /// Traces a ray split into equal segments across the `level.lanes` invocations sharing one
 /// interval, then composes the segments in order. Every invocation of the workgroup must call it.
-fn trace_lanes(local: u32, origin: vec2<f32>, direction: vec2<f32>, start: f32, end: f32) -> vec4<f32> {
+fn trace_lanes(
+    local: u32,
+    origin: vec2<f32>,
+    direction: vec2<f32>,
+    start: f32,
+    end: f32,
+    stops_when_lit: bool,
+) -> vec4<f32> {
     let lane: u32 = local % level.lanes;
     let share: f32 = (end - start) / f32(level.lanes);
     let segment_start: f32 = start + share * f32(lane);
     let segment_end: f32 = select(segment_start + share, end, lane == level.lanes - 1u);
-    segments[local] = trace(origin, direction, segment_start, segment_end);
+    segments[local] = trace(origin, direction, segment_start, segment_end, stops_when_lit);
     workgroupBarrier();
     var radiance: vec3<f32> = vec3<f32>(0.0);
     var transmission: f32 = 1.0;
@@ -163,14 +181,14 @@ fn merged_radiance(local: u32, position: vec2<f32>, direction: u32, is_traced: b
     let ray: vec2<f32> = vec2<f32>(cos(angle), sin(angle));
     let interval_end: f32 = select(level.interval_start, level.interval_end, is_traced);
     if level.has_upper == 0u {
-        return trace_lanes(local, position, ray, level.interval_start, interval_end).rgb;
+        return trace_lanes(local, position, ray, level.interval_start, interval_end, false).rgb;
     }
     let start: vec2<f32> = position + ray * level.interval_start;
     let upper_direction_count: u32 = level.direction_count * 2u;
     // where the interval crosses nothing, the four rays would see nothing either, so one ray and
     // interpolated coarser probes suffice
-    let plain: vec4<f32> = trace_lanes(local, position, ray, level.interval_start, interval_end);
-    let is_clear: bool = plain.a >= 0.9999 && all(plain.rgb <= vec3<f32>(1e-6));
+    let plain: vec4<f32> = trace_lanes(local, position, ray, level.interval_start, interval_end, true);
+    let is_clear: bool = plain.a >= CLEAR_TRANSMISSION && all(plain.rgb <= vec3<f32>(1e-6));
     let lattice: vec2<f32> = (position - level.upper_probe_origin) / level.upper_spacing;
     let maximum: vec2<i32> = max(vec2<i32>(level.upper_probe_count) - vec2<i32>(2), vec2<i32>(0));
     let base: vec2<i32> = clamp(vec2<i32>(floor(lattice)), vec2<i32>(0), maximum);
@@ -186,8 +204,9 @@ fn merged_radiance(local: u32, position: vec2<f32>, direction: u32, is_traced: b
         let segment: vec2<f32> = upper_position + ray * level.interval_end - start;
         let length: f32 = max(length(segment), 1e-6);
         let is_corner_traced: bool = is_traced && !is_clear && corner_weight > 0.0;
-        var near: vec4<f32> =
-            trace_lanes(local, start, segment / length, 0.0, select(0.0, length, is_corner_traced));
+        var near: vec4<f32> = trace_lanes(
+            local, start, segment / length, 0.0, select(0.0, length, is_corner_traced), false,
+        );
         if is_clear {
             near = plain;
         }

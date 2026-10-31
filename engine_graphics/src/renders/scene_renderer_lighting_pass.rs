@@ -25,7 +25,8 @@ const LIGHTING_UNIFORM_STRIDE: u64 = 256;
 /// Largest number of cascade levels
 const LIGHTING_LEVEL_MAXIMUM: usize = 16;
 
-/// Invocations a cascade level aims to fill by splitting its rays, up to 16 per interval
+/// Invocations a cascade level aims to fill on a discrete GPU by splitting its rays, up to 16 per
+/// interval; other GPUs fill with far fewer, so they aim for `1 << 15`
 const LIGHTING_TRACE_INVOCATIONS: u32 = 1 << 18;
 
 /// Bytes of one sprite instance, matching the sprite pass
@@ -360,6 +361,8 @@ pub struct SceneRendererLightingPass {
     cascade_bind_group_layout: wgpu::BindGroupLayout,
     /// Cascade tracing and merging pipeline
     trace_pipeline: wgpu::ComputePipeline,
+    /// Invocations a cascade level aims to fill by splitting its rays
+    trace_invocations: u32,
     /// Cascade integration pipeline
     integrate_pipeline: wgpu::ComputePipeline,
     /// Pipeline summarizing the change flags of the second cascade level
@@ -932,6 +935,10 @@ impl SceneRendererLightingPass {
             optical_bind_group: None,
             cascade_bind_group_layout,
             trace_pipeline,
+            trace_invocations: match accelerator.adapter().get_info().device_type {
+                wgpu::DeviceType::DiscreteGpu => LIGHTING_TRACE_INVOCATIONS,
+                _ => 1 << 15,
+            },
             integrate_pipeline,
             summarize_pipeline,
             cascade_buffer,
@@ -1061,7 +1068,8 @@ impl SceneRendererLightingPass {
         );
         // every level keeps its intervals between frames, and the finest level, which integrates
         // into the fluence, keeps none
-        let interval_buffers: Vec<wgpu::Buffer> = Self::domain_levels(width, height, [0, 0])
+        let interval_buffers: Vec<wgpu::Buffer> =
+            Self::domain_levels(width, height, [0, 0], self.trace_invocations)
             .iter()
             .enumerate()
             .map(|(level, shape)| {
@@ -1154,7 +1162,12 @@ impl SceneRendererLightingPass {
 
     /// Returns the cascade levels of a domain whose bottom-left texel has a world position,
     /// keeping every level's probes at fixed world positions as the domain moves
-    fn domain_levels(width: u32, height: u32, world_origin: [i64; 2]) -> Vec<LightingLevel> {
+    fn domain_levels(
+        width: u32,
+        height: u32,
+        world_origin: [i64; 2],
+        trace_invocations: u32,
+    ) -> Vec<LightingLevel> {
         let diagonal: f32 = (width as f32).hypot(height as f32);
         let mut levels: Vec<LightingLevel> = Vec::new();
         for level in 0..LIGHTING_LEVEL_MAXIMUM as u32 {
@@ -1187,7 +1200,7 @@ impl SceneRendererLightingPass {
                     0 => 1,
                     _ => {
                         let intervals: u32 = probe_count[0] * probe_count[1] * (LIGHTING_DIRECTIONS << level);
-                        1 << (LIGHTING_TRACE_INVOCATIONS / intervals).clamp(1, 16).ilog2()
+                        1 << (trace_invocations / intervals).clamp(1, 16).ilog2()
                     }
                 },
             });
@@ -1432,7 +1445,7 @@ impl SceneRendererLightingPass {
             cellular.region_tile_x * cellular.cellular_tile_size as i64 / texel_size as i64,
             cellular.region_tile_y * cellular.cellular_tile_size as i64 / texel_size as i64,
         ];
-        self.levels = Self::domain_levels(width, height, world_origin);
+        self.levels = Self::domain_levels(width, height, world_origin, self.trace_invocations);
         let mut cascade_bytes: Vec<u8> =
             vec![0; LIGHTING_UNIFORM_STRIDE as usize * LIGHTING_LEVEL_MAXIMUM];
         for (index, level) in self.levels.iter().enumerate() {
