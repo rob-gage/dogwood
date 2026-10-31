@@ -34,6 +34,7 @@ use engine::{
         MaterialTag,
         MaterialTemperatureColor,
         MaterialTransition,
+        MaterialValue,
     },
     scenes::{
         cellular_tiles::CELLULAR_TILE_SIZE,
@@ -445,13 +446,24 @@ impl TemplateGame {
             debris: Some(String::from("wood chips")),
             thermal: MaterialPropertiesThermal {
                 heat_capacity: 1.5,
-                conduction: 0.1,
+                conduction: 0.5,
                 edit_temperature: 293.0,
                 temperature_colors: wood_temperature_colors(),
                 ..Default::default()
             },
             chemical: MaterialPropertiesChemical {
-                tags: vec![MaterialTag::new("corrodible"), MaterialTag::new("flammable")],
+                tags: vec![
+                    MaterialTag::new("corrodible"),
+                    MaterialTag::new("combustion")
+                        .with_parameter("ignition", 500.0)
+                        .with_parameter("flame", 1300.0)
+                        .with_parameter("rate", 2.0)
+                        .with_parameter("amount", 0.02)
+                        .with_parameter("fire", 0.3)
+                        .with_parameter("smoke", 0.1)
+                        .with_parameter("heat", 150.0)
+                        .with_parameter("pressure", 0.0),
+                ],
                 amount_colors: wood_amount_colors(),
             },
         })?;
@@ -482,13 +494,24 @@ impl TemplateGame {
                 restitution: 0.0,
                 thermal: MaterialPropertiesThermal {
                     heat_capacity: 1.5,
-                    conduction: 0.1,
+                    conduction: 0.5,
                     edit_temperature: 293.0,
                     temperature_colors: wood_temperature_colors(),
                     ..Default::default()
                 },
                 chemical: MaterialPropertiesChemical {
-                    tags: vec![MaterialTag::new("corrodible"), MaterialTag::new("flammable")],
+                    tags: vec![
+                        MaterialTag::new("corrodible"),
+                        MaterialTag::new("combustion")
+                            .with_parameter("ignition", 450.0)
+                            .with_parameter("flame", 1300.0)
+                            .with_parameter("rate", 4.0)
+                            .with_parameter("amount", 0.02)
+                            .with_parameter("fire", 0.3)
+                            .with_parameter("smoke", 0.1)
+                            .with_parameter("heat", 150.0)
+                            .with_parameter("pressure", 0.0),
+                    ],
                     amount_colors: wood_amount_colors(),
                 },
             },
@@ -515,11 +538,21 @@ impl TemplateGame {
                 restitution: 0.0,
                 thermal: MaterialPropertiesThermal {
                     heat_capacity: 1.0,
-                    conduction: 0.2,
+                    conduction: 4.0,
                     ..Default::default()
                 },
                 chemical: MaterialPropertiesChemical {
-                    tags: vec![MaterialTag::new("explosive")],
+                    tags: vec![
+                        MaterialTag::new("combustion")
+                            .with_parameter("ignition", 400.0)
+                            .with_parameter("flame", f32::INFINITY)
+                            .with_parameter("rate", 60.0)
+                            .with_parameter("amount", 1.0)
+                            .with_parameter("fire", 1.0)
+                            .with_parameter("smoke", 0.5)
+                            .with_parameter("heat", 4000.0)
+                            .with_parameter("pressure", 40.0),
+                    ],
                     amount_colors: Vec::new(),
                 },
             },
@@ -543,7 +576,18 @@ impl TemplateGame {
                 ..Default::default()
             },
             chemical: MaterialPropertiesChemical {
-                tags: vec![MaterialTag::new("flammable")], amount_colors: Vec::new(),
+                tags: vec![
+                    MaterialTag::new("combustion")
+                        .with_parameter("ignition", 380.0)
+                        .with_parameter("flame", f32::INFINITY)
+                        .with_parameter("rate", 1.5)
+                        .with_parameter("amount", 0.04)
+                        .with_parameter("fire", 0.3)
+                        .with_parameter("smoke", 0.03)
+                        .with_parameter("heat", 500.0)
+                        .with_parameter("pressure", 0.0),
+                ],
+                amount_colors: Vec::new(),
             },
         })?;
         // dense green vapor that condenses back into acid
@@ -568,7 +612,18 @@ impl TemplateGame {
                 ..Default::default()
             },
             chemical: MaterialPropertiesChemical {
-                tags: vec![MaterialTag::new("flammable")], amount_colors: Vec::new(),
+                tags: vec![
+                    MaterialTag::new("combustion")
+                        .with_parameter("ignition", 500.0)
+                        .with_parameter("flame", f32::INFINITY)
+                        .with_parameter("rate", 15.0)
+                        .with_parameter("amount", 1.0)
+                        .with_parameter("fire", 2.0)
+                        .with_parameter("smoke", 0.05)
+                        .with_parameter("heat", 700.0)
+                        .with_parameter("pressure", 0.0),
+                ],
+                amount_colors: Vec::new(),
             },
         })?;
         // inert olive sludge formed when acid mixes with water
@@ -611,7 +666,7 @@ impl TemplateGame {
             },
             thermal: MaterialPropertiesThermal {
                 heat_capacity: 1.0,
-                conduction: 0.1,
+                conduction: 5.0,
                 edit_temperature: 1300.0,
                 cold_transition: Some(
                     MaterialTransition::new(600.0, 0.0, "smoke")
@@ -639,7 +694,7 @@ impl TemplateGame {
             },
             chemical: MaterialPropertiesChemical::default(),
         })?;
-        // dim gas left behind when fire cools or flammable material burns
+        // dim gas left behind when fire cools or matter burns
         material_registry.register_gas("smoke", MaterialPropertiesGas {
             mass: 30.0,
             diffusivity: 0.2,
@@ -794,85 +849,25 @@ impl TemplateGame {
                 },
             })?;
         }
-        // Fire has no oxidizer: flammable matter burns when hot or touching fire, then fire fades
-        // into smoke and smoke fades away.
+        // matter tagged for combustion burns by its own values once it is hot enough: fire and
+        // smoke rise from its surfaces, and it stays below its flame temperature so a fire
+        // settles instead of heating without bound
+        let combustion = |parameter: &str| {
+            MaterialValue::parameter(format!("combustion.{parameter}"))
+        };
         material_registry.register_reaction(
             MaterialReaction::new(
+                vec![MaterialReactant::tag("combustion", combustion("amount"))],
                 vec![
-                    MaterialReactant::material("fire", 0.0),
-                    MaterialReactant::material("acid gas", 1.0),
-                ],
-                vec![MaterialReactionProduct::new("fire", 2.0)],
-            )
-                .with_heat(700.0)
-                .with_rate(30.0),
-        );
-        material_registry.register_reaction(
-            MaterialReaction::new(
-                vec![MaterialReactant::material("acid gas", 1.0)],
-                vec![MaterialReactionProduct::new("fire", 2.0)],
-            )
-                .with_temperature_range(500.0, f32::INFINITY)
-                .with_heat(700.0)
-                .with_rate(10.0),
-        );
-        // burning acid flares up where it touches fire and keeps burning at its surface while
-        // the flames keep it hot, boiling into acid gas that flashes
-        material_registry.register_reaction(
-            MaterialReaction::new(
-                vec![
-                    MaterialReactant::material("fire", 0.0),
-                    MaterialReactant::material("acid", 0.04),
-                ],
-                vec![
-                    MaterialReactionProduct::new("fire", 0.3),
-                    MaterialReactionProduct::new("smoke", 0.03),
+                    MaterialReactionProduct::new("fire", combustion("fire")),
+                    MaterialReactionProduct::new("smoke", combustion("smoke")),
                 ],
             )
-                .with_heat(500.0)
-                .with_rate(2.0),
+                .with_temperature_range(combustion("ignition"), combustion("flame"))
+                .with_rate(combustion("rate"))
+                .with_heat(combustion("heat"))
+                .with_pressure(combustion("pressure")),
         );
-        material_registry.register_reaction(
-            MaterialReaction::new(
-                vec![MaterialReactant::material("acid", 0.04)],
-                vec![
-                    MaterialReactionProduct::new("fire", 0.3),
-                    MaterialReactionProduct::new("smoke", 0.03),
-                ],
-            )
-                .with_temperature_range(380.0, f32::INFINITY)
-                .with_heat(500.0)
-                .with_rate(0.5),
-        );
-        // flammable matter chars slowly and evenly, while explosive matter flashes and pushes
-        for (tag, amount, fire, smoke, heat, pressure, rate) in [
-            ("flammable", 0.02, 0.04, 0.03, 30.0, 0.0, 0.6),
-            ("explosive", 0.1, 0.3, 0.1, 300.0, 6.0, 1.5),
-        ] {
-            let products = || vec![
-                MaterialReactionProduct::new("fire", fire),
-                MaterialReactionProduct::new("smoke", smoke),
-            ];
-            material_registry.register_reaction(
-                MaterialReaction::new(
-                    vec![
-                        MaterialReactant::material("fire", 0.0),
-                        MaterialReactant::tag(tag, amount),
-                    ],
-                    products(),
-                )
-                    .with_heat(heat)
-                    .with_pressure(pressure)
-                    .with_rate(rate),
-            );
-            material_registry.register_reaction(
-                MaterialReaction::new(vec![MaterialReactant::tag(tag, amount)], products())
-                    .with_temperature_range(570.0, f32::INFINITY)
-                    .with_heat(heat)
-                    .with_pressure(pressure)
-                    .with_rate(rate * 2.0 / 3.0),
-            );
-        }
         material_registry.register_reaction(
             MaterialReaction::new(
                 vec![

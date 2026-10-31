@@ -142,30 +142,40 @@ written directly into a cellular material array does not create particles. See [
 
 ## Tags, amount colors, and reactions
 
-The template gives wood and wood chips the `flammable` tag, gives gunpowder the `explosive` tag, and uses amount-color keys to darken wood as its amount falls. `corrodible`, `flammable`, and `explosive` tags let reactions target groups of materials. A compact example follows the API used by the template:
+The template tags its fuels with `combustion` and parameters for how each burns, and uses amount-color keys to darken wood as its amount falls. Tags let reactions target groups of materials, and their parameters let one reaction treat each material differently. A compact example follows the API used by the template:
 
 ```rust
 use engine::materials::{
-    MaterialReaction, MaterialReactionProduct, MaterialReactant, MaterialRegistry,
+    MaterialReaction, MaterialReactionProduct, MaterialReactant, MaterialRegistry, MaterialTag,
+    MaterialValue,
 };
+
+// carried in a fuel's `MaterialPropertiesChemical::tags`
+fn gunpowder_combustion() -> MaterialTag {
+    MaterialTag::new("combustion")
+        .with_parameter("ignition", 400.0)
+        .with_parameter("amount", 1.0)
+        .with_parameter("heat", 4000.0)
+        .with_parameter("pressure", 40.0)
+}
 
 fn register_burning(registry: &mut MaterialRegistry) {
     registry.register_reaction(
         MaterialReaction::new(
+            vec![MaterialReactant::tag(
+                "combustion", MaterialValue::parameter("combustion.amount"),
+            )],
             vec![
-                MaterialReactant::material("fire", 0.0),
-                MaterialReactant::tag("explosive", 0.1),
-            ],
-            vec![
-                MaterialReactionProduct::new("fire", 0.3),
-                MaterialReactionProduct::new("smoke", 0.1),
+                MaterialReactionProduct::new("fire", 1.0),
+                MaterialReactionProduct::new("smoke", 0.5),
             ],
         )
-        .with_rate(1.5)
-        .with_heat(300.0)
-        .with_pressure(6.0),
+        .with_temperature_range(MaterialValue::parameter("combustion.ignition"), f32::INFINITY)
+        .with_rate(20.0)
+        .with_heat(MaterialValue::parameter("combustion.heat"))
+        .with_pressure(MaterialValue::parameter("combustion.pressure")),
     );
 }
 ```
 
-The zero-amount fire reactant is a catalyst; the tagged fuel consumes `0.1` amount per event, and each event adds `6` atmospheres of pressure. The [materials API](@/external-api/materials.md#reaction-properties-and-validation) documents tags, amount-color keys, validation, and the other reaction builders.
+Each material tagged `combustion` burns once it reaches its own `combustion.ignition` temperature, consuming its `combustion.amount` per event and adding its `combustion.heat` and `combustion.pressure`; gunpowder burns a whole cell per event into `40` atmospheres of pressure. The [materials API](@/external-api/materials.md#reaction-properties-and-validation) documents tags, amount-color keys, validation, and the other reaction builders.
