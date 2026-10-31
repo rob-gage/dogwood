@@ -27,7 +27,7 @@ const LIGHTING_LEVEL_MAXIMUM: usize = 16;
 
 /// Invocations a cascade level aims to fill on a discrete GPU by splitting its rays, up to 16 per
 /// interval; other GPUs fill with far fewer, so they aim for `1 << 15`
-const LIGHTING_TRACE_INVOCATIONS: u32 = 1 << 18;
+const LIGHTING_TRACE_INVOCATIONS: u32 = 1 << 20;
 
 /// Bytes of one sprite instance, matching the sprite pass
 const LIGHTING_INSTANCE_SIZE: usize = 64;
