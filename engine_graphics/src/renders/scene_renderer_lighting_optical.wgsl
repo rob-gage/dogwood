@@ -73,6 +73,10 @@ var actor_optics: texture_2d<f32>;
 @group(0) @binding(11)
 var optical: texture_storage_2d<rgba16float, write>;
 
+/// Per-cell material slots and their amounts in `AMOUNT_PER_UNIT`
+@group(0) @binding(12)
+var<storage, read> fluid_species: array<u32>;
+
 /// Fixed-point scale of the fluid raster mass
 const FLUID_RASTER_SCALE: f32 = 4096.0;
 
@@ -99,6 +103,19 @@ fn physical_cell_index(cell: vec2<u32>) -> u32 {
     return slot * size * size + in_tile.y * size + in_tile.x;
 }
 
+/// Returns the amount of one fluid material in a physical cell, or zero when absent
+fn fluid_amount(cell_index: u32, material_index: u32) -> f32 {
+    let base: u32 = cell_index * 4u;
+    let slots: u32 = fluid_species[base];
+    if (slots & 0xffffu) == material_index + 1u {
+        return f32(fluid_species[base + 1u]) / 65536.0;
+    }
+    if (slots >> 16u) == material_index + 1u {
+        return f32(fluid_species[base + 2u]) / 65536.0;
+    }
+    return 0.0;
+}
+
 /// Returns the extinction per cell of an occlusion per tile
 fn extinction(occlusion: f32) -> f32 {
     return min(-log(max(1.0 - occlusion, 1e-12)) / f32(optics.cellular_tile_size), EXTINCTION_MAXIMUM);
@@ -116,8 +133,11 @@ fn build(@builtin(global_invocation_id) invocation: vec3<u32>) {
     var cell_extinction: f32 = 0.0;
     let material_identifier: u32 = material_identifiers[index];
     if material_identifier != 0u {
-        let radiance: vec4<f32> = temperature_color(
-            thermal_index(material_identifier), temperature, unpack_radiance(colors[index].y), true);
+        let thermal: u32 = thermal_index(material_identifier);
+        let amount: f32 = f32(matter[index].y) / 65536.0;
+        let amount_radiance: vec4<f32> = amount_color(
+            thermal, amount, unpack_radiance(colors[index].y), true);
+        let radiance: vec4<f32> = temperature_color(thermal, temperature, amount_radiance, true);
         emission = radiance.rgb;
         cell_extinction = extinction(radiance.a);
     } else {
@@ -140,8 +160,10 @@ fn build(@builtin(global_invocation_id) invocation: vec3<u32>) {
                     fluid_temperature = (f32(heat.y) / FLUID_ENERGY_SCALE)
                         / (f32(heat.x) / FLUID_CAPACITY_SCALE) + bitcast<f32>(heat.w);
                 }
-                radiance = temperature_color(
-                    thermal_index(fluid_identifier), fluid_temperature, radiance, true);
+                let thermal: u32 = thermal_index(fluid_identifier);
+                let amount: f32 = fluid_amount(index, fluid_identifier & 0x3fffffffu);
+                radiance = amount_color(thermal, amount, radiance, true);
+                radiance = temperature_color(thermal, fluid_temperature, radiance, true);
                 emission += radiance.rgb * occupancy;
                 cell_extinction += extinction(radiance.a) * occupancy;
             }

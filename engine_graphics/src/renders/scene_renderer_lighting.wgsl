@@ -40,6 +40,11 @@ var light_sampler: sampler;
 @group(LIGHTING_GROUP) @binding(3)
 var<storage, read> temperature_colors: array<vec4<f32>>;
 
+/// Amount color keys: one `(first vector, key count)` header per thermal index, then keys
+/// of eleven vectors each
+@group(LIGHTING_GROUP) @binding(4)
+var<storage, read> amount_colors: array<vec4<f32>>;
+
 /// Returns the light at a domain position in cells
 fn light_at(domain_position: vec2<f32>) -> vec3<f32> {
     if lighting_view.has_light == 0u {
@@ -116,6 +121,61 @@ fn temperature_color(thermal_index: u32, temperature: f32, value: vec4<f32>, is_
         transformed[row] = dot(matrix_row, value);
     }
     transformed += mix(temperature_colors[first + base + 4u], temperature_colors[second + base + 4u], weight);
+    if is_radiance {
+        return vec4<f32>(
+            clamp(transformed.rgb, vec3<f32>(0.0), vec3<f32>(MATERIAL_RADIANCE_MAXIMUM)),
+            clamp(transformed.a, 0.0, 1.0),
+        );
+    }
+    return clamp(transformed, vec4<f32>(0.0), vec4<f32>(1.0));
+}
+
+/// Applies the amount color keys of a thermal index to a linear color or radiance
+fn amount_color(
+    thermal_index: u32,
+    amount: f32,
+    value: vec4<f32>,
+    is_radiance: bool,
+) -> vec4<f32> {
+    let header: vec4<u32> = bitcast<vec4<u32>>(amount_colors[thermal_index]);
+    let count: u32 = header.y;
+    if count == 0u {
+        return value;
+    }
+    var first: u32 = header.x;
+    var second: u32 = header.x;
+    var weight: f32 = 0.0;
+    for (var key: u32 = 1u; key < count; key++) {
+        let candidate: u32 = header.x + key * 11u;
+        if amount_colors[candidate].x <= amount {
+            first = candidate;
+            second = candidate;
+        } else {
+            second = candidate;
+            let low: f32 = amount_colors[first].x;
+            let high: f32 = amount_colors[second].x;
+            weight = clamp((amount - low) / max(high - low, 1e-6), 0.0, 1.0);
+            if amount < low {
+                weight = 0.0;
+            }
+            break;
+        }
+    }
+    let base: u32 = select(1u, 6u, is_radiance);
+    var transformed: vec4<f32>;
+    for (var row: u32 = 0u; row < 4u; row++) {
+        let matrix_row: vec4<f32> = mix(
+            amount_colors[first + base + row],
+            amount_colors[second + base + row],
+            weight,
+        );
+        transformed[row] = dot(matrix_row, value);
+    }
+    transformed += mix(
+        amount_colors[first + base + 4u],
+        amount_colors[second + base + 4u],
+        weight,
+    );
     if is_radiance {
         return vec4<f32>(
             clamp(transformed.rgb, vec3<f32>(0.0), vec3<f32>(MATERIAL_RADIANCE_MAXIMUM)),

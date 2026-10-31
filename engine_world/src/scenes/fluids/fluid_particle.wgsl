@@ -253,7 +253,8 @@ const FLUID_RASTER_ALIGNMENT_WORDS: u32 = __FLUID_RASTER_ALIGNMENT_WORDS__;
 /// Fixed-point units per heat capacity unit in the fluid heat
 const THERMAL_FLUID_CAPACITY_SCALE: f32 = __THERMAL_FLUID_CAPACITY_SCALE__;
 
-/// Thermal record flag of fluids whose species the raster tracks, because they react
+/// Thermal record flag of fluids whose species the raster tracks, because they react or have
+/// amount colors
 const THERMAL_FLAG_TRACKED: u32 = 4u;
 
 /// Fixed-point units per heat unit in the fluid heat
@@ -1602,7 +1603,7 @@ fn rasterize_fluid(@builtin(global_invocation_id) invocation: vec3<u32>) {
     )));
     let physical_cell: u32 = cell_index(cell);
     let base: u32 = physical_cell * 4u;
-    // only fluids that react are tracked by species
+    // only fluids that react or have amount colors are tracked by species
     let thermal_flags: u32 = thermal_materials[(THERMAL_OFFSETS.z + material_index) * 4u + 2u].z;
     if (thermal_flags & THERMAL_FLAG_TRACKED) != 0u {
         let species_slot: u32 = fluid_species_slot(physical_cell, material_index);

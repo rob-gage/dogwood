@@ -17,6 +17,6 @@ pub struct MaterialPropertiesGas {
     pub graphics: MaterialGraphicsGas,
     /// Thermal and phase-transition properties; heat capacity is per atmosphere
     pub thermal: MaterialPropertiesThermal,
-    /// Chemical reaction tags
+    /// Chemical reaction tags; amount colors are unused by gases
     pub chemical: MaterialPropertiesChemical,
 }

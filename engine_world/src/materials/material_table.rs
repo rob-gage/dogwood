@@ -10,6 +10,7 @@ use super::{
     MaterialPropertiesFluid,
     MaterialPropertiesGas,
     MaterialTemperatureColor,
+    MaterialAmountColor,
     MaterialReactant,
     MaterialRegistry,
     MaterialTransition,
@@ -94,6 +95,8 @@ pub struct MaterialTable {
     reaction_lookup_buffer: wgpu::Buffer,
     /// Temperature color headers and keys as `vec4<u32>` then `vec4<f32>` records
     temperature_color_buffer: wgpu::Buffer,
+    /// Amount color headers and eleven `vec4<f32>` records per key, indexed by thermal index
+    amount_color_buffer: wgpu::Buffer,
     /// Number of registered reactions
     reaction_count: u32,
     /// Whether any reaction product is a fluid
@@ -516,9 +519,10 @@ impl MaterialTable {
             mut thermal_property_bytes,
             transition_color_bytes,
             temperature_color_bytes,
+            amount_color_bytes,
             thermal_offsets,
             has_fluid_transitions,
-        ): (Vec<u8>, Vec<u8>, Vec<u8>, [u32; 4], bool) =
+        ): (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, [u32; 4], bool) =
             Self::new_thermal_properties(&material_registry, &transition_products)?;
         let (reaction_bytes, reaction_color_bytes, reaction_lookup_bytes, reaction_count,
             has_fluid_reaction_products) = Self::new_reactions(
@@ -573,6 +577,11 @@ impl MaterialTable {
             0,
             &temperature_color_bytes,
         );
+        let amount_color_buffer: wgpu::Buffer = Self::create_storage_buffer(
+            device, "`MaterialTable.amount_color_buffer`", &amount_color_bytes,
+        );
+        accelerator.queue().write_buffer(&amount_color_buffer, 0, &amount_color_bytes);
+
         let reaction_buffer: wgpu::Buffer = Self::create_storage_buffer(
             device, "`MaterialTable.reaction_buffer`", &reaction_bytes,
         );
@@ -837,6 +846,7 @@ impl MaterialTable {
             reaction_color_buffer,
             reaction_lookup_buffer,
             temperature_color_buffer,
+            amount_color_buffer,
             reaction_count,
             has_fluid_reaction_products,
             thermal_offsets,
@@ -853,11 +863,13 @@ impl MaterialTable {
     fn new_thermal_properties(
         material_registry: &MaterialRegistry,
         transition_products: &HashMap<(MaterialIdentifier, bool), MaterialIdentifier>,
-    ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>, [u32; 4], bool), MaterialError> {
+    ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, [u32; 4], bool), MaterialError> {
         let mut property_bytes: Vec<u8> = vec![0; 64];
         let mut color_bytes: Vec<u8> = vec![0; 448];
         let mut temperature_color_headers: Vec<[u32; 4]> = vec![[0; 4]];
         let mut temperature_color_key_bytes: Vec<u8> = Vec::new();
+        let mut amount_color_headers: Vec<[u32; 4]> = vec![[0; 4]];
+        let mut amount_color_key_bytes: Vec<u8> = Vec::new();
         let mut offsets: [u32; 4] = [0; 4];
         let mut count: u32 = 1;
         let mut has_fluid_transitions: bool = false;
@@ -961,6 +973,42 @@ impl MaterialTable {
                     0,
                     0,
                 ]);
+                let amount_colors: &[MaterialAmountColor] = match material {
+                    Material::CellularStatic { properties, .. } => {
+                        &properties.chemical.amount_colors
+                    }
+                    Material::CellularDynamic { properties, .. } => {
+                        &properties.chemical.amount_colors
+                    }
+                    Material::Fluid { properties, .. } => &properties.chemical.amount_colors,
+                    Material::Gas { .. } => &[],
+                };
+                let first_amount_vector_index: u32 = (amount_color_key_bytes.len() / 16) as u32;
+                let mut previous_amount: Option<f32> = None;
+                for key in amount_colors {
+                    if !key.amount.is_finite() || key.amount < 0.0
+                        || previous_amount.is_some_and(|amount| key.amount <= amount)
+                        || !valid_visual_transform(&key.color, true)
+                        || !valid_visual_transform(&key.radiance, true)
+                    {
+                        return Err(MaterialError::InvalidTransition {
+                            name: material.name().to_owned(),
+                            message: String::from(
+                                "amount color keys need finite, nonnegative, strictly increasing \
+                                amounts, finite transformations, and zero variances",
+                            ),
+                        });
+                    }
+                    previous_amount = Some(key.amount);
+                    append_visual_key(&mut amount_color_key_bytes, key.amount, &key.color,
+                        &key.radiance);
+                }
+                amount_color_headers.push([
+                    first_amount_vector_index,
+                    amount_colors.len() as u32,
+                    0,
+                    0,
+                ]);
                 if let (Some(hot_transition), Some(cold_transition)) =
                     (hot_transition, cold_transition)
                     && hot_transition.temperature <= cold_transition.temperature
@@ -1034,6 +1082,8 @@ impl MaterialTable {
                         }
                     }
                 }
+                // the fluid raster tracks the species of fluids with amount colors
+                if !amount_colors.is_empty() { flags |= THERMAL_FLAG_TRACKED; }
                 words[10] = flags;
                 for word in words { property_bytes.extend_from_slice(&word.to_le_bytes()); }
                 count += 1;
@@ -1048,7 +1098,17 @@ impl MaterialTable {
             }
         }
         temperature_color_bytes.extend_from_slice(&temperature_color_key_bytes);
-        Ok((property_bytes, color_bytes, temperature_color_bytes, offsets, has_fluid_transitions))
+        let mut amount_color_bytes: Vec<u8> = Vec::new();
+        let amount_header_count: u32 = amount_color_headers.len() as u32;
+        for header in amount_color_headers {
+            for (index, word) in header.into_iter().enumerate() {
+                let word: u32 = if index == 0 { word + amount_header_count } else { word };
+                amount_color_bytes.extend_from_slice(&word.to_le_bytes());
+            }
+        }
+        amount_color_bytes.extend_from_slice(&amount_color_key_bytes);
+        Ok((property_bytes, color_bytes, temperature_color_bytes, amount_color_bytes,
+            offsets, has_fluid_transitions))
     }
 
     /// Returns the color a cell or fluid particle is created with: its material's albedo at the
@@ -1298,6 +1358,10 @@ impl MaterialTable {
         &self.temperature_color_buffer
     }
 
+    /// Returns one `vec4<u32>` header per thermal index followed by eleven `vec4<f32>` records per
+    /// amount key: amount, color matrix and offset, then radiance matrix and offset
+    pub fn amount_color_buffer(&self) -> &wgpu::Buffer { &self.amount_color_buffer }
+
     /// Returns the number of compiled reactions
     pub fn reaction_count(&self) -> u32 { self.reaction_count }
 
@@ -1316,7 +1380,7 @@ impl MaterialTable {
 }
 
 /// Thermal record flag of materials whose amount a fluid raster tracks per cell, because they
-/// react
+/// react or have amount colors
 const THERMAL_FLAG_TRACKED: u32 = 4;
 
 /// Appends the seven `vec4<f32>` records of a color transformation
@@ -1328,6 +1392,41 @@ fn append_transform(bytes: &mut Vec<u8>, transformation: &MaterialColorTransform
     {
         bytes.extend_from_slice(&value.to_le_bytes());
     }
+}
+
+/// Appends an amount or temperature key and its two visual transformations
+fn append_visual_key(
+    bytes: &mut Vec<u8>,
+    value: f32,
+    color: &MaterialColorTransformation,
+    radiance: &MaterialColorTransformation,
+) {
+    for component in [value, 0.0, 0.0, 0.0] {
+        bytes.extend_from_slice(&component.to_le_bytes());
+    }
+    append_visual_color(bytes, color);
+    append_visual_color(bytes, radiance);
+}
+
+/// Appends a zero-variance transformation as its matrix rows and offset
+fn append_visual_color(bytes: &mut Vec<u8>, transformation: &MaterialColorTransformation) {
+    for value in transformation.matrix.iter().flatten().chain(&transformation.offset) {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+}
+
+/// Returns whether a visual key transformation has finite values and the required variances
+fn valid_visual_transform(
+    transformation: &MaterialColorTransformation,
+    zero_variance: bool,
+) -> bool {
+    transformation.matrix.iter().flatten().chain(&transformation.offset)
+        .all(|value| value.is_finite())
+        && transformation.channel_variance.iter()
+            .chain([&transformation.intensity_variance])
+            .all(|value| {
+                value.is_finite() && if zero_variance { *value == 0.0 } else { *value >= 0.0 }
+            })
 }
 
 /// Stores an unbounded maximum as the largest finite float in the reaction table

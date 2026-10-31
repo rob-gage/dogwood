@@ -47,7 +47,7 @@ unowned cell; cell and gas conversions wait for pool capacity. The thermal list 
 `THERMAL_CONVERSION_COUNT_MAXIMUM` entries, and asynchronous count readback keeps the pool awake
 briefly after a nonzero list.
 
-The fluid raster stores color in four words and radiance in four more words per physical cell, then an aligned species section with two material-index/amount slots per cell, filled only by fluids whose thermal record marks them tracked (they react). Chemistry reads and updates those slots and scales consumed particle amounts during the fluid heat pass. Particles reduced to amount zero are marked for kill; compaction follows after an asynchronous kill-count readback. Chemistry fluid products use a 4096-entry spawn list consumed on the next fluid tick. The fluid renderer uses radiance sums for lighting. Fluid temperature for render-time temperature colors comes from the fluid heat raster.
+The fluid raster stores color in four words and radiance in four more words per physical cell, then an aligned species section with two material-index/amount slots per cell, filled only by fluids whose thermal record marks them tracked (they react or have amount colors). Chemistry reads and updates those slots and scales consumed particle amounts during the fluid heat pass. Particles reduced to amount zero are marked for kill; compaction follows after an asynchronous kill-count readback. Chemistry fluid products use a 4096-entry spawn list consumed on the next fluid tick. The fluid renderer uses radiance sums for lighting. Fluid temperature for render-time temperature colors comes from the fluid heat raster.
 
 ## Neighbors
 

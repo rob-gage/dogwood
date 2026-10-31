@@ -483,6 +483,12 @@ impl SceneRendererLightingPass {
                         wgpu::BufferBindingType::Storage { read_only: true },
                         false,
                     ),
+                    buffer_entry(
+                        4,
+                        fragment_and_compute,
+                        wgpu::BufferBindingType::Storage { read_only: true },
+                        false,
+                    ),
                 ],
             },
         );
@@ -699,6 +705,7 @@ impl SceneRendererLightingPass {
                     buffer_entry(9, wgpu::ShaderStages::COMPUTE, read_storage, false),
                     texture_entry(10, wgpu::ShaderStages::COMPUTE),
                     storage_texture_entry(11),
+                    buffer_entry(12, wgpu::ShaderStages::COMPUTE, read_storage, false),
                 ],
             },
         );
@@ -1237,6 +1244,7 @@ impl SceneRendererLightingPass {
                     resource: wgpu::BindingResource::Sampler(&self.light_sampler),
                 },
                 buffer_binding(3, lighting.temperature_color_buffer),
+                buffer_binding(4, lighting.amount_color_buffer),
             ],
         }));
         let (Some([width, height]), Some(cellular), Some(temperature)) = (domain_size, cellular, temperature)
@@ -1381,6 +1389,13 @@ impl SceneRendererLightingPass {
                 wgpu::BindGroupEntry {
                     binding: 11,
                     resource: wgpu::BindingResource::TextureView(&domain.optical_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 12,
+                    resource: wgpu::BindingResource::Buffer(fluid.map_or(
+                        empty_buffer.as_entire_buffer_binding(),
+                        |fluid| fluid.species_buffer.clone(),
+                    )),
                 },
             ],
         }));

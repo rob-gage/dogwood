@@ -64,6 +64,10 @@ var<storage, read_write> shaded_cells: array<vec2<u32>>;
 @group(0) @binding(6)
 var<storage, read> fluid_heat: array<vec4<i32>>;
 
+/// Per-cell material slots and their amounts in `AMOUNT_PER_UNIT`
+@group(0) @binding(7)
+var<storage, read> fluid_species: array<u32>;
+
 /// Fixed-point scale of fluid radiance emission sums
 const FLUID_EMISSION_SCALE: f32 = 64.0;
 
@@ -104,6 +108,19 @@ fn physical_cell_index(cell: vec2<i32>) -> u32 {
     return slot * uniforms.cellular_tile_size * uniforms.cellular_tile_size
         + in_tile.y * uniforms.cellular_tile_size
         + in_tile.x;
+}
+
+/// Returns the amount of one material in a physical cell, or zero when it is absent
+fn fluid_amount(cell_index: u32, material_index: u32) -> f32 {
+    let base: u32 = cell_index * 4u;
+    let slots: u32 = fluid_species[base];
+    if (slots & 0xffffu) == material_index + 1u {
+        return f32(fluid_species[base + 1u]) / 65536.0;
+    }
+    if (slots >> 16u) == material_index + 1u {
+        return f32(fluid_species[base + 2u]) / 65536.0;
+    }
+    return 0.0;
 }
 
 /// Reads the fixed-point mass and material identifier at an in-region cell
@@ -227,15 +244,18 @@ fn shade(@builtin(global_invocation_id) invocation: vec3<u32>) {
             f32((packed_color >> 24u) & 0xffu),
         ) / 255.0;
     }
-    // the fluid shows its material's temperature colors at its cell's temperature
+    // the fluid shows its material's amount and temperature colors at its cell values
     let heat: vec4<i32> = fluid_heat[physical_cell_index(cell)];
     let thermal: u32 = thermal_index(material_identifier);
+    let amount: f32 = fluid_amount(physical_cell_index(cell), material_identifier & 0x3fffffffu);
     var linear_color: vec4<f32> = vec4<f32>(
         srgb_to_linear(srgb_color.r),
         srgb_to_linear(srgb_color.g),
         srgb_to_linear(srgb_color.b),
         srgb_color.a,
     );
+    linear_color = amount_color(thermal, amount, linear_color, false);
+    radiance = amount_color(thermal, amount, radiance, true);
     if heat.x > 0 {
         let temperature: f32 = (f32(heat.y) / 64.0) / (f32(heat.x) / 1024.0) + bitcast<f32>(heat.w);
         linear_color = temperature_color(thermal, temperature, linear_color, false);

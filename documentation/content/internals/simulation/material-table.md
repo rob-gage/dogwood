@@ -61,7 +61,7 @@ Compilation validates positive finite mass, diffusivity in `[0, 0.4]`, and cohes
 Thermal records use sixteen little-endian `u32` words per thermal index, with indices assigned in
 four consecutive groups ordered static, dynamic, fluid, and gas. Each record stores heat capacity,
 conduction, hot and cold transition temperatures and latent heat, resolved product identifiers
-and amounts, and flags: bit 0 for a hot transition, bit 1 for a cold one, and bit 2 for materials whose amount the fluid raster tracks per cell because they react. Static index zero is reserved for empty. `thermal_offsets()` returns the first
+and amounts, and flags: bit 0 for a hot transition, bit 1 for a cold one, and bit 2 for materials whose amount the fluid raster tracks per cell because they react or have amount colors. Static index zero is reserved for empty. `thermal_offsets()` returns the first
 thermal index for each form. A parallel buffer stores fourteen `vec4<f32>` values per hot or cold transition: seven color-transform vectors followed by seven radiance-transform vectors.
 
 Compilation stores `has_fluid_transitions` once: it is true when a fluid material has a transition
@@ -95,6 +95,8 @@ The cellular tile pass binds the dynamic property buffer as `array<vec4<f32>>` a
 The albedo and radiance readback and material buffer setup are implemented in {{ <rustdoc path="engine/materials/struct.MaterialTable.html" text="MaterialTable" /> }}.
 
 
-## Chemistry buffers
+## Chemistry and amount-color buffers
 
 Material compilation resolves reaction names and tags into thermal indices. It builds per-material unary lists and a two-material pair lookup whose entries are ordered by registration priority. Each lookup list holds at most 255 reaction indices; at most 64 reactions are accepted. Reaction records hold rates, heat, pressure, requirement bounds, reactant counts, and product indices and amounts. A companion record buffer stores product color/radiance transforms. The lookup includes per-material unary/paired flags used by chemistry tile selection.
+
+The amount-color buffer contains one `vec4<u32>` header per thermal material followed by eleven `vec4<f32>` values per visual key. Each key carries an amount and color/radiance transforms. Cellular and fluid rendering apply this amount transform before temperature transforms; gas does not use amount colors. See [chemistry API](@/external-api/materials.md#reaction-properties-and-validation) and [chemistry simulation](@/internals/simulation/chemistry.md).

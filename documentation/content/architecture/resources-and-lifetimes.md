@@ -127,7 +127,7 @@ The private `FLUID_ACTOR_CONTACT_SCALE` is `1024`. Count, actor, and import read
 
 ## Chemistry resources
 
-Chemistry allocates one 80-byte uniform record, one reacting-tile index per tile slot, a four-byte reacting count, and a 12-byte indirect dispatch record. Material compilation supplies reaction, lookup, and product-transform buffers; the fluid raster carries 16 additional bytes per cell for two species indices and amounts. The fluid spawn list holds 4096 eight-word product records (128 KiB plus its four-byte count). Reactions are limited to 64, with at most 255 entries per lookup list. `HEAT_CAPACITY_MINIMUM` is 0.01. See [chemistry simulation](@/internals/simulation/chemistry.md) and [chemistry shader](@/internals/shaders/chemistry-shader.md).
+Chemistry allocates one 80-byte uniform record, one reacting-tile index per tile slot, a four-byte reacting count, and a 12-byte indirect dispatch record. Material compilation supplies reaction, lookup, product-transform, and amount-color buffers; the fluid raster carries 16 additional bytes per cell for two species indices and amounts. The fluid spawn list holds 4096 eight-word product records (128 KiB plus its four-byte count). Reactions are limited to 64, with at most 255 entries per lookup list. `HEAT_CAPACITY_MINIMUM` is 0.01. See [chemistry simulation](@/internals/simulation/chemistry.md) and [chemistry shader](@/internals/shaders/chemistry-shader.md).
 
 ## Thermal resources
 

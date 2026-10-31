@@ -12,6 +12,9 @@ pub struct SceneGraphicsFluid<'a> {
     /// One `vec4<i32>` per physical cell: capacity*1024, energy*64, conduction*1024, and
     /// temperature change as f32 bits
     pub heat_buffer: &'a wgpu::Buffer,
+    /// Four words per physical cell: material index slots and their amounts in `AMOUNT_PER_UNIT`,
+    /// in a section of the raster buffer
+    pub species_buffer: wgpu::BufferBinding<'a>,
     /// Seven physics values followed by packed sRGB color per 32-byte fluid material record
     pub material_properties_buffer: &'a wgpu::Buffer,
     /// Horizontal offset of the region's bottom-left corner from the camera in tiles

@@ -20,6 +20,6 @@ pub struct MaterialPropertiesCellularDynamic {
     pub restitution: f32,
     /// Thermal and phase-transition properties
     pub thermal: MaterialPropertiesThermal,
-    /// Chemical reaction properties
+    /// Chemical reaction and amount-dependent visual properties
     pub chemical: MaterialPropertiesChemical,
 }

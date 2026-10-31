@@ -10,6 +10,8 @@ pub struct SceneGraphicsLighting<'a> {
     /// Temperature color keys of every material, as `MaterialTable::temperature_color_buffer`
     /// describes
     pub temperature_color_buffer: &'a wgpu::Buffer,
+    /// Amount color keys of every material, as `MaterialTable::amount_color_buffer` describes
+    pub amount_color_buffer: &'a wgpu::Buffer,
     /// First thermal index of each material form
     pub thermal_offsets: [u32; 4],
     /// Lights without sprites or materials

@@ -846,6 +846,7 @@ impl Scene {
                 ambient: self.ambient_light,
                 penetration: self.light_penetration,
                 temperature_color_buffer: self.material_table.temperature_color_buffer(),
+                amount_color_buffer: self.material_table.amount_color_buffer(),
                 thermal_offsets: self.material_table.thermal_offsets(),
                 // lights with nonfinite or negative values are skipped
                 lights: self.actor_registry
@@ -925,6 +926,7 @@ impl Scene {
             raster_buffer: fluids.fluid_raster_buffer(),
             color_buffer: fluids.fluid_color_buffer(),
             heat_buffer: fluids.fluid_heat_buffer(),
+            species_buffer: fluids.fluid_species_buffer(),
             material_properties_buffer: self.material_table.fluid_properties_buffer(),
             region_x: region_x as f32,
             region_y: region_y as f32,

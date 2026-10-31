@@ -90,8 +90,11 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     // material's temperature colors
     let thermal: u32 = thermal_index(material_identifier);
     let temperature: f32 = bitcast<f32>(matter[cell_index].x);
-    let color: vec4<f32> = temperature_color(thermal, temperature, linear_color, false);
-    let radiance: vec4<f32> = temperature_color(
-        thermal, temperature, unpack_radiance(colors[cell_index].y), true);
+    let amount: f32 = f32(matter[cell_index].y) / 65536.0;
+    let amount_color_value: vec4<f32> = amount_color(thermal, amount, linear_color, false);
+    let amount_radiance: vec4<f32> = amount_color(
+        thermal, amount, unpack_radiance(colors[cell_index].y), true);
+    let color: vec4<f32> = temperature_color(thermal, temperature, amount_color_value, false);
+    let radiance: vec4<f32> = temperature_color(thermal, temperature, amount_radiance, true);
     return lit_color(color, light_at(local * cellular_tile_size_float), radiance.rgb);
 }

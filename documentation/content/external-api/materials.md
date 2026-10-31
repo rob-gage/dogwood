@@ -21,7 +21,7 @@ have been registered.
 | `register_fluid(name, properties)` | `MaterialPropertiesFluid` | `density`, `viscosity`, `cohesion`, `artificial_pressure`, `drag`, `friction`, `restitution`, `edit_color`, `edit_radiance` |
 | `register_gas(name, properties)` | `MaterialPropertiesGas` | `mass`, `diffusivity`, `cohesion`, `graphics` (`color`, `opacity`, `radiance`) |
 
-Every form also has `chemical: MaterialPropertiesChemical`, with reaction-selection `tags`. Every form also has `thermal: MaterialPropertiesThermal`, with `heat_capacity`, `conduction`,
+Every form also has `chemical: MaterialPropertiesChemical`, with reaction-selection `tags` and visual-only `amount_colors`; gases ignore amount colors. Every form also has `thermal: MaterialPropertiesThermal`, with `heat_capacity`, `conduction`,
 `edit_temperature`, `hot_transition`, `cold_transition`, and render-time `temperature_colors`. Defaults are heat capacity `1.0`,
 conduction `0.0`, edit temperature `293.0`, and no transitions. Gas heat capacity is per
 atmosphere. `MaterialTransition::new(temperature, latent_heat, product)` takes a product name,
@@ -74,7 +74,7 @@ Placing a fluid identifier directly in a cellular array does not create a partic
 
 ## Reaction properties and validation
 
-`MaterialPropertiesChemical::tags` names material groups that reaction reactants can select.
+`MaterialPropertiesChemical::tags` names material groups that reaction reactants can select. `amount_colors` is a render-time list of `MaterialAmountColor` keys for cellular and fluid material; each key selects a color and radiance transformation at an amount per full cell or particle. Amount colors are applied before temperature colors. They do not alter stored simulation color or radiance.
 
 `MaterialReaction` takes one or two `MaterialReactant` entries and zero to three `MaterialReactionProduct` entries. Reactants select an exact material name or tag and specify consumed amount per event; amount zero marks a catalyst. Products specify material name and amount, with optional color and radiance transforms. Builder methods set event rate, inclusive temperature and pressure ranges, heat per event, and pressure added per event. Use `with_temperature_range`, `with_pressure_range`, `with_heat`, and `with_pressure`.
 
@@ -113,7 +113,7 @@ Registered static materials start at index 1. Dynamic, fluid, and gas indices st
 names. `debris(identifier)` returns the resolved dynamic debris identifier. `material_count()`
 counts all forms.
 
-The table provides reaction records, reaction product color transforms, and reaction lookup buffers. It also provides `cellular_color(identifier, cell, color)`, `cellular_radiance(identifier, cell, radiance)`, and GPU buffer accessors. Cellular radiance sampling uses the same frame and repetition math as albedo sampling; the explicit radiance value passes through unchanged. For cellular materials with albedo, `cellular_color` samples the frame at the cell center. The pattern
+The table provides `amount_color_buffer()` for render-time amount keys, along with reaction records, reaction product color transforms, and reaction lookup buffers. It also provides `cellular_color(identifier, cell, color)`, `cellular_radiance(identifier, cell, radiance)`, and GPU buffer accessors. Cellular radiance sampling uses the same frame and repetition math as albedo sampling; the explicit radiance value passes through unchanged. For cellular materials with albedo, `cellular_color` samples the frame at the cell center. The pattern
 repeats from the scene origin with image rows flipped. It applies the packed sRGB tint, multiplying
 RGB in linear light and alpha separately. Colors use RGBA bytes, with red in the least-significant
 byte: `u32::from_le_bytes([r, g, b, a])`.
@@ -129,7 +129,7 @@ details.
 
 Core: {{ <rustdoc path="engine/materials/enum.Material.html" text="Material" /> }} · {{ <rustdoc path="engine/materials/enum.MaterialForm.html" text="MaterialForm" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialIdentifier.html" text="MaterialIdentifier" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialRegistry.html" text="MaterialRegistry" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialTable.html" text="MaterialTable" /> }} · {{ <rustdoc path="engine/materials/enum.MaterialError.html" text="MaterialError" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialTransition.html" text="MaterialTransition" /> }}
 
-Chemistry: {{ <rustdoc path="engine/materials/struct.MaterialPropertiesChemical.html" text="MaterialPropertiesChemical" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialReaction.html" text="MaterialReaction" /> }} · {{ <rustdoc path="engine/materials/enum.MaterialReactant.html" text="MaterialReactant" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialReactionProduct.html" text="MaterialReactionProduct" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialRegistry.html#method.register_reaction" text="register_reaction" /> }}
+Chemistry: {{ <rustdoc path="engine/materials/struct.MaterialPropertiesChemical.html" text="MaterialPropertiesChemical" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialAmountColor.html" text="MaterialAmountColor" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialReaction.html" text="MaterialReaction" /> }} · {{ <rustdoc path="engine/materials/enum.MaterialReactant.html" text="MaterialReactant" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialReactionProduct.html" text="MaterialReactionProduct" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialRegistry.html#method.register_reaction" text="register_reaction" /> }}
 
 Properties: {{ <rustdoc path="engine/materials/struct.MaterialPropertiesCellularStatic.html" text="MaterialPropertiesCellularStatic" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialPropertiesCellularDynamic.html" text="MaterialPropertiesCellularDynamic" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialPropertiesFluid.html" text="MaterialPropertiesFluid" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialPropertiesGas.html" text="MaterialPropertiesGas" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialPropertiesThermal.html" text="MaterialPropertiesThermal" /> }} · {{ <rustdoc path="engine/materials/struct.MaterialTemperatureColor.html" text="MaterialTemperatureColor" /> }}
 

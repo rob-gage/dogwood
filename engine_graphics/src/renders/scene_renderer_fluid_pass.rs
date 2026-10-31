@@ -10,7 +10,7 @@ const FLUID_DEPTH_SEARCH_ROWS: u32 = 8;
 
 /// Renderer for the cell-resolution fluid raster
 pub struct SceneRendererFluidPass {
-    /// Layout for fluid uniforms, raster, material properties, and particle colors
+    /// Layout for fluid uniforms, raster, material properties, colors, and species amounts
     bind_group_layout: wgpu::BindGroupLayout,
     /// Pipeline layout for fluid rendering
     pipeline_layout: wgpu::PipelineLayout,
@@ -40,6 +40,8 @@ pub struct SceneRendererFluidPass {
     color_buffer: Option<wgpu::Buffer>,
     /// Fluid heat buffer used by the cached fluid bind group
     heat_buffer: Option<wgpu::Buffer>,
+    /// Species buffer used to select the amount of the rendered fluid material
+    species_buffer: Option<wgpu::Buffer>,
 }
 
 impl SceneRendererFluidPass {
@@ -121,6 +123,16 @@ impl SceneRendererFluidPass {
                         },
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 7,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             },
         );
@@ -176,6 +188,7 @@ impl SceneRendererFluidPass {
             material_properties_buffer: None,
             color_buffer: None,
             heat_buffer: None,
+            species_buffer: None,
         }
     }
 
@@ -312,8 +325,11 @@ impl SceneRendererFluidPass {
             self.color_buffer.as_ref() != Some(fluid_graphics.color_buffer);
         let heat_buffer_differs: bool =
             self.heat_buffer.as_ref() != Some(fluid_graphics.heat_buffer);
+        let species_buffer_differs: bool =
+            self.species_buffer.as_ref() != Some(fluid_graphics.species_buffer.buffer);
         if self.bind_group.is_none() || raster_buffer_differs || materials_buffer_differs
-            || color_buffer_differs || heat_buffer_differs || cell_buffers_differ
+            || color_buffer_differs || heat_buffer_differs || species_buffer_differs
+            || cell_buffers_differ
         {
             let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("`SceneRendererFluidPass.bind_group`"),
@@ -359,6 +375,12 @@ impl SceneRendererFluidPass {
                         binding: 6,
                         resource: fluid_graphics.heat_buffer.as_entire_binding(),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: wgpu::BindingResource::Buffer(
+                            fluid_graphics.species_buffer.clone(),
+                        ),
+                    },
                 ],
             });
             self.bind_group = Some(bind_group);
@@ -367,6 +389,7 @@ impl SceneRendererFluidPass {
                 Some(fluid_graphics.material_properties_buffer.clone());
             self.color_buffer = Some(fluid_graphics.color_buffer.clone());
             self.heat_buffer = Some(fluid_graphics.heat_buffer.clone());
+            self.species_buffer = Some(fluid_graphics.species_buffer.buffer.clone());
         }
     }
 
