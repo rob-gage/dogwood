@@ -51,7 +51,6 @@ const SEGMENT_CELLS: u32 = 8u;
 
 var<workgroup> scan_attenuations: array<f32, WORKGROUP_SIZE>;
 var<workgroup> scan_lights: array<vec3<f32>, WORKGROUP_SIZE>;
-var<workgroup> segment_carry: vec3<f32>;
 
 /// Unpacks one packed light
 fn unpack_light(packed: vec2<u32>) -> vec3<f32> {
@@ -80,213 +79,146 @@ fn attenuation(extinction: f32) -> f32 {
     return exp(-extinction / spread.penetration);
 }
 
+/// One cell of a line segment: its buffer index, the fraction of light spreading into it, and
+/// the light it starts with
+struct SpreadCell {
+    index: u32,
+    attenuation: f32,
+    seed: vec3<f32>,
+};
+
+/// The light entering an invocation's cells and leaving the whole segment
+struct SpreadScan {
+    entering: vec3<f32>,
+    leaving: vec3<f32>,
+};
+
+/// Reads a cell at a step along a line, from its far end when `reverse` holds; steps past the
+/// line pass light through unchanged
+fn load_cell(line: u32, step: u32, length: u32, reverse: bool) -> SpreadCell {
+    if step >= length {
+        return SpreadCell(0u, 1.0, vec3<f32>(0.0));
+    }
+    let cell: vec2<u32> = line_cell(line, select(step, length - 1u - step, reverse));
+    let index: u32 = cell.y * spread.domain_size.x + cell.x;
+    let extinction: f32 = textureLoad(optical, cell, 0).a;
+    var seed: vec3<f32> = unpack_light(input[index]);
+    if spread.adds_backlight != 0u {
+        // backlight reaches the cells a tile of matter does not hide from behind
+        let coordinates: vec2<f32> = (vec2<f32>(cell) + 0.5) / vec2<f32>(spread.domain_size);
+        seed += textureSampleLevel(backlight, backlight_sampler, coordinates, 0.0).rgb
+            * exp(-extinction * spread.cellular_tile_size);
+    }
+    return SpreadCell(index, attenuation(extinction), seed);
+}
+
+/// Scans the `max(a * x, b)` maps of every invocation's cells in the order of their `slot`s,
+/// given the light entering the segment. Every invocation of the workgroup must call it.
+fn scan_maps(slot: u32, attenuation_product: f32, light: vec3<f32>, carry: vec3<f32>) -> SpreadScan {
+    var product: f32 = attenuation_product;
+    var scanned: vec3<f32> = light;
+    scan_attenuations[slot] = product;
+    scan_lights[slot] = scanned;
+    workgroupBarrier();
+    for (var offset: u32 = 1u; offset < WORKGROUP_SIZE; offset *= 2u) {
+        var earlier_attenuation: f32 = 1.0;
+        var earlier_light: vec3<f32> = vec3<f32>(0.0);
+        if slot >= offset {
+            earlier_attenuation = scan_attenuations[slot - offset];
+            earlier_light = scan_lights[slot - offset];
+        }
+        workgroupBarrier();
+        if slot >= offset {
+            scanned = max(product * earlier_light, scanned);
+            product *= earlier_attenuation;
+            scan_attenuations[slot] = product;
+            scan_lights[slot] = scanned;
+        }
+        workgroupBarrier();
+    }
+    var entering: vec3<f32> = carry;
+    if slot > 0u {
+        entering = max(scan_attenuations[slot - 1u] * carry, scan_lights[slot - 1u]);
+    }
+    let leaving: vec3<f32> =
+        max(scan_attenuations[WORKGROUP_SIZE - 1u] * carry, scan_lights[WORKGROUP_SIZE - 1u]);
+    workgroupBarrier();
+    return SpreadScan(entering, leaving);
+}
+
+/// Writes a cell's spread light, to the light texture instead when this pass writes it, since the
+/// last pass's buffer is never read again
+fn store_light(index: u32, light: vec3<f32>) {
+    if spread.writes_light != 0u {
+        textureStore(light_texture, vec2<u32>(index % spread.domain_size.x,
+            index / spread.domain_size.x), vec4<f32>(light, 1.0));
+    } else {
+        output[index] = pack_light(light);
+    }
+}
+
+/// Spreads light along a line of one segment in both directions at once, each invocation keeping
+/// its cells between the two scans
+fn spread_segment(line: u32, thread: u32, length: u32) {
+    var cells: array<SpreadCell, SEGMENT_CELLS>;
+    var product: f32 = 1.0;
+    var light: vec3<f32> = vec3<f32>(0.0);
+    for (var cell_index: u32 = 0u; cell_index < SEGMENT_CELLS; cell_index++) {
+        cells[cell_index] = load_cell(line, thread * SEGMENT_CELLS + cell_index, length, false);
+        product *= cells[cell_index].attenuation;
+        light = max(cells[cell_index].attenuation * light, cells[cell_index].seed);
+    }
+    var forward: array<vec3<f32>, SEGMENT_CELLS>;
+    var carried: vec3<f32> = scan_maps(thread, product, light, vec3<f32>(0.0)).entering;
+    for (var cell_index: u32 = 0u; cell_index < SEGMENT_CELLS; cell_index++) {
+        carried = max(cells[cell_index].attenuation * carried, cells[cell_index].seed);
+        forward[cell_index] = carried;
+    }
+    // the reverse scan runs the invocations from the far end of the line
+    light = vec3<f32>(0.0);
+    for (var cell_index: i32 = i32(SEGMENT_CELLS) - 1; cell_index >= 0; cell_index--) {
+        light = max(cells[cell_index].attenuation * light, cells[cell_index].seed);
+    }
+    carried = scan_maps(WORKGROUP_SIZE - 1u - thread, product, light, vec3<f32>(0.0)).entering;
+    for (var cell_index: i32 = i32(SEGMENT_CELLS) - 1; cell_index >= 0; cell_index--) {
+        carried = max(cells[cell_index].attenuation * carried, cells[cell_index].seed);
+        if thread * SEGMENT_CELLS + u32(cell_index) < length {
+            store_light(cells[cell_index].index, max(forward[cell_index], carried));
+        }
+    }
+}
+
 /// Spreads light along one line in one direction as a scan of `max(a * x, b)` maps, one segment
 /// of the line at a time with each invocation holding its cells, writing the result or raising
 /// the written result to it
 fn spread_line(line: u32, thread: u32, length: u32, reverse: bool) {
-    if thread == 0u {
-        segment_carry = vec3<f32>(0.0);
-    }
+    var carry: vec3<f32> = vec3<f32>(0.0);
     let segment_length: u32 = WORKGROUP_SIZE * SEGMENT_CELLS;
     for (var segment_start: u32 = 0u; segment_start < length; segment_start += segment_length) {
-        var attenuations: array<f32, 8>;
-        var seeds: array<vec3<f32>, 8>;
-        var indices: array<u32, 8>;
-        var attenuation_product: f32 = 1.0;
+        var cells: array<SpreadCell, SEGMENT_CELLS>;
+        var product: f32 = 1.0;
         var light: vec3<f32> = vec3<f32>(0.0);
         let first: u32 = segment_start + thread * SEGMENT_CELLS;
         for (var cell_index: u32 = 0u; cell_index < SEGMENT_CELLS; cell_index++) {
-            let step: u32 = first + cell_index;
-            if step >= length {
-                attenuations[cell_index] = 1.0;
-                seeds[cell_index] = vec3<f32>(0.0);
-                continue;
-            }
-            let cell: vec2<u32> = line_cell(line, select(step, length - 1u - step, reverse));
-            let index: u32 = cell.y * spread.domain_size.x + cell.x;
-            let extinction: f32 = textureLoad(optical, cell, 0).a;
-            var seed: vec3<f32> = unpack_light(input[index]);
-            if spread.adds_backlight != 0u {
-                // backlight reaches the cells a tile of matter does not hide from behind
-                let coordinates: vec2<f32> = (vec2<f32>(cell) + 0.5) / vec2<f32>(spread.domain_size);
-                seed += textureSampleLevel(backlight, backlight_sampler, coordinates, 0.0).rgb
-                    * exp(-extinction * spread.cellular_tile_size);
-            }
-            indices[cell_index] = index;
-            attenuations[cell_index] = attenuation(extinction);
-            seeds[cell_index] = seed;
-            attenuation_product *= attenuations[cell_index];
-            light = max(attenuations[cell_index] * light, seed);
+            cells[cell_index] = load_cell(line, first + cell_index, length, reverse);
+            product *= cells[cell_index].attenuation;
+            light = max(cells[cell_index].attenuation * light, cells[cell_index].seed);
         }
-        scan_attenuations[thread] = attenuation_product;
-        scan_lights[thread] = light;
-        workgroupBarrier();
-        for (var offset: u32 = 1u; offset < WORKGROUP_SIZE; offset *= 2u) {
-            var earlier_attenuation: f32 = 1.0;
-            var earlier_light: vec3<f32> = vec3<f32>(0.0);
-            if thread >= offset {
-                earlier_attenuation = scan_attenuations[thread - offset];
-                earlier_light = scan_lights[thread - offset];
-            }
-            workgroupBarrier();
-            if thread >= offset {
-                light = max(attenuation_product * earlier_light, light);
-                attenuation_product *= earlier_attenuation;
-                scan_attenuations[thread] = attenuation_product;
-                scan_lights[thread] = light;
-            }
-            workgroupBarrier();
-        }
-        // the light entering this invocation's cells, from earlier invocations and segments
-        var carried: vec3<f32> = segment_carry;
-        if thread > 0u {
-            carried = max(scan_attenuations[thread - 1u] * segment_carry, scan_lights[thread - 1u]);
-        }
-        let segment_end: vec3<f32> = max(
-            scan_attenuations[WORKGROUP_SIZE - 1u] * segment_carry,
-            scan_lights[WORKGROUP_SIZE - 1u],
-        );
-        workgroupBarrier();
+        let scan: SpreadScan = scan_maps(thread, product, light, carry);
+        var carried: vec3<f32> = scan.entering;
         for (var cell_index: u32 = 0u; cell_index < SEGMENT_CELLS; cell_index++) {
             if first + cell_index >= length {
                 break;
             }
-            carried = max(attenuations[cell_index] * carried, seeds[cell_index]);
-            let index: u32 = indices[cell_index];
+            carried = max(cells[cell_index].attenuation * carried, cells[cell_index].seed);
+            let index: u32 = cells[cell_index].index;
             if reverse {
-                let spread_light: vec3<f32> = max(unpack_light(output[index]), carried);
-                output[index] = pack_light(spread_light);
-                if spread.writes_light != 0u {
-                    textureStore(light_texture, vec2<u32>(index % spread.domain_size.x,
-                        index / spread.domain_size.x), vec4<f32>(spread_light, 1.0));
-                }
+                store_light(index, max(unpack_light(output[index]), carried));
             } else {
                 output[index] = pack_light(carried);
             }
         }
-        if thread == 0u {
-            segment_carry = segment_end;
-        }
-        workgroupBarrier();
-    }
-}
-
-/// Spreads light along a line that fits one segment and divides into whole invocations in both
-/// directions, each invocation keeping its cells in registers. Reversed, the invocation holding
-/// cells `8j..8j+8` is exactly the invocation `n - 1 - j` of a reversed scan, so the arithmetic
-/// and grouping match two separate `spread_line` calls bit for bit.
-fn spread_line_fused(line: u32, thread: u32, length: u32) {
-    let count: u32 = length / SEGMENT_CELLS;
-    let is_active: bool = thread < count;
-    var attenuations: array<f32, 8>;
-    var seeds: array<vec3<f32>, 8>;
-    var indices: array<u32, 8>;
-    var forward: array<vec2<u32>, 8>;
-    let zero_carry: vec3<f32> = vec3<f32>(0.0);
-    var attenuation_product: f32 = 1.0;
-    var light: vec3<f32> = vec3<f32>(0.0);
-    let first: u32 = thread * SEGMENT_CELLS;
-    for (var cell_index: u32 = 0u; cell_index < SEGMENT_CELLS; cell_index++) {
-        if !is_active {
-            attenuations[cell_index] = 1.0;
-            seeds[cell_index] = vec3<f32>(0.0);
-            continue;
-        }
-        let cell: vec2<u32> = line_cell(line, first + cell_index);
-        let index: u32 = cell.y * spread.domain_size.x + cell.x;
-        let extinction: f32 = textureLoad(optical, cell, 0).a;
-        var seed: vec3<f32> = unpack_light(input[index]);
-        if spread.adds_backlight != 0u {
-            let coordinates: vec2<f32> = (vec2<f32>(cell) + 0.5) / vec2<f32>(spread.domain_size);
-            seed += textureSampleLevel(backlight, backlight_sampler, coordinates, 0.0).rgb
-                * exp(-extinction * spread.cellular_tile_size);
-        }
-        indices[cell_index] = index;
-        attenuations[cell_index] = attenuation(extinction);
-        seeds[cell_index] = seed;
-        attenuation_product *= attenuations[cell_index];
-        light = max(attenuations[cell_index] * light, seed);
-    }
-    // forward scan, invocation order is thread order
-    scan_attenuations[thread] = attenuation_product;
-    scan_lights[thread] = light;
-    workgroupBarrier();
-    for (var offset: u32 = 1u; offset < WORKGROUP_SIZE; offset *= 2u) {
-        var earlier_attenuation: f32 = 1.0;
-        var earlier_light: vec3<f32> = vec3<f32>(0.0);
-        if thread >= offset {
-            earlier_attenuation = scan_attenuations[thread - offset];
-            earlier_light = scan_lights[thread - offset];
-        }
-        workgroupBarrier();
-        if thread >= offset {
-            light = max(attenuation_product * earlier_light, light);
-            attenuation_product *= earlier_attenuation;
-            scan_attenuations[thread] = attenuation_product;
-            scan_lights[thread] = light;
-        }
-        workgroupBarrier();
-    }
-    var carried: vec3<f32> = zero_carry;
-    if thread > 0u {
-        carried = max(scan_attenuations[thread - 1u] * zero_carry, scan_lights[thread - 1u]);
-    }
-    workgroupBarrier();
-    for (var cell_index: u32 = 0u; cell_index < SEGMENT_CELLS; cell_index++) {
-        if !is_active {
-            break;
-        }
-        carried = max(attenuations[cell_index] * carried, seeds[cell_index]);
-        forward[cell_index] = pack_light(carried);
-    }
-    // reverse scan, this invocation acts as reversed invocation `count - 1 - thread`
-    let virtual_thread: u32 = select(thread, count - 1u - thread, is_active);
-    attenuation_product = 1.0;
-    light = vec3<f32>(0.0);
-    for (var step: u32 = 0u; step < SEGMENT_CELLS; step++) {
-        let cell_index: u32 = SEGMENT_CELLS - 1u - step;
-        attenuation_product *= attenuations[cell_index];
-        light = max(attenuations[cell_index] * light, seeds[cell_index]);
-    }
-    scan_attenuations[virtual_thread] = attenuation_product;
-    scan_lights[virtual_thread] = light;
-    workgroupBarrier();
-    for (var offset: u32 = 1u; offset < WORKGROUP_SIZE; offset *= 2u) {
-        var earlier_attenuation: f32 = 1.0;
-        var earlier_light: vec3<f32> = vec3<f32>(0.0);
-        if virtual_thread >= offset {
-            earlier_attenuation = scan_attenuations[virtual_thread - offset];
-            earlier_light = scan_lights[virtual_thread - offset];
-        }
-        workgroupBarrier();
-        if virtual_thread >= offset {
-            light = max(attenuation_product * earlier_light, light);
-            attenuation_product *= earlier_attenuation;
-            scan_attenuations[virtual_thread] = attenuation_product;
-            scan_lights[virtual_thread] = light;
-        }
-        workgroupBarrier();
-    }
-    carried = zero_carry;
-    if virtual_thread > 0u {
-        carried = max(scan_attenuations[virtual_thread - 1u] * zero_carry,
-            scan_lights[virtual_thread - 1u]);
-    }
-    if !is_active {
-        return;
-    }
-    for (var step: u32 = 0u; step < SEGMENT_CELLS; step++) {
-        let cell_index: u32 = SEGMENT_CELLS - 1u - step;
-        carried = max(attenuations[cell_index] * carried, seeds[cell_index]);
-        let index: u32 = indices[cell_index];
-        let spread_light: vec3<f32> = max(unpack_light(forward[cell_index]), carried);
-        // the last pass's buffer is never read again, only its light texture
-        if spread.writes_light != 0u {
-            textureStore(light_texture, vec2<u32>(index % spread.domain_size.x,
-                index / spread.domain_size.x), vec4<f32>(spread_light, 1.0));
-        } else {
-            output[index] = pack_light(spread_light);
-        }
+        carry = scan.leaving;
     }
 }
 
@@ -298,8 +230,8 @@ fn spread_lines(
 ) {
     let line: u32 = workgroup.x;
     let length: u32 = select(spread.domain_size.y, spread.domain_size.x, spread.axis == 0u);
-    if length % SEGMENT_CELLS == 0u && length <= WORKGROUP_SIZE * SEGMENT_CELLS {
-        spread_line_fused(line, thread, length);
+    if length <= WORKGROUP_SIZE * SEGMENT_CELLS {
+        spread_segment(line, thread, length);
         return;
     }
     spread_line(line, thread, length, false);
