@@ -1993,7 +1993,10 @@ fn refine(
     var stored: i32 = 0;
     if is_static(material_identifiers[fine_index]) {
         if constants.z != 0u {
-            stored = bitcast<i32>(words.w) / 4;
+            // floor shares, with the remainder going to the first cells, so the shares sum back
+            let total: i32 = bitcast<i32>(words.w);
+            let quotient: i32 = (total - ((total % 4) + 4) % 4) / 4;
+            stored = quotient + i32(i32(own) < total - quotient * 4);
         } else {
             var total: f32 = f32(words.x);
             for (var slot: u32 = 0u; slot < 4u; slot++) {

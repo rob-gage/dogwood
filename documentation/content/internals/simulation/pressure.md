@@ -30,7 +30,7 @@ The substeps then simulate the pressure cells with the same flow, transfer, and 
 
 - Phantom air and each species are split among cells by open volume, or evenly when none is open. Fluid-occupied cells retain partial volume, so refinement does not distribute bubbling gas evenly into a fully closed 2×2 group. Rounding remainders go to the most open cell, so no gas is lost.
 - Every cell keeps its pressure cell's face flows.
-- A static cell in a solid pressure cell takes an equal share of its stored pressure, so it holds the same pressure in atmospheres. One in a partial pressure cell stores the gauge pressure of the gas pressing on it.
+- A static cell in a solid pressure cell takes an equal share of its stored pressure, so it holds the same pressure in atmospheres. Shares are rounded down, and the remainder goes to the first cells, so the shares sum to the stored pressure. One in a partial pressure cell stores the gauge pressure of the gas pressing on it.
 
 Edits, streaming, rendering, and saves see only cells.
 
