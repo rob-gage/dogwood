@@ -455,7 +455,7 @@ fn added_gas(slots: vec4<u32>, gas_index: u32, amount: u32) -> vec4<u32> {
     var result: vec4<u32> = slots;
     if target_slot == 4u { return vec4<u32>(UNIT_MISSING); }
     let held: u32 = slots[target_slot] & SLOT_AMOUNT_MAXIMUM;
-    if held + amount > SLOT_AMOUNT_MAXIMUM { return vec4<u32>(UNIT_MISSING); }
+    if amount > SLOT_AMOUNT_MAXIMUM - held { return vec4<u32>(UNIT_MISSING); }
     result[target_slot] = (gas_index << 24u) | (held + amount);
     return result;
 }
@@ -695,13 +695,15 @@ fn react(
 /// Tries every reaction of a lookup entry between two units, swapping them for reactions listing
 /// the second unit first; catalytic contacts react only with the outside unit as the catalyst
 fn react_pair(first_slot: u32, first_unit: u32, second_slot: u32, second_unit: u32, scale: f32) {
-    if (unit_flags(first_slot, first_unit) & unit_flags(second_slot, second_unit) & FLAG_PAIRED)
-        == 0u
-    { return; }
     let first: u32 = unit_thermal_index(first_slot, first_unit);
     let second: u32 = unit_thermal_index(second_slot, second_unit);
     if first == UNIT_MISSING || second == UNIT_MISSING { return; }
-    let entry: u32 = reaction_lookup[first * uniforms.thermal_count + second];
+    let count: u32 = uniforms.thermal_count;
+    let flags: u32 = count * count + count;
+    if (reaction_lookup[flags + first] & reaction_lookup[flags + second] & FLAG_PAIRED) == 0u {
+        return;
+    }
+    let entry: u32 = reaction_lookup[first * count + second];
     for (var item: u32 = 0u; item < (entry & 0xffu); item++) {
         let word: u32 = reaction_lookup[(entry >> 8u) + item];
         let reaction: u32 = word & 0x7fffffffu;
@@ -923,7 +925,7 @@ fn select_tiles(
         region_reactions[region_index] = reactions;
     }
     workgroupBarrier();
-    let region_index: u32 = owned_region_index(local_index);
+    let region_index: u32 = (local_index / 8u + 1u) * u32(REGION_SIZE) + local_index % 8u + 1u;
     let block_bit: u32 = 1u << ((local_index / 16u) * 4u + (local_index % 8u) / 2u);
     let nearby: u32 = region_classes[region_index]
         | region_classes[region_index - 1u] | region_classes[region_index + 1u]
@@ -940,11 +942,6 @@ fn select_tiles(
         atomicStore(&reacting_tiles[entry], physical_tile);
         atomicStore(&reacting_tiles[entry + 1u], blocks);
     }
-}
-
-/// Returns the index in the workgroup's region of the cell an invocation owns
-fn owned_region_index(local_index: u32) -> u32 {
-    return (local_index / 8u + 1u) * u32(REGION_SIZE) + local_index % 8u + 1u;
 }
 
 /// Writes the indirect dispatch of one workgroup per reacting tile, then empties the list for the
