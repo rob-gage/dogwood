@@ -13,8 +13,8 @@ sources = ["engine_world/src/scenes/chemistry", "engine_world/src/scenes/thermal
 | Entry point | Work |
 |---|---|
 | `select_tiles` | Reads thermal-listed tiles and checks a 10×10 cell workgroup region for unary or paired reaction flags. Candidate tiles are appended to the reacting-tile list. |
-| `prepare_reactions` | Resets the reacting count and writes indirect dispatch arguments. |
-| `react_tiles` | Runs one workgroup per selected tile, processes owned 2×2 blocks and writes mutations. |
+| `prepare_reactions` | Pads the reacting-tile list to a multiple of four with tiles of no reactive blocks, writes indirect dispatch arguments, and resets the reacting count. |
+| `react_tiles` | Runs a 64-invocation workgroup per four selected tiles, one invocation per owned 2×2 block, and writes mutations. |
 
 Selection checks precompiled reaction flags and pair lookup entries before the reaction kernel reads full cell state. The pair lookup stores sorted reaction lists and their lengths; the selection flag words follow the unary headers. `MaterialTable` compiles these tables with the reaction records and product transformation vectors.
 

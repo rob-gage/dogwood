@@ -944,11 +944,19 @@ fn select_tiles(
     }
 }
 
-/// Writes the indirect dispatch of one workgroup per reacting tile, then empties the list for the
-/// next tick's selection
+/// Reacting tiles one workgroup reacts, sixteen invocations each
+const TILES_PER_WORKGROUP: u32 = 4u;
+
+/// Pads the reacting tiles with tiles of no reactive blocks to whole workgroups, writes the
+/// indirect dispatch of their workgroups, then empties the list for the next tick's selection
 @compute @workgroup_size(1)
 fn prepare_reactions() {
-    dispatches[0] = atomicLoad(&reacting_tiles[0]);
+    let count: u32 = atomicLoad(&reacting_tiles[0]);
+    let padded: u32 = (count + TILES_PER_WORKGROUP - 1u) / TILES_PER_WORKGROUP * TILES_PER_WORKGROUP;
+    for (var entry: u32 = count; entry < padded; entry++) {
+        atomicStore(&reacting_tiles[2u + 2u * entry], 0u);
+    }
+    dispatches[0] = padded / TILES_PER_WORKGROUP;
     dispatches[1] = 1u;
     dispatches[2] = 1u;
     atomicStore(&reacting_tiles[0], 0u);
@@ -958,14 +966,16 @@ fn prepare_reactions() {
 /// block, whose blocks shift by one cell along both axes every other tick, and tries their
 /// reactions alone, within each cell, across the block's inner faces, and with catalysts in the
 /// cells around the block, keeping the tile listed while a reaction is possible
-@compute @workgroup_size(16)
+@compute @workgroup_size(64)
 fn react_tiles(
     @builtin(workgroup_id) workgroup: vec3<u32>,
-    @builtin(local_invocation_index) local_block: u32,
+    @builtin(local_invocation_index) local_index: u32,
 ) {
+    let listed: u32 = workgroup.x * TILES_PER_WORKGROUP + local_index / 16u;
+    let local_block: u32 = local_index % 16u;
     // only the blocks the selection found able to react read their cells
-    if ((tiles.active_tiles[workgroup.x * 2u + 1u] >> local_block) & 1u) == 0u { return; }
-    let physical_tile: u32 = tiles.active_tiles[workgroup.x * 2u];
+    if ((tiles.active_tiles[listed * 2u + 1u] >> local_block) & 1u) == 0u { return; }
+    let physical_tile: u32 = tiles.active_tiles[listed * 2u];
     // the tile owns the blocks whose first cell lies in it, shifted back by the block offset
     let origin: vec2<i32> = listed_tile(physical_tile) * 8 - i32(uniforms.block_offset)
         + 2 * vec2<i32>(i32(local_block % 4u), i32(local_block / 4u));

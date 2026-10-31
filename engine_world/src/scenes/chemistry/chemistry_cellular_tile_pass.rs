@@ -177,10 +177,10 @@ impl ChemistryCellularTilePass {
         let tile_count: u64 = cellular_tile_buffers.material_identifier_buffer().size() / 4
             / (CELLULAR_TILE_SIZE * CELLULAR_TILE_SIZE) as u64;
         // the reacting tile count, then the buffer index and reactive block mask of every
-        // reacting tile
+        // reacting tile, with room to pad them to whole workgroups
         let reacting_tile_buffer: wgpu::Buffer = create_buffer(
             "`ChemistryCellularTilePass.reacting_tile_buffer`",
-            4 + tile_count * 8,
+            4 + (tile_count + 3) * 8,
             wgpu::BufferUsages::STORAGE,
         );
         let dispatch_buffer: wgpu::Buffer = create_buffer(
