@@ -406,12 +406,6 @@ fn cell_index(cell: vec2<i32>) -> u32 {
     return tile_index(position / 8u) * 64u + (position.y % 8u) * 8u + position.x % 8u;
 }
 
-/// Returns whether a cell position lies in a tile simulated this tick
-fn is_cell_active(cell: vec2<i32>) -> bool {
-    if !is_cell_inside(cell) { return false; }
-    return (atomicLoad(&pressure_awake[tile_index(vec2<u32>(cell) / 8u)]) & TILE_ACTIVE) != 0u;
-}
-
 /// Returns whether a pressure cell position lies inside the active region
 fn is_coarse_inside(cell: vec2<i32>) -> bool {
     return cell.x >= 0 && cell.y >= 0
@@ -531,12 +525,6 @@ fn solid_capacity(mass: f32) -> f32 {
     return uniforms.solid_response / (mass * uniforms.solid_speed * uniforms.solid_speed);
 }
 
-/// Reads one cell's gas and stored pressure and derives its pressure and density, treating cells
-/// outside the active region as closed and empty
-fn load_cell(cell: vec2<i32>) -> PressureCell {
-    return load_cell_with_activity(cell, is_cell_active(cell));
-}
-
 /// Returns a static cell's solid owner and absorption, as `PressureCell.solid` holds them
 fn static_solid(index: u32, material: vec4<f32>) -> u32 {
     let rigid_body_cell: u32 = rigid_body_cells[index];
@@ -545,55 +533,6 @@ fn static_solid(index: u32, material: vec4<f32>) -> u32 {
         owner = atomicLoad(&rigid_body_cellular_tiles[(rigid_body_cell - 1u) / 64u * 8u]) + 2u;
     }
     return (owner << 8u) | u32(round(saturate(material.y) * 255.0));
-}
-
-/// Reads one cell like `load_cell`, given whether it lies in a tile simulated this tick
-fn load_cell_with_activity(cell: vec2<i32>, is_active: bool) -> PressureCell {
-    var pressure_cell: PressureCell;
-    if !is_cell_inside(cell) { return pressure_cell; }
-    let index: u32 = cell_index(cell);
-    let words: vec4<u32> = gas_in[index * 2u + 1u];
-    pressure_cell.slots = gas_in[index * 2u];
-    pressure_cell.phantom = words.x;
-    pressure_cell.flow = vec2<f32>(bitcast<f32>(words.y), bitcast<f32>(words.z));
-    let volume_word: vec2<u32> = volumes[index];
-    pressure_cell.volume = f32(volume_word.x & ~VOLUME_DRAGGED) / VOLUME_SCALE;
-    pressure_cell.is_dragged = (volume_word.x & VOLUME_DRAGGED) != 0u;
-    pressure_cell.drag = unpack2x16snorm(volume_word.y) * ACTOR_VELOCITY_MAXIMUM
-        * uniforms.actor_velocity_scale;
-    pressure_cell.is_active = is_active;
-    pressure_cell.temperature = bitcast<f32>(matter[index].x);
-    var mass: f32 = f32(pressure_cell.phantom) * uniforms.ambient_mass;
-    var total: f32 = f32(pressure_cell.phantom);
-    for (var slot: u32 = 0u; slot < 4u; slot++) {
-        let amount: f32 = f32(slot_amount(pressure_cell.slots[slot]));
-        if amount <= 0.0 { continue; }
-        mass += amount * gas_materials[slot_gas(pressure_cell.slots[slot]) * 2u].x;
-        total += amount;
-    }
-    let volume: f32 = max(pressure_cell.volume, VOLUME_MINIMUM);
-    pressure_cell.total = total;
-    pressure_cell.pressure_factor = temperature_pressure_factor(pressure_cell.temperature);
-    pressure_cell.pressure = total / volume * pressure_cell.pressure_factor;
-    pressure_cell.density = mass / volume;
-    // static cells, of the cellular tiles or of a rigid body, carry stored pressure instead
-    let material_identifier: u32 = material_identifiers[index];
-    if is_static(material_identifier) {
-        let material: vec4<f32> = static_materials[material_identifier & 0x3fffffffu];
-        let rigid_body_cell: u32 = rigid_body_cells[index];
-        var owner: u32 = SOLID_TERRAIN;
-        if rigid_body_cell != 0u {
-            owner = atomicLoad(&rigid_body_cellular_tiles[(rigid_body_cell - 1u) / 64u * 8u]) + 2u;
-        }
-        pressure_cell.solid = (owner << 8u) | u32(round(saturate(material.y) * 255.0));
-        // a cell turned solid since its open volume was measured is closed all the same
-        pressure_cell.volume = 0.0;
-        pressure_cell.stored = bitcast<i32>(words.w);
-        pressure_cell.pressure = f32(uniforms.ambient_amount) + f32(pressure_cell.stored);
-        pressure_cell.density = material.x;
-        pressure_cell.pressure_factor = 1.0;
-    }
-    return pressure_cell;
 }
 
 /// Reads the pressure cells of a workgroup's pressure tile, listed by the bottom-left tile of its
@@ -1126,8 +1065,8 @@ fn collect(@builtin(global_invocation_id) invocation: vec3<u32>) {
         i32(invocation.x / uniforms.region_width),
     );
     var is_active: bool = false;
-    for (var y: i32 = -1; y <= 1; y++) {
-        for (var x: i32 = -1; x <= 1; x++) {
+    for (var y: i32 = -1; y <= 1 && !is_active; y++) {
+        for (var x: i32 = -1; x <= 1 && !is_active; x++) {
             let neighbor: vec2<i32> = tile + vec2<i32>(x, y);
             if neighbor.x < 0 || neighbor.y < 0
                 || neighbor.x >= i32(uniforms.region_width)

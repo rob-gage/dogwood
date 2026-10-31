@@ -252,8 +252,8 @@ fn collect(@builtin(global_invocation_id) invocation: vec3<u32>) {
     );
     // moving dynamic cells, fluid particles, and gas carry heat, so their tiles stay active
     var is_active: bool = false;
-    for (var y: i32 = -1; y <= 1; y++) {
-        for (var x: i32 = -1; x <= 1; x++) {
+    for (var y: i32 = -1; y <= 1 && !is_active; y++) {
+        for (var x: i32 = -1; x <= 1 && !is_active; x++) {
             let neighbor: vec2<i32> = tile + vec2<i32>(x, y);
             if neighbor.x < 0 || neighbor.y < 0
                 || neighbor.x >= i32(uniforms.region_width)
@@ -616,12 +616,13 @@ fn apply(
     let step: vec2<f32> = steps[index];
     let previous: f32 = bitcast<f32>(matter[index].x);
     // heat added to a cell holding almost nothing has nothing to warm, and is lost
-    let heat_capacity: f32 = cell_node(cell).heat_capacity;
-    let added_heat: f32 = select(
-        0.0,
-        f32(bitcast<i32>(changes.y)) / (uniforms.heat_scale * heat_capacity),
-        heat_capacity >= HEAT_CAPACITY_MINIMUM,
-    );
+    var added_heat: f32 = 0.0;
+    if changes.y != 0u {
+        let heat_capacity: f32 = cell_node(cell).heat_capacity;
+        if heat_capacity >= HEAT_CAPACITY_MINIMUM {
+            added_heat = f32(bitcast<i32>(changes.y)) / (uniforms.heat_scale * heat_capacity);
+        }
+    }
     let temperature: f32 = max(step.x + edited + added_heat, 0.0);
     matter[index].x = bitcast<u32>(temperature);
     fluid_heat[index].w = bitcast<i32>(step.y + edited + added_heat);
