@@ -70,7 +70,7 @@ Each event type is the argument of the matching `Game::*_event` callback; see [E
 | --- | --- | --- |
 | `SystemKeyboardEvent` | Fields `physical_key: PhysicalKey`, `pressed: bool`, `repeat: bool` | None |
 | `SystemMouseEvent` | `Button { button: MouseButton, pressed: bool }`, `CursorMoved { x, y }`, `CursorEntered`, `CursorLeft`, `WheelLines { horizontal, vertical }`, `WheelPixels { horizontal, vertical }` | Cursor coordinates and pixel wheel deltas are physical pixels (`f64`); line wheel deltas are `f32` lines |
-| `SystemWindowEvent` | `CloseRequested`, `Resized { width: u32, height: u32 }`, `FocusAcquired`, `FocusReleased` | `Resized` is in physical pixels |
+| `SystemWindowEvent` | `CloseRequested`, `Resized { width: u32, height: u32 }`, `FocusAcquired`, `FocusReleased` | `Resized` is in physical pixels; one is also sent with the initial size when the window is created |
 
 - `repeat` indicates an operating-system key repeat.
 - `KeyCode` and `PhysicalKey` are re-exported from Winit under `engine::system_events`.

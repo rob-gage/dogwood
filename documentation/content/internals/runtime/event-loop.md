@@ -17,7 +17,7 @@ For events belonging to its window, the host first gives each event to `UserInte
 | Winit event | Dogwood callback or host action |
 | --- | --- |
 | `CloseRequested` | `SystemWindowEvent::CloseRequested`, then exit the event loop |
-| `Resized` | `SystemWindowEvent::Resized { width, height }`, after updating the surface configuration, or suspending it for a zero-sized window |
+| `Resized` | `SystemWindowEvent::Resized { width, height }`, after updating the surface configuration, or suspending it for a zero-sized window; also sent once with the initial inner size after the window is created |
 | `Focused(true/false)` | `FocusAcquired` / `FocusReleased` |
 | `KeyboardInput` | `SystemKeyboardEvent` with physical key, pressed state, and repeat flag |
 | `MouseInput` | `SystemMouseEvent::Button` |

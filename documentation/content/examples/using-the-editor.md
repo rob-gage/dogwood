@@ -89,6 +89,7 @@ Game input is generally routed only in Play mode with the game camera selected; 
 
 - Keyboard presses reach `Game::keyboard_event` only when the viewport is focused and egui is not requesting keyboard input. Key releases are always forwarded.
 - Mouse events reach `Game::mouse_event` only when the pointer hovers over the viewport. Cursor positions are translated to viewport pixels.
+- `Game::window_event` receives the viewport tab's physical pixel size as `SystemWindowEvent::Resized` whenever it changes, matching those cursor coordinates.
 - egui pointer-button releases are also forwarded to the game UI outside the viewport, so no button stays held.
 
 See [Input and game UI](@/examples/input-and-ui.md) for how a game handles these events.

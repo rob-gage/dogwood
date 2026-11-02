@@ -28,7 +28,7 @@ fn main() -> Result<(), EngineError> {
 }
 ```
 
-The signature is `Editor::launch(engine: Engine, game: G) -> Result<(), EngineError>`, where `G: engine::games::Game`. It consumes both values, uses the game's `window_configuration()`, wraps the game in `GameInstance`, and opens the host window and event loop. A window failure is converted into `EngineError::Window`.
+The signature is `Editor::launch(engine: Engine, game: G) -> Result<(), EngineError>`, where `G: engine::games::Game`. It consumes both values, uses the game's `window_configuration()`, wraps the game in `GameInstance`, and opens the host window and event loop. The game receives `SystemWindowEvent::Resized` with the viewport tab's physical pixel size whenever it changes, not the host window size. A window failure is converted into `EngineError::Window`.
 
 `Engine::default()` creates the default accelerator and processor resources and panics if either initialization fails. Applications that need explicit setup can construct an `Engine` through its runtime API. See {{ <rustdoc path="editor/struct.Editor.html" text="Editor" /> }} and [Engine and Game](@/external-api/engine-and-games.md).
 

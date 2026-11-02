@@ -158,6 +158,8 @@ pub struct Editor<G: Game> {
     viewport_rect: Option<egui::Rect>,
     /// Physical pixels per point of the editor user interface
     pixels_per_point: f32,
+    /// Viewport size in physical pixels last reported to the game as its window size
+    reported_viewport_size: Option<(u32, u32)>,
     /// Whether the pointer is over the viewport
     is_viewport_hovered: bool,
     /// Whether the viewport was clicked since another part of the editor was
@@ -268,6 +270,7 @@ impl<G: Game> Editor<G> {
             viewport: None,
             viewport_rect: None,
             pixels_per_point: 1.0,
+            reported_viewport_size: None,
             is_viewport_hovered: false,
             is_viewport_focused: false,
             is_keyboard_wanted: false,
@@ -338,8 +341,11 @@ impl<G: Game> Editor<G> {
     /// Returns whether viewport input goes to the game rather than to editing
     fn is_game_input(&self) -> bool { self.is_playing && self.camera_actor.is_none() }
 
-    /// Handles a host window event, releasing held keys when focus is lost
+    /// Handles a host window event, releasing held keys when focus is lost; the game draws into
+    /// the viewport rather than the window, so it learns the viewport's size instead of the
+    /// window's
     fn window_event(&mut self, event: SystemWindowEvent) {
+        if let SystemWindowEvent::Resized { .. } = event { return; }
         if let SystemWindowEvent::FocusReleased = event { self.held_keys.clear(); }
         self.game_instance.window_event(event);
     }
@@ -441,6 +447,11 @@ impl<G: Game> Editor<G> {
         if let Some(rect) = self.viewport_rect {
             let width: u32 = ((rect.width() * self.pixels_per_point).round() as u32).max(1);
             let height: u32 = ((rect.height() * self.pixels_per_point).round() as u32).max(1);
+            // the game measures cursor positions, which arrive in viewport pixels, against this
+            if self.reported_viewport_size != Some((width, height)) {
+                self.reported_viewport_size = Some((width, height));
+                self.game_instance.window_event(SystemWindowEvent::Resized { width, height });
+            }
             let viewport: &mut EditorViewport = match self.viewport.as_mut() {
                 Some(viewport) => {
                     viewport.resize(accelerator, user_interface_renderer, width, height);

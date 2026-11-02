@@ -286,6 +286,11 @@ impl<'a> winit::application::ApplicationHandler for Window<'a> {
                     ));
                     window.request_redraw();
                     self.window = Some(window);
+                    // games learn the initial size the same way they learn later resizes
+                    (self.window_event_handler)(SystemWindowEvent::Resized {
+                        width: size.width,
+                        height: size.height,
+                    });
                 }
                 Err(error) => {
                     self.error = Some(WindowError::from(error));

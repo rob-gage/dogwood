@@ -27,7 +27,8 @@ Each editor frame handles the viewport in this order:
 1. `render_viewport` records the tab's available egui rectangle.
 2. The editor composes the UI using the current texture dimensions, so overlay coordinates use the existing texture size.
 3. The editor converts the tab's point dimensions to rounded physical pixels with the current `pixels_per_point`, and creates or resizes the texture if needed. Resizing replaces the view and updates the existing egui texture registration.
-4. `GameInstance::render` draws the game into the texture.
+4. When the resulting viewport pixel size differs from the last size reported, the editor sends `SystemWindowEvent::Resized { width, height }` to the game.
+5. `GameInstance::render` draws the game into the texture.
 5. The editor paints the registered texture into the tab rectangle with full-range UVs.
 
 The [scene renderer page](@/internals/rendering/scene-renderer.md) describes the game's own camera framing and render passes. The [UI renderer page](@/internals/rendering/user-interface.md) covers the editor's egui frame.
@@ -69,7 +70,7 @@ While the free camera is selected:
 
 ### Input coordinates
 
-Focus and native/egui event routing are described in [editor internals](@/internal-api/editor.md). For viewport-relative coordinates, native cursor movement subtracts the viewport's physical-pixel origin, while egui pointer coordinates subtract its egui-point origin.
+Focus and native/egui event routing are described in [editor internals](@/internal-api/editor.md). The editor does not forward the host window's resize event to the game; it reports the viewport tab's physical pixel size instead, matching the viewport-relative cursor coordinates. Native cursor movement subtracts the viewport's physical-pixel origin, while egui pointer coordinates subtract its egui-point origin.
 
 ## View modes
 
