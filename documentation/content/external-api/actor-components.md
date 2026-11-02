@@ -18,6 +18,7 @@ See [actors](@/external-api/actors.md) for registry operations and [collisions a
 | Parallax layer | `ActorKinematicsPositionComponent` + `ActorSpritesComponent` + `ActorParallaxComponent` |
 | Visible sprite | `ActorKinematicsPositionComponent` + `ActorSpritesComponent` |
 | Controllable pawn | `ActorKinematicsPositionComponent` + `ActorCollisionComponent` (kinematic body) + `ActorPawnMovementComponent` + `ActorPawnPossessionComponent` (`ActorPawnControlComponent` is optional; the game instance supplies it for possessed pawns) |
+| Ropes and tethers on pawns | Call `Scene::set_pawn_tether` each update; see [scenes](@/external-api/scenes.md) |
 
 See [parallax backgrounds](@/external-api/scenes.md#parallax-backgrounds) for physical depth, sprite scale, and gameplay changes.
 

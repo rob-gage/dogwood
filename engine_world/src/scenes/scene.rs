@@ -97,6 +97,30 @@ use std::{
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 pub struct SceneRigidBody(pub(crate) u64);
 
+/// A rigid body point held by a pawn's tether, with the tether length's gradient at that point
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ScenePawnTetherBody {
+    /// The rigid body holding the point
+    pub rigid_body: SceneRigidBody,
+    /// The point in scene coordinates
+    pub point: ScenePosition,
+    /// Change of tether length per tile the point moves, such as the sum of the unit directions
+    /// away from its neighbouring tether points
+    pub gradient: [f32; 2],
+}
+
+/// A one-sided length limit between a pawn and the points a rope holds or bends around, solved
+/// by the pawn's next movement step after its control and gravity
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ScenePawnTether<'a> {
+    /// Unit direction from the pawn toward the tether's nearest point
+    pub direction: [f32; 2],
+    /// Tether length beyond its allowed length in tiles, positive while overstretched
+    pub stretch: f32,
+    /// Rigid body points the tether holds, receiving the reaction of its pull
+    pub bodies: &'a [ScenePawnTetherBody],
+}
+
 /// Object hit by a scene ray
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 pub enum SceneRayTarget {
@@ -271,6 +295,12 @@ impl Scene {
     /// Returns whether a pawn was grounded at its last movement step
     pub fn pawn_is_grounded(&self, actor: Actor) -> Option<bool> {
         self.collision.as_ref()?.pawn_is_grounded(actor)
+    }
+
+    /// Sets or clears the tether solved by a pawn's next movement step, returning whether the
+    /// actor is a simulated pawn; a tether lasts one simulation step and is set again each update
+    pub fn set_pawn_tether(&mut self, actor: Actor, tether: Option<ScenePawnTether<'_>>) -> bool {
+        self.collision.as_mut().is_some_and(|collision| collision.set_pawn_tether(actor, tether))
     }
 
     /// Returns the downward acceleration of dynamic bodies and pawns in tiles per second squared

@@ -35,7 +35,7 @@ The facade re-exports selected types from the host, graphics, world, and user-in
 | `engine::runtime` | `Engine`, `EngineError` | [Engine and Game](@/external-api/engine-and-games.md) |
 | `engine::actors` | World actor module and its selected exports | [Actors](@/external-api/actors.md), [Actor components](@/external-api/actor-components.md) |
 | `engine::materials` | World material module and its selected exports, including chemical material properties and reaction types | [Materials](@/external-api/materials.md) |
-| `engine::scenes` | `Scene`, `SceneError`, `SceneGenerator`, `ScenePosition`, `SceneRayHit`, `SceneRayTarget`, `SceneRigidBody`, and scene submodules | [Scenes](@/external-api/scenes.md), [Coordinates, tiles, and chunks](@/external-api/world-storage.md), [Collisions and edits](@/external-api/collisions-and-edits.md) |
+| `engine::scenes` | `Scene`, `SceneError`, `SceneGenerator`, `ScenePosition`, `SceneRayHit`, `SceneRayTarget`, `SceneRigidBody`, `ScenePawnTether`, `ScenePawnTetherBody`, and scene submodules | [Scenes](@/external-api/scenes.md), [Coordinates, tiles, and chunks](@/external-api/world-storage.md), [Collisions and edits](@/external-api/collisions-and-edits.md) |
 | `engine::system_events` | Keyboard, mouse, and window events; `KeyCode`, `PhysicalKey` | [Host types](@/external-api/host.md) |
 | `engine::Accelerator`, `engine::AcceleratorError` | GPU context and initialization error | [Host types](@/external-api/host.md) |
 | `engine::Processor`, `engine::ProcessorConfiguration`, `engine::ProcessorError` | Named CPU pools and configuration | [Host types](@/external-api/host.md) |

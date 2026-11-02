@@ -16,7 +16,7 @@ Collision applies pawn movement only to actors that have:
 - an `ActorPawnMovementComponent`, and
 - an `ActorCollisionComponent` with body type `Kinematic`.
 
-`Scene::pawn_velocity` and `Scene::pawn_is_grounded` expose the stored state for eligible pawns.
+`Scene::pawn_velocity` and `Scene::pawn_is_grounded` expose the stored state for eligible pawns. Tethers set with `Scene::set_pawn_tether` are stored per pawn in `Collision::pawn_tethers` and consumed by the next movement step.
 
 When an actor has one or more colliders, every present collider's bounds must fit inside the active region; the actor's position is not checked separately. The `ActorPawnControlComponent` is optional; when absent, movement and jump or crouch intent are zero.
 
@@ -45,7 +45,7 @@ AI or other game code can write the same control component directly.
 
 ## Per-step movement
 
-While walking, each fixed collision step does the following:
+While walking without a tether, each fixed collision step does the following:
 
 1. Clamps horizontal intent to `[-1, 1]` and multiplies it by normal or crouching speed to get the target velocity.
 2. Moves horizontal velocity toward the target by at most `acceleration * dt`. Acceleration therefore also governs deceleration and direction changes.
@@ -92,3 +92,9 @@ The swimming branch applies, in order:
 Swimming does not require a new jump press or grounding. Crouch supplies downward thrust rather than selecting walking speed. Walking rules resume below the immersion thresholds, with remembered jump-held state still updated. A gameplay position change resets swimming along with velocity and grounding.
 
 The controller reads immersion, current, density, and drag rather than directly applying fluid projection impulses to kinematic pawns. Only idle swimmers set the GPU current-coupling flag; see [pawn/current feedback](@/internals/simulation/fluid-coupling.md#pawns-and-currents). Samples come from earlier GPU submissions, so transitions can lag the visible fluid raster.
+
+## Tethers
+
+A tether is a one-sided length limit along a rope from the pawn through rigid body points. After control and gravity have produced the pawn's velocity, `simulate_collisions_solve_pawn_tether` computes the rope's lengthening rate from the pawn's velocity along `-direction` and each held point's velocity along its gradient. Its stiffness sums the pawn's inverse collision mass and, per distinct dynamic body, the accumulated linear gradient over the body's mass plus the accumulated angular arm over its inertia. Slack (negative stretch) may be taken up within the step; positive overstretch uses a bias of `0.2 * stretch / dt`. A slack tether uses `stretch / dt`. The resulting one-sided impulse changes the pawn's velocity and is applied to each held point with `apply_impulse_at_point`, before `physics_pipeline.step`, so bodies respond in the same tick. The character controller then resolves the pawn's motion as usual. The tether lapses after one step.
+
+While a tether is set and the pawn is neither standing nor swimming, horizontal control only accelerates the pawn toward its walking speed and never brakes it, so swings keep their momentum. Standing pawns walk and jump normally; their walking acceleration is what pulls against the tether.

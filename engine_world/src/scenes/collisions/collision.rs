@@ -52,6 +52,7 @@ use crate::{
             CELLULAR_TILE_SIZE,
         },
         SceneError,
+        ScenePawnTether,
         ScenePosition,
         SceneRayHit,
         SceneRayTarget,
@@ -72,6 +73,24 @@ use std::collections::{
 
 /// Fraction of a rigid body's wet-face fluid mass that drags it toward the current each tick
 const RIGID_BODY_FLUID_CURRENT_COUPLING: f32 = 1.0;
+/// Fraction of a pawn tether's overstretch corrected per step
+const PAWN_TETHER_STRETCH_CORRECTION: f32 = 0.2;
+
+/// A pawn's tether for its next movement step
+#[derive(Default)]
+struct PawnTether {
+    /// Whether the tether was set for the next movement step
+    is_set: bool,
+    /// Unit direction from the pawn toward the tether's nearest point
+    direction: rapier2d::math::Vector,
+    /// Tether length beyond its allowed length in tiles
+    stretch: f32,
+    /// Rigid body identifier, Rapier point, and length gradient of every held body point
+    bodies: Vec<(u64, rapier2d::math::Vector, rapier2d::math::Vector)>,
+    /// Rigid body identifier, accumulated linear gradient, and accumulated angular gradient of
+    /// every distinct held body, reused between steps
+    body_terms: Vec<(u64, rapier2d::math::Vector, f32)>,
+}
 
 /// Rapier simulation of a scene's actors and rigid bodies against the solid cells of its active
 /// cellular tiles
@@ -105,6 +124,8 @@ pub struct Collision {
         rapier2d::math::Vector,
         Option<(rapier2d::math::Vector, bool, bool, bool)>,
     )>,
+    /// Tethers of pawns by actor
+    pawn_tethers: HashMap<Actor, PawnTether>,
     /// Character controller moving every pawn against the colliders it collides with
     pawn_movement_controller: rapier2d::control::KinematicCharacterController,
     /// GPU extraction of active cellular tile occupancies
@@ -182,6 +203,7 @@ impl Collision {
             dynamic_ring_offset: None,
             dynamic_cellular_tile_collider: None,
             actors: HashMap::new(),
+            pawn_tethers: HashMap::new(),
             // round pawns roll over steps lower than their radius, so taller ledges are walls
             pawn_movement_controller: rapier2d::control::KinematicCharacterController {
                 offset: rapier2d::control::CharacterLength::Absolute(0.01),
@@ -876,6 +898,7 @@ impl Collision {
             .copied()
             .collect();
         for actor in removed_actors {
+            self.pawn_tethers.remove(&actor);
             let Some((rigid_body_handle, _, _, _, _, _)) = self.actors.remove(&actor)
             else { continue; };
             self.rigid_bodies.remove(
@@ -972,8 +995,8 @@ impl Collision {
         (CELLULAR_TILE_SIZE * CELLULAR_TILE_SIZE) as f32 * tile_area
     }
 
-    /// Moves every pawn by its controlled velocity, gravity, fluid sample, and dynamic cell
-    /// contacts with the character controller
+    /// Moves every pawn by its controlled velocity, gravity, fluid sample, dynamic cell contacts,
+    /// and tether with the character controller
     fn simulate_collisions_move_pawns(
         &mut self,
         pawns: &[(Actor, ActorPawnMovementComponent, ActorPawnControlComponent)],
@@ -993,9 +1016,11 @@ impl Collision {
             let is_cellular_grounded: bool = cellular_normal.y >= maximum_slope_cosine;
             let fluid_contact: FluidActorContact =
                 fluid_actor_contacts.get(actor).copied().unwrap_or_default();
+            let tether: Option<&mut PawnTether> = self.pawn_tethers.get_mut(actor)
+                .filter(|tether| tether.is_set);
             let Some((
                 rigid_body_handle,
-                Some((collider_handle, _)),
+                Some((collider_handle, collision)),
                 _,
                 _,
                 _,
@@ -1020,10 +1045,6 @@ impl Collision {
             } else {
                 immersion >= swimming_enter_immersion
             };
-            let (Some(rigid_body), Some(collider)) = (
-                self.rigid_bodies.get(*rigid_body_handle),
-                self.colliders.get(*collider_handle),
-            ) else { continue; };
             let velocity_change: f32 = pawn_movement.acceleration * time_step;
             if *is_swimming {
                 let cells_per_tick_to_tiles_per_second: f32 =
@@ -1067,6 +1088,16 @@ impl Collision {
                 if world_speed > world_maximum_speed && world_speed > 0.0 {
                     *velocity *= world_maximum_speed / world_speed;
                 }
+            } else if tether.is_some() && !is_standing {
+                // a tethered pawn in the air keeps its swing: control only accelerates it toward
+                // its walking speed and never brakes it
+                let target_velocity_x: f32 =
+                    pawn_control.movement.clamp(-1.0, 1.0) * pawn_movement.speed;
+                let shortfall: f32 = (target_velocity_x - velocity.x) * target_velocity_x.signum();
+                if target_velocity_x != 0.0 && shortfall > 0.0 {
+                    velocity.x += shortfall.min(velocity_change) * target_velocity_x.signum();
+                }
+                velocity.y -= gravity * time_step;
             } else {
                 // walking retains its platform speed and edge-triggered grounded jump
                 let speed: f32 = if pawn_control.is_crouching {
@@ -1087,10 +1118,27 @@ impl Collision {
                 }
             }
             *is_jump_held = pawn_control.is_jumping;
+            // the tether acts on the velocity control and gravity produced, sharing its pull with
+            // the bodies it holds by their masses
+            if let Some(tether) = tether {
+                Self::simulate_collisions_solve_pawn_tether(
+                    tether,
+                    &self.collision_rigid_bodies,
+                    &mut self.rigid_bodies,
+                    velocity,
+                    collision.mass,
+                    time_step,
+                );
+                tether.is_set = false;
+            }
             let cellular_approach_speed: f32 = velocity.dot(cellular_normal);
             if cellular_approach_speed < 0.0 {
                 *velocity -= cellular_normal * cellular_approach_speed;
             }
+            let (Some(rigid_body), Some(collider)) = (
+                self.rigid_bodies.get(*rigid_body_handle),
+                self.colliders.get(*collider_handle),
+            ) else { continue; };
             // cast from the body's next pose so gameplay placement this tick is respected
             let collider_pose: rapier2d::math::Pose = *rigid_body.next_position()
                 * collider.position_wrt_parent().copied().unwrap_or_default();
@@ -1131,6 +1179,64 @@ impl Collision {
             if let Some(rigid_body) = self.rigid_bodies.get_mut(*rigid_body_handle) {
                 rigid_body.set_next_kinematic_translation(next_translation);
             }
+        }
+    }
+
+    /// Solves a pawn's tether as one pulling constraint over the pawn and the rigid body points
+    /// it holds, changing the pawn's velocity and the bodies by impulses
+    fn simulate_collisions_solve_pawn_tether(
+        tether: &mut PawnTether,
+        collision_rigid_bodies: &HashMap<u64, CollisionRigidBody>,
+        rigid_bodies: &mut rapier2d::dynamics::RigidBodySet,
+        velocity: &mut rapier2d::math::Vector,
+        mass: f32,
+        time_step: f32,
+    ) {
+        if mass <= 0.0 { return; }
+        // the tether lengthens as the pawn moves away from its nearest point
+        let pawn_gradient: rapier2d::math::Vector = -tether.direction;
+        let mut rate: f32 = pawn_gradient.dot(*velocity);
+        let mut stiffness: f32 = pawn_gradient.length_squared() / mass;
+        tether.body_terms.clear();
+        for (identifier, point, gradient) in &tether.bodies {
+            let Some(body) = collision_rigid_bodies.get(identifier)
+                .and_then(|body| rigid_bodies.get(body.rigid_body_handle))
+            else { continue; };
+            rate += gradient.dot(body.velocity_at_point(*point));
+            let arm: rapier2d::math::Vector = *point - body.center_of_mass();
+            let angular: f32 = arm.perp_dot(*gradient);
+            match tether.body_terms.iter_mut().find(|term| term.0 == *identifier) {
+                Some(term) => {
+                    term.1 += *gradient;
+                    term.2 += angular;
+                }
+                None => tether.body_terms.push((*identifier, *gradient, angular)),
+            }
+        }
+        for (identifier, linear, angular) in &tether.body_terms {
+            let Some(body) = collision_rigid_bodies.get(identifier)
+                .and_then(|body| rigid_bodies.get(body.rigid_body_handle))
+            else { continue; };
+            if !body.is_dynamic() { continue; }
+            let body_mass: f32 = body.mass();
+            let inertia: f32 = body.mass_properties().local_mprops.principal_inertia();
+            if body_mass > 0.0 { stiffness += linear.length_squared() / body_mass; }
+            if inertia > 0.0 { stiffness += angular * angular / inertia; }
+        }
+        // slack is taken up before the tether pulls, and overstretch is corrected gradually
+        let bias: f32 = if tether.stretch > 0.0 {
+            PAWN_TETHER_STRETCH_CORRECTION * tether.stretch / time_step
+        } else { tether.stretch / time_step };
+        // a tether only pulls, so it acts only once it would end the step overstretched
+        let impulse: f32 = -(rate + bias) / stiffness;
+        if impulse >= 0.0 || !impulse.is_finite() { return; }
+        *velocity += pawn_gradient * (impulse / mass);
+        for (identifier, point, gradient) in &tether.bodies {
+            let Some(body) = collision_rigid_bodies.get(identifier)
+                .and_then(|body| rigid_bodies.get_mut(body.rigid_body_handle))
+            else { continue; };
+            if !body.is_dynamic() { continue; }
+            body.apply_impulse_at_point(*gradient * impulse, *point, true);
         }
     }
 
@@ -1297,6 +1403,39 @@ impl Collision {
         let (_, _, _, _, _, pawn) = self.actors.get(&actor)?;
         let (_, is_grounded, ..) = pawn.as_ref()?;
         Some(*is_grounded)
+    }
+
+    /// Sets or clears the tether solved by one pawn's next movement step, returning whether the
+    /// actor is a simulated pawn
+    pub(crate) fn set_pawn_tether(
+        &mut self,
+        actor: Actor,
+        tether: Option<ScenePawnTether<'_>>,
+    ) -> bool {
+        if !matches!(self.actors.get(&actor), Some((_, Some(_), _, _, _, Some(_)))) {
+            return false;
+        }
+        let Some(scene_tether) = tether else {
+            if let Some(pawn_tether) = self.pawn_tethers.get_mut(&actor) {
+                pawn_tether.is_set = false;
+            }
+            return true;
+        };
+        let origin: CellularTileCoordinates = self.origin;
+        let pawn_tether: &mut PawnTether = self.pawn_tethers.entry(actor).or_default();
+        pawn_tether.is_set = true;
+        pawn_tether.direction = rapier2d::math::Vector::new(
+            scene_tether.direction[0],
+            scene_tether.direction[1],
+        );
+        pawn_tether.stretch = scene_tether.stretch;
+        pawn_tether.bodies.clear();
+        pawn_tether.bodies.extend(scene_tether.bodies.iter().map(|body| (
+            body.rigid_body.0,
+            Self::rapier_translation(origin, body.point),
+            rapier2d::math::Vector::new(body.gradient[0], body.gradient[1]),
+        )));
+        true
     }
 
     /// Converts a scene position to a live rigid body's local frame

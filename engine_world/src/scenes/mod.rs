@@ -15,6 +15,8 @@ mod scene_position;
 
 pub use scene::{
     Scene,
+    ScenePawnTether,
+    ScenePawnTetherBody,
     SceneRayHit,
     SceneRayTarget,
     SceneRigidBody,
