@@ -1,7 +1,7 @@
 // Copyright Rob Gage 2026
 
 use crate::{
-    materials::MaterialIdentifier,
+    materials::{MaterialForm, MaterialIdentifier},
     scenes::{
         cellular_tiles::{
             CellCoordinates,
@@ -29,6 +29,8 @@ pub struct Edit {
         CellularTileCoordinates,
         (u64, [MaterialIdentifier; 64], [u32; 64], [u32; 64], [f32; 64]),
     >,
+    /// Nonzero initial fluid velocities in tiles per second, keyed by world cell
+    pub fluid_velocities: BTreeMap<CellCoordinates, [f32; 2]>,
     /// Pressure in atmospheres added to each row-major cell of each tile, negative where removed
     pub pressures: BTreeMap<CellularTileCoordinates, [f32; 64]>,
     /// Temperature in kelvin added to everything in each row-major cell of each tile, negative
@@ -46,15 +48,16 @@ impl Edit {
         Self {
             mode,
             cellular_tiles: BTreeMap::new(),
+            fluid_velocities: BTreeMap::new(),
             pressures: BTreeMap::new(),
             temperatures: BTreeMap::new(),
             damages: BTreeMap::new(),
         }
     }
 
-    /// Fills one cell with a material, packed RGBA color and radiance (`u32::MAX` selects the
-    /// material's radiance), and temperature in kelvin, or the material's edit temperature when
-    /// `None`, replacing an earlier fill of the cell
+    /// Fills one cell at rest with a material, packed RGBA color and radiance (`u32::MAX` selects
+    /// the material's radiance), and temperature in kelvin, or the material's edit temperature
+    /// when `None`, replacing an earlier fill of the cell
     pub fn fill_cell(
         &mut self,
         cell: CellCoordinates,
@@ -62,6 +65,28 @@ impl Edit {
         color: u32,
         radiance: u32,
         temperature: Option<f32>,
+    ) {
+        self.fill_cell_with_velocity(
+            cell,
+            material_identifier,
+            color,
+            radiance,
+            temperature,
+            [0.0; 2],
+        );
+    }
+
+    /// Fills one cell with a material and optional initial fluid velocity in tiles per second,
+    /// with positive y pointing up; non-fluid materials ignore velocity and non-finite components
+    /// become zero
+    pub fn fill_cell_with_velocity(
+        &mut self,
+        cell: CellCoordinates,
+        material_identifier: MaterialIdentifier,
+        color: u32,
+        radiance: u32,
+        temperature: Option<f32>,
+        velocity: [f32; 2],
     ) {
         let cell_index: usize = (cell.y.rem_euclid(CELLULAR_TILE_SIZE) * CELLULAR_TILE_SIZE
             + cell.x.rem_euclid(CELLULAR_TILE_SIZE)) as usize;
@@ -74,6 +99,14 @@ impl Edit {
         colors[cell_index] = color;
         radiances[cell_index] = radiance;
         temperatures[cell_index] = temperature.unwrap_or(f32::NAN);
+        let velocity: [f32; 2] = velocity.map(|component| {
+            if component.is_finite() { component } else { 0.0 }
+        });
+        if material_identifier.form() != MaterialForm::Fluid || velocity == [0.0; 2] {
+            self.fluid_velocities.remove(&cell);
+        } else {
+            self.fluid_velocities.insert(cell, velocity);
+        }
     }
 
     /// Adds pressure in atmospheres to one cell, accumulating with earlier calls and ignoring a
@@ -133,9 +166,9 @@ impl Edit {
         durations[cell_index] += duration;
     }
 
-    /// Fills every cell whose center lies within a radius in tiles of a segment with a material,
-    /// packed RGBA color and radiance (`u32::MAX` selects the material's radiance), and temperature
-    /// in kelvin, or the material's edit temperature when `None`
+    /// Fills every cell whose center lies within a radius in tiles of a segment at rest with a
+    /// material, packed RGBA color and radiance (`u32::MAX` selects the material's radiance), and
+    /// temperature in kelvin, or the material's edit temperature when `None`
     pub fn fill_segment(
         &mut self,
         start: ScenePosition,
@@ -146,8 +179,36 @@ impl Edit {
         radiance: u32,
         temperature: Option<f32>,
     ) -> Result<(), EditError> {
+        self.fill_segment_with_velocity(
+            start,
+            end,
+            radius,
+            material_identifier,
+            color,
+            radiance,
+            temperature,
+            [0.0; 2],
+        )
+    }
+
+    /// Fills cells within a segment radius with a material and optional initial fluid velocity in
+    /// tiles per second, with positive y pointing up; non-fluid materials ignore velocity and
+    /// non-finite components become zero
+    pub fn fill_segment_with_velocity(
+        &mut self,
+        start: ScenePosition,
+        end: ScenePosition,
+        radius: f64,
+        material_identifier: MaterialIdentifier,
+        color: u32,
+        radiance: u32,
+        temperature: Option<f32>,
+        velocity: [f32; 2],
+    ) -> Result<(), EditError> {
         for cell in Self::segment_cells(start, end, radius)? {
-            self.fill_cell(cell, material_identifier, color, radiance, temperature);
+            self.fill_cell_with_velocity(
+                cell, material_identifier, color, radiance, temperature, velocity,
+            );
         }
         Ok(())
     }
@@ -342,6 +403,46 @@ mod tests {
             edit.damage_segment(start, start, 0.2, 1.0, f32::NAN),
             Err(EditError::InvalidDamage),
         ));
+    }
+
+    /// Zeroes nonfinite velocity components and clears a velocity refilled at rest
+    #[test]
+    fn fill_cell_with_velocity_sanitizes_and_replaces_velocity() {
+        let cell: CellCoordinates = CellCoordinates { x: -1, y: 9 };
+        let fluid: MaterialIdentifier = MaterialIdentifier::from_u32(0x80000001);
+        let mut edit: Edit = Edit::new(EditMode::Replace);
+        edit.fill_cell_with_velocity(cell, fluid, 0, 0, None, [12.0, f32::NAN]);
+        assert_eq!(edit.fluid_velocities.get(&cell), Some(&[12.0, 0.0]));
+        edit.fill_cell(cell, fluid, 0, 0, None);
+        assert!(!edit.fluid_velocities.contains_key(&cell));
+    }
+
+    /// Records no velocity for a material that is not a fluid
+    #[test]
+    fn fill_cell_with_velocity_ignores_nonfluid_material_velocity() {
+        let cell: CellCoordinates = CellCoordinates { x: 0, y: 0 };
+        let mut edit: Edit = Edit::new(EditMode::Replace);
+        edit.fill_cell_with_velocity(cell, MaterialIdentifier::EMPTY, 0, 0, None, [1.0, 2.0]);
+        assert!(edit.fluid_velocities.is_empty());
+    }
+
+    /// Records the velocity of every cell a segment fills
+    #[test]
+    fn fill_segment_with_velocity_records_each_filled_cell() {
+        let mut edit: Edit = Edit::new(EditMode::Replace);
+        let start: ScenePosition = ScenePosition::default();
+        edit.fill_segment_with_velocity(
+            start,
+            start,
+            0.75,
+            MaterialIdentifier::from_u32(0x80000001),
+            0,
+            0,
+            None,
+            [1.0, -2.0],
+        ).unwrap();
+        assert!(!edit.fluid_velocities.is_empty());
+        assert!(edit.fluid_velocities.values().all(|velocity| *velocity == [1.0, -2.0]));
     }
 
 }

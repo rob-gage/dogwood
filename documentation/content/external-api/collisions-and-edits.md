@@ -52,13 +52,15 @@ The high five group bits are reserved by the engine:
 
 ## Edits
 
-An `Edit` exposes its `mode`, `cellular_tiles` fills, `pressures` map of per-cell pressure deltas, `temperatures` map of per-cell temperature deltas, and `damages` map of per-cell maximum loads and summed durations. Request one with `Scene::edit`; see [editing and saving the world](@/examples/editing-cells.md) for the request flow.
+An `Edit` exposes its `mode`, `cellular_tiles` fills, sparse `fluid_velocities` map of nonzero initial fluid velocities in tiles per second, `pressures` map of per-cell pressure deltas, `temperatures` map of per-cell temperature deltas, and `damages` map of per-cell maximum loads and summed durations. Request one with `Scene::edit`; see [editing and saving the world](@/examples/editing-cells.md) for the request flow.
 
 ### Building an edit
 
 - `Edit::new(mode)` starts an empty edit.
 - `fill_cell(cell: CellCoordinates, material_identifier: MaterialIdentifier, color: u32, radiance: u32, temperature: Option<f32>)` records a cell and replaces any earlier fill of that cell in the edit. Pack `color` as RGBA with red in the least-significant byte: `u32::from_le_bytes([r, g, b, a])`. The radiance argument is packed linear HDR emission and occlusion (use `pack_radiance`); `u32::MAX` selects material radiance. The optional fill temperature is supplied in kelvin; omitted temperatures use the material edit temperature.
+- `fill_cell_with_velocity(cell: CellCoordinates, material_identifier: MaterialIdentifier, color: u32, radiance: u32, temperature: Option<f32>, velocity: [f32; 2])` also sets a fluid's initial velocity in tiles per second, with positive y pointing up. `fill_cell` uses zero velocity. Non-fluid materials ignore the velocity; non-finite components become zero.
 - `fill_segment(start: ScenePosition, end: ScenePosition, radius: f64, material_identifier: MaterialIdentifier, color: u32, radiance: u32, temperature: Option<f32>) -> Result<(), EditError>` fills cells whose centers fall within `radius` of the segment; `radius` is in tiles.
+- `fill_segment_with_velocity(start: ScenePosition, end: ScenePosition, radius: f64, material_identifier: MaterialIdentifier, color: u32, radiance: u32, temperature: Option<f32>, velocity: [f32; 2]) -> Result<(), EditError>` fills the same cells with the supplied initial fluid velocity in tiles per second, positive y up. Non-fluid materials ignore it; non-finite components become zero. Fluid velocity is converted to cells per fixed tick and clamped to `FLUID_VELOCITY_MAXIMUM` by magnitude when spawn commands are packed.
 - `add_temperature_cell` / `remove_temperature_cell` change everything in one cell by a kelvin amount; segment variants apply the change to cells near a segment. Cooling does not lower a cell below zero kelvin.
 - `add_pressure_cell` / `remove_pressure_cell` change one cell by an atmosphere amount. `add_pressure_segment` / `remove_pressure_segment` apply the change within a segment radius in tiles.
 - `damage_cell(cell: CellCoordinates, load: f32, duration: f32)` records a load in atmospheres for a duration in seconds on one cell. `damage_segment(start: ScenePosition, end: ScenePosition, radius: f64, load: f32, duration: f32) -> Result<(), EditError>` records it on cells within the segment radius in tiles. Both static and dynamic cells can be damaged.

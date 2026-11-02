@@ -83,7 +83,7 @@ const EXPORT_WORD_COUNT: u64 = 14;
 const NEIGHBOR_DATA_BYTE_COUNT: u64 = 20;
 
 /// Bytes in one GPU fluid edit command
-const EDIT_BYTE_COUNT: u64 = 32;
+const EDIT_BYTE_COUNT: u64 = 48;
 
 /// Bytes in one actor contact record, including impulse and fluid sample values
 const ACTOR_CONTACT_BYTE_COUNT: u64 = 32;
@@ -118,6 +118,8 @@ pub(super) struct FluidEdit {
     pub radiance: u32,
     /// Particle temperature in kelvin
     pub temperature: f32,
+    /// Initial particle velocity in tiles per second, with positive y pointing up
+    pub velocity: [f32; 2],
     /// One for Insert, zero for Replace
     pub(super) mode: u32,
 }
@@ -1532,7 +1534,7 @@ impl FluidParticlePass {
         let origin_x: i64 = region_origin.0;
         let origin_y: i64 = region_origin.1;
         let mut erase_words: Vec<[u32; 2]> = vec![[0; 2]; tile_count];
-        let mut spawn_commands: Vec<[u32; 8]> = Vec::with_capacity(edits.len());
+        let mut spawn_commands: Vec<[u32; 12]> = Vec::with_capacity(edits.len());
         let mut has_insert_spawn: bool = false;
         let mut set_erased_cell = |world_cell: CellCoordinates| {
             let local_x: i128 = i128::from(world_cell.x) - i128::from(origin_x);
@@ -1557,6 +1559,18 @@ impl FluidParticlePass {
             { continue; }
             if edit.mode == 0 { set_erased_cell(*cell); }
             if edit.mode != 0 { has_insert_spawn = true; }
+            // tiles per second to the solver's cells per fixed tick
+            let cells_per_tick: f32 = CELLULAR_TILE_SIZE as f32 * FLUID_TIME_STEP;
+            let mut velocity: [f32; 2] = [
+                edit.velocity[0] * cells_per_tick,
+                edit.velocity[1] * cells_per_tick,
+            ];
+            let velocity_length: f32 = velocity[0].hypot(velocity[1]);
+            if velocity_length > FLUID_VELOCITY_MAXIMUM {
+                velocity = velocity.map(|component| {
+                    component * FLUID_VELOCITY_MAXIMUM / velocity_length
+                });
+            }
             spawn_commands.push([
                 local_x as u32,
                 local_y as u32,
@@ -1566,11 +1580,17 @@ impl FluidParticlePass {
                 edit.temperature.to_bits(),
                 CELLULAR_TILE_AMOUNT_PER_UNIT,
                 edit.radiance,
+                velocity[0].to_bits(),
+                velocity[1].to_bits(),
+                0,
+                0,
             ]);
         }
         let has_erasures: bool = erase_words.iter()
             .any(|words| words[0] != 0 || words[1] != 0);
-        let mut edit_bytes: Vec<u8> = Vec::with_capacity(spawn_commands.len() * 32);
+        let mut edit_bytes: Vec<u8> = Vec::with_capacity(
+            spawn_commands.len() * EDIT_BYTE_COUNT as usize,
+        );
         for command in &spawn_commands {
             for value in command { edit_bytes.extend_from_slice(&value.to_le_bytes()); }
         }

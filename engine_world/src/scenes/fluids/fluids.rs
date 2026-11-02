@@ -168,6 +168,7 @@ impl Fluids {
                         color: colors[cell_index],
                         radiance: radiances[cell_index],
                         temperature: temperatures[cell_index],
+                        velocity: edit.fluid_velocities.get(&cell).copied().unwrap_or([0.0; 2]),
                         mode,
                     });
                     if mode == 0 { self.queued_erasures.insert(cell); }

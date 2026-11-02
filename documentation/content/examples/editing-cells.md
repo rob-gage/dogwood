@@ -19,8 +19,10 @@ sources = [
 
 An `Edit` groups cells by cellular tile (an 8x8 block of cells). Each filled cell carries a material identifier, packed color, packed radiance, and optional temperature in kelvin. Create one with `Edit::new`, then add cells:
 
-- `fill_cell`: sets one cell, replacing an earlier fill of the same cell in the same edit.
+- `fill_cell`: sets one cell at rest, replacing an earlier fill of the same cell in the same edit.
+- `fill_cell_with_velocity`: sets one cell with an initial fluid velocity in tiles per second; positive y points up. Non-fluid fills ignore velocity.
 - `fill_segment`: takes two scene positions and a radius in tiles, and fills cells whose centers are within the radius of the segment. A negative or non-finite radius produces no fill and returns `Ok(())`.
+- `fill_segment_with_velocity`: fills those segment cells with the supplied initial fluid velocity.
 
 The color tints the albedo; materials without an albedo use it directly. Pass `u32::MAX` as radiance to use the material default.
 
@@ -35,8 +37,15 @@ use engine::scenes::{
 fn build_edit(material_identifier: MaterialIdentifier) -> Result<Edit, EditError> {
     let mut edit = Edit::new(EditMode::Replace);
     let color = u32::from_le_bytes([180, 120, 60, 255]);
-    edit.fill_cell(CellCoordinates { x: 12, y: 7 }, material_identifier, color, u32::MAX, None);
-    edit.fill_segment(
+    edit.fill_cell_with_velocity(
+        CellCoordinates { x: 12, y: 7 },
+        material_identifier,
+        color,
+        u32::MAX,
+        None,
+        [0.0, 15.0],
+    );
+    edit.fill_segment_with_velocity(
         ScenePosition { tile_x: 2, tile_y: 1, offset_x: 0, offset_y: 0 },
         ScenePosition { tile_x: 3, tile_y: 1, offset_x: 0, offset_y: 0 },
         0.25,
@@ -44,6 +53,7 @@ fn build_edit(material_identifier: MaterialIdentifier) -> Result<Edit, EditError
         color,
         u32::MAX,
         None,
+        [0.0, 15.0],
     )?;
     edit.damage_segment(
         ScenePosition { tile_x: 2, tile_y: 1, offset_x: 0, offset_y: 0 },

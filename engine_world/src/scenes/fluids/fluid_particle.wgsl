@@ -2336,8 +2336,11 @@ fn begin_occupancy() {
 @compute @workgroup_size(PARTICLE_WORKGROUP_SIZE)
 fn spawn(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if invocation.x >= uniforms.edit_count { return; }
-    let command: vec4<u32> = edit_commands[invocation.x * 2u];
-    let particle_data: vec4<u32> = edit_commands[invocation.x * 2u + 1u];
+    let command: vec4<u32> = edit_commands[invocation.x * 3u];
+    let particle_data: vec4<u32> = edit_commands[invocation.x * 3u + 1u];
+    let velocity: vec2<f32> = bitcast<vec2<f32>>(
+        edit_commands[invocation.x * 3u + 2u].xy,
+    );
     let material_index: u32 = command.z & 0x3fffffffu;
     if command.z >> 30u != 2u || material_index >= uniforms.fluid_material_count { return; }
     let cell: vec2<i32> = vec2<i32>(command.xy);
@@ -2377,7 +2380,7 @@ fn spawn(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let jitter_y: f32 = (f32(jitter_hash >> 16u) / 65535.0 - 0.5) * 0.02;
     let position: vec2<f32> = vec2<f32>(cell) + 0.5 + vec2<f32>(jitter_x, jitter_y);
     let particle: FluidParticle = FluidParticle(
-        vec4<f32>(position, vec2<f32>(0.0)),
+        vec4<f32>(position, velocity),
         command.z,
         position.x,
         position.y,

@@ -9,7 +9,7 @@ This page explains how cell edits move from an `Edit` request through validation
 
 ## Request and validation
 
-An `Edit` groups cell fills, pressure changes, temperature changes, and scripted damage by cellular tile. Fills carry a bit mask, material identifiers, packed colors, and packed radiance. `pressures` stores per-cell signed pressure deltas in atmospheres; `damages` stores the greatest load and summed durations. Segment operations rasterize cells whose centers lie within the requested radius (in tiles) of a segment.
+An `Edit` groups cell fills, pressure changes, temperature changes, and scripted damage by cellular tile. Fills carry a bit mask, material identifiers, packed colors, and packed radiance; nonzero initial fluid velocities are kept in a sparse per-cell map. `pressures` stores per-cell signed pressure deltas in atmospheres; `damages` stores the greatest load and summed durations. Segment operations rasterize cells whose centers lie within the requested radius (in tiles) of a segment.
 
 | Limit or rule | Behaviour |
 | --- | --- |
@@ -55,4 +55,4 @@ If rigid-body tiles are present, the next collision update waits for GPU readbac
 
 Scene streaming writes queued edits before it moves the tile ring, so validated target tiles remain resident for the GPU write. Before a requested region change moves tiles, rigid bodies that leave that region are rasterized back into active cells. On scene drop, pending edits are streamed first, then active tiles are returned to chunk storage for saving; see [tile streaming](@/internals/world-streaming/tile-streaming.md).
 
-Fluid edits use a separate particle-action queue in addition to cellular writes. See [fluid edits](@/internals/world-streaming/fluid-streaming.md#editing-fluid) for spawn order, independent Insert behavior, and conservative capacity reservations.
+Fluid edits use a separate particle-action queue in addition to cellular writes. Initial velocities pass through this queue and are converted to solver units when spawn commands are packed. See [fluid edits](@/internals/world-streaming/fluid-streaming.md#editing-fluid) for spawn order, independent Insert behavior, and conservative capacity reservations.

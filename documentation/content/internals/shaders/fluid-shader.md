@@ -60,6 +60,11 @@ properties. Thermal materials and awake flags reuse bindings 29 and 30; static m
 records use binding 54. Only conversion entry points use this reduced layout, which stays within
 the per-stage storage binding limit.
 
+Edit spawn commands occupy 48 bytes: local integer cell xy, material ID, and Insert flag; packed
+color, temperature, amount, and radiance; then initial velocity xy in cells per tick and padding.
+Velocity is converted from tiles per second and clamped before upload. The `spawn` entry point
+loads it into the particle state; rejected Insert spawns still create no particle.
+
 Chemistry fluid products use a separate 4096-entry spawn list. Conversion and spawn-preparation
 pipelines use dedicated bind-group layouts that bind this list; the normal solver group keeps its
 existing binding count. Each spawn record is eight `u32` words (32 bytes): cell index, material,
@@ -74,7 +79,7 @@ All words are serialized little-endian by Rust. Sizes below are record strides, 
 | --- | ---: | --- |
 | Particle | 64 | Position/velocity xy at 0-15, material ID at 16, tick-start xy at 20-27, temperature at 28, packed color at 32, amount at 36, packed radiance at 40, padding at 44-63 |
 | Exact-position import | 48 | Position/velocity xy at 0-15, material ID at 16, color at 20, temperature at 24, amount at 28, radiance at 32, padding at 36-47 |
-| Spawn command | 16 | Local integer cell xy, material ID, Insert flag |
+| Edit spawn command | 48 | Cell xy, material ID, Insert flag, color, temperature, amount, radiance, initial velocity xy, padding |
 | Predicted position | 8 | Two `f32` coordinates |
 | Neighbor | 20 | Old position xy, cohesion, artificial pressure, sleeping flag |
 | Lambda | 4 | `f32` |

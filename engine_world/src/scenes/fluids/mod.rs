@@ -66,7 +66,7 @@ pub const FLUID_COHESION_SCALE: f32 = 0.5;
 /// Area-normalization coefficient of the dimensionless two-dimensional Akinci spline
 pub const FLUID_COHESION_NORMALIZATION_2D: f32 = 54.584_815;
 
-/// Maximum absolute particle velocity along either cell axis, measured per fixed tick
+/// Maximum particle velocity magnitude in cells per fixed tick
 pub const FLUID_VELOCITY_MAXIMUM: f32 = 4.0;
 
 /// Fixed-point units per fluid mass and momentum unit in the cell raster
