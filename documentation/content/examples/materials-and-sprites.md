@@ -16,6 +16,7 @@ world edits and generators. Dependency names can refer to materials registered l
 use engine::{
     materials::{
         MaterialPropertiesCellularDynamic, MaterialPropertiesCellularStatic,
+        MaterialPropertiesChemical,
         MaterialPropertiesThermal, MaterialRegistry,
     },
     runtime::EngineError,
@@ -47,7 +48,10 @@ fn register_stone(
         mass: 1.0,
         friction: 0.8,
         restitution: 0.1,
+        damage_threshold: 1.0,
+        damage_coefficient: 4.0,
         thermal: MaterialPropertiesThermal::default(),
+        chemical: MaterialPropertiesChemical::default(),
     })?;
     registry.register_cellular_static("stone", MaterialPropertiesCellularStatic {
         edit_color: MaterialGraphicsCellularStatic {
@@ -68,10 +72,13 @@ fn register_stone(
         mass: 2.0,
         friction: 0.6,
         restitution: 0.1,
-        strength: 10.0,
+        damage_threshold: 10.0,
+        damage_coefficient: 4.0,
         absorption: 0.1,
         debris: Some(String::from("gravel")),
+        debris_chance: 1.0,
         thermal: MaterialPropertiesThermal::default(),
+        chemical: MaterialPropertiesChemical::default(),
     })?;
     Ok(())
 }

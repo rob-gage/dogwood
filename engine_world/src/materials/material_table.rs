@@ -62,6 +62,12 @@ struct MaterialRadiance {
     repetition_height: f64,
 }
 
+/// Returns whether damage properties are valid: a positive threshold that is not NaN, infinity
+/// making cells unbreakable, and a finite nonnegative coefficient
+fn valid_damage_properties(threshold: f32, coefficient: f32) -> bool {
+    !threshold.is_nan() && threshold > 0.0 && coefficient.is_finite() && coefficient >= 0.0
+}
+
 /// Immutable registered materials and compiled GPU resources
 pub struct MaterialTable {
     /// Sole owned material definitions with registration inaccessible after compilation
@@ -70,9 +76,14 @@ pub struct MaterialTable {
     identifiers_by_name: HashMap<String, MaterialIdentifier>,
     /// Resolved cellular dynamic debris for static materials
     debris_by_identifier: HashMap<MaterialIdentifier, MaterialIdentifier>,
-    /// Mass, absorption, strength, and debris material identifier bits as four 32-bit words per
-    /// static cellular index
+    /// Mass, absorption, debris chance, and debris material identifier bits as four 32-bit words
+    /// per static cellular index
     cellular_static_properties_buffer: wgpu::Buffer,
+    /// Damage threshold and damage coefficient as two `f32` per static cellular index, empty index
+    /// zero being unbreakable
+    cellular_static_damage_buffer: wgpu::Buffer,
+    /// Damage threshold and damage coefficient as two `f32` per dynamic cellular index
+    cellular_dynamic_damage_buffer: wgpu::Buffer,
     /// Mass, friction, restitution, and padding as four `f32` per dynamic cellular index
     cellular_dynamic_properties_buffer: wgpu::Buffer,
     /// Density, nonlinear XSPH viscosity control, cohesion, artificial pressure, drag, friction,
@@ -352,6 +363,10 @@ impl MaterialTable {
         let cellular_static_count: usize = albedo_frames.len();
         let mut radiance_frames: Vec<Option<(&SpriteSheet, u32, f32, f32, f32)>> = vec![None];
         let mut static_property_bytes: Vec<u8> = vec![0; 16];
+        let mut static_damage_bytes: Vec<u8> = Vec::new();
+        for value in [f32::INFINITY, 0.0] {
+            static_damage_bytes.extend_from_slice(&value.to_le_bytes());
+        }
         let mut property_bytes: Vec<u8> = Vec::new();
         for index in 1.. {
             let Ok(identifier) = MaterialIdentifier::new(MaterialForm::CellularStatic, index)
@@ -363,15 +378,23 @@ impl MaterialTable {
                 || !(0.0..=1.0).contains(&properties.restitution)
                 || !properties.edit_radiance_intensity.is_finite()
                 || properties.edit_radiance_intensity < 0.0
-                || properties.strength.is_nan() || properties.strength <= 0.0
                 || !properties.absorption.is_finite()
                 || !(0.0..=1.0).contains(&properties.absorption)
+                || !valid_damage_properties(
+                    properties.damage_threshold,
+                    properties.damage_coefficient,
+                )
+                || !properties.debris_chance.is_finite()
+                || !(0.0..=1.0).contains(&properties.debris_chance)
             {
                 return Err(MaterialError::Compilation(String::from(
-                    "static cellular materials need a positive mass, a nonnegative friction, \
-                    a restitution from zero to one, a positive strength, and a finite absorption \
-                    from zero to one, and a finite nonnegative radiance intensity",
+                    "static cellular materials need positive mass, a positive non-NaN damage \
+                    threshold, nonnegative friction, radiance intensity, and damage \
+                    coefficient, and restitution, absorption, and debris chance from zero to one",
                 )));
+            }
+            for value in [properties.damage_threshold, properties.damage_coefficient] {
+                static_damage_bytes.extend_from_slice(&value.to_le_bytes());
             }
             radiance_frames.push(Some((
                 &*properties.edit_radiance.sprite_sheet,
@@ -387,7 +410,7 @@ impl MaterialTable {
             for value in [
                 properties.mass,
                 properties.absorption,
-                properties.strength,
+                properties.debris_chance,
                 debris_bits,
             ] {
                 static_property_bytes.extend_from_slice(&value.to_le_bytes());
@@ -403,6 +426,13 @@ impl MaterialTable {
             0,
             &static_property_bytes,
         );
+        let cellular_static_damage_buffer: wgpu::Buffer = Self::create_storage_buffer(
+            device,
+            "`MaterialTable.cellular_static_damage_buffer`",
+            &static_damage_bytes,
+        );
+        accelerator.queue().write_buffer(&cellular_static_damage_buffer, 0, &static_damage_bytes);
+        let mut dynamic_damage_bytes: Vec<u8> = Vec::new();
         for index in 0.. {
             let Ok(identifier) = MaterialIdentifier::new(MaterialForm::CellularDynamic, index)
             else { break; };
@@ -413,11 +443,20 @@ impl MaterialTable {
                 || !(0.0..=1.0).contains(&properties.restitution)
                 || !properties.edit_radiance_intensity.is_finite()
                 || properties.edit_radiance_intensity < 0.0
+                || !valid_damage_properties(
+                    properties.damage_threshold,
+                    properties.damage_coefficient,
+                )
             {
                 return Err(MaterialError::Compilation(String::from(
                     "dynamic cellular materials need a positive mass, a nonnegative friction, \
-                    a restitution from zero to one, and a finite nonnegative radiance intensity",
+                    a restitution from zero to one, a finite nonnegative radiance intensity, \
+                    a positive non-NaN damage threshold, and a finite nonnegative damage \
+                    coefficient",
                 )));
+            }
+            for value in [properties.damage_threshold, properties.damage_coefficient] {
+                dynamic_damage_bytes.extend_from_slice(&value.to_le_bytes());
             }
             // WGSL vec4<f32> records with a 16-byte stride
             for value in [properties.mass, properties.friction, properties.restitution, 0.0] {
@@ -447,6 +486,19 @@ impl MaterialTable {
             &property_bytes,
         );
         accelerator.queue().write_buffer(&cellular_dynamic_properties_buffer, 0, &property_bytes);
+        // an unbreakable record satisfies the storage binding when no dynamic material is
+        // registered
+        if dynamic_damage_bytes.is_empty() {
+            for value in [f32::INFINITY, 0.0] {
+                dynamic_damage_bytes.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        let cellular_dynamic_damage_buffer: wgpu::Buffer = Self::create_storage_buffer(
+            device,
+            "`MaterialTable.cellular_dynamic_damage_buffer`",
+            &dynamic_damage_bytes,
+        );
+        accelerator.queue().write_buffer(&cellular_dynamic_damage_buffer, 0, &dynamic_damage_bytes);
         // serialize fluid records as density, viscosity, cohesion, and artificial pressure, then
         // drag, friction, restitution, and color bits
         let mut fluid_property_bytes: Vec<u8> = Vec::new();
@@ -838,6 +890,8 @@ impl MaterialTable {
             identifiers_by_name,
             debris_by_identifier,
             cellular_static_properties_buffer,
+            cellular_static_damage_buffer,
+            cellular_dynamic_damage_buffer,
             cellular_dynamic_properties_buffer,
             fluid_properties_buffer,
             gas_properties_buffer,
@@ -1285,10 +1339,22 @@ impl MaterialTable {
         self.material_registry.gas_properties(identifier)
     }
 
-    /// Returns static cellular GPU properties as mass, absorption, strength, and debris material
-    /// identifier bits, zero for none
+    /// Returns static cellular GPU properties as mass, absorption, debris chance, and debris
+    /// material identifier bits, zero for none
     pub fn cellular_static_properties_buffer(&self) -> &wgpu::Buffer {
         &self.cellular_static_properties_buffer
+    }
+
+    /// Returns static cellular damage properties as damage threshold and damage coefficient
+    /// `vec2<f32>` records
+    pub fn cellular_static_damage_buffer(&self) -> &wgpu::Buffer {
+        &self.cellular_static_damage_buffer
+    }
+
+    /// Returns dynamic cellular damage properties as damage threshold and damage coefficient
+    /// `vec2<f32>` records
+    pub fn cellular_dynamic_damage_buffer(&self) -> &wgpu::Buffer {
+        &self.cellular_dynamic_damage_buffer
     }
 
     /// Returns dynamic cellular GPU properties as mass, friction, restitution, and padding
@@ -1363,6 +1429,26 @@ impl MaterialTable {
 
     /// Returns whether any registered transition starts or ends in a fluid
     pub fn has_fluid_transitions(&self) -> bool { self.has_fluid_transitions }
+
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::valid_damage_properties;
+
+    /// Accepts positive thresholds, infinity included, with finite nonnegative coefficients
+    #[test]
+    fn damage_properties_validate_threshold_and_coefficient() {
+        assert!(valid_damage_properties(1.0, 0.0));
+        assert!(valid_damage_properties(f32::INFINITY, 4.0));
+        assert!(!valid_damage_properties(f32::NAN, 1.0));
+        assert!(!valid_damage_properties(0.0, 1.0));
+        assert!(!valid_damage_properties(-1.0, 1.0));
+        assert!(!valid_damage_properties(1.0, f32::NAN));
+        assert!(!valid_damage_properties(1.0, f32::INFINITY));
+        assert!(!valid_damage_properties(1.0, -0.1));
+    }
 
 }
 

@@ -63,20 +63,19 @@ Each tick has 3 fixed substeps (`PRESSURE_SUBSTEP_COUNT`) over `PRESSURE_TIME_ST
 | `PRESSURE_OPEN_RELAXATION` | 3.0 | Gas-pressure relaxation rate per second |
 | `PRESSURE_OPEN_RELAXATION_MINIMUM` | 0.5 atm/s | Smallest gas-pressure relaxation |
 | `PRESSURE_TRAPPED_EXPULSION` | 8.0 | Trapped-gas expulsion rate per second |
-| `PRESSURE_DAMAGE_RATE` | 40.0 | Integrity loss per second per excess atmosphere and absorption |
 
 The GPU storage also uses a `VOLUME_SCALE` of 65,536 open-volume units, a `PRESSURE_IMPULSE` of 0.1111 mass·cells/tick per atmosphere per face, and a 0.02-atmosphere minimum to suppress tiny pushes.
 
-## Solid integrity and damage
+## Solid damage
 
-Solid material properties provide static `strength` in atmospheres and `absorption` in `[0, 1]`. Template stone uses strength `10` and absorption `0.1`; positive infinity makes a material unbreakable. The low 16 bits of `kinematics.y` store integrity, with zero meaning intact. Solid faces absorb pressure as it passes. Each substep, a solid or partial pressure cell measures its load in atmospheres:
+Static materials provide `damage_threshold` in atmospheres, `damage_coefficient`, and `absorption`. The threshold is the load borne indefinitely; positive infinity makes a material unbreakable. The coefficient is whole cells of amount lost per second per atmosphere beyond the threshold. Absorption only damps pressure waves. Template stone uses threshold `10`, coefficient `4.0`, and absorption `0.1`. Damage spends the cell's existing `amount` (65,536 units per whole cell), which chemistry also consumes. Each substep, a solid or partial pressure cell measures its load in atmospheres:
 
 - A solid pressure cell's load is the largest of its absolute stored pressure and the gauge pressure of its open neighbors.
 - A partial pressure cell's load is its own gauge pressure.
 
-Each static cell under that pressure cell loses integrity while the load exceeds its material's strength.
+Each pressure cell holds four fine cells, so a static cell bears one quarter of its load. It loses the ceiling of `damage_coefficient × max(quarter-load − damage_threshold, 0) × substep seconds × 65,536` amount units, capped at the amount remaining. `65,536` amount units make one whole cell. This reduces the same `matter.y` amount that chemistry consumes, so corrosion leaves less amount to spend before breakage. Pressure does not damage dynamic cells.
 
-After publishing pressure, `damage` breaks cells whose integrity is exhausted. A broken cell becomes its configured dynamic debris material, retaining color and radiance and receiving velocity from the pressure push, or becomes empty. Stored pressure is released as phantom air. Rigid-body cells are removed from their body's cell mask, and changed tiles are reported with their remaining static occupancy for later topology updates.
+After publishing pressure, `damage` breaks every static cell with zero amount in a `TILE_BROKEN` tile. The debris roll uses `debris_chance`; a debris cell receives a full amount of 65,536 and retains color and radiance, or the cell becomes empty. Emptied cells keep their temperature. Broken-cell pressure is released as phantom air. Rigid-body cells are removed from their body's cell mask, and changed tiles are reported with their remaining static occupancy for later topology updates.
 
 ## Published pressure and consumers
 

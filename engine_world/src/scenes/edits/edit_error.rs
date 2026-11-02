@@ -30,6 +30,8 @@ pub enum EditError {
     InvalidPressure,
     /// A temperature is negative or not finite
     InvalidTemperature,
+    /// A damage load or duration is negative or not finite
+    InvalidDamage,
     /// The edit would exceed a segment, queued tile, or fluid-particle capacity
     CapacityReached,
 }
@@ -46,6 +48,10 @@ impl Display for EditError {
             Self::InvalidPressure => write!(formatter, "Pressure must be finite and nonnegative"),
             Self::InvalidTemperature =>
                 write!(formatter, "Temperature must be finite and nonnegative"),
+            Self::InvalidDamage => write!(
+                formatter,
+                "Damage load and duration must be finite and nonnegative",
+            ),
             Self::CapacityReached => write!(formatter, "Edit capacity is reached"),
         }
     }

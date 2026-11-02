@@ -45,6 +45,13 @@ fn build_edit(material_identifier: MaterialIdentifier) -> Result<Edit, EditError
         u32::MAX,
         None,
     )?;
+    edit.damage_segment(
+        ScenePosition { tile_x: 2, tile_y: 1, offset_x: 0, offset_y: 0 },
+        ScenePosition { tile_x: 3, tile_y: 1, offset_x: 0, offset_y: 0 },
+        0.1,
+        30.0,
+        0.05,
+    )?;
     Ok(edit)
 }
 ```
@@ -55,6 +62,20 @@ The `EditMode` chosen in `Edit::new` controls what an edit overwrites:
 - `EditMode::Replace`: fills every targeted cell and ignores colliders.
 
 To erase, use `Replace` with `MaterialIdentifier::EMPTY`, color `0`, and radiance `0`.
+
+Scripted damage can be queued alongside fills and pressure changes. `damage_cell(cell, load,
+duration)` and `damage_segment(start, end, radius, load, duration)` apply a load in atmospheres for a
+duration in seconds to static or dynamic cells. A cell loses the ceiling of `damage_coefficient ×
+(load − damage_threshold) × duration` whole cells of amount, rounded to amount units and capped at
+the cell's current amount; loads at or below the threshold do no damage.
+Repeated calls on one cell keep the greatest load and add durations. Damage wakes thermal for the
+tile. Static cells that run out of amount break through the pressure damage pass; dynamic cells
+vanish immediately.
+
+`damage_cell` ignores a negative or nonfinite load or duration. `damage_segment` returns
+`EditError::InvalidDamage` for those values.
+
+See [materials](@/external-api/materials.md) for damage properties and debris chance.
 
 ## Submit edits to a scene
 

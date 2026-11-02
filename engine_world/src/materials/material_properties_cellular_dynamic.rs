@@ -18,6 +18,12 @@ pub struct MaterialPropertiesCellularDynamic {
     pub friction: f32,
     /// Fraction of a cell's speed kept, reversed, when it hits something it cannot enter
     pub restitution: f32,
+    /// Load in atmospheres of scripted damage the material bears indefinitely; infinity makes its
+    /// cells unbreakable. Pressure does not damage dynamic cells
+    pub damage_threshold: f32,
+    /// Amount of a cell, in whole cells, lost per second for each atmosphere of load beyond the
+    /// threshold; a cell vanishes when its amount runs out
+    pub damage_coefficient: f32,
     /// Thermal and phase-transition properties
     pub thermal: MaterialPropertiesThermal,
     /// Chemical reaction and amount-dependent visual properties

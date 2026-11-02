@@ -11,6 +11,8 @@ struct EditCellularTile {
     pressures: array<f32, 64>,
     temperatures: array<f32, 64>,
     temperature_changes: array<f32, 64>,
+    loads: array<f32, 64>,
+    durations: array<f32, 64>,
 };
 
 @group(0) @binding(0)
@@ -42,6 +44,12 @@ var<storage, read_write> temperature_changes: array<vec2<u32>>;
 
 @group(0) @binding(9)
 var<storage, read_write> thermal_awake: array<atomic<u32>>;
+
+@group(0) @binding(10)
+var<storage, read> cellular_static_damage: array<vec2<f32>>;
+
+@group(0) @binding(11)
+var<storage, read> cellular_dynamic_damage: array<vec2<f32>>;
 
 /// Amount of a cell holding one whole unit of its material, matching
 /// `CELLULAR_TILE_AMOUNT_PER_UNIT`
@@ -172,5 +180,43 @@ fn compute(
             }
         }
         atomicOr(&gas_awake[edit_cellular_tiles[edit_cellular_tile_index].cellular_tile_index], 1u);
+    }
+    // scripted damage removes amount the way pressure does; static cells whose amount runs out
+    // break into their debris in the pressure pass, and dynamic cells vanish here
+    let load: f32 = edit_cellular_tiles[edit_cellular_tile_index].loads[cell];
+    let duration: f32 = edit_cellular_tiles[edit_cellular_tile_index].durations[cell];
+    let material_identifier: u32 = material_identifiers[cell_index];
+    let form: u32 = material_identifier >> 30u;
+    if load > 0.0 && duration > 0.0 && material_identifier != 0u && form <= 1u {
+        let index: u32 = material_identifier & 0x3fffffffu;
+        var damage: vec2<f32>;
+        if form == 0u {
+            damage = cellular_static_damage[index];
+        } else {
+            damage = cellular_dynamic_damage[index];
+        }
+        let amount: u32 = matter[cell_index].y;
+        let overload: f32 = load - damage.x;
+        if overload > 0.0 && damage.y > 0.0 && amount > 0u {
+            let lost: u32 = u32(min(
+                ceil(damage.y * overload * duration * f32(AMOUNT_PER_UNIT)),
+                f32(amount),
+            ));
+            matter[cell_index].y = amount - lost;
+            let tile: u32 = edit_cellular_tiles[edit_cellular_tile_index].cellular_tile_index;
+            atomicOr(&thermal_awake[tile], 1u);
+            if lost == amount {
+                if form == 0u {
+                    // awake, with a static cell to break
+                    atomicOr(&gas_awake[tile], 9u);
+                } else {
+                    material_identifiers[cell_index] = 0u;
+                    colors[cell_index] = vec2<u32>(0u);
+                    kinematics[cell_index] = vec2<u32>(0u);
+                    atomicOr(&awake[tile], 3u);
+                    atomicOr(&gas_awake[tile], 1u);
+                }
+            }
+        }
     }
 }

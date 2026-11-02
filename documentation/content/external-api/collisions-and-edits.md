@@ -52,7 +52,7 @@ The high five group bits are reserved by the engine:
 
 ## Edits
 
-An `Edit` exposes its `mode`, `cellular_tiles` fills, and `pressures` map of per-cell pressure deltas, and `temperatures` map of per-cell temperature deltas. Request one with `Scene::edit`; see [editing and saving the world](@/examples/editing-cells.md) for the request flow.
+An `Edit` exposes its `mode`, `cellular_tiles` fills, `pressures` map of per-cell pressure deltas, `temperatures` map of per-cell temperature deltas, and `damages` map of per-cell maximum loads and summed durations. Request one with `Scene::edit`; see [editing and saving the world](@/examples/editing-cells.md) for the request flow.
 
 ### Building an edit
 
@@ -61,6 +61,15 @@ An `Edit` exposes its `mode`, `cellular_tiles` fills, and `pressures` map of per
 - `fill_segment(start: ScenePosition, end: ScenePosition, radius: f64, material_identifier: MaterialIdentifier, color: u32, radiance: u32, temperature: Option<f32>) -> Result<(), EditError>` fills cells whose centers fall within `radius` of the segment; `radius` is in tiles.
 - `add_temperature_cell` / `remove_temperature_cell` change everything in one cell by a kelvin amount; segment variants apply the change to cells near a segment. Cooling does not lower a cell below zero kelvin.
 - `add_pressure_cell` / `remove_pressure_cell` change one cell by an atmosphere amount. `add_pressure_segment` / `remove_pressure_segment` apply the change within a segment radius in tiles.
+- `damage_cell(cell: CellCoordinates, load: f32, duration: f32)` records a load in atmospheres for a duration in seconds on one cell. `damage_segment(start: ScenePosition, end: ScenePosition, radius: f64, load: f32, duration: f32) -> Result<(), EditError>` records it on cells within the segment radius in tiles. Both static and dynamic cells can be damaged.
+
+Amount lost is rounded up to the next whole amount unit from `damage_coefficient × (load − damage_threshold) × duration` whole cells; load at or
+below the material threshold does no damage. Calls on one cell keep the greatest load and add their
+durations. Load and duration must be finite and nonnegative. `damage_cell` ignores invalid values;
+`damage_segment` returns `EditError::InvalidDamage` with "Damage load and duration must be finite
+and nonnegative". Static cells reaching zero amount are broken in the pressure damage pass and use
+their material's debris chance. Dynamic cells reaching zero vanish immediately. Any damage wakes
+thermal for the tile.
 
 `fill_segment` edge cases:
 
@@ -80,7 +89,8 @@ In `Replace` mode, filling with `MaterialIdentifier::EMPTY` clears a cell; set i
 
 ### Edit errors
 
-`Scene::edit` returns an `EditError`:
+`Scene::edit` returns an `EditError` for request validation. `Edit::damage_segment` also returns
+`InvalidDamage` when its load or duration is negative or nonfinite:
 
 - `CellularTileInactive { coordinates }`: a tile of the edit is outside the active region.
 - `MaterialUnregistered { material_identifier }`: the material is not in the scene's material table.

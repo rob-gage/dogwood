@@ -30,8 +30,10 @@ Group 0 bindings:
 | 7 | Matter temperature and amount (`array<vec2<u32>>`) | read/write |
 | 8 | Temperature changes and conversion heat (`array<vec2<u32>>`) | read/write |
 | 9 | Thermal awake flags (atomic) | read/write |
+| 10 | Static damage properties (`array<vec2<f32>>`: threshold, coefficient) | read-only |
+| 11 | Dynamic damage properties (`array<vec2<f32>>`: threshold, coefficient) | read-only |
 
-Each tile record occupies 1560 bytes, serialized little-endian by Rust:
+Each tile record occupies 2072 bytes, serialized little-endian by Rust:
 
 | Offset | Field | Size |
 |---:|---|---:|
@@ -45,6 +47,8 @@ Each tile record occupies 1560 bytes, serialized little-endian by Rust:
 | 792 | `pressures: array<f32, 64>` | 256 B |
 | 1048 | `temperatures: array<f32, 64>` | 256 B |
 | 1304 | `temperature_changes: array<f32, 64>` | 256 B |
+| 1560 | `loads: array<f32, 64>` | 256 B |
+| 1816 | `durations: array<f32, 64>` | 256 B |
 
 ### Masks and addressing
 
@@ -69,5 +73,11 @@ On a write, the shader zeros the cell's kinematics, atomically ORs `3` into the 
 - Any other material is copied with its color and radiance. The cell keeps its species slots, which the [pressure simulation](@/internals/simulation/pressure.md) later pushes out, but loses its phantom air and flows.
 
 Queued pressure edits use atmospheres. Static cells receive signed stored pressure; other cells add to phantom air or proportionally reduce their gas.
+
+After temperature and pressure edits, scripted damage applies the ceiling of `damage_coefficient × (load −
+damage_threshold) × duration × 65,536`, capped at the cell's current amount, when load exceeds
+threshold. Any damage wakes thermal for the tile. A static cell reaching amount zero sets
+`gas_awake |= 9` for the pressure damage pass. A dynamic cell reaching zero is cleared immediately:
+material, colors, and kinematics become zero, `cellular_awake |= 3`, and `gas_awake |= 1`.
 
 The shader does not evaluate actor colliders or material registration; those decisions are made before the pass receives the records.

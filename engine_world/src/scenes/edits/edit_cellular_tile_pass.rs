@@ -5,6 +5,7 @@ use super::{
     EDIT_CELLULAR_TILE_COUNT_MAXIMUM,
 };
 use crate::{
+    materials::MaterialTable,
     scenes::cellular_tiles::{
         CellularTileBuffers,
         CellularTileIndex,
@@ -13,15 +14,16 @@ use crate::{
 use engine_host::acceleration::Accelerator;
 
 /// Bytes of one edited tile: its index, ambient gas amount, masks, materials, colors, radiances,
-/// pressures, temperatures, and added temperatures
-const EDIT_CELLULAR_TILE_BYTE_COUNT: u64 = (6 + 64 * 6) * 4;
+/// pressures, temperatures, temperature changes, damage loads, and damage durations
+const EDIT_CELLULAR_TILE_BYTE_COUNT: u64 = (6 + 64 * 8) * 4;
 
 /// GPU writing of edited cells into the active cellular tiles
 pub struct EditCellularTilePass {
     /// Pipeline writing one edited cell per invocation
     pipeline: wgpu::ComputePipeline,
     /// Bind group of the edited tiles, material identifiers, colors, kinematics, awake tiles, gas,
-    /// awake gas tiles, matter, edited temperature changes, and awake thermal tiles
+    /// awake gas tiles, matter, edited temperature changes, awake thermal tiles, and static and
+    /// dynamic damage properties
     bind_group: wgpu::BindGroup,
     /// Edited tiles uploaded for one stream
     edit_cellular_tile_buffer: wgpu::Buffer,
@@ -30,7 +32,11 @@ pub struct EditCellularTilePass {
 impl EditCellularTilePass {
 
     /// Creates edit resources writing into the cellular tile buffers
-    pub fn new(accelerator: &Accelerator, cellular_tile_buffers: &CellularTileBuffers) -> Self {
+    pub fn new(
+        accelerator: &Accelerator,
+        cellular_tile_buffers: &CellularTileBuffers,
+        material_table: &MaterialTable,
+    ) -> Self {
         let device: &wgpu::Device = accelerator.device();
         let storage_entry = |binding: u32, read_only: bool| -> wgpu::BindGroupLayoutEntry {
             wgpu::BindGroupLayoutEntry {
@@ -58,6 +64,8 @@ impl EditCellularTilePass {
                     storage_entry(7, false),
                     storage_entry(8, false),
                     storage_entry(9, false),
+                    storage_entry(10, true),
+                    storage_entry(11, true),
                 ],
             },
         );
@@ -137,6 +145,14 @@ impl EditCellularTilePass {
                     binding: 9,
                     resource: cellular_tile_buffers.thermal_awake_buffer().as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: material_table.cellular_static_damage_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: material_table.cellular_dynamic_damage_buffer().as_entire_binding(),
+                },
             ],
         });
         Self { pipeline, bind_group, edit_cellular_tile_buffer }
@@ -151,12 +167,12 @@ impl EditCellularTilePass {
         ambient_gas_amount: u32,
     ) {
         if edit_cellular_tiles.is_empty() { return; }
-        // WGSL tile header, four 64-word arrays, and three 64-float arrays
+        // WGSL tile header, three 64-word arrays, and five 64-float arrays
         let mut edit_cellular_tile_bytes: Vec<u8> = Vec::with_capacity(
             edit_cellular_tiles.len() * EDIT_CELLULAR_TILE_BYTE_COUNT as usize,
         );
         for (cellular_tile_index, (inserted_cells, replaced_cells, material_identifiers, colors, radiances,
-            pressures, temperatures, temperature_changes)) in edit_cellular_tiles
+            pressures, temperatures, temperature_changes, loads, durations)) in edit_cellular_tiles
         {
             let cellular_tile_index: u32 = (*cellular_tile_index).into();
             edit_cellular_tile_bytes.extend_from_slice(&cellular_tile_index.to_le_bytes());
@@ -173,7 +189,8 @@ impl EditCellularTilePass {
             for radiance in radiances {
                 edit_cellular_tile_bytes.extend_from_slice(&radiance.to_le_bytes());
             }
-            for value in pressures.iter().chain(temperatures).chain(temperature_changes) {
+            for value in pressures.iter().chain(temperatures).chain(temperature_changes)
+                .chain(loads).chain(durations) {
                 edit_cellular_tile_bytes.extend_from_slice(&value.to_le_bytes());
             }
         }

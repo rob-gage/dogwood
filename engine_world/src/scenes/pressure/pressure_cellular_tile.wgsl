@@ -37,8 +37,8 @@ struct PressureUniforms {
     solid_relaxation: f32,
     /// Fraction of the gas trapped in a solid cell pushed out through its open faces per substep
     trapped_expulsion: f32,
-    /// Integrity a solid cell loses per substep for each atmosphere its load exceeds its
-    /// strength, per unit of its material's absorption
+    /// Amount units a static cell loses per substep for each atmosphere its load exceeds its
+    /// material's damage threshold, per unit of its material's damage coefficient
     damage_rate: f32,
     /// Whether the open volume pass measures only the listed tiles instead of every tile
     is_volume_listed: u32,
@@ -57,7 +57,7 @@ struct PressureUniforms {
     gas_thermal_offset: u32,
     /// Reciprocal ambient temperature, used to scale gas pressure
     ambient_temperature_reciprocal: f32,
-    padding_1: u32,
+    tick_counter: u32,
     padding_2: u32,
 };
 
@@ -189,6 +189,9 @@ var<storage, read_write> matter: array<vec2<u32>>;
 @group(0) @binding(21)
 var<storage, read> thermal_materials: array<vec4<u32>>;
 
+@group(0) @binding(22)
+var<storage, read> static_damage_materials: array<vec2<f32>>;
+
 @group(1) @binding(0)
 var<storage, read_write> dispatches: array<u32>;
 
@@ -285,7 +288,7 @@ const TILE_AWAKE: u32 = 1u;
 /// Tile flag: the tile is simulated this tick
 const TILE_ACTIVE: u32 = 4u;
 
-/// Tile flag: a static cell of the tile lost all its integrity and breaks after the substeps
+/// Tile flag: a static cell of the tile ran out of amount and breaks after the substeps
 const TILE_BROKEN: u32 = 8u;
 
 /// Tile flag: fluid or a dragging actor reached the tile or a neighbor when open volumes were
@@ -303,8 +306,9 @@ const CELLULAR_TILE_CHANGED: u32 = 7u;
 /// Whether fluid or a dragging actor reached any cell of the workgroup's tile
 var<workgroup> volume_dependence: atomic<u32>;
 
-/// Integrity damage of a static cell that breaks, in the low sixteen bits of its kinematics
-const INTEGRITY_BROKEN: u32 = 0xffffu;
+/// Amount of a cell holding one whole unit of its material, matching
+/// `CELLULAR_TILE_AMOUNT_PER_UNIT`
+const AMOUNT_PER_UNIT: u32 = 65536u;
 
 /// Velocity units of one cell per tick in packed dynamic cell kinematics, matching the cellular
 /// tiles
@@ -1077,9 +1081,11 @@ fn collect(@builtin(global_invocation_id) invocation: vec3<u32>) {
             }
         }
     }
-    // neighbors only read the awake flag, which this store keeps with the volume dependence
+    // neighbors only read the awake flag, which this store keeps with the volume dependence and
+    // any break an edit flagged, which `damage` clears once it breaks the cells
     let index: u32 = tile_index(vec2<u32>(tile));
-    let flags: u32 = atomicLoad(&pressure_awake[index]) & (TILE_AWAKE | TILE_VOLUME_DEPENDENT);
+    let flags: u32 = atomicLoad(&pressure_awake[index])
+        & (TILE_AWAKE | TILE_VOLUME_DEPENDENT | TILE_BROKEN);
     atomicStore(&pressure_awake[index], select(flags, flags | TILE_ACTIVE, is_active));
     if is_active {
         control.active_tiles[atomicAdd(&control.active_tile_count, 1u)] = invocation.x;
@@ -1091,7 +1097,16 @@ fn collect(@builtin(global_invocation_id) invocation: vec3<u32>) {
 @compute @workgroup_size(64)
 fn clear(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if invocation.x >= uniforms.region_width * uniforms.region_height { return; }
-    atomicAnd(&pressure_awake[invocation.x], TILE_ACTIVE | TILE_VOLUME_DEPENDENT);
+    atomicAnd(&pressure_awake[invocation.x], TILE_ACTIVE | TILE_VOLUME_DEPENDENT | TILE_BROKEN);
+}
+
+/// Returns a deterministic pseudo-random value in the unit interval for a cell and tick
+fn debris_roll(index: u32) -> f32 {
+    var state: u32 = index ^ uniforms.tick_counter;
+    state = state * 747796405u + 2891336453u;
+    let word: u32 = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    let hash: u32 = (word >> 22u) ^ word;
+    return f32(hash) / 4294967296.0;
 }
 
 /// Lists the blocks of 2x2 tiles holding an active tile, by their bottom-left tile, after the
@@ -1598,9 +1613,9 @@ fn simulate_substep(cell: vec2<i32>, local_cell: u32) {
             is_relaxing = true;
         }
     }
-    // static cells absorb the load beyond their strength, a solid pressure cell's from its own
-    // stored pressure or the gas pressing on its open faces and an open one's from its gas,
-    // losing integrity until they break
+    // static cells bear the load beyond their damage threshold, a solid pressure cell's from its
+    // own stored pressure or the gas pressing on its open faces and an open one's from its gas,
+    // losing amount until they break
     let is_partial: bool = (coarse_constants(index).x & VOLUME_PARTIAL) != 0u;
     if center.solid != 0u || is_partial {
         var load: f32 = abs(center.pressure - f32(uniforms.ambient_amount));
@@ -1652,18 +1667,14 @@ fn damage_static_cells(cell: vec2<i32>, load: f32) {
         let index: u32 = cell_index(fine_cell);
         let material_identifier: u32 = material_identifiers[index];
         if !is_static(material_identifier) { continue; }
-        let material: vec4<f32> = static_materials[material_identifier & 0x3fffffffu];
-        let overload: f32 = load / AMOUNT_PER_ATMOSPHERE - material.z;
-        if overload <= 0.0 { continue; }
-        let damage: u32 = kinematics[index].y & INTEGRITY_BROKEN;
-        let next: u32 = min(
-            damage + u32(ceil(overload * material.y * uniforms.damage_rate)),
-            INTEGRITY_BROKEN,
-        );
-        if next != damage {
-            kinematics[index].y = (kinematics[index].y & ~INTEGRITY_BROKEN) | next;
-        }
-        if next == INTEGRITY_BROKEN {
+        let damage: vec2<f32> = static_damage_materials[material_identifier & 0x3fffffffu];
+        let overload: f32 = load / AMOUNT_PER_ATMOSPHERE - damage.x;
+        if overload <= 0.0 || damage.y <= 0.0 { continue; }
+        let amount: u32 = matter[index].y;
+        if amount == 0u { continue; }
+        let lost: u32 = u32(min(ceil(overload * damage.y * uniforms.damage_rate), f32(amount)));
+        matter[index].y = amount - lost;
+        if lost == amount {
             atomicOr(&pressure_awake[tile_index(vec2<u32>(fine_cell) / 8u)], TILE_BROKEN);
         }
     }
@@ -2053,7 +2064,7 @@ fn publish(
 /// Static cells of the cellular tiles left in the workgroup's tile after breaking, as cell masks
 var<workgroup> damage_occupancy: array<atomic<u32>, 2>;
 
-/// Breaks every static cell of the tiles that lost all its integrity this tick: it becomes its
+/// Breaks every static cell of the tiles whose amount ran out this tick: it becomes its
 /// material's debris moving with the push of the pressure around it, keeping its color, or empty
 /// when the material has none, and its stored pressure joins its new open volume as phantom air.
 /// A broken rigid body cell also leaves its body's occupied cells and is listed for its body to
@@ -2076,8 +2087,7 @@ fn damage(
     let index: u32 = cell_index(cell);
     var material_identifier: u32 = material_identifiers[index];
     let rigid_body_cell: u32 = rigid_body_cells[index];
-    var is_broken: bool = is_static(material_identifier)
-        && (kinematics[index].y & INTEGRITY_BROKEN) == INTEGRITY_BROKEN;
+    var is_broken: bool = is_static(material_identifier) && matter[index].y == 0u;
     // a rigid body cell breaks only once listed for its body to lose it, or waits a tick
     if is_broken && rigid_body_cell != 0u {
         let count: u32 = atomicAdd(&changed_rigid_body_cells[0], 1u);
@@ -2086,7 +2096,13 @@ fn damage(
     }
     if is_broken {
         let material: vec4<f32> = static_materials[material_identifier & 0x3fffffffu];
-        let debris: u32 = bitcast<u32>(material.w);
+        // a breaking cell becomes its debris only by its material's debris chance
+        let configured_debris: u32 = bitcast<u32>(material.w);
+        let debris: u32 = select(
+            0u,
+            configured_debris,
+            configured_debris != 0u && debris_roll(index) < material.z,
+        );
         // the pressure pushing on the cell's faces flings its debris
         var push: vec2<f32> = vec2<f32>(0.0);
         for (var face: u32 = 0u; face < 4u; face++) {
@@ -2101,10 +2117,11 @@ fn damage(
         ) * VELOCITY_SCALE));
         material_identifier = debris;
         material_identifiers[index] = debris;
-        // an emptied cell keeps its temperature for the gas that fills it
+        // an emptied cell keeps its temperature for the gas that fills it, and debris is whole
         if debris == 0u {
             colors[index] = vec2<u32>(0u);
-            matter[index].y = 0u;
+        } else {
+            matter[index].y = AMOUNT_PER_UNIT;
         }
         kinematics[index] = select(
             vec2<u32>(0u),

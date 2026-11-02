@@ -23,7 +23,7 @@ To try it without creating a project in the current directory, run `dogwood run-
 ### Materials
 
 - `gravel` is cellular dynamic, with mass, friction, and restitution properties.
-- `stone` is cellular static, uses `gravel` as its debris material, and has strength `10` atmospheres with absorption `0.1`.
+- `stone` is cellular static, uses `gravel` as its debris material, has a damage threshold of `10` atmospheres and coefficient `4.0`, and absorbs `0.1` of passing pressure waves.
 - `water` is fluid, with density `0.6`, viscosity `0.05`, cohesion `0.2`, artificial pressure `0.001`, drag `1.0`, and zero friction and restitution. Its packed RGBA color is `[40, 110, 200, 200]`. It is available for editor painting; the generator does not place water.
 - `water vapor` is gas, with mass `18.0`, diffusivity `0.04`, and cohesion `0.1`, so it rises through the default ambient gas mass of `29.0`. Its packed RGBA color is `[225, 230, 240, 150]`. It is available for editor painting; the generator does not place gas.
 - `acid` is a green fluid; `acid gas` is its gas transition product, and `acid sludge` is a dynamic product of acid and water. `fire` is a hot gas that transitions to `smoke`; fire and smoke fade through registered reactions.

@@ -51,7 +51,7 @@ The output is two `u32` words per tile, where bit `y * 8 + x` marks occupancy. T
 | 10 | Cell write records |
 | 11 | Cell read results, four words per cell |
 | 12 | Atomic changed-cell results |
-| 13 | Stored pressure bits and integrity of every rigid-body tile cell |
+| 13 | Stored pressure, kinematics word, temperature bits, and amount of every rigid-body tile cell; amount carries damage |
 | 14 | Gas cells, read as eight words per cell |
 
 ### Records
@@ -75,21 +75,21 @@ Uniforms occupy six 256-byte slots, for write, return, clear, rasterize, read, a
 
 `release` takes its behaviour from the uniform `mode`:
 
-- `MODE_CLEAR` saves each vacated static cell's stored pressure and integrity in the body's cell state, then empties the cell and its stored pressure. If the stored body material is dynamic, the cell becomes moving dynamic debris; if it is empty, the cell becomes empty.
-- `MODE_RETURN` saves each static cell's stored pressure and integrity in the body's cell state and leaves the cell in place at rest with its integrity; covered dynamic cells remain dynamic.
+- `MODE_CLEAR` saves each vacated static cell's stored pressure, kinematics word, temperature, and amount in the body's cell state, then empties the cell and its stored pressure. Amount carries damage. If the stored body material is dynamic, the cell becomes moving dynamic debris; if it is empty, the cell becomes empty.
+- `MODE_RETURN` saves each static cell's stored pressure, kinematics word, temperature, and amount in the body's cell state and leaves the cell in place at rest; covered dynamic cells remain dynamic.
 - `MODE_CHANGE` reports and detaches a listed body cell only when its current material differs from the stored material and is not dynamic. Unchanged or dynamic cells remain attached.
 
 `MODE_CLEAR` and `MODE_RETURN` are queued through `rasterize_rigid_bodies`, which submits without waiting. Pending cell writes are submitted first. In the rigid-body submission, `release` runs for returned and cleared tiles before `rasterize`, so moving bodies do not block themselves.
 
 ### Entry point behaviour
 
-- `rasterize` skips cells holding other static matter. It claims `rigid_body_cells` with compare-exchange, so the first invocation to successfully claim a contested cell wins; the shader does not impose item-order priority. Rigid-body tile cells use a 16-byte record of material, color, radiance, and padding. Rasterization writes those values, velocity, and the cell state's stored pressure and integrity only into empty cells; dynamic cells stay covered. It then saves the tile's mask as `previous_cells`.
+- `rasterize` skips cells holding other static matter. It claims `rigid_body_cells` with compare-exchange, so the first invocation to successfully claim a contested cell wins; the shader does not impose item-order priority. Rigid-body tile cells use a 16-byte record of material, color, radiance, and padding. Rasterization writes those values, velocity, stored pressure, kinematics word, temperature, and amount only into empty cells; dynamic cells stay covered. The cell amount carries damage. It then saves the tile's mask as `previous_cells`.
 - `write_cells` takes `[x, y, new_material, expected_material]` records. It writes only if the cell still holds the expected material and has no rigid-body cell. It zeroes kinematics and stored pressure, zeroes color and radiance when the cell is emptied, and wakes the tile.
-- `read_cells` returns each cell in two `vec4<u32>` values; the second value carries radiance in `.z`, alongside stored pressure bits and integrity.
-- `copy_states` takes `[old_cell, new_cell]` rigid-body tile-cell index pairs and copies the cell state, so a split body's new tiles keep their stored pressure and integrity.
+- `read_cells` returns each cell in two `vec4<u32>` values; the second value carries radiance in `.z`, alongside stored pressure bits, kinematics word, temperature bits, and amount.
+- `copy_states` takes `[old_cell, new_cell]` rigid-body tile-cell index pairs and copies the cell state, so a split body's new tiles keep their stored pressure, kinematics word, temperature, and amount. Amount carries damage.
 - `read_changed_cells` runs `release` in `MODE_CHANGE` and returns rigid-body tile-cell indices (`tile_index * 64 + bit`), not coordinates. It returns at most 65,536 cells with an incomplete flag; excess cells remain attached for a later read.
 
-Rigid-body cells keep their stored pressure and integrity in the cell state buffer while they are not rasterized. Once rasterized, they hold it in the scene's gas and kinematics buffers like static cells, where the pressure pass updates it; see [pressure simulation](@/internals/simulation/pressure.md#solid-integrity-and-damage).
+Rigid-body cells keep stored pressure, kinematics word, temperature, and amount in the cell state buffer while they are not rasterized. Amount carries damage. Once rasterized, these values move to the scene's gas, kinematics, thermal matter, and amount buffers like static cells, where the pressure pass updates amount; see [pressure simulation](@/internals/simulation/pressure.md#solid-damage).
 
 ## Readback
 

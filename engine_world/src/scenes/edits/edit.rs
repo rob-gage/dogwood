@@ -34,6 +34,9 @@ pub struct Edit {
     /// Temperature in kelvin added to everything in each row-major cell of each tile, negative
     /// where removed
     pub temperatures: BTreeMap<CellularTileCoordinates, [f32; 64]>,
+    /// Scripted damage load in atmospheres, the greatest supplied, and its total duration in
+    /// seconds for each row-major cell of each tile
+    pub damages: BTreeMap<CellularTileCoordinates, ([f32; 64], [f32; 64])>,
 }
 
 impl Edit {
@@ -45,6 +48,7 @@ impl Edit {
             cellular_tiles: BTreeMap::new(),
             pressures: BTreeMap::new(),
             temperatures: BTreeMap::new(),
+            damages: BTreeMap::new(),
         }
     }
 
@@ -110,6 +114,23 @@ impl Edit {
             + cell.x.rem_euclid(CELLULAR_TILE_SIZE)) as usize;
         self.temperatures.entry(cell.cellular_tile_coordinates())
             .or_insert([0.0; 64])[cell_index] -= temperature;
+    }
+
+    /// Damages the cellular matter of one cell as a load in atmospheres borne for a duration in
+    /// seconds, the way pressure damages static cells: the cell loses its material's damage
+    /// coefficient times the load beyond its damage threshold times the duration in amount. When
+    /// none is left a static cell breaks, becoming its debris by its debris chance or emptying, and
+    /// a dynamic cell vanishes. Calls on one cell keep the greatest load and add their durations; a
+    /// negative or nonfinite load or duration is ignored
+    pub fn damage_cell(&mut self, cell: CellCoordinates, load: f32, duration: f32) {
+        if !load.is_finite() || load < 0.0 || !duration.is_finite() || duration < 0.0 { return; }
+        let cell_index: usize = (cell.y.rem_euclid(CELLULAR_TILE_SIZE) * CELLULAR_TILE_SIZE
+            + cell.x.rem_euclid(CELLULAR_TILE_SIZE)) as usize;
+        let (loads, durations): &mut ([f32; 64], [f32; 64]) = self.damages
+            .entry(cell.cellular_tile_coordinates())
+            .or_insert(([0.0; 64], [0.0; 64]));
+        loads[cell_index] = loads[cell_index].max(load);
+        durations[cell_index] += duration;
     }
 
     /// Fills every cell whose center lies within a radius in tiles of a segment with a material,
@@ -196,6 +217,24 @@ impl Edit {
         Ok(())
     }
 
+    /// Damages every cell within a segment radius as `damage_cell` does
+    pub fn damage_segment(
+        &mut self,
+        start: ScenePosition,
+        end: ScenePosition,
+        radius: f64,
+        load: f32,
+        duration: f32,
+    ) -> Result<(), EditError> {
+        if !load.is_finite() || load < 0.0 || !duration.is_finite() || duration < 0.0 {
+            return Err(EditError::InvalidDamage);
+        }
+        for cell in Self::segment_cells(start, end, radius)? {
+            self.damage_cell(cell, load, duration);
+        }
+        Ok(())
+    }
+
     /// Returns cells whose centers lie within a radius in tiles of a segment
     fn segment_cells(
         start: ScenePosition,
@@ -247,6 +286,62 @@ impl Edit {
             }
         }
         Ok(cells)
+    }
+
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    /// Keeps the greatest load and adds durations across damage on one cell
+    #[test]
+    fn damage_cell_keeps_maximum_load_and_adds_durations() {
+        let cell: CellCoordinates = CellCoordinates { x: -1, y: 9 };
+        let mut edit: Edit = Edit::new(EditMode::Replace);
+        edit.damage_cell(cell, 20.0, 0.25);
+        edit.damage_cell(cell, 30.0, 0.5);
+        edit.damage_cell(cell, 0.0, 0.0);
+        let (loads, durations): &([f32; 64], [f32; 64]) =
+            edit.damages.get(&cell.cellular_tile_coordinates()).unwrap();
+        let cell_index: usize = (cell.y.rem_euclid(CELLULAR_TILE_SIZE) * CELLULAR_TILE_SIZE
+            + cell.x.rem_euclid(CELLULAR_TILE_SIZE)) as usize;
+        assert_eq!(loads[cell_index], 30.0);
+        assert_eq!(durations[cell_index], 0.75);
+    }
+
+    /// Ignores damage with a negative or nonfinite load or duration
+    #[test]
+    fn damage_cell_ignores_invalid_load_and_duration() {
+        let cell: CellCoordinates = CellCoordinates { x: 0, y: 0 };
+        let mut edit: Edit = Edit::new(EditMode::Replace);
+        edit.damage_cell(cell, f32::NAN, 1.0);
+        edit.damage_cell(cell, f32::INFINITY, 1.0);
+        edit.damage_cell(cell, -1.0, 1.0);
+        edit.damage_cell(cell, 1.0, f32::NAN);
+        edit.damage_cell(cell, 1.0, f32::INFINITY);
+        edit.damage_cell(cell, 1.0, -1.0);
+        assert!(edit.damages.is_empty());
+    }
+
+    /// Damages the cells under a segment and rejects invalid loads and durations
+    #[test]
+    fn damage_segment_rasterizes_cells_and_rejects_invalid_inputs() {
+        let mut edit: Edit = Edit::new(EditMode::Replace);
+        let start: ScenePosition = ScenePosition::default();
+        edit.damage_segment(start, start, 0.2, 0.5, 2.0).unwrap();
+        assert!(edit.damages.contains_key(
+            &CellCoordinates { x: 0, y: 0 }.cellular_tile_coordinates(),
+        ));
+        assert!(matches!(
+            edit.damage_segment(start, start, 0.2, f32::NAN, 1.0),
+            Err(EditError::InvalidDamage),
+        ));
+        assert!(matches!(
+            edit.damage_segment(start, start, 0.2, 1.0, f32::NAN),
+            Err(EditError::InvalidDamage),
+        ));
     }
 
 }

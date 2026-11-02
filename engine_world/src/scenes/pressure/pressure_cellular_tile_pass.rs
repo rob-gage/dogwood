@@ -5,7 +5,6 @@ use super::{
     PRESSURE_ACTOR_DRAG,
     PRESSURE_AMBIENT_DIFFUSIVITY,
     PRESSURE_BULK_VISCOSITY,
-    PRESSURE_DAMAGE_RATE,
     PRESSURE_FLOW_DAMPING,
     PRESSURE_FLOW_MINIMUM,
     PRESSURE_GAS_SPEED,
@@ -24,6 +23,7 @@ use crate::{
         cellular_tiles::{
             CellularTileBuffers,
             CellularTileRegion,
+            CELLULAR_TILE_AMOUNT_PER_UNIT,
             CELLULAR_TILE_SIZE,
         },
         fluids::FLUID_RASTER_SCALE,
@@ -67,6 +67,8 @@ pub struct PressureCellularTilePass {
     volume_region: Option<(CellularTileRegion, (u32, u32))>,
     /// First thermal index of the gas materials
     gas_thermal_offset: u32,
+    /// Counter advanced once for each pressure tick, used to vary debris outcomes
+    tick_counter: u32,
 }
 
 impl PressureCellularTilePass {
@@ -134,6 +136,7 @@ impl PressureCellularTilePass {
                     storage_entry(19, false),
                     storage_entry(20, false),
                     storage_entry(21, true),
+                    storage_entry(22, true),
                 ],
             },
         );
@@ -340,6 +343,11 @@ impl PressureCellularTilePass {
                         binding: 21,
                         resource: material_table.thermal_properties_buffer().as_entire_binding(),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 22,
+                        resource: material_table.cellular_static_damage_buffer()
+                            .as_entire_binding(),
+                    },
 
                 ],
             })
@@ -377,6 +385,7 @@ impl PressureCellularTilePass {
             dispatch_buffer,
             volume_region: None,
             gas_thermal_offset: material_table.thermal_offsets()[3],
+            tick_counter: 0,
         }
     }
 
@@ -448,7 +457,9 @@ impl PressureCellularTilePass {
                 solid_speed.to_bits(),
                 fraction_per_substep(PRESSURE_SOLID_RELAXATION).to_bits(),
                 fraction_per_substep(PRESSURE_TRAPPED_EXPULSION).to_bits(),
-                (PRESSURE_DAMAGE_RATE * substep_time * 65535.0).to_bits(),
+                // a material's damage coefficient times this is the amount it loses per
+                // atmosphere of overload in one substep
+                (substep_time * CELLULAR_TILE_AMOUNT_PER_UNIT as f32).to_bits(),
                 u32::from(is_volume_listed),
                 (1.0 / area).to_bits(),
                 fraction_per_substep(PRESSURE_OPEN_RELAXATION).to_bits(),
@@ -462,7 +473,7 @@ impl PressureCellularTilePass {
                 } else {
                     0
                 },
-                0,
+                self.tick_counter,
                 0,
             ] {
                 uniform_bytes.extend_from_slice(&value.to_le_bytes());
@@ -471,6 +482,7 @@ impl PressureCellularTilePass {
         };
         accelerator.queue().write_buffer(&self.uniform_buffer, 0, &uniforms(1.0));
         accelerator.queue().write_buffer(&self.coarse_uniform_buffer, 0, &uniforms(2.0));
+        self.tick_counter = self.tick_counter.wrapping_add(1);
         let mut command_encoder: wgpu::CommandEncoder = accelerator.device()
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Scene pressure cellular tiles"),

@@ -33,7 +33,8 @@ Static and dynamic materials are validated against the same physical ranges:
 - mass is positive and finite;
 - friction is nonnegative and finite;
 - restitution is in `[0, 1]`;
-- static strength is positive and not NaN (positive infinity is allowed), and absorption is finite in `[0, 1]`;
+- damage thresholds are positive and not NaN (positive infinity is allowed), and damage coefficients are finite and nonnegative;
+- static absorption and debris chance are finite in `[0, 1]`;
 - for a static material, a debris name, if present, resolves to a registered dynamic material.
 
 ### Dynamic property buffer
@@ -42,7 +43,13 @@ Each dynamic record is serialized as four little-endian `f32` values: mass, fric
 
 ### Static property buffer
 
-Each static record is four little-endian `f32` values: mass, absorption, strength, and the debris material identifier stored in the fourth word's bits (zero when absent). The `STORAGE | COPY_DST` buffer has a 16-byte stride. Index zero is the empty material and contains zeros.
+Each static record is four little-endian `f32` values: mass, absorption, damage threshold, and the debris material identifier stored in the fourth word's bits (zero when absent). The `STORAGE | COPY_DST` buffer has a 16-byte stride. Index zero is the empty material and contains zeros.
+
+`cellular_static_damage_buffer()` stores a `vec2<f32>` per static index: damage threshold and
+damage coefficient. Index zero is unbreakable, with infinite threshold and zero coefficient. The
+8-byte records are bound by the edit and pressure passes. `cellular_dynamic_damage_buffer()` stores
+the same `vec2<f32>` record per dynamic index, bound by the edit pass. Empty dynamic tables receive
+an unbreakable fallback record.
 
 ### Fluid property buffer
 
@@ -90,7 +97,7 @@ Packed colors are little-endian RGBA. White returns the sampled albedo unchanged
 
 The cellular tile pass binds the dynamic property buffer as `array<vec4<f32>>` and indexes it with the dynamic identifier's low 30 bits. It uses mass, friction, and restitution in cell movement and collisions; see [cellular kinematics](@/internals/simulation/cellular-kinematics.md) and the [cellular tile shader](@/internals/shaders/cellular-tile-shader.md). Static-cell mass, friction, and restitution are instead looked up on the CPU when calculating a detached [cellular rigid body's properties](@/internals/simulation/rigid-bodies.md).
 
-`MaterialTable` creates static cellular, dynamic cellular, fluid, and gas property buffers. The fluid solver and cellular kinematics consume the fluid buffer for particle constraints and fluid/body coupling. The fluid renderer reads density and packed color from the same buffer. The [pressure simulation](@/internals/simulation/pressure.md) reads mass, diffusivity, and cohesion from the gas buffer, and [gas rendering](@/internals/rendering/gas-pass.md) reads its packed color and radiance.
+`MaterialTable` creates static cellular, dynamic cellular, fluid, and gas property buffers. Static cellular records contain mass, absorption, debris chance, and debris material identifier bits; damage thresholds and coefficients live in the separate damage buffer. The fluid solver and cellular kinematics consume the fluid buffer for particle constraints and fluid/body coupling. The fluid renderer reads density and packed color from the same buffer. The [pressure simulation](@/internals/simulation/pressure.md) reads mass, diffusivity, and cohesion from the gas buffer, and [gas rendering](@/internals/rendering/gas-pass.md) reads its packed color and radiance.
 
 The albedo and radiance readback and material buffer setup are implemented in {{ <rustdoc path="engine/materials/struct.MaterialTable.html" text="MaterialTable" /> }}.
 

@@ -35,10 +35,21 @@ use std::collections::{
     HashSet,
 };
 
-/// Inserted and replaced cells, materials, colors, added pressures, temperatures, and added
-/// temperatures of one tile's merged edits
+/// Inserted and replaced cells, materials, colors, pressures, temperatures, temperature changes,
+/// and damage loads and durations of one tile's merged edits
 pub type EditedCellularTile =
-    (u64, u64, [MaterialIdentifier; 64], [u32; 64], [u32; 64], [f32; 64], [f32; 64], [f32; 64]);
+    (
+        u64,
+        u64,
+        [MaterialIdentifier; 64],
+        [u32; 64],
+        [u32; 64],
+        [f32; 64],
+        [f32; 64],
+        [f32; 64],
+        [f32; 64],
+        [f32; 64],
+    );
 
 /// Requested edits awaiting their write into the GPU-resident cellular tiles
 pub struct EditStreamingState {
@@ -70,11 +81,13 @@ impl EditStreamingState {
         let mut cellular_tiles: HashSet<CellularTileCoordinates> = self.edits.iter()
             .flat_map(|queued_edit| queued_edit.cellular_tiles.keys()
                 .chain(queued_edit.pressures.keys())
-                .chain(queued_edit.temperatures.keys()).copied())
+                .chain(queued_edit.temperatures.keys())
+                .chain(queued_edit.damages.keys()).copied())
             .collect();
         cellular_tiles.extend(edit.cellular_tiles.keys().copied());
         cellular_tiles.extend(edit.pressures.keys().copied());
         cellular_tiles.extend(edit.temperatures.keys().copied());
+        cellular_tiles.extend(edit.damages.keys().copied());
         if cellular_tiles.len() > EDIT_CELLULAR_TILE_COUNT_MAXIMUM {
             return Err(EditError::CapacityReached);
         }
@@ -99,7 +112,8 @@ impl EditStreamingState {
         }
         // like filled tiles, a pressure or temperature tile outside the resident region rejects the
         // whole edit
-        for coordinates in edit.pressures.keys().chain(edit.temperatures.keys()) {
+        for coordinates in edit.pressures.keys().chain(edit.temperatures.keys())
+            .chain(edit.damages.keys()) {
             if !active_region.is_some_and(|region| region.contains(*coordinates)) {
                 return Err(EditError::CellularTileInactive { coordinates: *coordinates });
             }
@@ -137,6 +151,7 @@ impl EditStreamingState {
         accelerator: &Accelerator,
         cellular_tile_buffers: &CellularTileBuffers,
         cellular_tile_streaming_state: &CellularTileStreamingState,
+        material_table: &MaterialTable,
         actor_registry: &ActorRegistry,
         collision: Option<&mut Collision>,
         ambient_gas_amount: u32,
@@ -155,13 +170,14 @@ impl EditStreamingState {
         let mut edited_cellular_tiles: BTreeMap<CellularTileCoordinates, EditedCellularTile> =
             BTreeMap::new();
         let empty_cellular_tile: EditedCellularTile =
-            (0, 0, [MaterialIdentifier::EMPTY; 64], [0; 64], [0; 64], [0.0; 64], [0.0; 64], [0.0; 64]);
+            (0, 0, [MaterialIdentifier::EMPTY; 64], [0; 64], [0; 64], [0.0; 64], [0.0; 64], [0.0; 64],
+            [0.0; 64], [0.0; 64]);
         for edit in self.edits.drain(..) {
             for (coordinates, (cells, material_identifiers, colors, radiances, temperatures)) in
                 edit.cellular_tiles
             {
                 let (inserted_cells, replaced_cells, edited_materials, edited_colors, edited_radiances, _,
-                    edited_temperatures, _): &mut EditedCellularTile =
+                    edited_temperatures, _, _, _): &mut EditedCellularTile =
                     edited_cellular_tiles.entry(coordinates).or_insert(empty_cellular_tile);
                 let blocked_cells: u64 = intersections.get(&coordinates).copied().unwrap_or(0);
                 for cell_index in 0..64 {
@@ -202,15 +218,24 @@ impl EditStreamingState {
                 }
             }
             for (coordinates, pressures) in edit.pressures {
-                let (_, _, _, _, _, edited_pressures, _, _): &mut EditedCellularTile =
+                let (_, _, _, _, _, edited_pressures, _, _, _, _): &mut EditedCellularTile =
                     edited_cellular_tiles.entry(coordinates).or_insert(empty_cellular_tile);
                 for cell_index in 0..64 { edited_pressures[cell_index] += pressures[cell_index]; }
             }
             for (coordinates, temperatures) in edit.temperatures {
-                let (_, _, _, _, _, _, _, temperature_changes): &mut EditedCellularTile =
+                let (_, _, _, _, _, _, _, temperature_changes, _, _): &mut EditedCellularTile =
                     edited_cellular_tiles.entry(coordinates).or_insert(empty_cellular_tile);
                 for cell_index in 0..64 {
                     temperature_changes[cell_index] += temperatures[cell_index];
+                }
+            }
+            for (coordinates, (loads, durations)) in edit.damages {
+                let (_, _, _, _, _, _, _, _, edited_loads, edited_durations):
+                    &mut EditedCellularTile =
+                    edited_cellular_tiles.entry(coordinates).or_insert(empty_cellular_tile);
+                for cell_index in 0..64 {
+                    edited_loads[cell_index] = edited_loads[cell_index].max(loads[cell_index]);
+                    edited_durations[cell_index] += durations[cell_index];
                 }
             }
         }
@@ -224,7 +249,11 @@ impl EditStreamingState {
                 .collect();
         if edit_cellular_tiles.is_empty() { return Ok(()); }
         self.edit_cellular_tile_pass
-            .get_or_insert_with(|| EditCellularTilePass::new(accelerator, cellular_tile_buffers))
+            .get_or_insert_with(|| EditCellularTilePass::new(
+                accelerator,
+                cellular_tile_buffers,
+                material_table,
+            ))
             .write_cellular_tiles(accelerator, &edit_cellular_tiles, ambient_gas_amount);
         // collisions read the edited cells in the next simulation even when the ring is unmoved
         if let Some(collision) = collision { collision.request_cellular_tile_read(); }

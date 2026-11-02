@@ -16,8 +16,8 @@ have been registered.
 
 | Registration method | Properties type | Additional properties |
 |---|---|---|
-| `register_cellular_static(name, properties)` | `MaterialPropertiesCellularStatic` | `mass`, `friction`, `restitution`, `strength`, `absorption`, `debris: Option<String>` |
-| `register_cellular_dynamic(name, properties)` | `MaterialPropertiesCellularDynamic` | `mass`, `friction`, `restitution` |
+| `register_cellular_static(name, properties)` | `MaterialPropertiesCellularStatic` | `mass`, `friction`, `restitution`, `damage_threshold`, `damage_coefficient`, `absorption`, `debris: Option<String>`, `debris_chance` |
+| `register_cellular_dynamic(name, properties)` | `MaterialPropertiesCellularDynamic` | `mass`, `friction`, `restitution`, `damage_threshold`, `damage_coefficient` |
 | `register_fluid(name, properties)` | `MaterialPropertiesFluid` | `density`, `viscosity`, `cohesion`, `artificial_pressure`, `drag`, `friction`, `restitution`, `edit_color`, `edit_radiance` |
 | `register_gas(name, properties)` | `MaterialPropertiesGas` | `mass`, `diffusivity`, `cohesion`, `graphics` (`color`, `opacity`, `radiance`) |
 
@@ -37,8 +37,10 @@ in [the material table page](@/internals/simulation/material-table.md).
 
 - Cellular mass must be finite and positive; friction finite and nonnegative; restitution in
   `[0, 1]`.
-- Static strength must be positive and not NaN (positive infinity is allowed), and absorption must
-  be finite in `[0, 1]`.
+- Cellular damage thresholds must be positive and not NaN (positive infinity makes the material
+  unbreakable); damage coefficients must be finite and nonnegative. Static absorption must be
+  finite in `[0, 1]` and damps pressure waves only. Static debris chance must be finite and in
+  `[0, 1]`; it is ignored when `debris` is `None`.
 - Fluid density must be finite and positive; viscosity and restitution in `[0, 1]`; cohesion,
   artificial pressure, drag, and friction finite and nonnegative. Viscosity is a nonlinear control
   for per-substep XSPH relaxation toward the neighbor-weighted mean velocity. Fluid friction also
@@ -62,6 +64,13 @@ in [the material table page](@/internals/simulation/material-table.md).
 Radiance is linear HDR emission RGB plus occlusion, the fraction of light blocked by one tile of thickness. Emission is per cell along the optical path: a full-thickness cell shows its emission at the surface, while thin gas or sprites emit along the path. `pack_radiance` clamps emission channels to 0–127 and occlusion to 0–1; its packed `u32` uses three 7-bit emission mantissas in bits 0–20, a shared 4-bit exponent in bits 21–24, and 7-bit occlusion in bits 25–31.
 
 `MaterialTemperatureColor::new(temperature)` creates an identity key; `with_color` and `with_radiance` set its two transforms. `MaterialPropertiesThermal::temperature_colors` stores these keys, which interpolate color and radiance transforms at render time. They change appearance without modifying stored color or radiance; temperature keys require finite, nonnegative, strictly increasing temperatures, finite transforms, and zero variances. With no keys, the transforms are identity. See [thermal simulation](@/internals/simulation/thermal.md) for the render-time behavior.
+
+`damage_threshold` is the load in atmospheres borne indefinitely, for both pressure (static only)
+and scripted damage (static and dynamic). `damage_coefficient` is the number of whole cells of
+amount lost per second per atmosphere above the threshold. Both pressure and scripted damage spend
+the cell's existing amount, which chemistry also consumes. `absorption` only damps pressure waves.
+For static materials, `debris_chance` controls whether a broken cell becomes its configured debris
+material; `1.0` preserves the guaranteed debris behavior.
 
 `SpriteSheet` albedo uploads generate a complete CPU box-filtered mip chain with RGB averaged in
 linear light and linear alpha. See [lighting](@/external-api/lighting.md) for sprite radiance sheets.

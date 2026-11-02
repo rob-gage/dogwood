@@ -18,15 +18,20 @@ pub struct MaterialPropertiesCellularStatic {
     pub friction: f32,
     /// Fraction of speed kept, reversed, when rigid bodies made of this material collide
     pub restitution: f32,
-    /// Pressure difference in atmospheres the material holds indefinitely: loads below it never
-    /// damage its cells, and infinity makes them unbreakable
-    pub strength: f32,
+    /// Load in atmospheres the material bears indefinitely: pressure or scripted damage at or below
+    /// it never damages its cells, and infinity makes them unbreakable
+    pub damage_threshold: f32,
+    /// Amount of a cell, in whole cells, lost per second for each atmosphere of load beyond the
+    /// threshold; a cell breaks when its amount runs out
+    pub damage_coefficient: f32,
     /// Fraction from zero to one of the pressure passing through each cell that the material
-    /// absorbs, which damps pressure waves and, above its strength, damages the cell
+    /// absorbs, which damps pressure waves
     pub absorption: f32,
     /// Name of the cellular dynamic material each cell becomes when it breaks off, keeping its
     /// color, or `None` to vanish
     pub debris: Option<String>,
+    /// Probability from zero to one that a breaking cell becomes its debris material
+    pub debris_chance: f32,
     /// Thermal and phase-transition properties
     pub thermal: MaterialPropertiesThermal,
     /// Chemical reaction and amount-dependent visual properties
