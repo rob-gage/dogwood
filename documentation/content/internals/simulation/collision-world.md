@@ -8,7 +8,7 @@ sources = ["engine_world/src/scenes/collisions/collision.rs", "engine_world/src/
 
 This page is for engine contributors. It describes the `Collision` struct, its Rapier configuration, and the order of work in one fixed step. See {{ <rustdoc path="engine/scenes/collisions/struct.Collision.html" text="Collision" /> }}.
 
-`Collision` owns the Rapier 2D pipeline and its world state: rigid bodies and colliders, island and broad/narrow phase managers, joints, the CCD solver, and fixed-step integration parameters. It also owns:
+`Collision` owns the Rapier 2D pipeline and its world state: rigid bodies and colliders, island and broad/narrow phase managers, joints, the CCD solver, and fixed-step integration parameters. Scene raycasts create lightweight query views over this existing broad phase; they do not rebuild a separate collision world. It also owns:
 
 - the actor-to-Rapier handles;
 - the static-cell collider and a separate settled-dynamic-cell collider;

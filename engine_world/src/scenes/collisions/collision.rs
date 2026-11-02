@@ -45,6 +45,7 @@ use crate::{
     },
     scenes::{
         cellular_tiles::{
+            CellCoordinates,
             CellularTileBuffers,
             CellularTileCoordinates,
             CellularTileRegion,
@@ -52,6 +53,9 @@ use crate::{
         },
         SceneError,
         ScenePosition,
+        SceneRayHit,
+        SceneRayTarget,
+        SceneRigidBody,
         fluids::{
             FLUID_TIME_STEP,
             FluidActorContact,
@@ -1281,6 +1285,149 @@ impl Collision {
     /// Returns the cellular tile whose bottom-left corner is the origin of every Rapier position
     pub fn origin(&self) -> CellularTileCoordinates { self.origin }
 
+    /// Returns one pawn's velocity in tiles per second
+    pub(crate) fn pawn_velocity(&self, actor: Actor) -> Option<[f32; 2]> {
+        let (_, _, _, _, _, pawn) = self.actors.get(&actor)?;
+        let (velocity, ..) = pawn.as_ref()?;
+        Some([velocity.x, velocity.y])
+    }
+
+    /// Returns whether one pawn was grounded at its last movement step
+    pub(crate) fn pawn_is_grounded(&self, actor: Actor) -> Option<bool> {
+        let (_, _, _, _, _, pawn) = self.actors.get(&actor)?;
+        let (_, is_grounded, ..) = pawn.as_ref()?;
+        Some(*is_grounded)
+    }
+
+    /// Converts a scene position to a live rigid body's local frame
+    pub(crate) fn rigid_body_local_point(
+        &self,
+        rigid_body: SceneRigidBody,
+        position: ScenePosition,
+    ) -> Option<[f32; 2]> {
+        let body: &rapier2d::dynamics::RigidBody = self.rigid_body(rigid_body)?;
+        let local: rapier2d::math::Vector = body.position()
+            .inverse_transform_point(Self::rapier_translation(self.origin, position));
+        Some([local.x, local.y])
+    }
+
+    /// Converts a point in a live rigid body's local frame to a scene position
+    pub(crate) fn rigid_body_scene_position(
+        &self,
+        rigid_body: SceneRigidBody,
+        local: [f32; 2],
+    ) -> Option<ScenePosition> {
+        let body: &rapier2d::dynamics::RigidBody = self.rigid_body(rigid_body)?;
+        let translation: rapier2d::math::Vector = body.position()
+            .transform_point(rapier2d::math::Vector::new(local[0], local[1]));
+        Some(Self::scene_position(self.origin, translation))
+    }
+
+    /// Casts a ray through the existing Rapier broad phase and returns its nearest hit among the
+    /// filtered collision groups, ignoring an excluded actor
+    pub(crate) fn raycast(
+        &self,
+        origin: ScenePosition,
+        direction: [f64; 2],
+        maximum_distance: f64,
+        filter: u32,
+        exclude: Option<Actor>,
+    ) -> Option<SceneRayHit> {
+        let length: f64 = direction[0].hypot(direction[1]);
+        if !length.is_finite() || length == 0.0 || !maximum_distance.is_finite()
+            || maximum_distance < 0.0
+        { return None; }
+        let unit: rapier2d::math::Vector = rapier2d::math::Vector::new(
+            (direction[0] / length) as f32,
+            (direction[1] / length) as f32,
+        );
+        let ray_origin: rapier2d::math::Vector = Self::rapier_translation(self.origin, origin);
+        let mut query_filter: rapier2d::pipeline::QueryFilter<'_> =
+            rapier2d::pipeline::QueryFilter::default().groups(
+                rapier2d::geometry::InteractionGroups::new(
+                    rapier2d::geometry::Group::ALL,
+                    rapier2d::geometry::Group::from_bits_retain(filter),
+                    rapier2d::geometry::InteractionTestMode::And,
+                ),
+            );
+        if let Some((rigid_body_handle, ..)) = exclude.and_then(|actor| self.actors.get(&actor)) {
+            query_filter = query_filter.exclude_rigid_body(*rigid_body_handle);
+        }
+        let query_pipeline: rapier2d::pipeline::QueryPipeline<'_> = self.broad_phase
+            .as_query_pipeline(
+                self.narrow_phase.query_dispatcher(),
+                &self.rigid_bodies,
+                &self.colliders,
+                query_filter,
+            );
+        let ray: rapier2d::parry::query::Ray = rapier2d::parry::query::Ray::new(ray_origin, unit);
+        let (collider_handle, intersection) =
+            query_pipeline.cast_ray_and_get_normal(&ray, maximum_distance as f32, true)?;
+        let position: rapier2d::math::Vector = ray_origin + unit * intersection.time_of_impact;
+        let target: SceneRayTarget =
+            self.ray_target(collider_handle, position, intersection.normal)?;
+        Some(SceneRayHit {
+            position: Self::scene_position(self.origin, position),
+            normal: [intersection.normal.x, intersection.normal.y],
+            distance: f64::from(intersection.time_of_impact),
+            target,
+        })
+    }
+
+    /// Returns what a ray hit on a collider: the cell just inside the hit face of a cellular tile
+    /// collider, a cellular rigid body by the identifier stored in its user data, or an actor
+    fn ray_target(
+        &self,
+        collider_handle: rapier2d::geometry::ColliderHandle,
+        position: rapier2d::math::Vector,
+        normal: rapier2d::math::Vector,
+    ) -> Option<SceneRayTarget> {
+        if self.cellular_tile_collider == Some(collider_handle)
+            || self.dynamic_cellular_tile_collider == Some(collider_handle)
+        {
+            // half a cell inward from the hit face lands inside the hit cell, well beyond f32
+            // rounding at region-sized coordinates
+            let inside: rapier2d::math::Vector =
+                (position - normal * (0.5 / CELLULAR_TILE_SIZE as f32)) * CELLULAR_TILE_SIZE as f32;
+            return Some(SceneRayTarget::CellularTile {
+                cell: CellCoordinates {
+                    x: self.origin.x * CELLULAR_TILE_SIZE + inside.x.floor() as i64,
+                    y: self.origin.y * CELLULAR_TILE_SIZE + inside.y.floor() as i64,
+                },
+            });
+        }
+        let parent: rapier2d::dynamics::RigidBodyHandle =
+            self.colliders.get(collider_handle)?.parent()?;
+        let identifier: u128 = self.rigid_bodies.get(parent)?.user_data;
+        if identifier != 0 {
+            let rigid_body: SceneRigidBody = SceneRigidBody(identifier as u64);
+            return Some(SceneRayTarget::RigidBody { rigid_body });
+        }
+        self.actors.iter().find_map(|(actor, (rigid_body_handle, ..))| {
+            (*rigid_body_handle == parent).then_some(SceneRayTarget::Actor { actor: *actor })
+        })
+    }
+
+    /// Returns a live cellular rigid body's Rapier body
+    fn rigid_body(&self, rigid_body: SceneRigidBody) -> Option<&rapier2d::dynamics::RigidBody> {
+        self.rigid_bodies.get(self.collision_rigid_bodies.get(&rigid_body.0)?.rigid_body_handle)
+    }
+
+    /// Converts a Rapier translation to a scene position relative to a cellular tile origin
+    fn scene_position(
+        origin: CellularTileCoordinates,
+        translation: rapier2d::math::Vector,
+    ) -> ScenePosition {
+        let x: f64 = f64::from(translation.x);
+        let y: f64 = f64::from(translation.y);
+        ScenePosition {
+            tile_x: origin.x + x.floor() as i64,
+            tile_y: origin.y + y.floor() as i64,
+            offset_x: ((x - x.floor()) * ScenePosition::OFFSET_UNITS_PER_TILE) as u32,
+            offset_y: ((y - y.floor()) * ScenePosition::OFFSET_UNITS_PER_TILE) as u32,
+        }
+    }
+
     /// Returns the edges of every collider as scene-position line segments
     pub fn collider_outlines(&self) -> Vec<(ScenePosition, ScenePosition)> {
         use rapier2d::{math::Vector, parry::shape::AxisMask};
@@ -1731,6 +1878,8 @@ impl Collision {
                 .angvel(angular_velocity)
                 .soft_ccd_prediction(COLLISION_RIGID_BODY_CCD_PREDICTION)
                 .additional_solver_iterations(COLLISION_RIGID_BODY_SOLVER_ITERATION_COUNT)
+                // scene ray hits name the body by this identifier
+                .user_data(u128::from(self.next_rigid_body_identifier))
                 .build();
         collision_rigid_body.rigid_body_handle = self.rigid_bodies.insert(rigid_body);
         // filled one voxel at a time because Parry 0.30's bulk-built chunk hierarchy can panic
@@ -2300,6 +2449,30 @@ impl Collision {
             ScenePosition { tile_x: origin.x, tile_y: origin.y, offset_x: 0, offset_y: 0 };
         let (x, y): (f64, f64) = position.relative_position(origin_position);
         rapier2d::math::Vector::new(x as f32, y as f32)
+    }
+
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::Collision;
+    use crate::scenes::{
+        cellular_tiles::CellularTileCoordinates,
+        ScenePosition,
+    };
+
+    /// Converts Rapier translations through a distant cellular tile origin, keeping negative
+    /// fractional coordinates in the right tile
+    #[test]
+    fn scene_position_preserves_negative_fractional_coordinates() {
+        let origin: CellularTileCoordinates = CellularTileCoordinates { x: -100, y: 200 };
+        let translation: rapier2d::math::Vector = rapier2d::math::Vector::new(-1.25, 0.5);
+        let position: ScenePosition = Collision::scene_position(origin, translation);
+        assert_eq!(position.tile_x, -102);
+        assert_eq!(position.tile_y, 200);
+        assert_eq!(position.offset_x, (0.75 * ScenePosition::OFFSET_UNITS_PER_TILE) as u32);
+        assert_eq!(position.offset_y, (0.5 * ScenePosition::OFFSET_UNITS_PER_TILE) as u32);
     }
 
 }

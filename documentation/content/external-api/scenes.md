@@ -3,7 +3,7 @@ title = "Scenes"
 description = "Scene construction, streaming and simulation contracts, generators, and exact positions."
 weight = 30
 [extra]
-sources = ["engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chemistry", "engine_world/src/scenes/thermal", "engine_world/src/scenes/scene_error.rs", "engine_world/src/scenes/scene_generator.rs", "engine_world/src/scenes/scene_position.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/materials/material_table.rs", "engine/src/lib.rs", "engine_world/src/actors/components/actor_light.rs"]
+sources = ["engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chemistry", "engine_world/src/scenes/thermal", "engine_world/src/scenes/scene_error.rs", "engine_world/src/scenes/scene_generator.rs", "engine_world/src/scenes/scene_position.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/materials/material_table.rs", "engine/src/lib.rs", "engine_world/src/actors/components/actor_light.rs"]
 +++
 
 This page covers the `Scene` type, the `SceneGenerator` trait, `ScenePosition`, and `SceneError`. It is for game programmers who build and drive a scene; games that use `Engine::launch` get the lifecycle calls from `GameInstance` automatically.
@@ -14,7 +14,7 @@ This page covers the `Scene` type, the `SceneGenerator` trait, `ScenePosition`, 
 
 - `actor_registry_mutable()` gives mutable access to the `ActorRegistry`.
 - `material_table()` returns the compiled material table.
-- `set_gravity(f32)` sets downward acceleration in tiles per second squared. The source default is `50.0`. The setter does not validate; negative values produce upward acceleration.
+- `gravity()` returns downward acceleration in tiles per second squared. `set_gravity(f32)` sets it; the source default is `50.0`. The setter does not validate; negative values produce upward acceleration.
 - `set_ambient_gas_pressure(f32)` sets the pressure of the phantom air filling empty cells, in atmospheres. Values must be finite and in `[0, 256)`; otherwise it returns `InvalidAmbientGasPressure`. The default is `1.0`; zero leaves empty cells a vacuum. Tiles without stored gas start with it.
 - `ambient_gas_temperature()` returns the configured phantom-air temperature in kelvin. `set_ambient_gas_temperature(f32)` accepts finite nonnegative values and controls newly initialized gas temperatures and ambient relaxation.
 - `set_ambient_gas_heat_capacity(f32)` sets heat per atmosphere per kelvin; it must be finite and positive.
@@ -24,6 +24,9 @@ This page covers the `Scene` type, the `SceneGenerator` trait, `ScenePosition`, 
 - `save()` requests persistence; it is a no-op before streaming is initialized. Save requests are nonblocking; drive the normal `stream`/`simulate` lifecycle until `is_saved()` is true. [Particle persistence](@/internals/world-streaming/fluid-streaming.md#resident-saves) describes the pending phases.
 - `is_saved()` reports whether requested saves have completed.
 - `active_cellular_tile_region()` returns the active region, or `None` before tiles become resident.
+- `raycast(origin: ScenePosition, direction: [f64; 2], maximum_distance: f64, filter: u32, exclude: Option<Actor>) -> Option<SceneRayHit>` queries the existing collision broad phase and returns the nearest filtered hit. Direction may have any nonzero length; distance is in tiles. `filter` is a collision-group mask, and `exclude` skips the specified actor. It returns `None` before collision state exists or when the ray has invalid inputs or no hit. A ray starting inside a solid reports a zero-distance hit. `SceneRayHit` fields are `position: ScenePosition`, outward `normal: [f32; 2]`, `distance: f64` in tiles, and `target: SceneRayTarget`; targets are `CellularTile { cell }`, `RigidBody { rigid_body }`, or `Actor { actor }`.
+- `pawn_velocity(actor: Actor) -> Option<[f32; 2]>` and `pawn_is_grounded(actor: Actor) -> Option<bool>` read a simulated pawn's movement state. Velocity is in tiles per second; grounded reports the last movement step.
+- `rigid_body_local_point(rigid_body: SceneRigidBody, position: ScenePosition) -> Option<[f32; 2]>` converts a scene position into a live cellular rigid body's local frame in tiles. `rigid_body_scene_position(rigid_body: SceneRigidBody, local: [f32; 2]) -> Option<ScenePosition>` converts back. `SceneRigidBody` identifiers are never reused and are stored in the Rapier body's user data for constant-time hit resolution; a ray hit supplies the identifier. Removed bodies no longer resolve.
 
 ## Lifecycle
 

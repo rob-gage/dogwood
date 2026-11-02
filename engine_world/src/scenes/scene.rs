@@ -2,6 +2,7 @@
 
 use super::{
     cellular_tiles::{
+        CellCoordinates,
         CellularTileBuffers,
         CellularTileCoordinates,
         CellularTileRegion,
@@ -91,6 +92,34 @@ use std::{
     },
     sync::Arc,
 };
+
+/// Stable identifier for a live cellular rigid body in one scene
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+pub struct SceneRigidBody(pub(crate) u64);
+
+/// Object hit by a scene ray
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+pub enum SceneRayTarget {
+    /// Solid cellular tile cell
+    CellularTile { cell: CellCoordinates },
+    /// Cellular rigid body
+    RigidBody { rigid_body: SceneRigidBody },
+    /// Actor collider
+    Actor { actor: Actor },
+}
+
+/// Closest object hit by a scene ray
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct SceneRayHit {
+    /// Hit position in scene coordinates
+    pub position: ScenePosition,
+    /// Surface normal pointing out of the hit collider
+    pub normal: [f32; 2],
+    /// Distance from the cast origin in tiles
+    pub distance: f64,
+    /// Object that was hit
+    pub target: SceneRayTarget,
+}
 
 /// A playable scene
 pub struct Scene {
@@ -202,6 +231,50 @@ impl Scene {
     pub fn collider_outlines(&self) -> Vec<(ScenePosition, ScenePosition)> {
         self.collision.as_ref().map_or_else(Vec::new, Collision::collider_outlines)
     }
+
+    /// Casts a ray from a scene position along a direction for up to a distance in tiles, returning
+    /// the nearest hit among colliders in the filter's collision groups, ignoring an excluded actor
+    pub fn raycast(
+        &self,
+        origin: ScenePosition,
+        direction: [f64; 2],
+        maximum_distance: f64,
+        filter: u32,
+        exclude: Option<Actor>,
+    ) -> Option<SceneRayHit> {
+        self.collision.as_ref()?.raycast(origin, direction, maximum_distance, filter, exclude)
+    }
+
+    /// Converts a scene position to a live cellular rigid body's local frame, in tiles
+    pub fn rigid_body_local_point(
+        &self,
+        rigid_body: SceneRigidBody,
+        position: ScenePosition,
+    ) -> Option<[f32; 2]> {
+        self.collision.as_ref()?.rigid_body_local_point(rigid_body, position)
+    }
+
+    /// Converts a point in a live cellular rigid body's local frame, in tiles, to a scene position
+    pub fn rigid_body_scene_position(
+        &self,
+        rigid_body: SceneRigidBody,
+        local: [f32; 2],
+    ) -> Option<ScenePosition> {
+        self.collision.as_ref()?.rigid_body_scene_position(rigid_body, local)
+    }
+
+    /// Returns a pawn's velocity in tiles per second
+    pub fn pawn_velocity(&self, actor: Actor) -> Option<[f32; 2]> {
+        self.collision.as_ref()?.pawn_velocity(actor)
+    }
+
+    /// Returns whether a pawn was grounded at its last movement step
+    pub fn pawn_is_grounded(&self, actor: Actor) -> Option<bool> {
+        self.collision.as_ref()?.pawn_is_grounded(actor)
+    }
+
+    /// Returns the downward acceleration of dynamic bodies and pawns in tiles per second squared
+    pub fn gravity(&self) -> f32 { self.gravity }
 
     /// Sets the downward acceleration of dynamic bodies and pawns in tiles per second squared
     pub fn set_gravity(&mut self, gravity: f32) { self.gravity = gravity; }

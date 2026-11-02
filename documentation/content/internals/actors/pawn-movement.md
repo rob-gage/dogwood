@@ -16,6 +16,8 @@ Collision applies pawn movement only to actors that have:
 - an `ActorPawnMovementComponent`, and
 - an `ActorCollisionComponent` with body type `Kinematic`.
 
+`Scene::pawn_velocity` and `Scene::pawn_is_grounded` expose the stored state for eligible pawns.
+
 When an actor has one or more colliders, every present collider's bounds must fit inside the active region; the actor's position is not checked separately. The `ActorPawnControlComponent` is optional; when absent, movement and jump or crouch intent are zero.
 
 ## Tuning values

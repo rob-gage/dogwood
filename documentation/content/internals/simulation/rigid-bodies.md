@@ -7,6 +7,8 @@ sources = ["engine_world/src/scenes/collisions/collision.rs", "engine_world/src/
 +++
 A cellular rigid body is a group of static cells that is no longer connected to the rest of the world. Collision detects it, simulates it as a Rapier body, and rasterizes it back into the tile buffers. This page is for engine contributors; it covers detection, creation, splitting, rasterization, and release.
 
+Each created body receives a scene-local `SceneRigidBody` identifier that is never reused. The identifier is stored in the Rapier body's `user_data`, so ray hits resolve the owner in constant time. The largest group retaining the original Rapier body keeps its identifier after a split; newly created pieces receive new identifiers. Released and removed bodies no longer resolve through `Scene::rigid_body_local_point` or `Scene::rigid_body_scene_position`. These methods convert points between scene and body-local coordinates; ray hits carry the body identifier.
+
 ## Limits
 
 | Limit | Value |

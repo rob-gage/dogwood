@@ -13,7 +13,12 @@ mod scene_error;
 mod scene_generator;
 mod scene_position;
 
-pub use scene::Scene;
+pub use scene::{
+    Scene,
+    SceneRayHit,
+    SceneRayTarget,
+    SceneRigidBody,
+};
 pub use scene_error::SceneError;
 pub use scene_generator::SceneGenerator;
 pub use scene_position::ScenePosition;

@@ -8,6 +8,8 @@ sources = ["engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes
 
 This page covers the colliders actors attach to the physics world and the `Edit` API for changing cells. It also lists the public collision and cellular tile simulation types that games do not manage. The collision types are under `engine::scenes::collisions`.
 
+`Scene::raycast` queries the current broad phase with a collision-group mask. Ray directions are normalized internally, and distances are measured in tiles. A ray starting inside a solid reports a zero-distance hit. Terrain results identify the solid cell; actor and rigid-body hits identify their owner. Settled dynamic cells can be selected with `COLLISION_GROUP_CELLULAR_DYNAMIC`. See [scene queries](@/external-api/scenes.md).
+
 ## Collider data
 
 A `Collider` combines a `ColliderShape` with `offset_x`, `offset_y`, and `rotation`. Offsets are in tiles relative to the owning actor, and rotation is counterclockwise radians.
