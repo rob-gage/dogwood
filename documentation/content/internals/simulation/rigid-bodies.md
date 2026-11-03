@@ -39,6 +39,8 @@ Detached groups are read from GPU cell storage to retain each cell's material id
 - Groups of 12 or more cells become candidate rigid bodies.
 - If body or tile capacity prevents insertion, the group remains static.
 
+The applied groups' cell writes are submitted as soon as the groups are applied, before that tick's occupancy read, so a read requested by an edit in the same tick does not find the cells still static and detach them again as a second body.
+
 Each body stores an 8x8-cell occupancy mask per cellular tile, plus per-cell material identifiers, colors, and radiance. Each rigid-body cell record stores material, color, radiance, and padding. Rapier receives a dynamic body and a voxel collider. The GPU pass receives tile records and a body record used to rasterize the cells. Each body cell also carries stored pressure and amount in a GPU state buffer; amount carries damage through release, rasterization, body splits, and detachment. The body tracks the last rasterized pose. The [Rapier collision world](@/internals/simulation/collision-world.md) covers the broader collision step.
 
 ### Mass properties
@@ -65,7 +67,7 @@ This readback and split path is why an edit requests fresh collision cell data; 
 
 ## Rasterization
 
-The collision update writes records when a body's pose, per-tick linear or angular movement values, or cells change. The pass submits pending cell replacements first, then returns departing tiles, clears old coverage for moved bodies, and rasterizes tile records at the new pose.
+The collision update writes records when a body's pose, per-tick linear or angular movement values, or cells change. The pass returns departing tiles, clears old coverage for moved bodies, and rasterizes tile records at the new pose.
 
 Dynamic cells under a rigid body stay associated while its current rasterization covers them. When the body moves, old coverage markers are cleared; dynamic material, color, and kinematics at uncovered old cells remain in place. Unchanged, resting bodies keep their current rasterized cells.
 

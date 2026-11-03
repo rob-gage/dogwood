@@ -27,9 +27,11 @@ const PRESSURE_BUOYANCY_SCALE: f32 = 0.5;
 /// Speed of pressure waves through gas in tiles per second
 const PRESSURE_GAS_SPEED: f32 = 18.0;
 
-/// Speed of pressure waves through solid cells in tiles per second, below the stability limit of
-/// 0.7 cells per substep
-const PRESSURE_SOLID_SPEED: f32 = 30.0;
+/// Speed of pressure waves through solid cells in tiles per second, 0.44 pressure cells per
+/// substep, well below the stability limit of 0.7 so that moving rigid bodies, whose stored
+/// pressure moves with them while their face flows stay in the grid, never build up stored
+/// pressure until they break
+const PRESSURE_SOLID_SPEED: f32 = 20.0;
 
 /// Impedance of a solid cell of unit mass relative to gas, so that heavier solids reflect more of
 /// the pressure reaching them

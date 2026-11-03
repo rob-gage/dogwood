@@ -146,8 +146,6 @@ pub struct Collision {
     free_cellular_tile_indices: Vec<u32>,
     /// Rigid body and coordinates in it of every held rigid body tile
     cellular_tile_rigid_bodies: HashMap<u32, (u64, (i32, i32))>,
-    /// Cells written before the next rasterization, with their new and expected materials
-    rigid_body_cell_writes: Vec<[u32; 4]>,
     /// Static cell groups merged into one read request at the end of this collision tick
     detached_cell_groups: Vec<Vec<(u32, u32)>>,
     /// Rigid bodies whose cells changed since their last rasterization
@@ -230,7 +228,6 @@ impl Collision {
                 .rev()
                 .collect(),
             cellular_tile_rigid_bodies: HashMap::new(),
-            rigid_body_cell_writes: Vec::new(),
             detached_cell_groups: Vec::new(),
             changed_rigid_bodies: HashSet::new(),
             cleared_cellular_tiles: Vec::new(),
@@ -1923,6 +1920,7 @@ impl Collision {
             self.simulate_collisions_apply_detached_cells(
                 accelerator,
                 active_region,
+                ring_offset,
                 verified_groups,
                 material_table,
             );
@@ -1931,15 +1929,18 @@ impl Collision {
     }
 
     /// Creates rigid bodies or debris from verified detach groups and clears their static voxels
+    /// and cells
     fn simulate_collisions_apply_detached_cells(
         &mut self,
         accelerator: &Accelerator,
         active_region: CellularTileRegion,
+        ring_offset: (u32, u32),
         groups: Vec<Vec<((u32, u32), (MaterialIdentifier, u32, u32, [u32; 4]))>>,
         material_table: &MaterialTable,
     ) {
         let region_tile_width: i64 = active_region.width() as i64;
         let (region_x, region_y): (i32, i32) = self.rigid_body_region_origin(active_region);
+        let mut cell_writes: Vec<[u32; 4]> = Vec::new();
         for group in groups {
             let group_cells: Vec<((i64, i64), (MaterialIdentifier, u32, u32, [u32; 4]))> =
                 group.into_iter().map(|(cell, read)| {
@@ -1995,7 +1996,7 @@ impl Collision {
                         .unwrap_or(MaterialIdentifier::EMPTY)
                         .as_u32()
                 } else { 0 };
-                self.rigid_body_cell_writes
+                cell_writes
                     .push([x as u32, y as u32, material, material_identifier.as_u32()]);
                 if let Some((_, cellular_tiles)) = self.cellular_tiles.as_mut() {
                     let tile_index: usize = (y / 8 * region_tile_width + x / 8) as usize;
@@ -2017,6 +2018,20 @@ impl Collision {
                     self.solid_cell_count -= 1;
                 }
             }
+        }
+        // the cells leave the grid now, since an occupancy read later this tick would otherwise
+        // find them static and detach them again as a second body
+        if !cell_writes.is_empty() {
+            self.rigid_body_pass.rasterize_rigid_bodies(
+                accelerator,
+                active_region,
+                ring_offset,
+                (region_x, region_y),
+                &cell_writes,
+                &[],
+                &[],
+                &[],
+            );
         }
     }
 
@@ -2387,8 +2402,7 @@ impl Collision {
             collision_rigid_body.rasterization = Some(rasterization);
         }
         self.changed_rigid_bodies.clear();
-        let cell_writes: Vec<[u32; 4]> = std::mem::take(&mut self.rigid_body_cell_writes);
-        if !records.is_empty() || !cell_writes.is_empty() || !cleared_cellular_tiles.is_empty() {
+        if !records.is_empty() || !cleared_cellular_tiles.is_empty() {
             let region_origin: (i32, i32) = self.rigid_body_region_origin(active_region);
             self.rigid_body_pass.write_rigid_bodies(accelerator, &records);
             self.rigid_body_pass.rasterize_rigid_bodies(
@@ -2396,7 +2410,7 @@ impl Collision {
                 active_region,
                 ring_offset,
                 region_origin,
-                &cell_writes,
+                &[],
                 &[],
                 &cleared_cellular_tiles,
                 &rasterized_cellular_tiles,

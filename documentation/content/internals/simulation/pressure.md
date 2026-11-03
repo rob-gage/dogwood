@@ -52,7 +52,7 @@ Each tick has 3 fixed substeps (`PRESSURE_SUBSTEP_COUNT`) over `PRESSURE_TIME_ST
 | --- | ---: | --- |
 | `PRESSURE_BUOYANCY_SCALE` | 0.5 | Fraction of scene gravity applied to gas |
 | `PRESSURE_GAS_SPEED` | 18 tiles/s | Pressure-wave speed through gas |
-| `PRESSURE_SOLID_SPEED` | 30 tiles/s | Pressure-wave speed through solids |
+| `PRESSURE_SOLID_SPEED` | 20 tiles/s | Pressure-wave speed through solids |
 | `PRESSURE_SOLID_IMPEDANCE` | 5.0 | Solid impedance relative to gas for unit mass |
 | `PRESSURE_FLOW_DAMPING` | 0.96 | Face flow removed per second |
 | `PRESSURE_BULK_VISCOSITY` | 24.0 | Net-flow divergence response per second |

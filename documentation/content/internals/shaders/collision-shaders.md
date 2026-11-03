@@ -79,7 +79,7 @@ Uniforms occupy six 256-byte slots, for write, return, clear, rasterize, read, a
 - `MODE_RETURN` saves each static cell's stored pressure, kinematics word, temperature, and amount in the body's cell state and leaves the cell in place at rest; covered dynamic cells remain dynamic.
 - `MODE_CHANGE` reports and detaches a listed body cell only when its current material differs from the stored material and is not dynamic. Unchanged or dynamic cells remain attached.
 
-`MODE_CLEAR` and `MODE_RETURN` are queued through `rasterize_rigid_bodies`, which submits without waiting. Pending cell writes are submitted first. In the rigid-body submission, `release` runs for returned and cleared tiles before `rasterize`, so moving bodies do not block themselves.
+`MODE_CLEAR` and `MODE_RETURN` are queued through `rasterize_rigid_bodies`, which submits without waiting. Detached groups submit their `write_cells` records through the same function, with no tile items, when they are applied. In the rigid-body submission, `release` runs for returned and cleared tiles before `rasterize`, so moving bodies do not block themselves.
 
 ### Entry point behaviour
 
