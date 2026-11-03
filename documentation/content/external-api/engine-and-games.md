@@ -22,7 +22,9 @@ use engine::{
 
 struct MyGame;
 
-impl Game for MyGame {}
+impl Game for MyGame {
+    type GameEvent = ();
+}
 
 fn main() -> Result<(), EngineError> {
     Engine::default().launch(MyGame)
@@ -40,12 +42,15 @@ All trait methods have defaults, so implementations override only the callbacks 
 | Method | Default | Called |
 | --- | --- | --- |
 | `window_configuration(&self) -> WindowConfiguration` | `WindowConfiguration::default()` | Once during `Engine::launch`, before opening the window |
-| `update(&mut self, elapsed_time: Duration)` | No operation | Once per fixed update, at 60 updates per second when the window loop catches up; elapsed time is one update interval |
+| `update(&mut self, elapsed_time: Duration, game_events: &mut GameEventQueue<Self::GameEvent>)` | No operation | Once per fixed update, at 60 updates per second when the window loop catches up; elapsed time is one update interval |
+| `handle_game_event(&mut self, game_event: Self::GameEvent, game_events: &mut GameEventQueue<Self::GameEvent>)` | No operation | For each event queued by a callback, after that callback returns |
 | `scene(&mut self) -> Option<(&mut Scene, Actor)>` | `None` | During update, streaming, and rendering to obtain the current scene and its camera actor |
-| `user_interface(&mut self, user_interface: &mut UserInterface)` | No operation | Every rendered frame to compose UI |
-| `window_event(&mut self, event: SystemWindowEvent)` | No operation | When the host emits a window event |
-| `keyboard_event(&mut self, event: SystemKeyboardEvent)` | No operation | When the host emits a keyboard event |
-| `mouse_event(&mut self, event: SystemMouseEvent)` | No operation | When the host emits a mouse event |
+| `user_interface(&mut self, user_interface: &mut UserInterface, game_events: &mut GameEventQueue<Self::GameEvent>)` | No operation | Every rendered frame to compose UI |
+| `window_event(&mut self, event: SystemWindowEvent, game_events: &mut GameEventQueue<Self::GameEvent>)` | No operation | When the host emits a window event |
+| `keyboard_event(&mut self, event: SystemKeyboardEvent, game_events: &mut GameEventQueue<Self::GameEvent>)` | No operation | When the host emits a keyboard event |
+| `mouse_event(&mut self, event: SystemMouseEvent, game_events: &mut GameEventQueue<Self::GameEvent>)` | No operation | When the host emits a mouse event |
+
+`GameEventQueue<E>` is a FIFO queue with `push`, `pop`, `len`, and `is_empty`. After each callback that receives it, the engine passes queued events to `handle_game_event` in order. Events queued by a handler are handled in the same drain. A handler that always queues another event never returns. During `update`, event handling finishes before the engine streams and simulates the scene.
 
 The runtime caps accumulated time at six fixed update intervals after a delayed event-loop iteration. See [Frame and update lifecycle](@/architecture/frame-lifecycle.md) for the fixed-update loop.
 
@@ -58,10 +63,10 @@ The selected camera actor must have `ActorCameraComponent` and `ActorKinematicsP
 Each fixed update runs these steps in order:
 
 1. Query `scene()`. If it returns `Some`, apply held-key control to possessed pawns (actors with `ActorPawnPossessionComponent`; see [Actor components](@/external-api/actor-components.md)).
-2. Call `Game::update`.
+2. Call `Game::update`, then handle all queued events in FIFO order. Handlers can enqueue further events; the drain ends when the queue is empty.
 3. Query `scene()` again. If it returns `Some`, stream and simulate the scene.
 
-`GameInstance` tracks `PhysicalKey::Code` press and release events and clears held keys on `FocusReleased`. It maps keys to pawn control as follows:
+`GameInstance` tracks `PhysicalKey::Code` press and release events and clears held keys on `FocusReleased`. It maps keys to pawn control as follows. Pawn control is applied before `update` and its event drain.
 
 | Keys | Control |
 | --- | --- |
@@ -105,4 +110,4 @@ These calls panic instead of returning errors:
 
 The `Game` callback methods themselves do not return errors.
 
-{{ <rustdoc path="engine/runtime/struct.Engine.html" text="Engine" /> }} · {{ <rustdoc path="engine/runtime/enum.EngineError.html" text="EngineError" /> }} · {{ <rustdoc path="engine/games/trait.Game.html" text="Game" /> }} · {{ <rustdoc path="engine/games/struct.GameInstance.html" text="GameInstance" /> }}
+{{ <rustdoc path="engine/runtime/struct.Engine.html" text="Engine" /> }} · {{ <rustdoc path="engine/runtime/enum.EngineError.html" text="EngineError" /> }} · {{ <rustdoc path="engine/games/trait.Game.html" text="Game" /> }} · {{ <rustdoc path="engine/games/struct.GameEventQueue.html" text="GameEventQueue" /> }} · {{ <rustdoc path="engine/games/struct.GameInstance.html" text="GameInstance" /> }}

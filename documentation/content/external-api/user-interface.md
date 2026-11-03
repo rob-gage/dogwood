@@ -3,7 +3,7 @@ title = "User interface"
 description = "Compose native egui interfaces and game UI with the engine facade."
 weight = 100
 [extra]
-sources = ["engine_user_interface/src", "engine/src/lib.rs"]
+sources = ["engine_user_interface/src", "engine/src/games", "engine/src/lib.rs"]
 +++
 
 ## Using `Game::user_interface`
@@ -26,7 +26,7 @@ Toggles, sliders, and text inputs borrow their values mutably for composition. A
 
 ```rust
 use engine::{
-    games::Game,
+    games::{Game, GameEventQueue},
     user_interface::{
         game_ui::{GameUi, UiElement},
         UserInterface,
@@ -39,7 +39,9 @@ struct InventoryGame {
 }
 
 impl Game for InventoryGame {
-    fn user_interface(&mut self, ui: &mut UserInterface) {
+    type GameEvent = ();
+
+    fn user_interface(&mut self, ui: &mut UserInterface, _game_events: &mut GameEventQueue<Self::GameEvent>) {
         let responses = self.game_ui.show(
             ui,
             UiElement::column()

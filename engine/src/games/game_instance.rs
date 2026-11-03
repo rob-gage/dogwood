@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-use super::Game;
+use super::{Game, GameEventQueue};
 use engine_graphics::{
     renders::{SceneRenderer, SceneRendererViewMode},
     world::scenes::{SceneGraphics, SceneGraphicsOverlay},
@@ -23,6 +23,8 @@ use std::{collections::HashSet, mem, time::Duration};
 pub struct GameInstance<G: Game> {
     /// The `Game` running in this `GameInstance`
     game: G,
+    /// Events produced by game callbacks and waiting for their handlers
+    game_events: GameEventQueue<G::GameEvent>,
     /// Keys held since focus was last released, controlling possessed pawns
     held_keys: HashSet<KeyCode>,
     /// Camera replacing the game's own camera, used by hosts such as the editor
@@ -42,6 +44,7 @@ impl<G: Game> GameInstance<G> {
     pub fn new(accelerator: &Accelerator, game: G) -> GameInstance<G> {
         GameInstance {
             game,
+            game_events: GameEventQueue::new(),
             held_keys: HashSet::new(),
             camera_actor: None,
             overlays: Vec::new(),
@@ -82,7 +85,8 @@ impl<G: Game> GameInstance<G> {
         if let SystemWindowEvent::FocusReleased = event {
             self.held_keys.clear();
         }
-        self.game.window_event(event);
+        self.game.window_event(event, &mut self.game_events);
+        self.handle_game_events();
     }
 
     /// Handles a host keyboard event, recording held keys for pawn control
@@ -94,12 +98,21 @@ impl<G: Game> GameInstance<G> {
                 self.held_keys.remove(&key_code);
             }
         }
-        self.game.keyboard_event(event);
+        self.game.keyboard_event(event, &mut self.game_events);
+        self.handle_game_events();
     }
 
     /// Handles a host mouse event
     pub fn mouse_event(&mut self, event: SystemMouseEvent) {
-        self.game.mouse_event(event);
+        self.game.mouse_event(event, &mut self.game_events);
+        self.handle_game_events();
+    }
+
+    /// Handles queued game events until the queue is empty
+    fn handle_game_events(&mut self) {
+        while let Some(game_event) = self.game_events.pop() {
+            self.game.handle_game_event(game_event, &mut self.game_events);
+        }
     }
 
     /// Advances the game by one fixed update, then streams and simulates its scene
@@ -135,7 +148,8 @@ impl<G: Game> GameInstance<G> {
                     .unwrap_or_else(|error| panic!("Pawn possession failed: {error:?}"));
             }
         }
-        self.game.update(elapsed_time);
+        self.game.update(elapsed_time, &mut self.game_events);
+        self.handle_game_events();
         let camera_actor: Option<Actor> = self.camera_actor;
         let Some((scene, game_camera_actor)) = self.game.scene() else {
             return;
@@ -211,9 +225,13 @@ impl<G: Game> GameInstance<G> {
         }
         // compose the user interface and draw it over the scene
         let game: &mut G = &mut self.game;
+        let game_events: &mut GameEventQueue<G::GameEvent> = &mut self.game_events;
         let mut output: egui::FullOutput = self
             .user_interface_context
-            .run(input, |user_interface| game.user_interface(user_interface));
+            .run(input, |user_interface| {
+                game.user_interface(user_interface, game_events)
+            });
+        self.handle_game_events();
         let platform_output: egui::PlatformOutput = mem::take(&mut output.platform_output);
         let texture: &wgpu::Texture = texture_view.texture();
         let callback_command_buffers: Vec<wgpu::CommandBuffer> = self

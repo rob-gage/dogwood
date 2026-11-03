@@ -5,7 +5,7 @@ weight = 5
 sort_by = "weight"
 template = "section.html"
 [extra]
-sources = ["Cargo.toml", "engine/Cargo.toml", "engine/src/runtime/engine.rs", "engine/src/games/game.rs", "engine/src/games/game_instance.rs", "engine_host/Cargo.toml", "engine_world/Cargo.toml", "engine_graphics/Cargo.toml", "engine_user_interface/Cargo.toml", "engine_audio/Cargo.toml", "editor/Cargo.toml", "cli/Cargo.toml"]
+sources = ["Cargo.toml", "engine/Cargo.toml", "engine/src/runtime/engine.rs", "engine/src/games/game.rs", "engine/src/games/game_instance.rs", "engine/src/games/game_event_queue.rs", "engine_host/Cargo.toml", "engine_world/Cargo.toml", "engine_graphics/Cargo.toml", "engine_user_interface/Cargo.toml", "engine_audio/Cargo.toml", "editor/Cargo.toml", "cli/Cargo.toml"]
 +++
 
 This section explains how Dogwood's crates cooperate at runtime. Read it before changing code in `engine_world` or `engine_host`; game programmers can start with the [core concepts](@/getting-started/core-concepts.md) page instead.

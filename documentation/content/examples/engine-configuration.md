@@ -74,6 +74,8 @@ use engine_host::windows::WindowConfiguration;
 struct MyGame;
 
 impl Game for MyGame {
+    type GameEvent = ();
+
     fn window_configuration(&self) -> WindowConfiguration {
         WindowConfiguration { fps_limit: 120 }
     }

@@ -3,7 +3,7 @@ title = "Actors, cameras, and pawns"
 description = "Spawn scene actors, select a camera, and opt a pawn into keyboard movement."
 weight = 30
 [extra]
-sources = ["engine_world/src/actors", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/scene_position.rs", "engine_world/src/scenes/collisions/collision.rs", "engine/src/games/game_instance.rs", "engine/src/games/game.rs", "engine/src/lib.rs", "engine_graphics/src/world/scenes/scene_graphics_lighting.rs"]
+sources = ["engine_world/src/actors", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/scene_position.rs", "engine_world/src/scenes/collisions/collision.rs", "engine/src/games/game_instance.rs", "engine/src/games/game.rs", "engine/src/games/game_event_queue.rs", "engine/src/lib.rs", "engine_graphics/src/world/scenes/scene_graphics_lighting.rs"]
 +++
 
 ## Spawn actors with components

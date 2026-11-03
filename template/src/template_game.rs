@@ -16,7 +16,7 @@ use engine::{
         },
         Actor,
     },
-    games::Game,
+    games::{Game, GameEventQueue},
     materials::{
         MaterialAmountColor,
         MaterialIdentifier,
@@ -1049,8 +1049,13 @@ impl TemplateGame {
 }
 
 impl Game for TemplateGame {
+    type GameEvent = ();
 
-    fn keyboard_event(&mut self, event: SystemKeyboardEvent) {
+    fn keyboard_event(
+        &mut self,
+        event: SystemKeyboardEvent,
+        _game_events: &mut GameEventQueue<Self::GameEvent>,
+    ) {
         if !event.pressed { return; }
         let zoom_factor: f32 = match event.physical_key {
             PhysicalKey::Code(KeyCode::Equal | KeyCode::NumpadAdd) => 1.0 / 1.1,

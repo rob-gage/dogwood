@@ -6,6 +6,7 @@ weight = 60
 sources = [
     "engine_host/src/system_events",
     "engine/src/games/game.rs",
+    "engine/src/games/game_event_queue.rs",
     "engine/src/games/game_instance.rs",
     "engine_user_interface/src/game_ui",
     "engine_user_interface/src/lib.rs",
@@ -18,14 +19,16 @@ sources = [
 
 This page covers receiving host input and composing a small in-game interface in a `Game`. `Game` has four callbacks for host input and UI; see [host types](@/external-api/host.md) for event variants and units.
 
-- `keyboard_event`: receives a `SystemKeyboardEvent`.
-- `mouse_event`: receives a `SystemMouseEvent`.
-- `window_event`: receives a `SystemWindowEvent`.
-- `user_interface`: composes the interface drawn over the scene (see below).
+- `keyboard_event`: receives a `SystemKeyboardEvent` and a mutable game-event queue.
+- `mouse_event`: receives a `SystemMouseEvent` and a mutable game-event queue.
+- `window_event`: receives a `SystemWindowEvent` and a mutable game-event queue.
+- `user_interface`: composes the interface drawn over the scene and receives a mutable game-event queue (see below).
+
+Each callback's queued events are handled in insertion order after it returns; see [Engine and Game](@/external-api/engine-and-games.md#implementing-game).
 
 ```rust
 use engine::{
-    games::Game,
+    games::{Game, GameEventQueue},
     system_events::{
         KeyCode, PhysicalKey, SystemKeyboardEvent, SystemMouseEvent, SystemWindowEvent,
     },
@@ -38,7 +41,9 @@ struct CounterGame {
 }
 
 impl Game for CounterGame {
-    fn keyboard_event(&mut self, event: SystemKeyboardEvent) {
+    type GameEvent = ();
+
+    fn keyboard_event(&mut self, event: SystemKeyboardEvent, _game_events: &mut GameEventQueue<Self::GameEvent>) {
         if event.pressed
             && !event.repeat
             && event.physical_key == PhysicalKey::Code(KeyCode::Space)
@@ -47,13 +52,13 @@ impl Game for CounterGame {
         }
     }
 
-    fn mouse_event(&mut self, event: SystemMouseEvent) {
+    fn mouse_event(&mut self, event: SystemMouseEvent, _game_events: &mut GameEventQueue<Self::GameEvent>) {
         if let SystemMouseEvent::Button { pressed, .. } = event {
             self.is_button_down = pressed;
         }
     }
 
-    fn window_event(&mut self, event: SystemWindowEvent) {
+    fn window_event(&mut self, event: SystemWindowEvent, _game_events: &mut GameEventQueue<Self::GameEvent>) {
         if let SystemWindowEvent::Resized { width, height } = event {
             self.size = (width, height);
         }
@@ -74,7 +79,7 @@ In the editor, keyboard presses and mouse events reach the game only in Play mod
 Keep one `GameUi` in your game so it can reuse its layout state. `show` returns an error for an invalid layout; the example below treats that as a programming error.
 
 ```rust
-use engine::{games::Game, user_interface::{UserInterface, game_ui::{GameUi, UiElement}}};
+use engine::{games::{Game, GameEventQueue}, user_interface::{UserInterface, game_ui::{GameUi, UiElement}}};
 
 struct MenuGame {
     ui: GameUi,
@@ -83,14 +88,16 @@ struct MenuGame {
 }
 
 impl Game for MenuGame {
-    fn update(&mut self, _elapsed_time: std::time::Duration) {
+    type GameEvent = ();
+
+    fn update(&mut self, _elapsed_time: std::time::Duration, _game_events: &mut GameEventQueue<Self::GameEvent>) {
         if self.increment_pending {
             self.count += 1;
             self.increment_pending = false;
         }
     }
 
-    fn user_interface(&mut self, ui: &mut UserInterface) {
+    fn user_interface(&mut self, ui: &mut UserInterface, _game_events: &mut GameEventQueue<Self::GameEvent>) {
         let responses = self.ui
             .show(ui, UiElement::column()
                 .child(UiElement::text(format!("Count: {}", self.count)))

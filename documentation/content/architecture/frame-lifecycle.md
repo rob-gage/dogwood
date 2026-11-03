@@ -18,6 +18,7 @@ window events ──> Game callbacks (window / keyboard / mouse)
 event-loop iteration ──> 0..6 fixed updates
                          | pawn controls
                          | Game::update
+                         | drain GameEventQueue
                          | Scene::stream
                          | Scene::simulate
                          v
@@ -31,9 +32,11 @@ redraw request ──> acquire surface ──> scene ──> UI ──> present
 `GameInstance::update` runs these steps in order:
 
 1. Apply held-key movement, jump, and crouch values to possessed pawns.
-2. Call `Game::update`.
+2. Call `Game::update`, then handle queued game events until the queue is empty.
 3. Stream the selected scene around its camera.
 4. Simulate that scene.
+
+Window, keyboard, mouse, and user-interface callbacks also drain their event queue after returning. Event handlers can queue more events, which are handled in the same drain. A handler that always queues another event never returns. During update, the drain finishes before streaming and simulation, so a handler can replace the scene used for that update.
 
 Streaming and simulation errors are converted to panics at this runtime boundary. A game without a scene receives its update callback but has no scene work.
 

@@ -21,7 +21,9 @@ use engine::{
 
 struct MyGame;
 
-impl Game for MyGame {}
+impl Game for MyGame {
+    type GameEvent = ();
+}
 
 fn main() -> Result<(), EngineError> {
     Editor::launch(Engine::default(), MyGame)
