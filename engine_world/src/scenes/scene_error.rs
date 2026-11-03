@@ -17,6 +17,8 @@ use std::{
 /// An error encountered while using a scene
 #[derive(Clone, Debug)]
 pub enum SceneError {
+    /// Actor sensing has more than eight tags or a negative or nonfinite limit
+    InvalidActorSensingConfiguration,
     /// Fluid capacity factor is not finite or is outside the range `(0, 1]`
     InvalidFluidCapacityFactor,
     /// The fluid particle pool already exists and its capacity can no longer change
@@ -132,6 +134,13 @@ pub enum SceneError {
     },
     /// The accelerator could not be polled for fluid particle count readbacks
     FluidParticlePoll,
+    /// An actor sensing readback buffer could not be mapped
+    ActorSensingResponse {
+        /// Mapping error returned by WGPU
+        error: wgpu::BufferAsyncError,
+    },
+    /// The accelerator could not be polled for actor sensing readbacks
+    ActorSensingPoll,
     /// A fluid export readback buffer does not match the compaction export buffer
     FluidParticleExportBufferSizeInvalid,
     /// A mapped fluid particle export record contains invalid world position or state

@@ -66,6 +66,6 @@ Timeouts and occluded surfaces skip a frame. Outdated or lost surfaces are recon
 
 For the scene-internal order of edit application, streaming, and simulation, see [scene update pipeline](@/architecture/scene-pipeline.md). The public lifecycle hooks are {{ <rustdoc path="engine/games/trait.Game.html" text="Game" /> }} and {{ <rustdoc path="engine/runtime/struct.Engine.html" text="Engine" /> }}.
 
-Within each scene simulation, cellular tiles, collision, fluids, and pressure run before thermal. Thermal records chemistry selection and reaction work between its prepare and step stages when reactions are registered. See the complete [simulation order](@/architecture/scene-pipeline.md#simulation-order).
+Within each scene simulation, cellular tiles, collision, fluids, and pressure run before thermal. Thermal records chemistry selection and reaction work between its prepare and step stages when reactions are registered. Actor sensing runs last and reads results asynchronously. See the complete [simulation order](@/architecture/scene-pipeline.md#simulation-order).
 
 Before fluid shading and scene drawing, the renderer prepares the resident-region lighting texture; see [lighting pass](@/internals/rendering/lighting-pass.md).

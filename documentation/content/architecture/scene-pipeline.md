@@ -3,7 +3,7 @@ title = "Scene update pipeline"
 description = "The ordered streaming and simulation stages performed by a scene update."
 weight = 20
 [extra]
-sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/pressure", "engine_world/src/scenes/chemistry", "engine_world/src/scenes/thermal", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_pass.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/collision_cellular_tile_pass.rs", "engine_world/src/scenes/collisions/collision_rigid_body.wgsl"]
+sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/pressure", "engine_world/src/scenes/chemistry", "engine_world/src/scenes/thermal", "engine_world/src/scenes/actor_sensing", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_pass.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/collision_cellular_tile_pass.rs", "engine_world/src/scenes/collisions/collision_rigid_body.wgsl"]
 +++
 
 This page defines the ordered work inside `Scene::stream` and `Scene::simulate`. The [frame lifecycle](@/architecture/frame-lifecycle.md) calls both after `Game::update`; rendering is a separate redraw operation.
@@ -27,6 +27,7 @@ Scene::simulate (when an active region exists)
   apply thermal temperature changes to fluid particles
   collision-owned changed-cell copies for the next update
   mark outgoing particle export submitted
+  poll actor sensing readbacks without waiting; dispatch and copy this step's actor samples
 
 Scene::graphics -> renderer compute shading -> scene draw -> UI -> present
 ```
@@ -62,6 +63,7 @@ When the active region is resident, `Scene::simulate` runs these steps in order.
 13. **Simulate thermal conduction and reactions.** Thermal records `collect`, `clear`, and `prepare`, then chemistry tile selection, reaction preparation, and reaction work, then thermal `step` and `apply`. Reaction heat and products therefore participate in this thermal step.
 14. **Apply fluid particle heat.** The fluid pass applies the thermal temperature changes and chemistry consumption to particles.
 15. **Request changed-cell copies.** `Collision::request_changed_cells` copies thermal and collision changes without waiting. Collision reads them next tick. The scene marks a particle export submitted only after successful fluid simulation.
+16. **Sense actors.** `ActorSensingPass` first polls a completed readback without waiting, then dispatches `actor_sensing.wgsl` over cellular tile actor records and copies this step's results into an available slot. It skips the copy if all three slots are in flight. Results are consumed on a later simulation step; sensing is last and does not feed back into this step. See [actor sensing](@/internals/simulation/actor-sensing.md) for cell rules and result latency.
 
 ## Ownership
 

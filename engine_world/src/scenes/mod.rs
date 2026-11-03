@@ -5,6 +5,7 @@ pub mod chemistry;
 pub mod chunks;
 pub mod collisions;
 pub mod edits;
+mod actor_sensing;
 pub mod fluids;
 pub mod pressure;
 pub mod thermal;
@@ -24,6 +25,11 @@ pub use scene::{
 pub use scene_error::SceneError;
 pub use scene_generator::SceneGenerator;
 pub use scene_position::ScenePosition;
+pub use actor_sensing::{
+    SceneActorSensing,
+    SceneActorSensingConfiguration,
+    SCENE_ACTOR_SENSING_TAG_COUNT_MAXIMUM,
+};
 
 /// Maximum number of persistent retained regions
 const SCENE_CHUNK_REGION_COUNT_MAXIMUM: usize = 32;

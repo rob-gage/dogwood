@@ -30,7 +30,7 @@ Each call to `simulate_collisions` runs these steps in order:
 2. Refreshes static occupancy when region, ring, or edit state requires it. Edit changed-cell reads can block. Applies changed occupancy to the static voxel collider and checks both added and removed occupancy cells for floating groups; tiles entering the region are not checked.
 3. Consumes the newest completed settled dynamic-cell occupancy snapshot, falling back to a blocking read only when no matching region/ring snapshot exists; requests another snapshot.
 4. Releases bodies outside the active region and applies cellular kinematics impulses and fluid moments from prior GPU contact feedback.
-5. Synchronizes actors and collider components, then moves pawns through the character controller using movement, gravity, and dynamic-cell contacts.
+5. Synchronizes actors and collider components, then moves pawns through the character controller using movement, gravity, and dynamic-cell contacts. Each pawn movement step uses up to `PAWN_MOVEMENT_SUBSTEP_COUNT_MAXIMUM` (8) substeps, each no longer than half its collider's narrowest half extent; see [pawn movement](@/internals/actors/pawn-movement.md#movement-substeps).
 6. Steps Rapier and writes body positions back to actors.
 7. Rasterizes changed cellular rigid bodies into tile buffers and requests detached-cell copies for later processing.
 
@@ -40,3 +40,5 @@ A release during this step requests a static occupancy reread; its newly rasteri
 `Collision` creates actor Rapier bodies with rotations locked. `ActorKinematicsRotationComponent` is currently a marker with no rotation value. An actor with only `ActorContactComponent` gets a position-based kinematic body, and its contact collider is a sensor. The collision and occupancy phases, including collider delta updates, are detailed on [static cell colliders](@/internals/simulation/static-cell-colliders.md); the kinematics-to-collision contact formats are on [contact exchange](@/internals/simulation/contact-exchange.md).
 
 Collision also consumes asynchronous fluid actor samples for impulses and swimming, and rigid-body fluid samples for buoyancy and drag. See [fluid coupling](@/internals/simulation/fluid-coupling.md).
+
+`Scene::pawn_impact_speed` reports the largest speed lost along a solid surface normal during the pawn's last movement step. It counts controller hits relative to moving surfaces, ground snaps, and dynamic-cell contacts; see [pawn impact speed](@/internals/actors/pawn-movement.md#pawn-impact-speed).

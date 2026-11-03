@@ -23,6 +23,12 @@ use super::{
         EditError,
         EditStreamingState,
     },
+    actor_sensing::{
+        is_valid_configuration,
+        ActorSensingPass,
+        SceneActorSensing,
+        SceneActorSensingConfiguration,
+    },
     chemistry::Chemistry,
     fluids::{
         FluidActorContact,
@@ -195,6 +201,12 @@ pub struct Scene {
     ambient_light: [f32; 3],
     /// Divisor of matter's extinction while light spreads into occluding matter
     light_penetration: f32,
+    /// What is sensed around actors from the next simulation step
+    actor_sensing_configuration: SceneActorSensingConfiguration,
+    /// GPU sensing of the cells around actors, absent until simulated
+    actor_sensing_pass: Option<ActorSensingPass>,
+    /// Newest completed sensing of each sensed actor
+    actor_sensing: HashMap<Actor, SceneActorSensing>,
     /// Resolution used to calculate radiance cascade lighting
     lighting_quality: LightingQuality,
     /// ECS world and fixed-tick systems of every live actor
@@ -240,6 +252,9 @@ impl Scene {
             ambient_gas_conduction: SCENE_AMBIENT_GAS_CONDUCTION_DEFAULT,
             ambient_light: [1.0, 1.0, 1.0],
             light_penetration: 8.0,
+            actor_sensing_configuration: SceneActorSensingConfiguration::default(),
+            actor_sensing_pass: None,
+            actor_sensing: HashMap::new(),
             lighting_quality: LightingQuality::High,
             actor_registry: ActorRegistry::new(),
             material_table: Arc::new(material_table),
@@ -250,6 +265,25 @@ impl Scene {
 
     /// Returns the actors of this scene for modification
     pub fn actor_registry_mutable(&mut self) -> &mut ActorRegistry { &mut self.actor_registry }
+
+    /// Sets what is sensed around actors from the next simulation step; unknown tags count
+    /// nothing
+    pub fn set_actor_sensing(
+        &mut self,
+        configuration: SceneActorSensingConfiguration,
+    ) -> Result<(), SceneError> {
+        if !is_valid_configuration(&configuration) {
+            return Err(SceneError::InvalidActorSensingConfiguration);
+        }
+        self.actor_sensing_configuration = configuration;
+        Ok(())
+    }
+
+    /// Returns the newest completed sensing of an actor, one or more simulation steps old, or
+    /// `None` before its first readback or for an actor without a cellular tile actor record
+    pub fn actor_sensing(&self, actor: Actor) -> Option<SceneActorSensing> {
+        self.actor_sensing.get(&actor).copied()
+    }
 
     /// Returns the edges of every collider in the collision world as line segments for debugging
     pub fn collider_outlines(&self) -> Vec<(ScenePosition, ScenePosition)> {
@@ -290,6 +324,14 @@ impl Scene {
     /// Returns a pawn's velocity in tiles per second
     pub fn pawn_velocity(&self, actor: Actor) -> Option<[f32; 2]> {
         self.collision.as_ref()?.pawn_velocity(actor)
+    }
+
+    /// Returns the largest speed, in tiles per second, at which a pawn struck a solid surface during
+    /// its last movement step: its velocity relative to the surface along the surface normal, taken
+    /// before the hit stopped it. Returns zero without a hit or `None` for an actor that is not a
+    /// simulated pawn
+    pub fn pawn_impact_speed(&self, actor: Actor) -> Option<f32> {
+        self.collision.as_ref()?.pawn_impact_speed(actor)
     }
 
     /// Returns whether a pawn was grounded at its last movement step
@@ -821,6 +863,34 @@ impl Scene {
             accelerator,
             active_region,
             cellular_tile_streaming_state.cellular_tile_ring_offset(),
+        );
+        // actors sense the cells as every simulation left them this step; the results are read
+        // back without waiting at a later step, so sensing never stalls on the GPU
+        let cellular_tiles: &CellularTiles = self.cellular_tiles
+            .as_ref()
+            .expect("cellular tile simulation exists after simulation");
+        let actor_sensing_pass: &mut ActorSensingPass = self.actor_sensing_pass
+            .get_or_insert_with(|| ActorSensingPass::new(
+                accelerator,
+                cellular_tile_buffers,
+                &self.material_table,
+                cellular_tiles.actor_buffer(),
+                fluids.fluid_raster_buffer(),
+            ));
+        actor_sensing_pass.read(accelerator, &mut self.actor_sensing)?;
+        actor_sensing_pass.configure(
+            accelerator,
+            &self.material_table,
+            &self.actor_sensing_configuration,
+        );
+        let sensed_actor_records: Vec<Actor> = cellular_tiles.fluid_actors().iter()
+            .map(|(actor, _)| *actor)
+            .collect();
+        actor_sensing_pass.sense(
+            accelerator,
+            active_region,
+            cellular_tile_streaming_state.cellular_tile_ring_offset(),
+            &sensed_actor_records,
         );
         if let Some((streaming_request_identifier, _)) = particle_export_target {
             self.cellular_tile_streaming_state.as_mut()

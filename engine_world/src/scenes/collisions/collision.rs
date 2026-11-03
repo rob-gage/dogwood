@@ -76,6 +76,10 @@ const RIGID_BODY_FLUID_CURRENT_COUPLING: f32 = 1.0;
 /// Fraction of a pawn tether's overstretch corrected per step
 const PAWN_TETHER_STRETCH_CORRECTION: f32 = 0.2;
 
+/// Most substeps one pawn movement step is split into; a pawn moving farther than this many
+/// halves of its narrowest half extent in one step takes longer substeps
+const PAWN_MOVEMENT_SUBSTEP_COUNT_MAXIMUM: u32 = 8;
+
 /// A pawn's tether for its next movement step
 #[derive(Default)]
 struct PawnTether {
@@ -124,6 +128,8 @@ pub struct Collision {
         rapier2d::math::Vector,
         Option<(rapier2d::math::Vector, bool, bool, bool)>,
     )>,
+    /// Largest solid-surface impact speed from each pawn's last movement step
+    pawn_impact_speeds: HashMap<Actor, f32>,
     /// Tethers of pawns by actor
     pawn_tethers: HashMap<Actor, PawnTether>,
     /// Character controller moving every pawn against the colliders it collides with
@@ -203,6 +209,7 @@ impl Collision {
             dynamic_ring_offset: None,
             dynamic_cellular_tile_collider: None,
             actors: HashMap::new(),
+            pawn_impact_speeds: HashMap::new(),
             pawn_tethers: HashMap::new(),
             // round pawns roll over steps lower than their radius, so taller ledges are walls
             pawn_movement_controller: rapier2d::control::KinematicCharacterController {
@@ -899,6 +906,7 @@ impl Collision {
             .collect();
         for actor in removed_actors {
             self.pawn_tethers.remove(&actor);
+            self.pawn_impact_speeds.remove(&actor);
             let Some((rigid_body_handle, _, _, _, _, _)) = self.actors.remove(&actor)
             else { continue; };
             self.rigid_bodies.remove(
@@ -1007,6 +1015,7 @@ impl Collision {
         let time_step: f32 = self.integration_parameters.dt;
         let maximum_slope_cosine: f32 = self.pawn_movement_controller.max_slope_climb_angle.cos();
         for (actor, pawn_movement, pawn_control) in pawns {
+            self.pawn_impact_speeds.insert(*actor, 0.0);
             // dynamic cells push the pawn by the momentum of the cells it shoved, and hold it like
             // ground where they could not get out of its way
             let (velocity_change, cellular_normal, cellular_depth): ([f32; 2], [f32; 2], f32) =
@@ -1033,6 +1042,11 @@ impl Collision {
                 bool,
                 bool,
             ) = pawn;
+            // dynamic cells hold no pawn in the controller and stop it by these contacts
+            // instead, so the speed it carried into their surface is an impact
+            if cellular_normal != rapier2d::math::Vector::ZERO {
+                self.pawn_impact_speeds.insert(*actor, (-velocity.dot(cellular_normal)).max(0.0));
+            }
             *velocity += rapier2d::math::Vector::new(velocity_change[0], velocity_change[1]);
             let is_standing: bool = *is_grounded || is_cellular_grounded;
             let immersion: f32 = fluid_contact.immersion.clamp(0.0, 1.0);
@@ -1145,37 +1159,74 @@ impl Collision {
             // pawns sink one cell into dynamic cells and are pushed out of anything deeper
             let cellular_correction: f32 =
                 (cellular_depth - 1.0 / CELLULAR_TILE_SIZE as f32).max(0.0) / 2.0;
-            let desired_translation: rapier2d::math::Vector =
-                *velocity * time_step + cellular_normal * cellular_correction;
+            let correction: rapier2d::math::Vector = cellular_normal * cellular_correction;
+            // a pawn moves in substeps no longer than half its narrowest extent, so a fast fall
+            // can't pass through thin solids between the controller's casts
+            let narrowest_extent: f32 = collider.shape().compute_local_aabb().half_extents()
+                .min_element();
+            let substep_count: u32 = ((*velocity * time_step + correction).length()
+                / (narrowest_extent / 2.0).max(0.01))
+                .ceil()
+                .clamp(1.0, PAWN_MOVEMENT_SUBSTEP_COUNT_MAXIMUM as f32) as u32;
+            let substep_time: f32 = time_step / substep_count as f32;
             let mut resolved_velocity: rapier2d::math::Vector = *velocity;
-            let movement: rapier2d::control::EffectiveCharacterMovement =
-                self.pawn_movement_controller.move_shape(
-                    time_step,
-                    &self.broad_phase.as_query_pipeline(
-                        self.narrow_phase.query_dispatcher(),
-                        &self.rigid_bodies,
-                        &self.colliders,
-                        rapier2d::pipeline::QueryFilter::default()
-                            .exclude_rigid_body(*rigid_body_handle)
-                            .exclude_sensors()
-                            .groups(collider.collision_groups()),
-                    ),
-                    collider.shape(),
-                    &collider_pose,
-                    desired_translation,
-                    // each surface hit removes only the velocity pushing into it
-                    |character_collision: rapier2d::control::CharacterCollision| {
-                        let normal: rapier2d::math::Vector = character_collision.hit.normal1;
-                        let approach_speed: f32 = resolved_velocity.dot(normal);
-                        if approach_speed < 0.0 { resolved_velocity -= normal * approach_speed; }
-                    },
-                );
-            // snapping to the ground stops a fall without reporting a hit
-            if movement.grounded && resolved_velocity.y < 0.0 { resolved_velocity.y = 0.0; }
+            let mut substep_pose: rapier2d::math::Pose = collider_pose;
+            let mut movement_translation: rapier2d::math::Vector = rapier2d::math::Vector::ZERO;
+            let mut is_movement_grounded: bool = false;
+            for _ in 0..substep_count {
+                let substep_translation: rapier2d::math::Vector = resolved_velocity * substep_time
+                    + correction / substep_count as f32;
+                let movement: rapier2d::control::EffectiveCharacterMovement =
+                    self.pawn_movement_controller.move_shape(
+                        substep_time,
+                        &self.broad_phase.as_query_pipeline(
+                            self.narrow_phase.query_dispatcher(),
+                            &self.rigid_bodies,
+                            &self.colliders,
+                            rapier2d::pipeline::QueryFilter::default()
+                                .exclude_rigid_body(*rigid_body_handle)
+                                .exclude_sensors()
+                                .groups(collider.collision_groups()),
+                        ),
+                        collider.shape(),
+                        &substep_pose,
+                        substep_translation,
+                        // each surface hit removes only the velocity pushing into it, and
+                        // records the speed it struck at relative to the surface
+                        |character_collision: rapier2d::control::CharacterCollision| {
+                            let normal: rapier2d::math::Vector = character_collision.hit.normal1;
+                            let surface_velocity: rapier2d::math::Vector = self.colliders
+                                .get(character_collision.handle)
+                                .and_then(|hit_collider| hit_collider.parent())
+                                .and_then(|body_handle| self.rigid_bodies.get(body_handle))
+                                .filter(|body| !body.is_fixed())
+                                .map(|body| body.velocity_at_point(character_collision.hit.witness1))
+                                .unwrap_or(rapier2d::math::Vector::ZERO);
+                            let impact: &mut f32 =
+                                self.pawn_impact_speeds.entry(*actor).or_default();
+                            *impact = impact.max(-(resolved_velocity - surface_velocity).dot(normal));
+                            let approach_speed: f32 = resolved_velocity.dot(normal);
+                            if approach_speed < 0.0 {
+                                resolved_velocity -= normal * approach_speed;
+                            }
+                        },
+                    );
+                substep_pose.translation += movement.translation;
+                movement_translation += movement.translation;
+                is_movement_grounded = movement.grounded;
+            }
+            // snapping to the ground stops a fall the controller reports no hit for, so the
+            // falling speed it stops is an impact too; a standing pawn falls only one step of
+            // gravity
+            if is_movement_grounded && resolved_velocity.y < 0.0 {
+                let impact: &mut f32 = self.pawn_impact_speeds.entry(*actor).or_default();
+                *impact = impact.max(-resolved_velocity.y);
+                resolved_velocity.y = 0.0;
+            }
             *velocity = resolved_velocity;
-            *is_grounded = movement.grounded || is_cellular_grounded;
+            *is_grounded = is_movement_grounded || is_cellular_grounded;
             let next_translation: rapier2d::math::Vector =
-                rigid_body.next_position().translation + movement.translation;
+                rigid_body.next_position().translation + movement_translation;
             if let Some(rigid_body) = self.rigid_bodies.get_mut(*rigid_body_handle) {
                 rigid_body.set_next_kinematic_translation(next_translation);
             }
@@ -1396,6 +1447,13 @@ impl Collision {
         let (_, _, _, _, _, pawn) = self.actors.get(&actor)?;
         let (velocity, ..) = pawn.as_ref()?;
         Some([velocity.x, velocity.y])
+    }
+
+    /// Returns the largest impact speed against solid surfaces in one pawn's last movement step
+    pub(crate) fn pawn_impact_speed(&self, actor: Actor) -> Option<f32> {
+        let (_, _, _, _, _, pawn) = self.actors.get(&actor)?;
+        pawn.as_ref()?;
+        Some(self.pawn_impact_speeds.get(&actor).copied().unwrap_or(0.0))
     }
 
     /// Returns whether one pawn was grounded at its last movement step
@@ -2427,8 +2485,12 @@ impl Collision {
         match (is_pawn, pawn.is_some()) {
             (true, false) => {
                 *pawn = Some((rapier2d::math::Vector::ZERO, false, false, false));
+                self.pawn_impact_speeds.insert(actor, 0.0);
             }
-            (false, true) => *pawn = None,
+            (false, true) => {
+                *pawn = None;
+                self.pawn_impact_speeds.remove(&actor);
+            }
             _ => {}
         }
         if let Some(rigid_body) = self.rigid_bodies.get_mut(rigid_body_handle) {
@@ -2443,6 +2505,7 @@ impl Collision {
                     *velocity = rapier2d::math::Vector::ZERO;
                     *is_grounded = false;
                     *is_swimming = false;
+                    self.pawn_impact_speeds.insert(actor, 0.0);
                 }
                 if rigid_body.is_kinematic() {
                     rigid_body.set_next_kinematic_translation(translation);

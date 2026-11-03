@@ -15,6 +15,7 @@ use super::{
     MaterialReactant,
     MaterialReaction,
     MaterialRegistry,
+    MaterialTag,
     MaterialValue,
     MaterialTransition,
 };
@@ -1300,6 +1301,15 @@ impl MaterialTable {
     /// Returns the material represented by a valid registered identifier
     pub fn get(&self, identifier: MaterialIdentifier) -> Option<&Material> {
         self.material_registry.get(identifier)
+    }
+
+    /// Returns the chemical tags carried by a registered material
+    pub fn tags(&self, identifier: MaterialIdentifier) -> Vec<String> {
+        self.get(identifier)
+            .map(|material: &Material| material_chemical(material).tags.iter()
+                .map(|tag: &MaterialTag| tag.name.clone())
+                .collect())
+            .unwrap_or_default()
     }
 
     /// Returns the number of registered materials

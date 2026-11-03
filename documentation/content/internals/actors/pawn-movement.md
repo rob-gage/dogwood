@@ -63,7 +63,7 @@ Crouching only changes the target speed. It does not change the collider shape o
 
 ### Character controller
 
-The controller is Rapier's `KinematicCharacterController`. For its tuning constants, see [Rapier tuning and origin](@/internals/simulation/collision-world.md#rapier-tuning-and-origin). It queries the actor's collision groups, excludes its own rigid body and sensor colliders, and removes velocity into each contacted surface. The resolved movement sets the kinematic body's next translation.
+The controller is Rapier's `KinematicCharacterController`. For its tuning constants, see [Rapier tuning and origin](@/internals/simulation/collision-world.md#rapier-tuning-and-origin). It queries the actor's collision groups, excludes its own rigid body and sensor colliders, and removes velocity into each contacted surface. It runs once per [movement substep](#movement-substeps), and the summed movement sets the kinematic body's next translation.
 
 ## Dynamic-cell contact
 
@@ -98,3 +98,29 @@ The controller reads immersion, current, density, and drag rather than directly 
 A tether is a one-sided length limit along a rope from the pawn through rigid body points. After control and gravity have produced the pawn's velocity, `simulate_collisions_solve_pawn_tether` computes the rope's lengthening rate from the pawn's velocity along `-direction` and each held point's velocity along its gradient. Its stiffness sums the pawn's inverse collision mass and, per distinct dynamic body, the accumulated linear gradient over the body's mass plus the accumulated angular arm over its inertia. Slack (negative stretch) may be taken up within the step; positive overstretch uses a bias of `0.2 * stretch / dt`. A slack tether uses `stretch / dt`. The resulting one-sided impulse changes the pawn's velocity and is applied to each held point with `apply_impulse_at_point`, before `physics_pipeline.step`, so bodies respond in the same tick. The character controller then resolves the pawn's motion as usual. The tether lapses after one step.
 
 While a tether is set and the pawn is neither standing nor swimming, horizontal control only accelerates the pawn toward its walking speed and never brakes it, so swings keep their momentum. Standing pawns walk and jump normally; their walking acceleration is what pulls against the tether.
+## Pawn impact speed
+
+`Scene::pawn_impact_speed(actor)` reports the largest speed at which a pawn struck something during
+its last movement step, in tiles per second, measured before the hit stopped it. Three hits count:
+
+- **Character-controller hits** on static cells and rigid bodies: the pawn's velocity relative to
+  the surface along its normal. A moving rigid body's velocity at the hit point is subtracted, so a
+  body striking a still pawn is not the pawn's impact.
+- **Ground snaps**: when the controller snaps a falling pawn onto the ground without reporting a
+  hit, which is how most landings end, the falling speed the snap stops counts. A standing pawn
+  only gains one step of gravity, so standing and walking report about `gravity * dt`.
+- **Dynamic-cell contacts**: dynamic cells stop a pawn by their sampled contact rather than in the
+  controller, so the speed the pawn carried into the contact normal at the start of the step
+  counts. Because contacts arrive a step late, this measures the speed of the first step inside
+  the cells.
+
+Tether pulls, fluid forces, the cells' pushes, and control changes never count. Walking into a wall
+reports roughly walking speed; a fall reports its landing speed. The value is zero without a hit,
+and resets at each movement step and when gameplay teleports the pawn.
+
+### Movement substeps
+
+A pawn's movement step is split into substeps, each no longer than half the narrowest half extent
+of its collider, up to `PAWN_MOVEMENT_SUBSTEP_COUNT_MAXIMUM` (8). Each substep moves by the velocity
+left after earlier substeps' hits. Without substeps, a pawn moving most of its own size in one step
+could pass through the static-cell voxel collider between casts.

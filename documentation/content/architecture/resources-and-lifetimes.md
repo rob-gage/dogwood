@@ -3,7 +3,7 @@ title = "Resources and lifetimes"
 description = "How a scene creates, shares, saves, and releases its world resources."
 weight = 50
 [extra]
-sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/pressure", "engine_world/src/scenes/thermal", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl", "engine_host/src/acceleration/accelerator.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting_clear.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cache.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_blocks.wgsl", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl", "engine_graphics/src/world/materials/material_radiance.rs", "engine_world/src/materials/material_table.rs", "engine_world/src/materials/material_temperature_color.rs", "engine_world/src/scenes/chemistry", "engine_graphics/src/world/scenes/lighting_quality.rs"]
+sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/pressure", "engine_world/src/scenes/thermal", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/actor_sensing", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl", "engine_host/src/acceleration/accelerator.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting_clear.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cache.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_blocks.wgsl", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl", "engine_graphics/src/world/materials/material_radiance.rs", "engine_world/src/materials/material_table.rs", "engine_world/src/materials/material_temperature_color.rs", "engine_world/src/scenes/chemistry", "engine_graphics/src/world/scenes/lighting_quality.rs"]
 +++
 
 This page describes what a `Scene` owns, when its GPU and streaming state is created, the fixed capacity constants, and what happens on save and drop. It is for engine contributors.
@@ -25,14 +25,15 @@ Scene
 ├── Collision
 ├── Thermal ── fluid heat, collision change lists, conversion list
 ├── Chemistry ── reacting-tile list and indirect dispatch (when reactions exist)
-└── CellularTiles
+├── CellularTiles
+└── ActorSensingPass + three asynchronous result readbacks
 ```
 
 ### Lazy initialization
 
 `Scene::new` leaves chunk streaming, tile buffers, tile streaming, collision, and kinematics absent. The first `Scene::stream` creates chunk streaming and the GPU tile ring, sized to twice the first camera's unzoomed width and height. Later requested regions must keep those dimensions.
 
-Collision, kinematics, and thermal simulation are created on the first `simulate` call with an active region; thermal storage is available before fluid simulation so conversions can consume the prior thermal tick's list. Pressure simulation is created after fluids. Tile buffers retain a cloned `Accelerator`; its clone holds handles to the same WGPU instance, adapter, device, and queue, so teardown can use that context. See the [scene pipeline](@/architecture/scene-pipeline.md) for call order.
+Collision, kinematics, and thermal simulation are created on the first `simulate` call with an active region; thermal storage is available before fluid simulation so conversions can consume the prior thermal tick's list. Pressure simulation is created after fluids. The actor-sensing pass is created after simulation and keeps three asynchronous result readbacks. Tile buffers retain a cloned `Accelerator`; its clone holds handles to the same WGPU instance, adapter, device, and queue, so teardown can use that context. See the [scene pipeline](@/architecture/scene-pipeline.md) for call order.
 
 ## Saving and drop behavior
 
@@ -124,6 +125,10 @@ Public solver constants in `engine_world/src/scenes/fluids/mod.rs`:
 | `FLUID_TIME_STEP` | 1/60 second |
 
 The private `FLUID_ACTOR_CONTACT_SCALE` is `1024`. Count, actor, and import readbacks each have three staging slots; the resident save has one separate snapshot slot. [GPU layouts](@/internals/shaders/fluid-shader.md) document record sizes and region/pool scaling. The collision-side `RIGID_BODY_FLUID_CURRENT_COUPLING` is `1.0`.
+
+## Actor sensing resources
+
+`ActorSensingPass` allocates a 64-byte uniform buffer, a tag-mask buffer, 64-byte result records for up to 32 cellular tile actor records, and three asynchronous result readbacks. The masks contain one `u32` per cellular static, cellular dynamic, or fluid material index. `SCENE_ACTOR_SENSING_TAG_COUNT_MAXIMUM` is 8 configured tags; private thresholds `CONTACT_COVERAGE` and `DROWNING_COVERAGE` are both 0.5 fluid coverage. `RESULT_BYTE_COUNT` is 64, `UNIFORM_BYTE_COUNT` is 64, and `READBACK_COUNT` is 3. See [actor sensing](@/internals/simulation/actor-sensing.md) and the [shader reference](@/internals/shaders/actor-sensing-shader.md).
 
 ## Chemistry resources
 

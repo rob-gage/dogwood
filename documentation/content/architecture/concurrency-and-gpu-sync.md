@@ -38,6 +38,8 @@ Tile streaming and kinematics do not use a worker pool. They submit GPU work and
 
 `CellularTiles` has three readback slots. If all actor-contact slots are busy, that tick's actor contacts are skipped; rigid-body contacts instead accumulate until a slot is available.
 
+`ActorSensingPass` polls its three result slots without waiting, then dispatches the current sample at the end of scene simulation. A full set of slots skips that step's result copy. The newest available sample is therefore at least one simulation step old and may lag further. See [actor sensing](@/internals/simulation/actor-sensing.md).
+
 `AcceleratorReadback::map` transitions only slots with newly recorded copies into mapping. Slots already mapping retain their metadata and ownership across subsequent submissions, including submissions with no new copies. A slot becomes reusable only after its result is consumed and its buffer is unmapped.
 
 ## Queue ordering and readback
@@ -59,6 +61,7 @@ The synchronization strategy depends on the operation:
 | Collision changed-cell feedback, including thermal changes | Copied at tick N end and read at tick N+1 start; waits only for that copy submission. | Topology updates are applied on the following tick. |
 | Cellular actor and rigid-body contact feedback | Copied during tick N and consumed starting tick N+1; contact reads wait only for their copied submission. Control sizing never waits. | Feedback is exactly one tick late, never delayed by later queue work. |
 | Fluid actor feedback | Copied during tick N and read starting tick N+1; waits only for that copy submission when actor response needs it. | Samples match the actor records used by that tick. |
+| Actor sensing results | Polls completed copies without waiting; the end-of-step copy uses one of three slots and is skipped when all are in flight. | Results lag by at least one simulation step and can lag further. |
 | Normal tile-streaming and kinematics readbacks ([tile streaming](@/internals/world-streaming/tile-streaming.md)) | Map asynchronously; later stream and update calls poll and consume available responses. | These results can be applied after their GPU work completes. |
 | Active tile return during `Scene` drop | On success, polls with `wait_indefinitely` until every response has been applied. A polling, mapping, or inactive-chunk error aborts the return and makes `Scene::drop` panic. | Teardown must return all active tile data to chunks. See [resources and lifetimes](@/architecture/resources-and-lifetimes.md#saving-and-drop-behavior). |
 | Dirty chunk saves during drop | Attempts to save each remaining dirty chunk synchronously up to three times; if any save still fails, drop panics. | See [chunk I/O scheduling](@/internals/world-streaming/chunk-io.md). |

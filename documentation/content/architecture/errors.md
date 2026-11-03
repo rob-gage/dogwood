@@ -3,7 +3,7 @@ title = "Error handling"
 description = "How Dogwood represents failures, propagates them, and turns some into panics."
 weight = 60
 [extra]
-sources = ["engine/src/runtime/engine_error.rs", "engine_world/src/scenes/scene_error.rs", "engine_world/src/actors/actor_error.rs", "engine_world/src/materials/material_error.rs", "engine_world/src/materials/material_registry.rs", "engine_world/src/scenes/chunks/chunk_error.rs", "engine_world/src/scenes/edits/edit_error.rs", "engine_graphics/src/sprites/sprite_sheet_error.rs", "engine_host/src/acceleration/accelerator_error.rs", "engine_host/src/acceleration/accelerator.rs", "engine_host/src/processors/processor_error.rs", "engine_host/src/processors/processor.rs", "engine_host/src/windows/window_error.rs", "engine/src/runtime/engine.rs", "engine/src/games/game_instance.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs"]
+sources = ["engine/src/runtime/engine_error.rs", "engine_world/src/scenes/scene_error.rs", "engine_world/src/actors/actor_error.rs", "engine_world/src/materials/material_error.rs", "engine_world/src/materials/material_registry.rs", "engine_world/src/scenes/chunks/chunk_error.rs", "engine_world/src/scenes/edits/edit_error.rs", "engine_graphics/src/sprites/sprite_sheet_error.rs", "engine_host/src/acceleration/accelerator_error.rs", "engine_host/src/acceleration/accelerator.rs", "engine_host/src/processors/processor_error.rs", "engine_host/src/processors/processor.rs", "engine_host/src/windows/window_error.rs", "engine/src/runtime/engine.rs", "engine/src/games/game_instance.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/actor_sensing", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs"]
 +++
 
 This page covers the error types, how they convert and propagate, and where the runtime turns them into panics. It is for engine contributors.
@@ -12,7 +12,7 @@ This page covers the error types, how they convert and propagate, and where the 
 
 Errors are returned at the API that can report them. {{ <rustdoc path="engine/runtime/enum.EngineError.html" text="EngineError" /> }} is the launch-level wrapper, with variants for accelerator, processor, window, sprite-sheet, material, and actor failures. Its `From` implementations convert exactly those six error types. `Engine::launch` returns `Result<(), EngineError>`.
 
-Scene operations use {{ <rustdoc path="engine/scenes/enum.SceneError.html" text="SceneError" /> }} for chunk streaming and storage, camera actor lookup, tile readback and poll, collision/kinematics, actor despawn, and collider validation failures.
+Scene operations use {{ <rustdoc path="engine/scenes/enum.SceneError.html" text="SceneError" /> }} for chunk streaming and storage, camera actor lookup, tile readback and poll, collision/kinematics, actor despawn, collider validation, and actor sensing configuration and readback failures. `InvalidActorSensingConfiguration` reports more than eight tags or negative/nonfinite sensing limits. `ActorSensingPoll` reports a readback poll failure; `ActorSensingResponse { error }` carries an asynchronous buffer-mapping error.
 
 `SceneError` has no general `From` conversions: call sites wrap lower-level errors explicitly, such as `CameraActor { error }` and `ActorDespawn { error }`. See the [engine and game API](@/external-api/engine-and-games.md), [scene API](@/external-api/scenes.md), and [editing guide](@/examples/editing-cells.md).
 
@@ -49,7 +49,7 @@ The enums identify failures; they do not decide whether a caller can recover.
 | `AcceleratorError` / `ProcessorError` | Graphics initialization (including unsupported adapter limits) and pool configuration or build failures. |
 | `WindowError` | Event-loop, OS, surface creation, unsupported surface, and surface validation failures. |
 | `ChunkError` | I/O and serialized chunk validation. |
-| `SceneError` | Streaming, storage, tile readback, collision/kinematics, ambient gas configuration, despawn, and collider failures; chunk load, save, and generation variants carry coordinates and a lower-level error. |
+| `SceneError` | Streaming, storage, tile and actor-sensing readback, collision/kinematics, ambient gas configuration, despawn, and collider failures; chunk load, save, and generation variants carry coordinates and a lower-level error. |
 | `EditError` | Inactive tiles, unregistered materials, invalid pressure, temperature, or damage inputs, or edit request capacity reached. |
 | `EngineError` | Launch wrapper; see above. |
 

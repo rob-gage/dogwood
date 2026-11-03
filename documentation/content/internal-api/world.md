@@ -39,6 +39,8 @@ Scene
 │   └── PressureCellularTilePass
 ├── Option<Thermal>               first Scene::simulate with active region
 │   └── ThermalCellularTilePass
+├── Option<ActorSensingPass>       first completed active-region simulation
+│   └── three asynchronous result readback slots
 └── Option<Chemistry>              when the material table contains reactions
     └── ChemistryCellularTilePass
 ```
@@ -51,6 +53,7 @@ The pass objects are owned by their parent systems:
 - `Pressure` manages the shared pressure substrate through `PressureCellularTilePass`, reading tile buffers, fluid raster, actor records, and rigid-body cell records.
 - `Thermal` manages conduction, transitions, and fluid heat through `ThermalCellularTilePass`.
 - `Chemistry` selects and applies material reactions inside the thermal compute pass when the compiled material table contains reactions.
+- `ActorSensingPass` samples cell and gas state around cellular tile actor records at the end of simulation; completed samples are read back without waiting.
 
 `Scene` passes shared tile buffers to these systems and, when creating `CellularTiles`, the collision system's rigid-body pass. For ordering and resource lifetime, see [Scene update pipeline](@/architecture/scene-pipeline.md) and [Resources and lifetimes](@/architecture/resources-and-lifetimes.md).
 
@@ -62,7 +65,7 @@ The pass objects are owned by their parent systems:
 
 ### Simulation
 
-`Scene::simulate` returns early until an active region exists, then lazily creates its simulation systems. It advances cellular tiles and collision, runs the fluid solver, then pressure. If reactions exist, it prepares chemistry uniforms; thermal then records chemistry selection and reaction work between its prepare and step stages, before fluid heat is applied. See [chemistry simulation](@/internals/simulation/chemistry.md), [pressure simulation](@/internals/simulation/pressure.md), and [scene ordering](@/architecture/scene-pipeline.md#simulation-order).
+`Scene::simulate` returns early until an active region exists, then lazily creates its simulation systems. It advances cellular tiles and collision, runs the fluid solver, then pressure. If reactions exist, it prepares chemistry uniforms; thermal then records chemistry selection and reaction work between its prepare and step stages, before fluid heat is applied. Actor sensing polls and dispatches last. See [chemistry simulation](@/internals/simulation/chemistry.md), [pressure simulation](@/internals/simulation/pressure.md), [actor sensing](@/internals/simulation/actor-sensing.md), and [scene ordering](@/architecture/scene-pipeline.md#simulation-order).
 
 [Collision world](@/internals/simulation/collision-world.md), [Cellular kinematics](@/internals/simulation/cellular-kinematics.md), and [Edit pipeline](@/internals/simulation/edit-pipeline.md) describe those systems in depth.
 

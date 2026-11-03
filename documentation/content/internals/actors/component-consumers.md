@@ -57,7 +57,7 @@ These components are empty markers that no system reads:
 
 ## Update order
 
-For the host-level fixed-update and rendering sequence, see [frame and update lifecycle](@/architecture/frame-lifecycle.md). Within scene simulation, `Scene::simulate` runs cellular tiles, collision, fluid particles, then pressure; pressure consumers read the previous tick's publication. `CellularTiles` returns asynchronous contact data; see [cell and body contact exchange](@/internals/simulation/contact-exchange.md) for readback timing and cached values.
+For the host-level fixed-update and rendering sequence, see [frame and update lifecycle](@/architecture/frame-lifecycle.md). Within scene simulation, `Scene::simulate` runs cellular tiles, collision, fluid particles, pressure, thermal work, then actor sensing; pressure consumers read the previous tick's publication. `CellularTiles` returns asynchronous contact data; see [cell and body contact exchange](@/internals/simulation/contact-exchange.md) for readback timing and cached values, and [actor sensing](@/internals/simulation/actor-sensing.md) for sensed-cell results.
 
 For the simulations themselves, see [cellular kinematics](@/internals/simulation/cellular-kinematics.md) and the [Rapier collision world](@/internals/simulation/collision-world.md).
 
