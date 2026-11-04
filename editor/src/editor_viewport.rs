@@ -28,10 +28,15 @@ impl EditorViewport {
         height: u32,
     ) -> Self {
         let texture_view: wgpu::TextureView = Self::texture_view_new(accelerator, width, height);
+        let sampled_view = texture_view.texture().create_view(&wgpu::TextureViewDescriptor {
+            // egui expects encoded color values and must not decode this texture while sampling.
+            format: Some(wgpu::TextureFormat::Rgba8Unorm),
+            ..Default::default()
+        });
         let texture_id: egui::TextureId = user_interface_renderer.renderer_mut()
             .register_native_texture(
                 accelerator.device(),
-                &texture_view,
+                &sampled_view,
                 wgpu::FilterMode::Nearest,
             );
         Self { texture_view, texture_id }
@@ -48,9 +53,13 @@ impl EditorViewport {
         let texture: &wgpu::Texture = self.texture_view.texture();
         if texture.width() == width && texture.height() == height { return; }
         self.texture_view = Self::texture_view_new(accelerator, width, height);
+        let sampled_view = self.texture_view.texture().create_view(&wgpu::TextureViewDescriptor {
+            format: Some(wgpu::TextureFormat::Rgba8Unorm),
+            ..Default::default()
+        });
         user_interface_renderer.renderer_mut().update_egui_texture_from_wgpu_texture(
             accelerator.device(),
-            &self.texture_view,
+            &sampled_view,
             wgpu::FilterMode::Nearest,
             self.texture_id,
         );
@@ -122,7 +131,9 @@ impl EditorViewport {
                 format: wgpu::TextureFormat::Rgba8UnormSrgb,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                     | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
+                // Scene rendering uses sRGB encoding; egui samples the same encoded bytes
+                // through a plain unorm view, as required by its native-texture contract.
+                view_formats: &[wgpu::TextureFormat::Rgba8Unorm],
             })
             .create_view(&wgpu::TextureViewDescriptor::default())
     }

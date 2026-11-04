@@ -10,6 +10,10 @@ use crate::world::{
 use engine_host::acceleration::Accelerator;
 use std::collections::HashMap;
 
+#[cfg(test)]
+#[path = "scene_renderer_lighting_tests.rs"]
+mod tests;
+
 /// Length of the finest cascade intervals in lighting texels
 const LIGHTING_INTERVAL: f32 = 2.0;
 
@@ -352,6 +356,8 @@ pub struct SceneRendererLightingPass {
     cascade_bind_group_layout: wgpu::BindGroupLayout,
     /// Cascade tracing and merging pipeline
     trace_pipeline: wgpu::ComputePipeline,
+    /// Barrier-free tracing for levels with one invocation per ray
+    trace_single_pipeline: wgpu::ComputePipeline,
     /// Invocations a cascade level aims to fill by splitting its rays
     trace_invocations: u32,
     /// Cascade integration pipeline
@@ -798,6 +804,12 @@ impl SceneRendererLightingPass {
             &cascade_module,
             "trace_merge",
         );
+        let trace_single_pipeline: wgpu::ComputePipeline = compute_pipeline(
+            "`SceneRendererLightingPass.trace_single_pipeline`",
+            &cascade_pipeline_layout,
+            &cascade_module,
+            "trace_merge_single",
+        );
         let integrate_pipeline: wgpu::ComputePipeline = compute_pipeline(
             "`SceneRendererLightingPass.integrate_pipeline`",
             &cascade_pipeline_layout,
@@ -931,6 +943,7 @@ impl SceneRendererLightingPass {
             optical_bind_group: None,
             cascade_bind_group_layout,
             trace_pipeline,
+            trace_single_pipeline,
             trace_invocations: match accelerator.adapter().get_info().device_type {
                 wgpu::DeviceType::DiscreteGpu => LIGHTING_TRACE_INVOCATIONS,
                 _ => 1 << 15,
@@ -1265,8 +1278,9 @@ impl SceneRendererLightingPass {
         let mut sprite_bytes: [u8; 32] = [0; 32];
         sprite_bytes[0..4].copy_from_slice(&domain_origin[0].to_le_bytes());
         sprite_bytes[4..8].copy_from_slice(&domain_origin[1].to_le_bytes());
-        sprite_bytes[8..12].copy_from_slice(&(width as f32 / cellular_tile_size).to_le_bytes());
-        sprite_bytes[12..16].copy_from_slice(&(height as f32 / cellular_tile_size).to_le_bytes());
+        // Raster targets get fewer texels at lower quality, but cover the same world area.
+        sprite_bytes[8..12].copy_from_slice(&(width as f32 * texel_size as f32 / cellular_tile_size).to_le_bytes());
+        sprite_bytes[12..16].copy_from_slice(&(height as f32 * texel_size as f32 / cellular_tile_size).to_le_bytes());
         sprite_bytes[16..20].copy_from_slice(&cellular_tile_size.to_le_bytes());
         sprite_bytes[20..24].copy_from_slice(&(texel_size as f32).to_le_bytes());
         queue.write_buffer(&self.sprite_buffer, 0, &sprite_bytes);
@@ -1411,7 +1425,7 @@ impl SceneRendererLightingPass {
         for (index, level) in self.levels.iter().enumerate() {
             let upper: Option<&LightingLevel> = self.levels.get(index + 1);
             let record: &mut [u8] = &mut cascade_bytes[index * LIGHTING_UNIFORM_STRIDE as usize..];
-            let words: [[u8; 4]; 17] = [
+            let words: [[u8; 4]; 18] = [
                 width.to_le_bytes(),
                 height.to_le_bytes(),
                 level.probe_count[0].to_le_bytes(),
@@ -1429,6 +1443,7 @@ impl SceneRendererLightingPass {
                 upper.map_or(1.0, |upper| upper.spacing).to_le_bytes(),
                 u32::from(upper.is_some()).to_le_bytes(),
                 level.lanes.to_le_bytes(),
+                (texel_size as f32).to_le_bytes(),
             ];
             for (word_index, word) in words.iter().enumerate() {
                 record[word_index * 4..word_index * 4 + 4].copy_from_slice(word);
@@ -1580,9 +1595,11 @@ impl SceneRendererLightingPass {
         compute_pass.set_pipeline(&self.block_pipeline);
         compute_pass.set_bind_group(0, &domain.block_bind_group, &[]);
         dispatch(&mut compute_pass,domain.width.div_ceil(8), domain.height.div_ceil(8), 1);
-        compute_pass.set_pipeline(&self.trace_pipeline);
         for index in (1..self.levels.len()).rev() {
             let level: &LightingLevel = &self.levels[index];
+            compute_pass.set_pipeline(if level.lanes == 1 {
+                &self.trace_single_pipeline
+            } else { &self.trace_pipeline });
             let offset: u32 = (index as u64 * LIGHTING_UNIFORM_STRIDE) as u32;
             compute_pass.set_bind_group(0, &domain.cascade_bind_groups[index], &[offset]);
             let count: u32 =

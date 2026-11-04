@@ -30,7 +30,7 @@ On redraw, the host takes accumulated egui input (including current viewport and
 
 `UserInterfaceRenderer::new` creates a single-sample egui-wgpu renderer for a target format. A target view must use that format; the renderer has no depth or stencil attachment.
 
-The source documentation prefers `Rgba8Unorm` or `Bgra8Unorm` gamma-space targets for egui. The host picks the first sRGB surface format the surface offers, and the editor viewport uses `Rgba8UnormSrgb`. `renderer()` and `renderer_mut()` borrow the inner egui-wgpu renderer; `renderer_mut` is used to register native textures and callback resources.
+The source documentation prefers `Rgba8Unorm` or `Bgra8Unorm` gamma-space targets for egui. The host picks the first sRGB surface format the surface offers, and the editor viewport renders through `Rgba8UnormSrgb` while registering an alternate `Rgba8Unorm` sampling view with egui. `renderer()` and `renderer_mut()` borrow the inner egui-wgpu renderer; `renderer_mut` is used to register native textures and callback resources.
 
 If the target format changes, recreate the renderer and egui context together; the old context will not replay consumed texture deltas.
 

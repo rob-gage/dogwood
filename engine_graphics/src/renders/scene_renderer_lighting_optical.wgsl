@@ -206,5 +206,6 @@ fn build(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let actor: vec4<f32> = textureLoad(actor_optics, invocation.xy, 0);
     emission += actor.rgb;
     cell_extinction += -log(max(actor.a, 1e-12));
-    textureStore(optical, invocation.xy, vec4<f32>(emission, min(cell_extinction, EXTINCTION_MAXIMUM)));
+    textureStore(optical, invocation.xy, vec4<f32>(
+        emission, min(cell_extinction, EXTINCTION_MAXIMUM * f32(optics.texel_size))));
 }

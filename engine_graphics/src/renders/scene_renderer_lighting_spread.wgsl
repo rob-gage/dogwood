@@ -49,8 +49,8 @@ override WORKGROUP_SIZE: u32 = 256u;
 /// Cells each invocation holds per segment of a line
 const SEGMENT_CELLS: u32 = 8u;
 
-var<workgroup> scan_attenuations: array<f32, WORKGROUP_SIZE>;
-var<workgroup> scan_lights: array<vec3<f32>, WORKGROUP_SIZE>;
+var<workgroup> scan_attenuations: array<f32, WORKGROUP_SIZE * 2u>;
+var<workgroup> scan_lights: array<vec3<f32>, WORKGROUP_SIZE * 2u>;
 
 /// Unpacks one packed light
 fn unpack_light(packed: vec2<u32>) -> vec3<f32> {
@@ -120,28 +120,29 @@ fn scan_maps(slot: u32, attenuation_product: f32, light: vec3<f32>, carry: vec3<
     scan_attenuations[slot] = product;
     scan_lights[slot] = scanned;
     workgroupBarrier();
+    // Read and write separate halves, so no barrier is needed between the reads and writes.
+    // Every slot is copied forward, including the prefix untouched by this scan step.
+    var source: u32 = 0u;
+    var destination: u32 = WORKGROUP_SIZE;
     for (var offset: u32 = 1u; offset < WORKGROUP_SIZE; offset *= 2u) {
-        var earlier_attenuation: f32 = 1.0;
-        var earlier_light: vec3<f32> = vec3<f32>(0.0);
         if slot >= offset {
-            earlier_attenuation = scan_attenuations[slot - offset];
-            earlier_light = scan_lights[slot - offset];
-        }
-        workgroupBarrier();
-        if slot >= offset {
+            let earlier_attenuation: f32 = scan_attenuations[source + slot - offset];
+            let earlier_light: vec3<f32> = scan_lights[source + slot - offset];
             scanned = max(product * earlier_light, scanned);
             product *= earlier_attenuation;
-            scan_attenuations[slot] = product;
-            scan_lights[slot] = scanned;
         }
+        scan_attenuations[destination + slot] = product;
+        scan_lights[destination + slot] = scanned;
         workgroupBarrier();
+        source = destination;
+        destination = WORKGROUP_SIZE - source;
     }
     var entering: vec3<f32> = carry;
     if slot > 0u {
-        entering = max(scan_attenuations[slot - 1u] * carry, scan_lights[slot - 1u]);
+        entering = max(scan_attenuations[source + slot - 1u] * carry, scan_lights[source + slot - 1u]);
     }
     let leaving: vec3<f32> =
-        max(scan_attenuations[WORKGROUP_SIZE - 1u] * carry, scan_lights[WORKGROUP_SIZE - 1u]);
+        max(scan_attenuations[source + WORKGROUP_SIZE - 1u] * carry, scan_lights[source + WORKGROUP_SIZE - 1u]);
     workgroupBarrier();
     return SpreadScan(entering, leaving);
 }

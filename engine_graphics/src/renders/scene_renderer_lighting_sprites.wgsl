@@ -83,8 +83,7 @@ fn vertex(@builtin(vertex_index) vertex_index: u32, instance: SpriteInstance) ->
     output.color = vec4<f32>(instance.color.rgb * instance.radiance_intensity, instance.color.a);
     let texture_size: vec2<f32> = vec2<f32>(textureDimensions(radiance_texture, 0));
     let region_size: vec2<f32> = abs(instance.radiance_region.zw - instance.radiance_region.xy) * texture_size;
-    output.texels_per_tile = max(region_size.x / max(instance.center_size.z, 1e-6), 1e-6)
-        / sprite_optics.texel_size;
+    output.texels_per_tile = max(region_size.x / max(instance.center_size.z, 1e-6), 1e-6);
     return output;
 }
 
@@ -106,7 +105,7 @@ fn light_fragment(input: SpriteVarying) -> @location(0) vec4<f32> {
     if distance > 0.5 {
         discard;
     }
-    return vec4<f32>(input.color.rgb, 0.0);
+    return vec4<f32>(input.color.rgb * sprite_optics.texel_size, 0.0);
 }
 
 /// Composites a background's emission over the farther backgrounds, blurred by its depth

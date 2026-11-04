@@ -20,7 +20,7 @@ use engine_graphics::world::materials::MATERIAL_RADIANCE_WGSL;
 use std::collections::HashMap;
 
 /// Bytes of the uniforms
-const UNIFORM_BYTE_COUNT: u64 = 80;
+const UNIFORM_BYTE_COUNT: u64 = 96;
 
 /// Bytes of one thermal index's record in the thermal properties
 const THERMAL_RECORD_BYTE_COUNT: u64 = 64;
@@ -313,9 +313,15 @@ impl ChemistryCellularTilePass {
             THERMAL_FLUID_CAPACITY_SCALE.to_bits(),
             THERMAL_FLUID_ENERGY_SCALE.to_bits(),
             (ambient_heat_capacity / GAS_AMOUNT_PER_ATMOSPHERE).to_bits(),
-            0,
-            0,
-            0,
+            // These traversal bounds deliberately remain runtime uniforms: expanding the full
+            // reaction solver for every unit/contact causes pathological Mesa compilation.
+            7, // matter + four gas species + two fluid species
+            4, // internal faces, in the shader's original order
+            4, // owned cells of the 2x2 block
+            12, // owned cells plus the eight neighboring catalyst cells
+            2, // neighboring axes
+            3, // candidate places receiving reaction heat
+            4, // gas species slots
         ] {
             uniform_bytes.extend_from_slice(&value.to_le_bytes());
         }

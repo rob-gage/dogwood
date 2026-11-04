@@ -14,7 +14,7 @@ This page is for editor contributors. It covers how the editor draws a running g
 
 The editor creates an `EditorViewport` lazily when the viewport tab is drawn. It owns a texture view and the egui texture ID registered for that view.
 
-- The texture is a single-sample 2D `Rgba8UnormSrgb` target with render-attachment and texture-binding usage.
+- The texture is a single-sample 2D `Rgba8UnormSrgb` target with render-attachment and texture-binding usage. The scene writes through its sRGB view; egui samples an alternate `Rgba8Unorm` view of the same bytes, preserving encoded colors instead of decoding them a second time.
 - Each dimension is clamped to at least one physical pixel.
 - The egui renderer registers it with nearest filtering.
 

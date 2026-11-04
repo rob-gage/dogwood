@@ -25,3 +25,9 @@ The main bind group contains uniforms, tile matter/gas/color/kinematics, awake f
 Fluid species occupy an aligned four-word section appended to the fluid raster buffer: two packed material indices and two amounts per physical cell. The chemistry pass writes remaining amounts there. Fluid heat consumes the amounts to scale particle amount; the kill count is read back asynchronously and requests compaction. Fluid products use eight-word records in a spawn list with capacity 4096, which the next fluid simulation consumes.
 
 Reaction mutations reuse thermal conversion helpers for cellular products, gas, color/radiance transforms, heat, and collision occupancy reporting. Writes are gated by `TILE_LISTED`, ensuring thermal's apply step consumes the changes. `HEAT_CAPACITY_MINIMUM` is `0.01`; heat that cannot be assigned to cellular matter or gas is passed through the fluid heat raster where fluid is present.
+
+The 96-byte uniform record includes fixed runtime traversal bounds: seven material units, four
+internal faces, four owned cells, twelve loaded cells, two neighboring axes, three heat destinations,
+and four gas slots. Runtime bounds keep driver compilation from expanding the reaction solver.
+One ordered contact loop shares the solver across unary, same-cell, internal-face, and neighboring
+catalyst checks. Internal faces retain order `(0, 1)`, `(2, 3)`, `(0, 2)`, `(1, 3)`.

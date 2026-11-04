@@ -25,9 +25,14 @@ struct ChemistryUniforms {
     fluid_energy_scale: f32,
     /// Heat capacity of one gas amount unit of phantom air
     ambient_heat_capacity: f32,
-    padding_0: u32,
-    padding_1: u32,
-    padding_2: u32,
+    /// Fixed traversal bounds supplied at runtime to avoid explosive driver loop unrolling.
+    unit_count: u32,
+    face_count: u32,
+    block_cell_count: u32,
+    loaded_cell_count: u32,
+    neighbor_axis_count: u32,
+    heat_place_count: u32,
+    gas_slot_count: u32,
 };
 
 /// A count of tiles, then their entries: the buffer indices of thermal's listed tiles for the
@@ -367,7 +372,7 @@ fn cell_heat_capacity(slot: u32) -> f32 {
             thermal_index(cell.material_identifier, uniforms.thermal_offsets),
         ) * f32(cell.matter.y) / AMOUNT_PER_UNIT;
     }
-    for (var gas_slot: u32 = 0u; gas_slot < 4u; gas_slot++) {
+    for (var gas_slot: u32 = 0u; gas_slot < uniforms.gas_slot_count; gas_slot++) {
         let amount: u32 = cell.slots[gas_slot] & SLOT_AMOUNT_MAXIMUM;
         if amount == 0u { continue; }
         heat_capacity += thermal_heat_capacity(uniforms.thermal_offsets.w
@@ -444,7 +449,7 @@ fn consume(slot: u32, unit: u32, amount: f32) {
 /// fourth gas index set to `UNIT_MISSING` when no slot holds it
 fn added_gas(slots: vec4<u32>, gas_index: u32, amount: u32) -> vec4<u32> {
     var target_slot: u32 = 4u;
-    for (var slot: u32 = 0u; slot < 4u; slot++) {
+    for (var slot: u32 = 0u; slot < uniforms.gas_slot_count; slot++) {
         let held: u32 = slots[slot] & SLOT_AMOUNT_MAXIMUM;
         if held > 0u && slots[slot] >> 24u == gas_index {
             target_slot = slot;
@@ -547,7 +552,7 @@ fn react(
             gas_slot = slots[reactant];
         }
     }
-    for (var side: u32 = 1u; side <= 2u; side++) {
+    for (var side: u32 = 1u; side <= uniforms.neighbor_axis_count; side++) {
         let slot: u32 = first_consumed ^ side;
         if gas_slot == CELL_OUTSIDE && cells[slot].index != CELL_OUTSIDE
             && cells[slot].material_identifier == 0u
@@ -694,7 +699,7 @@ fn react(
         var capacities: array<f32, 3>;
         var capacity_sum: f32 = 0.0;
         var counted: u32 = 0u;
-        for (var place: u32 = 0u; place < 3u; place++) {
+        for (var place: u32 = 0u; place < uniforms.heat_place_count; place++) {
             let slot: u32 = heated[place];
             if slot >= 4u || (place < 2u && (place >= reactant_count || amounts[place] <= 0.0))
                 || ((counted >> slot) & 1u) != 0u
@@ -703,7 +708,7 @@ fn react(
             capacities[place] = cell_heat_capacity(slot) + fluid_heat_capacity(slot);
             capacity_sum += capacities[place];
         }
-        for (var place: u32 = 0u; place < 3u; place++) {
+        for (var place: u32 = 0u; place < uniforms.heat_place_count; place++) {
             if capacities[place] <= 0.0 { continue; }
             cells[heated[place]].heat +=
                 i32(round(heat * capacities[place] / capacity_sum * uniforms.heat_scale));
@@ -716,79 +721,52 @@ fn react(
     }
 }
 
-/// Tries every reaction of a lookup entry between two units, swapping them for reactions listing
-/// the second unit first; catalytic contacts react only with the outside unit as the catalyst
-fn react_pair(first_slot: u32, first_unit: u32, second_slot: u32, second_unit: u32, scale: f32) {
+/// Tries a unary or paired contact through one copy of the full reaction solver.
+/// Contact enumeration preserves the previous cell, face, unit, and registration order.
+fn react_contact(first_slot: u32, first_unit: u32, second_slot: u32, second_unit: u32, scale: f32) {
     let first: u32 = unit_thermal_index(first_slot, first_unit);
-    let second: u32 = unit_thermal_index(second_slot, second_unit);
-    if first == UNIT_MISSING || second == UNIT_MISSING { return; }
+    if first == UNIT_MISSING { return; }
     let count: u32 = uniforms.thermal_count;
     let flags: u32 = count * count + count;
-    if (reaction_lookup[flags + first] & reaction_lookup[flags + second] & FLAG_PAIRED) == 0u {
-        return;
+    let paired: bool = second_slot != CELL_OUTSIDE;
+    var entry: u32;
+    if paired {
+        let second: u32 = unit_thermal_index(second_slot, second_unit);
+        if second == UNIT_MISSING { return; }
+        if (reaction_lookup[flags + first] & reaction_lookup[flags + second] & FLAG_PAIRED) == 0u {
+            return;
+        }
+        entry = reaction_lookup[first * count + second];
+    } else {
+        if (unit_flags(first_slot, first_unit) & FLAG_UNARY) == 0u { return; }
+        entry = reaction_lookup[count * count + first];
     }
-    let entry: u32 = reaction_lookup[first * count + second];
     for (var item: u32 = 0u; item < (entry & 0xffu); item++) {
         let word: u32 = reaction_lookup[(entry >> 8u) + item];
         let reaction: u32 = word & 0x7fffffffu;
-        let is_swapped: bool = (word >> 31u) != 0u;
-        let amounts: vec2<f32> =
-            bitcast<vec2<f32>>(reactions[reaction * REACTION_RECORD_COUNT + 2u].xy);
-        // the second unit's amount in this reaction, and the first's
-        let second_amount: f32 = select(amounts.y, amounts.x, is_swapped);
-        let first_amount: f32 = select(amounts.x, amounts.y, is_swapped);
+        let is_swapped: bool = paired && (word >> 31u) != 0u;
         var rate_scale: f32 = scale;
-        if second_slot >= 4u {
-            // outside the block, only a catalyst the first unit reacts with
-            if second_amount > 0.0 || first_amount <= 0.0 { continue; }
-        } else if first_amount == 0.0 || second_amount == 0.0 {
-            // catalytic contacts react every tick, inside or outside the block
-            rate_scale = 1.0;
+        if paired {
+            let amounts: vec2<f32> =
+                bitcast<vec2<f32>>(reactions[reaction * REACTION_RECORD_COUNT + 2u].xy);
+            let second_amount: f32 = select(amounts.y, amounts.x, is_swapped);
+            let first_amount: f32 = select(amounts.x, amounts.y, is_swapped);
+            if second_slot >= 4u {
+                if second_amount > 0.0 || first_amount <= 0.0 { continue; }
+            } else if first_amount == 0.0 || second_amount == 0.0 {
+                rate_scale = 1.0;
+            }
         }
-        if is_swapped {
-            react(reaction, second_slot, second_unit, first_slot, first_unit, rate_scale);
-        } else {
-            react(reaction, first_slot, first_unit, second_slot, second_unit, rate_scale);
-        }
-        // a missing unit reacts no further
-        if unit_thermal_index(first_slot, first_unit) == UNIT_MISSING
-            || unit_thermal_index(second_slot, second_unit) == UNIT_MISSING
-        { return; }
-    }
-}
-
-/// Tries the reactions of every unit of a block cell alone and with the other units in it
-fn react_cell(slot: u32) {
-    for (var unit: u32 = 0u; unit < UNIT_COUNT; unit++) {
-        if (unit_flags(slot, unit) & FLAG_UNARY) == 0u { continue; }
-        let thermal: u32 = unit_thermal_index(slot, unit);
-        let entry: u32 = reaction_lookup[
-            uniforms.thermal_count * uniforms.thermal_count + thermal
-        ];
-        for (var item: u32 = 0u; item < (entry & 0xffu); item++) {
-            if unit_thermal_index(slot, unit) == UNIT_MISSING { break; }
-            react(reaction_lookup[(entry >> 8u) + item], slot, unit, CELL_OUTSIDE, 0u, 1.0);
-        }
-    }
-    for (var first: u32 = 0u; first < UNIT_COUNT; first++) {
-        if (unit_flags(slot, first) & FLAG_PAIRED) == 0u { continue; }
-        for (var second: u32 = first + 1u; second < UNIT_COUNT; second++) {
-            react_pair(slot, first, slot, second, 1.0);
-        }
-    }
-}
-
-/// Tries the reactions across a face between two cells of the block, whose two-sided reactions
-/// get their chance every second tick
-fn react_face(first_slot: u32, second_slot: u32) {
-    if cells[first_slot].index == CELL_OUTSIDE || cells[second_slot].index == CELL_OUTSIDE {
-        return;
-    }
-    for (var first: u32 = 0u; first < UNIT_COUNT; first++) {
-        if (unit_flags(first_slot, first) & FLAG_PAIRED) == 0u { continue; }
-        for (var second: u32 = 0u; second < UNIT_COUNT; second++) {
-            react_pair(first_slot, first, second_slot, second, 2.0);
-        }
+        react(
+            reaction,
+            select(first_slot, second_slot, is_swapped),
+            select(first_unit, second_unit, is_swapped),
+            select(second_slot, first_slot, is_swapped),
+            select(second_unit, first_unit, is_swapped),
+            rate_scale,
+        );
+        if unit_thermal_index(first_slot, first_unit) == UNIT_MISSING { return; }
+        if paired && unit_thermal_index(second_slot, second_unit) == UNIT_MISSING { return; }
     }
 }
 
@@ -816,7 +794,7 @@ fn store_cell(slot: u32) {
             words.w = bitcast<u32>(min(stored + i32(cell.pressure), i32(SLOT_AMOUNT_MAXIMUM)));
         } else {
             var total: u32 = words.x;
-            for (var gas_slot: u32 = 0u; gas_slot < 4u; gas_slot++) {
+            for (var gas_slot: u32 = 0u; gas_slot < uniforms.gas_slot_count; gas_slot++) {
                 total += cell.slots[gas_slot] & SLOT_AMOUNT_MAXIMUM;
             }
             words.x += min(cell.pressure, SLOT_AMOUNT_MAXIMUM - min(total, SLOT_AMOUNT_MAXIMUM));
@@ -887,7 +865,7 @@ fn position_units(position: vec2<i32>, is_owned: bool) -> array<u32, 7> {
         units[UNIT_CELLULAR] = thermal_index(material_identifier, uniforms.thermal_offsets);
     }
     let slots: vec4<u32> = gas[index * 2u];
-    for (var slot: u32 = 0u; slot < 4u; slot++) {
+    for (var slot: u32 = 0u; slot < uniforms.gas_slot_count; slot++) {
         if (slots[slot] & SLOT_AMOUNT_MAXIMUM) != 0u {
             units[1u + slot] = uniforms.thermal_offsets.w + (slots[slot] >> 24u);
         }
@@ -1003,31 +981,68 @@ fn react_tiles(
     // the tile owns the blocks whose first cell lies in it, shifted back by the block offset
     let origin: vec2<i32> = listed_tile(physical_tile) * 8 - i32(uniforms.block_offset)
         + 2 * vec2<i32>(i32(local_block % 4u), i32(local_block / 4u));
-    for (var slot: u32 = 0u; slot < 12u; slot++) {
+    for (var slot: u32 = 0u; slot < uniforms.loaded_cell_count; slot++) {
         load_cell(slot, block_cell_position(origin, slot));
         load_cell_heat(slot);
     }
     is_reacting = false;
-    for (var slot: u32 = 0u; slot < 4u; slot++) {
-        if cells[slot].index != CELL_OUTSIDE { react_cell(slot); }
-    }
-    react_face(0u, 1u);
-    react_face(2u, 3u);
-    react_face(0u, 2u);
-    react_face(1u, 3u);
-    for (var slot: u32 = 0u; slot < 4u; slot++) {
-        if cells[slot].index == CELL_OUTSIDE { continue; }
-        for (var side: u32 = 0u; side < 2u; side++) {
-            let neighbor: u32 = 4u + slot * 2u + side;
-            if cells[neighbor].index == CELL_OUTSIDE { continue; }
-            for (var unit: u32 = 0u; unit < UNIT_COUNT; unit++) {
-                if (unit_flags(slot, unit) & FLAG_PAIRED) == 0u { continue; }
-                for (var neighbor_unit: u32 = 0u; neighbor_unit < UNIT_COUNT; neighbor_unit++) {
-                    react_pair(slot, unit, neighbor, neighbor_unit, 1.0);
+    let units: u32 = uniforms.unit_count;
+    let pairs: u32 = units * (units - 1u) / 2u;
+    let per_cell: u32 = units + pairs;
+    let cell_contacts: u32 = uniforms.block_cell_count * per_cell;
+    let per_face: u32 = units * units;
+    let face_contacts: u32 = uniforms.face_count * per_face;
+    let contact_count: u32 = cell_contacts + face_contacts
+        + uniforms.block_cell_count * 2u * per_face;
+    let face_first = array<u32, 4>(0u, 2u, 0u, 1u);
+    let face_second = array<u32, 4>(1u, 3u, 2u, 3u);
+    // Enumerate unary/same-cell contacts, then internal faces, then outside catalysts in exactly
+    // their original order. One shared contact call keeps the large solver from being inlined
+    // separately for each traversal path.
+    for (var contact: u32 = 0u; contact < contact_count; contact++) {
+        var first_slot: u32;
+        var second_slot: u32;
+        var first_unit: u32;
+        var second_unit: u32 = 0u;
+        var scale: f32 = 1.0;
+        if contact < cell_contacts {
+            first_slot = contact / per_cell;
+            let local: u32 = contact % per_cell;
+            if local < units {
+                first_unit = local;
+                second_slot = CELL_OUTSIDE;
+            } else {
+                second_slot = first_slot;
+                var pair: u32 = local - units;
+                first_unit = 0u;
+                loop {
+                    let width: u32 = units - first_unit - 1u;
+                    if pair < width { break; }
+                    pair -= width;
+                    first_unit++;
                 }
+                second_unit = first_unit + 1u + pair;
             }
+        } else if contact < cell_contacts + face_contacts {
+            let local: u32 = contact - cell_contacts;
+            let face: u32 = local / per_face;
+            first_slot = face_first[face];
+            second_slot = face_second[face];
+            first_unit = (local % per_face) / units;
+            second_unit = local % units;
+            scale = 2.0;
+        } else {
+            let local: u32 = contact - cell_contacts - face_contacts;
+            let face: u32 = local / per_face;
+            first_slot = face / 2u;
+            second_slot = 4u + face;
+            first_unit = (local % per_face) / units;
+            second_unit = local % units;
         }
+        if cells[first_slot].index == CELL_OUTSIDE { continue; }
+        if second_slot != CELL_OUTSIDE && cells[second_slot].index == CELL_OUTSIDE { continue; }
+        react_contact(first_slot, first_unit, second_slot, second_unit, scale);
     }
-    for (var slot: u32 = 0u; slot < 4u; slot++) { store_cell(slot); }
+    for (var slot: u32 = 0u; slot < uniforms.block_cell_count; slot++) { store_cell(slot); }
     if is_reacting { atomicOr(&thermal_awake[physical_tile], THERMAL_TILE_AWAKE); }
 }

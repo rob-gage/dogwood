@@ -1,6 +1,6 @@
 // Copyright Rob Gage 2026
 
-/// One cascade level: probes `spacing` cells apart, each tracing `direction_count` intervals from
+/// One cascade level: probes `spacing` lighting texels apart, each tracing `direction_count` intervals from
 /// `interval_start` to `interval_end` lighting texels, merged with the next coarser level
 struct CascadeLevel {
     /// Lighting domain size in texels
@@ -9,30 +9,32 @@ struct CascadeLevel {
     probe_count: vec2<u32>,
     /// Domain position of the first probe's center in lighting texels
     probe_origin: vec2<f32>,
-    /// Distance between neighboring probes in cells
+    /// Distance between neighboring probes in lighting texels
     spacing: f32,
     /// Number of evenly spaced directions traced from each probe
     direction_count: u32,
-    /// Distance from a probe where its intervals start in cells
+    /// Distance from a probe where its intervals start in lighting texels
     interval_start: f32,
-    /// Distance from a probe where its intervals end in cells
+    /// Distance from a probe where its intervals end in lighting texels
     interval_end: f32,
     /// Number of probes along each axis of the coarser level
     upper_probe_count: vec2<u32>,
-    /// Domain position of the coarser level's first probe center in cells
+    /// Domain position of the coarser level's first probe center in lighting texels
     upper_probe_origin: vec2<f32>,
-    /// Distance between neighboring probes of the coarser level in cells
+    /// Distance between neighboring probes of the coarser level in lighting texels
     upper_spacing: f32,
     /// Whether a coarser level exists to merge with
     has_upper: u32,
     /// Number of consecutive invocations that split each ray of one interval between them
     lanes: u32,
+    /// Cells along each side of a lighting texel
+    texel_size: f32,
 };
 
 @group(0) @binding(0)
 var<uniform> level: CascadeLevel;
 
-/// Linear emission per cell of path in `rgb` and extinction per cell in `a`
+/// Linear emission per lighting texel of path in `rgb` and extinction per lighting texel in `a`
 @group(0) @binding(1)
 var optical: texture_2d<f32>;
 
@@ -115,12 +117,18 @@ fn trace(origin: vec2<f32>, direction: vec2<f32>, start: f32, end: f32, stops_wh
         let crossing: vec2<f32> = select(vec2<f32>(1e30), (boundary - origin) * inverse, is_moving);
         let next: f32 = max(min(min(crossing.x, crossing.y), exit), distance + 1e-4);
         let length: f32 = next - distance;
+        if sample.a == 0.0 && all(sample.rgb == vec3<f32>(0.0)) {
+            distance = next;
+            continue;
+        }
         let visibility: f32 = exp(-sample.a * length);
         // an optically thick cell emits its radiance from its surface, and a thin one along
         // its path
         var path: f32 = length;
-        if sample.a > 1e-4 {
-            path = (1.0 - visibility) / min(sample.a, 1.0);
+        if sample.a > 1e-4 * level.texel_size {
+            // Both coefficients are per lighting texel. The surface-emission cutoff is
+            // one extinction per world cell, independent of the lighting resolution.
+            path = (1.0 - visibility) / min(sample.a, level.texel_size);
         }
         radiance += transmission * sample.rgb * path;
         transmission *= visibility;
@@ -146,6 +154,12 @@ fn trace_lanes(
     end: f32,
     stops_when_lit: bool,
 ) -> vec4<f32> {
+    // With one invocation per ray there is no cross-lane data to exchange. The single
+    // segment is exactly [start, end], so shared storage and two workgroup barriers add no work
+    // to the result. This uniform branch preserves the same trace and arithmetic.
+    if level.lanes == 1u {
+        return trace(origin, direction, start, end, stops_when_lit);
+    }
     let lane: u32 = local % level.lanes;
     let share: f32 = (end - start) / f32(level.lanes);
     let segment_start: f32 = start + share * f32(lane);
@@ -176,7 +190,61 @@ fn unpack_interval(packed: vec2<u32>) -> vec3<f32> {
 /// from where this interval starts to where that probe's interval starts, so occluders between
 /// the probes do not leak light across. Every invocation of the workgroup must call it; one whose
 /// result is unused passes `is_traced` false to trace nothing while it takes part in the barriers.
+// Barrier-free equivalent of the merge below. Keep ray/interpolation math in sync; the
+// separate function lets WGSL prove that its per-invocation early return skips no barriers.
+fn merged_radiance_single(local: u32, position: vec2<f32>, direction: u32, is_traced: bool) -> vec3<f32> {
+    // No result is consumed for an unchanged interval. This helper contains no barriers.
+    if !is_traced { return vec3<f32>(0.0); }
+    let angle: f32 = (f32(direction) + 0.5) * TAU / f32(level.direction_count);
+    let ray: vec2<f32> = vec2<f32>(cos(angle), sin(angle));
+    let interval_end: f32 = select(level.interval_start, level.interval_end, is_traced);
+    if level.has_upper == 0u {
+        return trace(position, ray, level.interval_start, interval_end, false).rgb;
+    }
+    let start: vec2<f32> = position + ray * level.interval_start;
+    let upper_direction_count: u32 = level.direction_count * 2u;
+    // where the interval crosses nothing, the four rays would see nothing either, so one ray and
+    // interpolated coarser probes suffice
+    let plain: vec4<f32> = trace(position, ray, level.interval_start, interval_end, true);
+    let is_clear: bool = plain.a >= CLEAR_TRANSMISSION && all(plain.rgb <= vec3<f32>(1e-6));
+    let lattice: vec2<f32> = (position - level.upper_probe_origin) / level.upper_spacing;
+    let maximum: vec2<i32> = max(vec2<i32>(level.upper_probe_count) - vec2<i32>(2), vec2<i32>(0));
+    let base: vec2<i32> = clamp(vec2<i32>(floor(lattice)), vec2<i32>(0), maximum);
+    let weight: vec2<f32> = clamp(lattice - vec2<f32>(base), vec2<f32>(0.0), vec2<f32>(1.0));
+    var radiance: vec3<f32> = vec3<f32>(0.0);
+    for (var corner: u32 = 0u; corner < 4u; corner++) {
+        let offset: vec2<i32> = vec2<i32>(i32(corner & 1u), i32(corner >> 1u));
+        let corner_weight: f32 = select(1.0 - weight.x, weight.x, offset.x == 1)
+            * select(1.0 - weight.y, weight.y, offset.y == 1);
+        let probe: vec2<u32> = vec2<u32>(min(base + offset, vec2<i32>(level.upper_probe_count) - vec2<i32>(1)));
+        if corner_weight <= 0.0 {
+            continue;
+        }
+        var near: vec4<f32> = plain;
+        // Single-lane invocations have no barriers to attend for unused corner rays.
+        if !is_clear {
+            let upper_position: vec2<f32> = level.upper_probe_origin + vec2<f32>(probe) * level.upper_spacing;
+            let segment: vec2<f32> = upper_position + ray * level.interval_end - start;
+            let length: f32 = max(length(segment), 1e-6);
+            near = trace(start, segment / length, 0.0, length, false);
+        }
+        var corner_radiance: vec3<f32> = near.rgb;
+        if near.a > 0.0 {
+            let first: u32 = (probe.y * level.upper_probe_count.x + probe.x) * upper_direction_count
+                + direction * 2u;
+            corner_radiance += near.a * 0.5
+                * (unpack_interval(upper_intervals[first]) + unpack_interval(upper_intervals[first + 1u]));
+        }
+        radiance += corner_weight * corner_radiance;
+    }
+    return radiance;
+}
+
+
 fn merged_radiance(local: u32, position: vec2<f32>, direction: u32, is_traced: bool) -> vec3<f32> {
+    // The lane count is uniform across this dispatch. The barrier-free implementation can
+    // return immediately for unchanged intervals instead of executing discarded ray setup.
+    if level.lanes == 1u { return merged_radiance_single(local, position, direction, is_traced); }
     let angle: f32 = (f32(direction) + 0.5) * TAU / f32(level.direction_count);
     let ray: vec2<f32> = vec2<f32>(cos(angle), sin(angle));
     let interval_end: f32 = select(level.interval_start, level.interval_end, is_traced);
@@ -361,6 +429,30 @@ fn trace_merge(
     intervals[index] = vec2<u32>(packed.x, packed.y | select(0u, 0x10000u, any(packed != previous)));
 }
 
+/// Single-invocation rays need neither clamped dummy work nor barrier participation.
+@compute @workgroup_size(64, 1, 1)
+fn trace_merge_single(
+    @builtin(global_invocation_id) invocation: vec3<u32>,
+    @builtin(local_invocation_index) local: u32,
+    @builtin(num_workgroups) workgroups: vec3<u32>,
+) {
+    let interval_total: u32 = level.probe_count.x * level.probe_count.y * level.direction_count;
+    let index: u32 = invocation.x + invocation.y * workgroups.x * 64u;
+    if index >= interval_total { return; }
+    let direction: u32 = index % level.direction_count;
+    let probe_index: u32 = index / level.direction_count;
+    let probe: vec2<u32> = vec2<u32>(probe_index % level.probe_count.x, probe_index / level.probe_count.x);
+    let position: vec2<f32> = level.probe_origin + vec2<f32>(probe) * level.spacing;
+    if !interval_inputs_changed(position, direction) {
+        intervals[index].y &= ~CHANGED;
+        return;
+    }
+    let radiance: vec3<f32> = merged_radiance_single(local, position, direction, true);
+    let packed: vec2<u32> = vec2<u32>(pack2x16float(radiance.rg), pack2x16float(vec2<f32>(radiance.b, 0.0)));
+    let previous: vec2<u32> = vec2<u32>(intervals[index].x, intervals[index].y & ~CHANGED);
+    intervals[index] = vec2<u32>(packed.x, packed.y | select(0u, 0x10000u, any(packed != previous)));
+}
+
 /// Gathers the fluence of every cell from its finest intervals merged with the stored levels,
 /// keeping the previous fluence of cells where nothing changed
 @compute @workgroup_size(8, 8, 1)
@@ -368,13 +460,15 @@ fn integrate(
     @builtin(global_invocation_id) invocation: vec3<u32>,
     @builtin(local_invocation_index) local: u32,
 ) {
-    // invocations outside the domain gather a clamped cell to keep the lane barriers uniform
-    let traced: vec2<u32> = min(invocation.xy, level.domain_size - vec2<u32>(1u));
+    // The finest cascade always has one lane: this entry point has no barriers.
+    if any(invocation.xy >= level.domain_size) { return; }
+    let traced: vec2<u32> = invocation.xy;
     let position: vec2<f32> = vec2<f32>(traced) + 0.5;
     let is_changed: bool = all(invocation.xy < level.domain_size) && cell_inputs_changed(position);
+    if !is_changed { return; }
     var radiance: vec3<f32> = vec3<f32>(0.0);
     for (var direction: u32 = 0u; direction < level.direction_count; direction++) {
-        radiance += merged_radiance(local, position, direction, is_changed);
+        radiance += merged_radiance_single(local, position, direction, true);
     }
     if !is_changed {
         return;
