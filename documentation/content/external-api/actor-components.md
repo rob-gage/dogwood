@@ -41,7 +41,7 @@ See [parallax backgrounds](@/external-api/scenes.md#parallax-backgrounds) for ph
 | `ActorLightComponent` | `color: [f32; 3]`; `intensity: f32`; `radius: f32` in tiles | White, `1.0`, `0.5` | Adds a disc light when paired with `ActorKinematicsPositionComponent`; invalid values are skipped. See [Lighting](@/external-api/lighting.md). |
 | `ActorAttachmentComponent` | Empty marker | `Default::default()` | No runtime consumer. |
 | `ActorKinematicsVelocityComponent` | Empty marker | `Default::default()` | No runtime consumer. |
-| `ActorKinematicsRotationComponent` | Empty marker | `Default::default()` | No runtime consumer. |
+| `ActorKinematicsRotationComponent` | `rotation: f32`, counterclockwise radians around the actor position | `0.0` | Lets a collision body turn: dynamic bodies write their rotation back after each step, and gameplay changes turn the body. Collider placement for collision, edits, and cellular kinematics includes it. Pawns ignore it and stay upright. Sprites do not read it; copy it into the sprite tuple's rotation. |
 | `ActorKinematicsAngularVelocityComponent` | Empty marker | `Default::default()` | No runtime consumer. |
 | `ActorSamplerMaterialsComponent` | Empty marker | `Default::default()` | No runtime consumer. |
 | `ActorSamplerTemperaturesComponent` | Empty marker | `Default::default()` | No runtime consumer. |

@@ -12,6 +12,7 @@ use crate::{
             ActorCollisionComponent,
             ActorIdentityComponent,
             ActorKinematicsPositionComponent,
+            ActorKinematicsRotationComponent,
         },
         Actor,
         ActorRegistry,
@@ -136,6 +137,13 @@ impl CellularTiles {
             if !mass.is_finite() || mass <= 0.0 {
                 return Err(SceneError::InvalidCollider { actor });
             }
+            // turning actors place their colliders by their rotation
+            let rotation: f32 = actor_registry.component::<ActorKinematicsRotationComponent>(actor)
+                .map_or(0.0, |rotation| rotation.rotation);
+            let collision: ActorCollisionComponent = ActorCollisionComponent {
+                collider: collision.collider.rotated(rotation),
+                ..collision.clone()
+            };
             actors.push((
                 actor,
                 collision.collider.shape,
@@ -145,7 +153,7 @@ impl CellularTiles {
                 mass,
                 swimming_actors.contains(&actor),
             ));
-            fluid_actors.push((actor, collision.clone()));
+            fluid_actors.push((actor, collision));
         }
         fluid_actors.truncate(super::CELLULAR_TILE_ACTOR_COUNT_MAXIMUM);
         self.fluid_actors = fluid_actors;

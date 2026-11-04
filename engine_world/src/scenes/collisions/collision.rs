@@ -31,6 +31,7 @@ use crate::{
             ActorContactComponent,
             ActorIdentityComponent,
             ActorKinematicsPositionComponent,
+            ActorKinematicsRotationComponent,
             ActorPawnControlComponent,
             ActorPawnMovementComponent,
             ActorPersistenceComponent,
@@ -128,6 +129,8 @@ pub struct Collision {
         rapier2d::math::Vector,
         Option<(rapier2d::math::Vector, bool, bool, bool)>,
     )>,
+    /// Rotation of each actor body that turns, as last synchronized with its actor
+    actor_rotations: HashMap<Actor, f32>,
     /// Largest solid-surface impact speed from each pawn's last movement step
     pawn_impact_speeds: HashMap<Actor, f32>,
     /// Tethers of pawns by actor
@@ -207,6 +210,7 @@ impl Collision {
             dynamic_ring_offset: None,
             dynamic_cellular_tile_collider: None,
             actors: HashMap::new(),
+            actor_rotations: HashMap::new(),
             pawn_impact_speeds: HashMap::new(),
             pawn_tethers: HashMap::new(),
             // round pawns roll over steps lower than their radius, so taller ledges are walls
@@ -571,6 +575,9 @@ impl Collision {
             let Ok(collision) = actor_registry.component::<ActorCollisionComponent>(actor)
             else { continue; };
             if collision.memberships & COLLISION_GROUP_EDIT == 0 { continue; }
+            let collider: Collider = collision.collider.rotated(
+                Self::actor_rotation(actor_registry, actor).unwrap_or(0.0),
+            );
             // place the origin at the actor's tile so nearby cells are located exactly
             let position: ScenePosition = position.position;
             let translation: rapier2d::math::Vector = Self::rapier_translation(
@@ -578,14 +585,11 @@ impl Collision {
                 position,
             );
             let bounds: rapier2d::parry::bounding_volume::Aabb =
-                Self::simulate_collisions_collider_bounds(actor, &collision.collider, translation)?;
-            let shape: rapier2d::geometry::SharedShape = Self::rapier_shape(&collision.collider);
+                Self::simulate_collisions_collider_bounds(actor, &collider, translation)?;
+            let shape: rapier2d::geometry::SharedShape = Self::rapier_shape(&collider);
             let pose: rapier2d::math::Pose = rapier2d::math::Pose::new(
-                translation + rapier2d::math::Vector::new(
-                    collision.collider.offset_x,
-                    collision.collider.offset_y,
-                ),
-                collision.collider.rotation,
+                translation + rapier2d::math::Vector::new(collider.offset_x, collider.offset_y),
+                collider.rotation,
             );
             for coordinates in cellular_tiles {
                 let tile_x: f32 = coordinates.x.saturating_sub(position.tile_x) as f32;
@@ -850,6 +854,7 @@ impl Collision {
                 .cloned();
             let translation: rapier2d::math::Vector =
                 Self::rapier_translation(self.origin, position);
+            let rotation: Option<f32> = Self::actor_rotation(actor_registry, actor);
             // an actor exits once any collider, or its position without colliders, leaves
             let mut is_inside: bool = translation.cmpge(region_minimum).all()
                 && translation.cmplt(region_maximum).all();
@@ -857,7 +862,11 @@ impl Collision {
                 .chain(contact.iter().map(|contact| &contact.collider))
             {
                 let collider_bounds: rapier2d::parry::bounding_volume::Aabb =
-                    Self::simulate_collisions_collider_bounds(actor, collider, translation)?;
+                    Self::simulate_collisions_collider_bounds(
+                        actor,
+                        &collider.rotated(rotation.unwrap_or(0.0)),
+                        translation,
+                    )?;
                 is_inside = collider_bounds.mins.cmpge(region_minimum).all()
                     && collider_bounds.maxs.cmple(region_maximum).all();
                 if !is_inside { break; }
@@ -891,6 +900,8 @@ impl Collision {
                 collision,
                 contact,
                 pawn_movement.is_some(),
+                // pawns stay upright under the character controller
+                rotation.filter(|_| pawn_movement.is_none()),
             );
             if let Some(fluid_contact) = fluid_actor_contacts.get(&actor) {
                 self.simulate_collisions_apply_fluid_actor_contact(actor, *fluid_contact, gravity);
@@ -904,6 +915,7 @@ impl Collision {
         for actor in removed_actors {
             self.pawn_tethers.remove(&actor);
             self.pawn_impact_speeds.remove(&actor);
+            self.actor_rotations.remove(&actor);
             let Some((rigid_body_handle, _, _, _, _, _)) = self.actors.remove(&actor)
             else { continue; };
             self.rigid_bodies.remove(
@@ -945,6 +957,15 @@ impl Collision {
         let origin: CellularTileCoordinates = self.origin;
         for (actor, (rigid_body_handle, _, _, position, translation, _)) in &mut self.actors {
             let Some(rigid_body) = self.rigid_bodies.get(*rigid_body_handle) else { continue; };
+            // turning bodies write their rotations back too
+            if let Some(rotation) = self.actor_rotations.get_mut(actor)
+                && rigid_body.rotation().angle() != *rotation
+            {
+                *rotation = rigid_body.rotation().angle();
+                if let Ok(actor_rotation) =
+                    actor_registry.component_mutable::<ActorKinematicsRotationComponent>(*actor)
+                { actor_rotation.rotation = *rotation; }
+            }
             if rigid_body.translation() == *translation { continue; }
             *translation = rigid_body.translation();
             let x: f64 = f64::from(translation.x);
@@ -2468,6 +2489,7 @@ impl Collision {
         collision: Option<ActorCollisionComponent>,
         contact: Option<ActorContactComponent>,
         is_pawn: bool,
+        rotation: Option<f32>,
     ) {
         // actors with only a contact are kinematic
         let rigid_body_type: rapier2d::dynamics::RigidBodyType =
@@ -2481,7 +2503,7 @@ impl Collision {
             match self.actors.entry(actor) {
                 Entry::Occupied(entry) => entry.get().0,
                 Entry::Vacant(entry) => {
-                    // actor rotation is not simulated until actors have a rotation
+                    // bodies turn only while their actors have a rotation
                     let rigid_body: rapier2d::dynamics::RigidBody =
                         rapier2d::dynamics::RigidBodyBuilder::new(rigid_body_type)
                             .translation(translation)
@@ -2525,6 +2547,23 @@ impl Collision {
                     rigid_body.set_next_kinematic_translation(translation);
                 } else {
                     rigid_body.set_translation(translation, true);
+                }
+            }
+            // turn the body where gameplay rotated the actor since the last step, unlocking
+            // rotation when the actor gains one and locking it upright when the actor loses it
+            let synchronized_rotation: Option<f32> = self.actor_rotations.get(&actor).copied();
+            if rotation != synchronized_rotation {
+                rigid_body.lock_rotations(rotation.is_none(), true);
+                let angle: rapier2d::math::Rotation =
+                    rapier2d::math::Rotation::new(rotation.unwrap_or(0.0));
+                if rigid_body.is_kinematic() {
+                    rigid_body.set_next_kinematic_rotation(angle);
+                } else {
+                    rigid_body.set_rotation(angle, true);
+                }
+                match rotation {
+                    Some(rotation) => { self.actor_rotations.insert(actor, rotation); }
+                    None => { self.actor_rotations.remove(&actor); }
                 }
             }
         }
@@ -2642,6 +2681,12 @@ impl Collision {
             collider.rotation,
         );
         Ok(Self::rapier_shape(collider).compute_aabb(&pose))
+    }
+
+    /// Returns the rotation of an actor that has one
+    fn actor_rotation(actor_registry: &ActorRegistry, actor: Actor) -> Option<f32> {
+        actor_registry.component::<ActorKinematicsRotationComponent>(actor).ok()
+            .map(|rotation| rotation.rotation)
     }
 
     /// Returns the Rapier shape of a collider centered on its offset

@@ -12,7 +12,7 @@ This page covers the colliders actors attach to the physics world and the `Edit`
 
 ## Collider data
 
-A `Collider` combines a `ColliderShape` with `offset_x`, `offset_y`, and `rotation`. Offsets are in tiles relative to the owning actor, and rotation is counterclockwise radians.
+A `Collider` combines a `ColliderShape` with `offset_x`, `offset_y`, and `rotation`. Offsets are in tiles relative to the owning actor, and rotation is counterclockwise radians. `Collider::rotated(rotation)` returns the collider as placed on an owner turned by `rotation`, rotating its offset and adding to its rotation.
 
 | Shape | Dimensions (tiles) |
 |---|---|

@@ -14,3 +14,20 @@ pub struct Collider {
     /// Counterclockwise rotation of the shape around its center in radians
     pub rotation: f32,
 }
+
+impl Collider {
+
+    /// Returns this collider on an owner turned counterclockwise by a rotation in radians around
+    /// its position
+    pub fn rotated(&self, rotation: f32) -> Self {
+        if rotation == 0.0 { return self.clone(); }
+        let (sine, cosine): (f32, f32) = rotation.sin_cos();
+        Self {
+            shape: self.shape,
+            offset_x: cosine * self.offset_x - sine * self.offset_y,
+            offset_y: sine * self.offset_x + cosine * self.offset_y,
+            rotation: self.rotation + rotation,
+        }
+    }
+
+}

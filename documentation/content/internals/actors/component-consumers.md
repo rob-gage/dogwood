@@ -41,6 +41,11 @@ For component fields and defaults, see the [actor components API](@/external-api
 - **Graphics:** `Scene::graphics` uses the visible dimensions, which are width and height multiplied by zoom.
 - **Editor:** scales keyboard movement by the free camera's zoom-adjusted visible width and updates its zoom from the mouse wheel.
 
+## Rotation
+
+- **Collision:** bodies of actors with `ActorKinematicsRotationComponent` turn freely, except pawns; others keep rotations locked. A gameplay change to `rotation` turns the body (as the next kinematic rotation for kinematic bodies), the body's rotation is written back after each step, and removing the component locks the body upright again. Region-exit bounds and edit-group intersections place colliders with `Collider::rotated`.
+- **Cellular tiles:** actor records for cellular kinematics and fluid coupling place colliders with the same rotation.
+
 ## Components without consumers
 
 These components are empty markers that no system reads:
@@ -49,7 +54,6 @@ These components are empty markers that no system reads:
 
 > **Not implemented:** Actor-parent attachment is not implemented.
 - `ActorKinematicsVelocityComponent`: movement does not read it as velocity.
-- `ActorKinematicsRotationComponent`: collision locks all actor body rotations regardless of this component.
 - `ActorKinematicsAngularVelocityComponent`
 - `ActorSamplerMaterialsComponent`
 - `ActorSamplerTemperaturesComponent`
