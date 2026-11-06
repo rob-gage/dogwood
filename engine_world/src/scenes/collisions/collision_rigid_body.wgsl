@@ -16,7 +16,9 @@ struct CollisionRigidBodyUniforms {
 
 struct CollisionRigidBodyCellularTile {
     rigid_body: u32,
-    padding_0: u32,
+    /// Whether each cell is stamped where its center lands, leaving no gaps in thin strands, rather
+    /// than each grid cell taking whatever body cell lies under its center
+    is_stamped: u32,
     tile: vec2<i32>,
     cells: vec2<u32>,
     previous_cells: vec2<u32>,
@@ -264,6 +266,33 @@ fn release(
     }
 }
 
+/// Claims a grid cell for a rigid body cell, writing the body cell there if the grid cell is empty.
+/// Other static matter keeps its cell, and the first body to claim a cell owns it
+fn claim_cell(cell: vec2<i32>, rigid_body_cell: u32, rigid_body: CollisionRigidBody) {
+    let index: u32 = cell_index(cell);
+    let material_identifier: u32 = material_identifiers[index];
+    if is_static(material_identifier) { return; }
+    var is_claimed: bool = false;
+    loop {
+        let exchange = atomicCompareExchangeWeak(&rigid_body_cells[index], 0u, rigid_body_cell);
+        if exchange.exchanged { is_claimed = true; break; }
+        if exchange.old_value != 0u { break; }
+    }
+    if !is_claimed { return; }
+    if material_identifier == 0u {
+        let rigid_cell: vec4<u32> = rigid_body_cellular_tile_cells[rigid_body_cell - 1u];
+        material_identifiers[index] = rigid_cell.x;
+        colors[index] = rigid_cell.yz;
+        kinematics[index] = pack_velocity(point_velocity(rigid_body, cell));
+        let state: vec4<u32> = rigid_body_cell_states[rigid_body_cell - 1u];
+        gas[index * 8u + 7u] = state.x;
+        kinematics[index].y = state.y;
+        matter[index] = state.zw;
+        atomicOr(&thermal_awake[tile_index(vec2<u32>(cell) / 8u)], TILE_THERMAL_AWAKE);
+    }
+    atomicOr(&awake[tile_index(vec2<u32>(cell) / 8u)], TILE_AWAKE);
+}
+
 /// Rasterizes one rigid body tile at its position: every cell whose center lies in one of the
 /// tile's occupied cells takes that cell's material, color, velocity, and state, except cells of
 /// other static matter, and dynamic cells there stay covered until they escape
@@ -277,6 +306,29 @@ fn rasterize(
     let cellular_tile: CollisionRigidBodyCellularTile =
         rigid_body_cellular_tiles[cellular_tile_index];
     let rigid_body: CollisionRigidBody = rigid_bodies[cellular_tile.rigid_body];
+    if cellular_tile.is_stamped != 0u {
+        // one invocation per cell of the tile, stamping it where its center lands
+        let bit: u32 = local_index;
+        if (cellular_tile.cells[bit / 32u] & (1u << (bit % 32u))) != 0u {
+            let local: vec2<f32> = vec2<f32>(cellular_tile.tile * 8)
+                + vec2<f32>(f32(bit % 8u), f32(bit / 8u)) + 0.5;
+            let cell: vec2<i32> = vec2<i32>(floor(
+                rigid_body.position + rotate(rigid_body.rotation, local),
+            )) - uniforms.region_origin;
+            let size: vec2<i32> = vec2<i32>(
+                i32(uniforms.region_width) * 8,
+                i32(uniforms.region_height) * 8,
+            );
+            if all(cell >= vec2<i32>(0)) && all(cell < size) {
+                claim_cell(cell, cellular_tile_index * 64u + bit + 1u, rigid_body);
+            }
+        }
+        workgroupBarrier();
+        if local_index == 0u {
+            rigid_body_cellular_tiles[cellular_tile_index].previous_cells = cellular_tile.cells;
+        }
+        return;
+    }
     let bounds: vec4<i32> = cellular_tile_bounds(
         cellular_tile,
         cellular_tile.cells,
@@ -297,30 +349,7 @@ fn rasterize(
         if any(tile_cell < vec2<i32>(0)) || any(tile_cell >= vec2<i32>(8)) { continue; }
         let bit: u32 = u32(tile_cell.y * 8 + tile_cell.x);
         if (cellular_tile.cells[bit / 32u] & (1u << (bit % 32u))) == 0u { continue; }
-        let index: u32 = cell_index(cell);
-        let material_identifier: u32 = material_identifiers[index];
-        // other static matter keeps its cell, and the first body to claim a cell owns it
-        if is_static(material_identifier) { continue; }
-        let rigid_body_cell: u32 = cellular_tile_index * 64u + bit + 1u;
-        var is_claimed: bool = false;
-        loop {
-            let exchange = atomicCompareExchangeWeak(&rigid_body_cells[index], 0u, rigid_body_cell);
-            if exchange.exchanged { is_claimed = true; break; }
-            if exchange.old_value != 0u { break; }
-        }
-        if !is_claimed { continue; }
-        if material_identifier == 0u {
-            let rigid_cell: vec4<u32> = rigid_body_cellular_tile_cells[rigid_body_cell - 1u];
-            material_identifiers[index] = rigid_cell.x;
-            colors[index] = rigid_cell.yz;
-            kinematics[index] = pack_velocity(point_velocity(rigid_body, cell));
-            let state: vec4<u32> = rigid_body_cell_states[rigid_body_cell - 1u];
-            gas[index * 8u + 7u] = state.x;
-            kinematics[index].y = state.y;
-            matter[index] = state.zw;
-            atomicOr(&thermal_awake[tile_index(vec2<u32>(cell) / 8u)], TILE_THERMAL_AWAKE);
-        }
-        atomicOr(&awake[tile_index(vec2<u32>(cell) / 8u)], TILE_AWAKE);
+        claim_cell(cell, cellular_tile_index * 64u + bit + 1u, rigid_body);
     }
     // the next release finds the cells rasterized here once every invocation read the tile
     workgroupBarrier();

@@ -368,11 +368,12 @@ impl CollisionRigidBodyPass {
         material_identifiers: &[MaterialIdentifier; 64],
         colors: &[u32; 64],
         radiances: &[u32; 64],
-        states: &[[u32; 4]; 64],
+        states: Option<&[[u32; 4]; 64]>,
+        is_stamped: bool,
     ) {
         let mut record_bytes: Vec<u8> = Vec::with_capacity(CELLULAR_TILE_BYTE_COUNT as usize);
         record_bytes.extend_from_slice(&rigid_body.to_le_bytes());
-        record_bytes.extend_from_slice(&0_u32.to_le_bytes());
+        record_bytes.extend_from_slice(&u32::from(is_stamped).to_le_bytes());
         record_bytes.extend_from_slice(&coordinates.0.to_le_bytes());
         record_bytes.extend_from_slice(&coordinates.1.to_le_bytes());
         record_bytes.extend_from_slice(&cells.to_le_bytes());
@@ -394,13 +395,16 @@ impl CollisionRigidBodyPass {
             u64::from(cellular_tile) * 64 * 16,
             &cell_bytes,
         );
-        let state_bytes: Vec<u8> = states.iter().flatten().copied()
-            .flat_map(u32::to_le_bytes).collect();
-        accelerator.queue().write_buffer(
-            &self.cellular_tile_state_buffer,
-            u64::from(cellular_tile) * 64 * 16,
-            &state_bytes,
-        );
+        // without states, cells keep the temperatures and amounts the simulation gave them
+        if let Some(states) = states {
+            let state_bytes: Vec<u8> = states.iter().flatten().copied()
+                .flat_map(u32::to_le_bytes).collect();
+            accelerator.queue().write_buffer(
+                &self.cellular_tile_state_buffer,
+                u64::from(cellular_tile) * 64 * 16,
+                &state_bytes,
+            );
+        }
     }
 
     /// Writes rigid body records: position, rotation cosine and sine, the position and rotation

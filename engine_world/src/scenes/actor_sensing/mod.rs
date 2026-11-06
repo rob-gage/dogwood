@@ -82,7 +82,7 @@ fn form_slot(form: MaterialForm) -> Option<usize> {
 }
 
 /// Returns the number of material indices of each form, each one past its highest registered index
-fn form_index_counts(material_table: &MaterialTable) -> [u32; 4] {
+pub(crate) fn form_index_counts(material_table: &MaterialTable) -> [u32; 4] {
     let mut counts: [u32; 4] = [0; 4];
     for (identifier, _, form) in material_table.materials() {
         let Some(slot) = form_slot(form) else { continue; };
@@ -93,7 +93,7 @@ fn form_index_counts(material_table: &MaterialTable) -> [u32; 4] {
 
 /// Returns masks for cellular static, dynamic, fluid, then gas indices; bit `i` is set when the
 /// material carries configured tag `i`
-fn tag_masks(material_table: &MaterialTable, tags: &[String]) -> Vec<u32> {
+pub(crate) fn tag_masks(material_table: &MaterialTable, tags: &[String]) -> Vec<u32> {
     let counts: [u32; 4] = form_index_counts(material_table);
     let offsets: [u32; 4] = [0, counts[0], counts[0] + counts[1], counts[0] + counts[1] + counts[2]];
     let mut masks: Vec<u32> = vec![0; counts.iter().sum::<u32>() as usize];

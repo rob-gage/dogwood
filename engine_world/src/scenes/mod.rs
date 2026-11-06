@@ -5,7 +5,7 @@ pub mod chemistry;
 pub mod chunks;
 pub mod collisions;
 pub mod edits;
-mod actor_sensing;
+pub(crate) mod actor_sensing;
 pub mod fluids;
 pub mod pressure;
 pub mod thermal;
@@ -15,6 +15,7 @@ mod scene_backgrounds;
 mod scene_generator;
 mod scene_material_surfaces;
 mod scene_position;
+pub mod soft_bodies;
 
 pub use scene::{
     Scene,

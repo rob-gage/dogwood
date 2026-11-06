@@ -64,8 +64,22 @@ use crate::{
         },
     },
 };
+use crate::scenes::soft_bodies::{
+    SceneSoftBody,
+    SoftBodies,
+    SoftBodyDescriptor,
+    SoftBodyRapier,
+    SoftBodySegment,
+    SoftBodySegmentDescriptor,
+    SoftBodySegmentTile,
+    SoftBodyTearEvents,
+    SoftBodyTerrain,
+    COLLISION_GROUP_SOFT_BODY,
+};
 use engine_host::acceleration::{Accelerator, AcceleratorReadback, AcceleratorReadbackError};
+use crate::scenes::cellular_tiles::CELLULAR_TILE_AMOUNT_PER_UNIT;
 use std::collections::{
+    BTreeSet,
     hash_map::Entry,
     BTreeMap,
     HashMap,
@@ -90,6 +104,8 @@ struct PawnTether {
     direction: rapier2d::math::Vector,
     /// Tether length beyond its allowed length in tiles
     stretch: f32,
+    /// Fraction of the pawn's speed across the tether lost per second while it pulls
+    damping: f32,
     /// Rigid body identifier, Rapier point, and length gradient of every held body point
     bodies: Vec<(u64, rapier2d::math::Vector, rapier2d::math::Vector)>,
     /// Rigid body identifier, accumulated linear gradient, and accumulated angular gradient of
@@ -158,6 +174,12 @@ pub struct Collision {
     /// Records of removed rigid bodies whose cells the next rasterization clears, and the record
     /// indices and tiles freed after it
     removed_rigid_bodies: Vec<(u32, [f32; 14])>,
+    /// Records of the soft body segments rasterized this tick
+    soft_body_records: Vec<(u32, [f32; 14])>,
+    /// Tiles of soft body segments clearing where they were this tick
+    soft_body_cleared_tiles: Vec<u32>,
+    /// Tiles of soft body segments rasterized this tick
+    soft_body_rasterized_tiles: Vec<u32>,
     /// Rigid body tiles freed after the next rasterization
     removed_cellular_tiles: Vec<u32>,
     /// GPU rasterization of rigid body cells into the active cellular tiles
@@ -174,8 +196,10 @@ pub struct Collision {
     changed_rigid_body_cell_readbacks: AcceleratorReadback<()>,
     /// Rigid bodies of every simulated actor
     rigid_bodies: rapier2d::dynamics::RigidBodySet,
-    /// Rapier soft bodies, which every removal of a body or collider updates
-    soft_bodies: rapier2d::dynamics::SoftBodySet,
+    /// Soft bodies, simulated with the rigid bodies
+    pub(crate) soft_bodies: SoftBodies,
+    /// Tears of soft bodies during the last step
+    soft_body_tear_events: SoftBodyTearEvents,
     /// Cellular tile collider and every simulated actor collider
     colliders: rapier2d::geometry::ColliderSet,
     /// Fixed timestep and solver settings
@@ -194,6 +218,28 @@ pub struct Collision {
     multibody_joints: rapier2d::dynamics::MultibodyJointSet,
     /// Continuous collision detection solver
     ccd_solver: rapier2d::dynamics::CCDSolver,
+}
+
+/// Squared cells a soft body segment must move before it is rasterized again
+const SOFT_BODY_RASTER_MOVE: f32 = 0.06;
+
+/// Squared change in rotation cosine and sine before a soft body segment is rasterized again
+const SOFT_BODY_RASTER_TURN: f32 = 0.002;
+
+/// Returns the rasterization record of a soft body segment: where it is and was, in cells from the
+/// collision origin, and its velocity in cells per tick
+fn soft_body_segment_record(
+    now: ([f32; 2], [f32; 2]),
+    last: ([f32; 2], [f32; 2]),
+    velocity: [f32; 2],
+) -> [f32; 14] {
+    [
+        now.0[0], now.0[1], now.1[0], now.1[1],
+        last.0[0], last.0[1], last.1[0], last.1[1],
+        velocity[0], velocity[1],
+        now.0[0], now.0[1],
+        0.0, 1.0,
+    ]
 }
 
 impl Collision {
@@ -238,6 +284,9 @@ impl Collision {
             changed_rigid_bodies: HashSet::new(),
             cleared_cellular_tiles: Vec::new(),
             removed_rigid_bodies: Vec::new(),
+            soft_body_records: Vec::new(),
+            soft_body_cleared_tiles: Vec::new(),
+            soft_body_rasterized_tiles: Vec::new(),
             removed_cellular_tiles: Vec::new(),
             rigid_body_pass: CollisionRigidBodyPass::new(accelerator, cellular_tile_buffers),
             changed_cellular_tile_buffer: accelerator.device().create_buffer(
@@ -273,7 +322,8 @@ impl Collision {
                 3,
             ),
             rigid_bodies: rapier2d::dynamics::RigidBodySet::new(),
-            soft_bodies: rapier2d::dynamics::SoftBodySet::new(),
+            soft_bodies: SoftBodies::new(),
+            soft_body_tear_events: SoftBodyTearEvents::default(),
             colliders: rapier2d::geometry::ColliderSet::new(),
             // resolve stack loads before a body penetrates beyond the voxel surface contacts
             integration_parameters: rapier2d::dynamics::IntegrationParameters {
@@ -435,6 +485,7 @@ impl Collision {
             cellular_contacts,
             fluid_actor_contacts,
         )?;
+        self.simulate_collisions_prepare_soft_body_cells(accelerator, active_region, material_table);
         self.simulate_collisions_rasterize_rigid_bodies(accelerator, active_region, ring_offset);
         self.simulate_collisions_request_detached_cells(accelerator, active_region, ring_offset);
         Ok(())
@@ -628,6 +679,7 @@ impl Collision {
 
     /// Moves the origin, removing the cellular tile collider and re-placing every body
     fn simulate_collisions_move_origin(&mut self, origin: CellularTileCoordinates) {
+        self.soft_bodies.move_origin(origin);
         // rigid bodies keep their place relative to the cells, shifted by the whole tiles moved
         let shift: rapier2d::math::Vector = rapier2d::math::Vector::new(
             (self.origin.x - origin.x) as f32,
@@ -644,13 +696,19 @@ impl Collision {
                 position[1] += shift.y * CELLULAR_TILE_SIZE as f32;
             }
         }
+        for segment in self.soft_bodies.bodies.values_mut().flat_map(|record| &mut record.segments) {
+            if let Some((position, _)) = segment.rasterization.as_mut() {
+                position[0] += shift.x * CELLULAR_TILE_SIZE as f32;
+                position[1] += shift.y * CELLULAR_TILE_SIZE as f32;
+            }
+        }
         self.origin = origin;
         if let Some(cellular_tile_collider) = self.cellular_tile_collider.take() {
             self.colliders.remove(
                 cellular_tile_collider,
                 &mut self.island_manager,
                 &mut self.rigid_bodies,
-                &mut self.soft_bodies,
+                &mut self.soft_bodies.set,
                 false,
             );
         }
@@ -659,7 +717,7 @@ impl Collision {
                 collider,
                 &mut self.island_manager,
                 &mut self.rigid_bodies,
-                &mut self.soft_bodies,
+                &mut self.soft_bodies.set,
                 false,
             );
         }
@@ -792,7 +850,7 @@ impl Collision {
                 cellular_tile_collider,
                 &mut self.island_manager,
                 &mut self.rigid_bodies,
-                &mut self.soft_bodies,
+                &mut self.soft_bodies.set,
                 false,
             );
         }
@@ -933,7 +991,7 @@ impl Collision {
                 &mut self.colliders,
                 &mut self.impulse_joints,
                 &mut self.multibody_joints,
-                &mut self.soft_bodies,
+                &mut self.soft_bodies.set,
                 true,
             );
         }
@@ -959,11 +1017,12 @@ impl Collision {
             &mut self.colliders,
             &mut self.impulse_joints,
             &mut self.multibody_joints,
-            &mut self.soft_bodies,
+            &mut self.soft_bodies.set,
             &mut self.ccd_solver,
             &(),
-            &(),
+            &self.soft_body_tear_events,
         );
+        self.simulate_collisions_settle_soft_bodies(active_region);
         // write the exact positions of dynamic bodies and pawns that moved back to their actors
         let origin: CellularTileCoordinates = self.origin;
         for (actor, (rigid_body_handle, _, _, position, translation, _)) in &mut self.actors {
@@ -1215,7 +1274,7 @@ impl Collision {
                             rapier2d::pipeline::QueryFilter::default()
                                 .exclude_rigid_body(*rigid_body_handle)
                                 .exclude_sensors()
-                                .groups(collider.collision_groups()),
+                                .groups(Self::groups_without_soft_bodies(collider)),
                         ),
                         collider.shape(),
                         &substep_pose,
@@ -1311,6 +1370,10 @@ impl Collision {
         let impulse: f32 = -(rate + bias) / stiffness;
         if impulse >= 0.0 || !impulse.is_finite() { return; }
         *velocity += pawn_gradient * (impulse / mass);
+        if tether.damping > 0.0 {
+            let along: rapier2d::math::Vector = tether.direction * velocity.dot(tether.direction);
+            *velocity = along + (*velocity - along) * (-tether.damping * time_step).exp();
+        }
         for (identifier, point, gradient) in &tether.bodies {
             let Some(body) = collision_rigid_bodies.get(identifier)
                 .and_then(|body| rigid_bodies.get_mut(body.rigid_body_handle))
@@ -1371,7 +1434,7 @@ impl Collision {
                 &mut self.colliders,
                 &mut self.impulse_joints,
                 &mut self.multibody_joints,
-                &mut self.soft_bodies,
+                &mut self.soft_bodies.set,
                 true,
             );
         }
@@ -1469,15 +1532,221 @@ impl Collision {
         physical_tiles
     }
 
-    /// Returns every actor with a collision body
-    pub(crate) fn actors(&self) -> impl Iterator<Item = Actor> + '_ {
-        self.actors.keys().copied()
+    /// Creates a soft body
+    pub(crate) fn spawn_soft_body(&mut self, descriptor: &SoftBodyDescriptor) -> Option<SceneSoftBody> {
+        // a segment takes one record and a tile for each block of eight cells it touches
+        let tiles_of = |segment: &SoftBodySegmentDescriptor| -> BTreeSet<(i32, i32)> {
+            segment.cells.iter().map(|cell| (cell.x.div_euclid(8), cell.y.div_euclid(8))).collect()
+        };
+        let tile_count: usize = descriptor.segments.iter().map(|segment| tiles_of(segment).len()).sum();
+        if self.free_rigid_body_indices.len() < descriptor.segments.len()
+            || self.free_cellular_tile_indices.len() < tile_count
+        { return None; }
+        self.soft_bodies.move_origin(self.origin);
+        let handles: HashMap<u64, rapier2d::dynamics::RigidBodyHandle> = self.collision_rigid_bodies
+            .iter()
+            .map(|(identifier, body)| (*identifier, body.rigid_body_handle))
+            .collect();
+        let mut rapier: SoftBodyRapier<'_> = SoftBodyRapier {
+            bodies: &mut self.rigid_bodies,
+            colliders: &mut self.colliders,
+            islands: &mut self.island_manager,
+            impulse_joints: &mut self.impulse_joints,
+            multibody_joints: &mut self.multibody_joints,
+        };
+        let body: SceneSoftBody =
+            self.soft_bodies.spawn(descriptor, &mut rapier, |body| handles.get(&body.0).copied());
+        let state: [u32; 4] = [
+            0,
+            0,
+            descriptor.cell_temperature.to_bits(),
+            CELLULAR_TILE_AMOUNT_PER_UNIT,
+        ];
+        let mut segments: Vec<SoftBodySegment> = Vec::with_capacity(descriptor.segments.len());
+        for described in &descriptor.segments {
+            let index: u32 = self.free_rigid_body_indices.pop()?;
+            let mut tiles: BTreeMap<(i32, i32), SoftBodySegmentTile> = BTreeMap::new();
+            for cell in &described.cells {
+                let coordinates: (i32, i32) = (cell.x.div_euclid(8), cell.y.div_euclid(8));
+                let tile: &mut SoftBodySegmentTile = match tiles.entry(coordinates) {
+                    std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                    std::collections::btree_map::Entry::Vacant(entry) => {
+                        let tile_index: u32 = self.free_cellular_tile_indices.pop()?;
+                        self.soft_bodies.tile_owners.insert(tile_index, (body, index, coordinates));
+                        entry.insert(SoftBodySegmentTile {
+                            cells: 0,
+                            materials: [MaterialIdentifier::EMPTY; 64],
+                            colors: [0; 64],
+                            radiances: [0; 64],
+                            states: [state; 64],
+                            index: tile_index,
+                            rasterized: 0,
+                        })
+                    }
+                };
+                let bit: usize = (cell.y.rem_euclid(8) * 8 + cell.x.rem_euclid(8)) as usize;
+                tile.cells |= 1 << bit;
+                tile.materials[bit] = cell.material;
+                tile.colors[bit] = cell.color;
+                tile.radiances[bit] = cell.radiance;
+            }
+            segments.push(SoftBodySegment {
+                first: described.first,
+                second: described.second,
+                length: described.length,
+                index,
+                tiles,
+                rasterization: None,
+                is_dirty: true,
+                has_written_states: false,
+            });
+        }
+        if let Some(record) = self.soft_bodies.bodies.get_mut(&body) { record.segments = segments; }
+        Some(body)
+    }
+
+    /// Removes a soft body, returning whether it existed
+    pub(crate) fn remove_soft_body(&mut self, body: SceneSoftBody) -> bool {
+        let mut rapier: SoftBodyRapier<'_> = SoftBodyRapier {
+            bodies: &mut self.rigid_bodies,
+            colliders: &mut self.colliders,
+            islands: &mut self.island_manager,
+            impulse_joints: &mut self.impulse_joints,
+            multibody_joints: &mut self.multibody_joints,
+        };
+        self.soft_bodies.remove(body, &mut rapier)
+    }
+
+    /// Tears the edge joining two neighboring soft body particles, returning whether it existed
+    pub(crate) fn tear_soft_body(&mut self, body: SceneSoftBody, first: u32, second: u32) -> bool {
+        let mut rapier: SoftBodyRapier<'_> = SoftBodyRapier {
+            bodies: &mut self.rigid_bodies,
+            colliders: &mut self.colliders,
+            islands: &mut self.island_manager,
+            impulse_joints: &mut self.impulse_joints,
+            multibody_joints: &mut self.multibody_joints,
+        };
+        self.soft_bodies.tear_between(body, first, second, &mut rapier)
+    }
+
+    /// Returns a collider's interaction groups, leaving out soft bodies, which yield to what they
+    /// touch instead of blocking it
+    fn groups_without_soft_bodies(
+        collider: &rapier2d::geometry::Collider,
+    ) -> rapier2d::geometry::InteractionGroups {
+        let groups: rapier2d::geometry::InteractionGroups = collider.collision_groups();
+        rapier2d::geometry::InteractionGroups::new(
+            groups.memberships,
+            groups.filter & !rapier2d::geometry::Group::from_bits_retain(COLLISION_GROUP_SOFT_BODY),
+            groups.test_mode,
+        )
+    }
+
+    /// Divides torn soft bodies, then keeps every soft body out of solid cells and rigid bodies,
+    /// letting bodies rest once nothing moves them and waking those that something approaches
+    fn simulate_collisions_settle_soft_bodies(&mut self, active_region: CellularTileRegion) {
+        self.soft_bodies.move_origin(self.origin);
+        if let Ok(mut events) = self.soft_body_tear_events.0.lock() {
+            for event in events.drain(..) { self.soft_bodies.apply_tear(&event); }
+        }
+        let mut rapier: SoftBodyRapier<'_> = SoftBodyRapier {
+            bodies: &mut self.rigid_bodies,
+            colliders: &mut self.colliders,
+            islands: &mut self.island_manager,
+            impulse_joints: &mut self.impulse_joints,
+            multibody_joints: &mut self.multibody_joints,
+        };
+        self.soft_bodies.decompose_small(&mut rapier);
+        if self.soft_bodies.bodies.is_empty() { return; }
+        let Some((region, tiles)) = self.cellular_tiles.as_ref() else { return; };
+        if *region != active_region { return; }
+        let terrain: SoftBodyTerrain<'_> =
+            SoftBodyTerrain::new(*region, [self.origin.x, self.origin.y], tiles);
+        self.soft_bodies.update_cell_anchors(&terrain);
+        // whatever is moving wakes the bodies it comes near
+        let moving_rigid_bodies = self.collision_rigid_bodies.values()
+            .map(|collision_rigid_body| collision_rigid_body.rigid_body_handle);
+        let moving_actors = self.actors.values().map(|actor| actor.0);
+        let mut contacts: Vec<rapier2d::geometry::ColliderHandle> = Vec::new();
+        for handle in moving_rigid_bodies.chain(moving_actors) {
+            let Some(body) = self.rigid_bodies.get(handle) else { continue; };
+            if body.linvel().length_squared() + body.angvel().abs() < 0.01 && !body.is_kinematic() {
+                continue;
+            }
+            for collider in body.colliders() {
+                let Some(shape) = self.colliders.get(*collider) else { continue; };
+                let bounds: rapier2d::parry::bounding_volume::Aabb = shape.compute_aabb();
+                self.soft_bodies.wake_near(
+                    [bounds.mins.x, bounds.mins.y],
+                    [bounds.maxs.x, bounds.maxs.y],
+                );
+            }
+        }
+        for collision_rigid_body in self.collision_rigid_bodies.values() {
+            if let Some(body) = self.rigid_bodies.get(collision_rigid_body.rigid_body_handle) {
+                contacts.extend(body.colliders().iter().copied());
+            }
+        }
+        let colliders: &rapier2d::geometry::ColliderSet = &self.colliders;
+        let mut impulses: Vec<(rapier2d::dynamics::RigidBodyHandle, rapier2d::math::Vector, rapier2d::math::Vector)> =
+            Vec::new();
+        self.soft_bodies.settle(&terrain, |position, radius, mass| {
+            let mut point: rapier2d::math::Vector =
+                rapier2d::math::Vector::new(position[0], position[1]);
+            let mut is_pushed: bool = false;
+            for handle in &contacts {
+                let Some(collider) = colliders.get(*handle) else { continue; };
+                if !rapier2d::parry::bounding_volume::BoundingVolume::loosened(
+                    &collider.compute_aabb(),
+                    radius,
+                ).contains_local_point(point) { continue; }
+                let projection: rapier2d::parry::query::PointProjection =
+                    collider.shape().project_point(collider.position(), point, true);
+                let separation: rapier2d::math::Vector = point - projection.point;
+                let distance: f32 = separation.length();
+                if !projection.is_inside && distance >= radius { continue; }
+                // what is inside leaves through the nearest surface, the way it came in
+                let outward: rapier2d::math::Vector = if projection.is_inside {
+                    let boundary: rapier2d::parry::query::PointProjection =
+                        collider.shape().project_point(collider.position(), point, false);
+                    let way: rapier2d::math::Vector = boundary.point - point;
+                    let length: f32 = way.length().max(0.0001);
+                    point = boundary.point;
+                    way / length
+                } else if distance > 0.0001 {
+                    point = projection.point;
+                    separation / distance
+                } else { continue; };
+                let pushed: rapier2d::math::Vector = point + outward * radius;
+                if let Some(parent) = collider.parent() {
+                    impulses.push((
+                        parent,
+                        -(pushed - rapier2d::math::Vector::new(position[0], position[1]))
+                            * (mass * 60.0),
+                        pushed,
+                    ));
+                }
+                point = pushed;
+                is_pushed = true;
+            }
+            is_pushed.then_some([point.x, point.y])
+        });
+        for (handle, impulse, point) in impulses {
+            if let Some(body) = self.rigid_bodies.get_mut(handle) {
+                body.apply_impulse_at_point(impulse, point, true);
+            }
+        }
     }
 
     /// Returns the cellular tile whose bottom-left corner is the origin of every Rapier position
     pub fn origin(&self) -> CellularTileCoordinates { self.origin }
 
     /// Returns one pawn's velocity in tiles per second
+    pub(crate) fn actors(&self) -> impl Iterator<Item = Actor> + '_ {
+        self.actors.keys().copied()
+    }
+
+    /// Returns a pawn's velocity in tiles per second
     pub(crate) fn pawn_velocity(&self, actor: Actor) -> Option<[f32; 2]> {
         let (_, _, _, _, _, pawn) = self.actors.get(&actor)?;
         let (velocity, ..) = pawn.as_ref()?;
@@ -1522,6 +1791,7 @@ impl Collision {
             scene_tether.direction[1],
         );
         pawn_tether.stretch = scene_tether.stretch;
+        pawn_tether.damping = scene_tether.damping;
         pawn_tether.bodies.clear();
         pawn_tether.bodies.extend(scene_tether.bodies.iter().map(|body| (
             body.rigid_body.0,
@@ -1789,6 +2059,12 @@ impl Collision {
                 collision_rigid_body.cellular_tiles.values().map(|(_, _, _, _, _, index, _)| *index),
             );
         }
+        // soft body cells are read the same way, from where they were last rasterized
+        for segment in self.soft_bodies.bodies.values().flat_map(|record| &record.segments) {
+            let Some(rasterization) = segment.rasterization else { continue; };
+            records.push((segment.index, soft_body_segment_record(rasterization, rasterization, [0.0; 2])));
+            cellular_tiles.extend(segment.tiles.values().map(|tile| tile.index));
+        }
         if cellular_tiles.is_empty() { return Ok(()); }
         self.rigid_body_pass.write_rigid_bodies(accelerator, &records);
         let region_origin: (i32, i32) = self.rigid_body_region_origin(active_region);
@@ -1818,6 +2094,16 @@ impl Collision {
         material_table: &MaterialTable,
     ) {
         let mut removed_cells: HashMap<u64, Vec<(i32, i32)>> = HashMap::new();
+        // what cuts soft bodies is what cuts everything else: their cells stop being theirs
+        let soft_cells: Vec<(u32, u32)> = changed_cells.iter()
+            .map(|cell| (*cell / 64, *cell % 64))
+            .filter(|(tile, _)| self.soft_bodies.tile_owners.contains_key(tile))
+            .collect();
+        if !soft_cells.is_empty() {
+            for (body, first, second) in self.soft_bodies.remove_cells(&soft_cells, material_table) {
+                self.tear_soft_body(body, first, second);
+            }
+        }
         for changed_cell in changed_cells {
             let Some((rigid_body, (tile_x, tile_y))) =
                 self.cellular_tile_rigid_bodies.get(&(changed_cell / 64)).copied()
@@ -2186,7 +2472,8 @@ impl Collision {
                 material_identifiers,
                 colors,
                 radiances,
-                states,
+                Some(states),
+                false,
             );
             self.cellular_tile_rigid_bodies
                 .insert(*cellular_tile, (rigid_body, (*tile_x, *tile_y)));
@@ -2319,7 +2606,8 @@ impl Collision {
                 material_identifiers,
                 colors,
                 radiances,
-                states,
+                Some(states),
+                false,
             );
             if *cells == 0 { emptied_tiles.push(*coordinates); }
         }
@@ -2348,7 +2636,7 @@ impl Collision {
                 &mut self.colliders,
                 &mut self.impulse_joints,
                 &mut self.multibody_joints,
-                &mut self.soft_bodies,
+                &mut self.soft_bodies.set,
                 true,
             );
             return;
@@ -2371,6 +2659,132 @@ impl Collision {
         }
         self.changed_rigid_bodies.insert(rigid_body);
         self.collision_rigid_bodies.insert(rigid_body, collision_rigid_body);
+    }
+
+    /// Writes changed soft body cells and chooses the segments rasterized this tick: those that
+    /// moved far enough to matter, clearing where they were, and clearing for good those that
+    /// parted from their bodies or left the region
+    fn simulate_collisions_prepare_soft_body_cells(
+        &mut self,
+        accelerator: &Accelerator,
+        active_region: CellularTileRegion,
+        material_table: &MaterialTable,
+    ) {
+        let (region_x, region_y): (i32, i32) = self.rigid_body_region_origin(active_region);
+        let cells_per_tile: f32 = CELLULAR_TILE_SIZE as f32;
+        let margin: f32 = cells_per_tile * 2.0;
+        let bounds: [f32; 4] = [
+            region_x as f32 + margin,
+            region_y as f32 + margin,
+            region_x as f32 + (active_region.width() as i64 * CELLULAR_TILE_SIZE) as f32 - margin,
+            region_y as f32 + (active_region.height() as i64 * CELLULAR_TILE_SIZE) as f32 - margin,
+        ];
+        let pass: &CollisionRigidBodyPass = &self.rigid_body_pass;
+        let write = |segment: &SoftBodySegment| {
+            for (coordinates, tile) in &segment.tiles {
+                pass.write_cellular_tile(
+                    accelerator,
+                    tile.index,
+                    segment.index,
+                    *coordinates,
+                    tile.cells,
+                    tile.rasterized,
+                    &tile.materials,
+                    &tile.colors,
+                    &tile.radiances,
+                    (!segment.has_written_states).then_some(&tile.states),
+                    true,
+                );
+            }
+        };
+        for (mut segment, is_debris) in std::mem::take(&mut self.soft_bodies.dropped_segments) {
+            let tile_indices: Vec<u32> = segment.tiles.values().map(|tile| tile.index).collect();
+            let Some(rasterization) = segment.rasterization else {
+                self.free_cellular_tile_indices.extend(tile_indices);
+                self.free_rigid_body_indices.push(segment.index);
+                continue;
+            };
+            // what is left of its cells leaves the grid as debris or nothing
+            for tile in segment.tiles.values_mut() {
+                let mut bits: u64 = tile.cells;
+                while bits != 0 {
+                    let bit: usize = bits.trailing_zeros() as usize;
+                    bits &= bits - 1;
+                    tile.materials[bit] = if is_debris {
+                        material_table.debris(tile.materials[bit]).unwrap_or(MaterialIdentifier::EMPTY)
+                    } else { MaterialIdentifier::EMPTY };
+                }
+                tile.cells = 0;
+            }
+            write(&segment);
+            self.removed_rigid_bodies.push((
+                segment.index,
+                soft_body_segment_record(rasterization, rasterization, [0.0; 2]),
+            ));
+            self.soft_body_cleared_tiles.extend(&tile_indices);
+            self.removed_cellular_tiles.extend(tile_indices);
+        }
+        for record in self.soft_bodies.bodies.values_mut() {
+            for segment in &mut record.segments {
+                let (Some(first), Some(second)) = (
+                    record.settled.get(segment.first as usize).copied(),
+                    record.settled.get(segment.second as usize).copied(),
+                ) else { continue; };
+                let along: [f32; 2] = [second[0] - first[0], second[1] - first[1]];
+                let length: f32 = along[0].hypot(along[1]);
+                let rotation: [f32; 2] = if length > 0.0001 {
+                    [along[1] / length, -along[0] / length]
+                } else {
+                    segment.rasterization.map_or([1.0, 0.0], |(_, rotation)| rotation)
+                };
+                // a column of cells is centered on the line between the particles
+                let position: [f32; 2] = [
+                    first[0] * cells_per_tile - rotation[0] * 0.5,
+                    first[1] * cells_per_tile - rotation[1] * 0.5,
+                ];
+                let is_inside: bool = position[0] >= bounds[0] && position[1] >= bounds[1]
+                    && position[0] <= bounds[2] && position[1] <= bounds[3];
+                let is_dirty: bool = std::mem::take(&mut segment.is_dirty);
+                if is_dirty {
+                    write(segment);
+                    segment.has_written_states = true;
+                }
+                if !is_inside {
+                    // nothing of a body stays behind in cells that stream away
+                    if let Some(rasterization) = segment.rasterization.take() {
+                        self.soft_body_records.push((
+                            segment.index,
+                            soft_body_segment_record(rasterization, rasterization, [0.0; 2]),
+                        ));
+                        self.soft_body_cleared_tiles.extend(segment.tiles.values().map(|tile| tile.index));
+                    }
+                    continue;
+                }
+                let previous: Option<([f32; 2], [f32; 2])> = segment.rasterization;
+                // resting and barely moving segments cost nothing
+                if !is_dirty && previous.is_some_and(|(at, turned)| {
+                    (at[0] - position[0]).powi(2) + (at[1] - position[1]).powi(2) < SOFT_BODY_RASTER_MOVE
+                        && (turned[0] - rotation[0]).powi(2) + (turned[1] - rotation[1]).powi(2) < SOFT_BODY_RASTER_TURN
+                }) { continue; }
+                let last: ([f32; 2], [f32; 2]) = previous.unwrap_or((position, rotation));
+                self.soft_body_records.push((
+                    segment.index,
+                    soft_body_segment_record(
+                        (position, rotation),
+                        last,
+                        [position[0] - last.0[0], position[1] - last.0[1]],
+                    ),
+                ));
+                if previous.is_some() {
+                    self.soft_body_cleared_tiles.extend(segment.tiles.values().map(|tile| tile.index));
+                }
+                for tile in segment.tiles.values_mut() {
+                    tile.rasterized = tile.cells;
+                    self.soft_body_rasterized_tiles.push(tile.index);
+                }
+                segment.rasterization = Some((position, rotation));
+            }
+        }
     }
 
     /// Rasterizes every rigid body that moved or changed where it is now, clearing where it was,
@@ -2441,6 +2855,9 @@ impl Collision {
             collision_rigid_body.rasterization = Some(rasterization);
         }
         self.changed_rigid_bodies.clear();
+        records.append(&mut self.soft_body_records);
+        cleared_cellular_tiles.append(&mut self.soft_body_cleared_tiles);
+        rasterized_cellular_tiles.append(&mut self.soft_body_rasterized_tiles);
         if !records.is_empty() || !cleared_cellular_tiles.is_empty() {
             let region_origin: (i32, i32) = self.rigid_body_region_origin(active_region);
             self.rigid_body_pass.write_rigid_bodies(accelerator, &records);
@@ -2603,7 +3020,7 @@ impl Collision {
                 collider_handle,
                 &mut self.island_manager,
                 &mut self.rigid_bodies,
-                &mut self.soft_bodies,
+                &mut self.soft_bodies.set,
                 true,
             );
         }

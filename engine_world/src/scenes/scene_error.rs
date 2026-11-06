@@ -141,6 +141,13 @@ pub enum SceneError {
     },
     /// The accelerator could not be polled for actor sensing readbacks
     ActorSensingPoll,
+    /// A soft body sampling readback buffer could not be mapped
+    SoftBodySamplingResponse {
+        /// Mapping error returned by WGPU
+        error: wgpu::BufferAsyncError,
+    },
+    /// The accelerator could not be polled for soft body sampling readbacks
+    SoftBodySamplingPoll,
     /// A fluid export readback buffer does not match the compaction export buffer
     FluidParticleExportBufferSizeInvalid,
     /// A mapped fluid particle export record contains invalid world position or state

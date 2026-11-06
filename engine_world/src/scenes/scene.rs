@@ -52,6 +52,14 @@ use super::{
     SCENE_FLUID_CAPACITY_FACTOR_DEFAULT,
     SCENE_GRAVITY_DEFAULT,
 };
+use super::soft_bodies::{
+    SceneSoftBody,
+    SoftBodyAnchor,
+    SoftBodyDescriptor,
+    SoftBodyEnvironment,
+    SoftBodyEvent,
+    SoftBodySamplingPass,
+};
 use super::{
     scene_backgrounds::SceneBackgrounds,
     scene_material_surfaces::{MaterialSurface, SceneMaterialSurfaces},
@@ -132,6 +140,8 @@ pub struct ScenePawnTether<'a> {
     pub stretch: f32,
     /// Rigid body points the tether holds, receiving the reaction of its pull
     pub bodies: &'a [ScenePawnTetherBody],
+    /// Fraction of the pawn's speed across the tether lost per second while it pulls
+    pub damping: f32,
 }
 
 /// Object hit by a scene ray
@@ -220,6 +230,8 @@ pub struct Scene {
     actor_sensing_pass: Option<ActorSensingPass>,
     /// Newest completed sensing of each sensed actor
     actor_sensing: HashMap<Actor, SceneActorSensing>,
+    /// GPU sampling of the cells around soft body particles, absent until simulated
+    soft_body_sampling_pass: Option<SoftBodySamplingPass>,
     /// Simulation steps so far, the clock of decoration motion
     simulated_ticks: u64,
     /// Resolution used to calculate radiance cascade lighting
@@ -273,6 +285,7 @@ impl Scene {
             actor_sensing_configuration: SceneActorSensingConfiguration::default(),
             actor_sensing_pass: None,
             actor_sensing: HashMap::new(),
+            soft_body_sampling_pass: None,
             simulated_ticks: 0,
             lighting_quality: LightingQuality::High,
             actor_registry: ActorRegistry::new(),
@@ -362,6 +375,140 @@ impl Scene {
     /// actor is a simulated pawn; a tether lasts one simulation step and is set again each update
     pub fn set_pawn_tether(&mut self, actor: Actor, tether: Option<ScenePawnTether<'_>>) -> bool {
         self.collision.as_mut().is_some_and(|collision| collision.set_pawn_tether(actor, tether))
+    }
+
+    /// Returns how many static cells a soft body holds
+    pub fn soft_body_cell_count(&self, body: SceneSoftBody) -> Option<usize> {
+        let record = self.collision.as_ref()?.soft_bodies.bodies.get(&body)?;
+        Some(record.segments.iter().map(|segment| segment.cell_count()).sum())
+    }
+
+    /// Creates a soft body, or returns `None` before the scene first simulates or beyond the
+    /// capacity for cells carried by moving bodies
+    pub fn spawn_soft_body(&mut self, descriptor: &SoftBodyDescriptor) -> Option<SceneSoftBody> {
+        self.collision.as_mut()?.spawn_soft_body(descriptor)
+    }
+
+    /// Removes a soft body, returning whether it existed
+    pub fn remove_soft_body(&mut self, body: SceneSoftBody) -> bool {
+        self.collision.as_mut().is_some_and(|collision| collision.remove_soft_body(body))
+    }
+
+    /// Tears the edge joining two neighboring particles of a soft body, returning whether it existed;
+    /// the pieces are reported by `take_soft_body_events`
+    pub fn tear_soft_body(&mut self, body: SceneSoftBody, first: u32, second: u32) -> bool {
+        self.collision.as_mut().is_some_and(|collision| collision.tear_soft_body(body, first, second))
+    }
+
+    /// Takes what happened to soft bodies since the last call
+    pub fn take_soft_body_events(&mut self) -> Vec<SoftBodyEvent> {
+        self.collision.as_mut().map_or_else(Vec::new, |collision| collision.soft_bodies.take_events())
+    }
+
+    /// Returns the identifiers of the live soft bodies
+    pub fn soft_bodies(&self) -> Vec<SceneSoftBody> {
+        self.collision.as_ref().map_or_else(Vec::new, |collision| collision.soft_bodies.identifiers())
+    }
+
+    /// Returns the number of particles of a soft body
+    pub fn soft_body_particle_count(&self, body: SceneSoftBody) -> Option<usize> {
+        self.collision.as_ref()?.soft_bodies.particle_count(body)
+    }
+
+    /// Returns a soft body particle's position
+    pub fn soft_body_particle_position(
+        &self,
+        body: SceneSoftBody,
+        particle: usize,
+    ) -> Option<ScenePosition> {
+        self.collision.as_ref()?.soft_bodies.particle_position(body, particle)
+    }
+
+    /// Returns a soft body particle's velocity in tiles per second
+    pub fn soft_body_particle_velocity(
+        &self,
+        body: SceneSoftBody,
+        particle: usize,
+    ) -> Option<[f32; 2]> {
+        self.collision.as_ref()?.soft_bodies.particle_velocity(body, particle)
+    }
+
+    /// Returns the rest length along a soft body's edges between two particles, or `None` if no
+    /// edges join them
+    pub fn soft_body_path_length(&self, body: SceneSoftBody, first: u32, second: u32) -> Option<f32> {
+        self.collision.as_ref()?.soft_bodies.path_length(body, first, second)
+    }
+
+    /// Returns the newest sample of the cell grid around a soft body particle
+    pub fn soft_body_particle_environment(
+        &self,
+        body: SceneSoftBody,
+        particle: usize,
+    ) -> Option<SoftBodyEnvironment> {
+        self.collision.as_ref()?.soft_bodies.particle_environment(body, particle)
+    }
+
+    /// Returns the anchors still holding a soft body
+    pub fn soft_body_anchors(&self, body: SceneSoftBody) -> Option<&[SoftBodyAnchor]> {
+        self.collision.as_ref()?.soft_bodies.anchors(body)
+    }
+
+    /// Returns whether a soft body is asleep
+    pub fn soft_body_is_sleeping(&self, body: SceneSoftBody) -> Option<bool> {
+        self.collision.as_ref()?.soft_bodies.is_sleeping(body)
+    }
+
+    /// Returns the particle nearest a position within a distance in tiles, with its distance
+    pub fn nearest_soft_body_particle(
+        &self,
+        position: ScenePosition,
+        distance: f32,
+    ) -> Option<(SceneSoftBody, usize, f32)> {
+        self.collision.as_ref()?.soft_bodies.nearest_particle(position, distance)
+    }
+
+    /// Holds a soft body particle so that it follows a position, or lets it go with `None`
+    pub fn set_soft_body_particle_target(
+        &mut self,
+        body: SceneSoftBody,
+        particle: usize,
+        target: Option<ScenePosition>,
+    ) {
+        if let Some(collision) = self.collision.as_mut() {
+            collision.soft_bodies.set_particle_target(body, particle, target);
+        }
+    }
+
+    /// Adds velocity in tiles per second to a soft body particle and wakes its body
+    pub fn add_soft_body_particle_velocity(
+        &mut self,
+        body: SceneSoftBody,
+        particle: usize,
+        velocity: [f32; 2],
+    ) {
+        if let Some(collision) = self.collision.as_mut() {
+            collision.soft_bodies.add_particle_velocity(body, particle, velocity);
+        }
+    }
+
+    /// Pushes every soft body particle near a position outward, falling off linearly to zero at a
+    /// radius in tiles, in tiles per second at the center
+    pub fn add_soft_body_radial_velocity(
+        &mut self,
+        center: ScenePosition,
+        radius: f32,
+        speed: f32,
+    ) {
+        if let Some(collision) = self.collision.as_mut() {
+            collision.soft_bodies.add_radial_velocity(center, radius, speed);
+        }
+    }
+
+    /// Sets the material tags reported in soft body particle environments, at most eight
+    pub fn set_soft_body_environment_tags(&mut self, tags: Vec<String>) {
+        if let Some(collision) = self.collision.as_mut() {
+            collision.soft_bodies.set_environment_tags(tags);
+        }
     }
 
     /// Returns the downward acceleration of dynamic bodies and pawns in tiles per second squared
@@ -935,6 +1082,28 @@ impl Scene {
             &sensed_actor_records,
         );
         self.simulated_ticks += 1;
+        // soft bodies sample the same finished cells, and read earlier samples without waiting
+        let fluids: &Fluids = self.fluids.as_ref()
+            .expect("fluid storage exists with the tile buffers");
+        let collision: &mut Collision = self.collision.as_mut()
+            .expect("collision simulation exists after simulation");
+        if !collision.soft_bodies.bodies.is_empty() {
+            let sampling_pass: &mut SoftBodySamplingPass = self.soft_body_sampling_pass
+                .get_or_insert_with(|| SoftBodySamplingPass::new(
+                    accelerator,
+                    cellular_tile_buffers,
+                    &self.material_table,
+                    fluids.fluid_raster_buffer(),
+                ));
+            sampling_pass.configure(accelerator, &self.material_table, &mut collision.soft_bodies);
+            sampling_pass.read(accelerator, &mut collision.soft_bodies, self.gravity)?;
+            sampling_pass.sample(
+                accelerator,
+                active_region,
+                cellular_tile_streaming_state.cellular_tile_ring_offset(),
+                &collision.soft_bodies,
+            );
+        }
         if let Some((streaming_request_identifier, _)) = particle_export_target {
             self.cellular_tile_streaming_state.as_mut()
                 .expect("tile streaming state exists after simulation")
