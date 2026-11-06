@@ -16,6 +16,8 @@ pub enum ChunkStreamingResponse {
         streaming_request_identifier: u64,
         /// Loaded chunk or typed load error
         result: Result<Chunk, SceneError>,
+        /// Transient background generated beside this resident chunk.
+        background: Option<super::ChunkBackgroundUpload>,
     },
     /// Completed chunk load that found no persisted file
     Missing {
@@ -32,6 +34,8 @@ pub enum ChunkStreamingResponse {
         streaming_request_identifier: u64,
         /// Generated chunk or typed generation error
         result: Result<Chunk, SceneError>,
+        /// Transient background generated beside this resident chunk.
+        background: Option<super::ChunkBackgroundUpload>,
     },
     /// Completed save that returns ownership of its chunk
     Saved {

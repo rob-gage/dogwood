@@ -3,7 +3,7 @@ title = "Resources and lifetimes"
 description = "How a scene creates, shares, saves, and releases its world resources."
 weight = 50
 [extra]
-sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/pressure", "engine_world/src/scenes/thermal", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/actor_sensing", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl", "engine_host/src/acceleration/accelerator.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting_clear.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cache.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_blocks.wgsl", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl", "engine_graphics/src/world/materials/material_radiance.rs", "engine_world/src/materials/material_table.rs", "engine_world/src/materials/material_temperature_color.rs", "engine_world/src/scenes/chemistry", "engine_graphics/src/world/scenes/lighting_quality.rs"]
+sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/pressure", "engine_world/src/scenes/thermal", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/actor_sensing", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/scene_backgrounds.rs", "engine_world/src/scenes/scene_material_surfaces.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl", "engine_host/src/acceleration/accelerator.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting_clear.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cache.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_blocks.wgsl", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl", "engine_world/src/scenes/scene_material_surfaces.rs", "engine_graphics/src/renders/scene_renderer_surface_pass.rs", "engine_graphics/src/renders/scene_renderer_surface.wgsl", "engine_graphics/src/world/materials/material_radiance.rs", "engine_world/src/materials/material_table.rs", "engine_world/src/materials/material_temperature_color.rs", "engine_world/src/scenes/chemistry", "engine_graphics/src/world/scenes/lighting_quality.rs"]
 +++
 
 This page describes what a `Scene` owns, when its GPU and streaming state is created, the fixed capacity constants, and what happens on save and drop. It is for engine contributors.
@@ -52,6 +52,17 @@ Dropping a streamed `Scene` blocks in these stages:
 Drop does not wait for load or generation jobs. See [panics at runtime boundaries](@/architecture/errors.md#panics-at-runtime-boundaries) for the failure policy.
 
 ## Capacity limits
+
+## Rendering and generation constants
+
+| Constant | Value | Meaning |
+| --- | ---: | --- |
+| `MATERIAL_SURFACE_SIZE` | 256 | Width and height in cells of each material surface art tile |
+| `SCENE_BACKGROUND_UPLOADS_PER_STREAM` | 4 | Maximum chunk backgrounds uploaded during one stream call |
+| `SCENE_BACKGROUND_OVERHANG` | 32 tiles | Extra culling margin around the visible rectangle for chunk sprites |
+| `SURFACE_FIELD_MARGIN` | 8 cells | Field area added around the visible cell rectangle |
+
+Only `MATERIAL_SURFACE_SIZE` is public; the remaining implementation constants are private. The parallax batch uniform stride is 256 bytes. See [material surfaces](@/external-api/materials.md#material-surfaces), [chunk backgrounds](@/examples/scene-generators.md#chunk-backgrounds), and [scene rendering](@/internals/rendering/scene-renderer.md).
 
 These constants are fixed implementation values rather than runtime settings.
 

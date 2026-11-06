@@ -66,6 +66,8 @@ pub struct Chunk {
     /// Temperature bits and amount of each cell of each cellular tile whose matter differs from the
     /// default, keyed by row-major tile index within the chunk, with two words per row-major cell
     matter_cellular_tiles: BTreeMap<u32, Box<[u32; 128]>>,
+    /// Whether the generator's colors are final, needing no material albedo
+    albedo_resolved: bool,
 }
 
 /// Exact bit representation of one persisted fluid particle
@@ -173,8 +175,18 @@ impl Chunk {
             fluid_particles: Vec::new(),
             gas_cellular_tiles: BTreeMap::new(),
             matter_cellular_tiles: BTreeMap::new(),
+            albedo_resolved: false,
         }
     }
+
+    /// Sets whether the colors a generator wrote are final, so its materials' albedos apply only
+    /// to cells left white
+    pub fn set_albedo_resolved(&mut self, albedo_resolved: bool) {
+        self.albedo_resolved = albedo_resolved;
+    }
+
+    /// Returns whether the colors a generator wrote are final
+    pub fn albedo_resolved(&self) -> bool { self.albedo_resolved }
 
     /// Fills every cell in this chunk with one material, packed color and radiance, at rest
     pub fn fill(&mut self, material_identifier: MaterialIdentifier, color: u32, radiance: u32) {

@@ -9,6 +9,8 @@ use super::{
     SceneGraphicsPressure,
     SceneGraphicsTemperature,
     SceneGraphicsSprites,
+    SceneGraphicsParallaxBatch,
+    SceneGraphicsMaterialSurfaces,
 };
 
 /// Borrowed graphical representation of one scene for one rendered frame
@@ -34,6 +36,12 @@ pub struct SceneGraphics<'a> {
     pub temperature: Option<SceneGraphicsTemperature<'a>>,
     /// Background planes with physical depth, drawn before gameplay
     pub parallax: Vec<super::SceneGraphicsParallax<'a>>,
+    /// Static world-aligned batches drawn after `parallax` and before gameplay
+    pub parallax_batches: Vec<SceneGraphicsParallaxBatch<'a>>,
+    /// Art of the materials that show a surface where they meet open space
+    pub material_surfaces: Option<SceneGraphicsMaterialSurfaces<'a>>,
+    /// Whether material edges are drawn: surface art, its color shift, and contact shadows
+    pub material_edges: bool,
     /// Sprite content drawn around the cellular content by depth
     pub sprites: SceneGraphicsSprites<'a>,
     /// Cell-aligned areas drawn over the scene

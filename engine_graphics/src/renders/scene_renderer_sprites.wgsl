@@ -30,6 +30,23 @@ var sprite_texture: texture_2d<f32>;
 @group(1) @binding(1)
 var radiance_texture: texture_2d<f32>;
 
+/// Placement of a static batch, and where the surface field lies relative to the camera
+struct BatchUniforms {
+    origin: vec2<f32>,
+    region_origin: vec2<f32>,
+    cellular_tile_size: f32,
+    contact_shadow: f32,
+    /// Offset from region-local cells to the surface field, which wraps by world position
+    field_offset: vec2<f32>,
+};
+
+@group(3) @binding(0)
+var<uniform> batch: BatchUniforms;
+
+/// Closeness to the opposite state, direction toward open space, and solidity of each cell
+@group(3) @binding(1)
+var surface_field: texture_2d<f32>;
+
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) texture_coordinates: vec2<f32>,
@@ -55,6 +72,42 @@ fn vertex(
     @location(5) radiance_coordinates: vec4<f32>,
     @location(6) radiance_intensity: f32,
     @builtin(vertex_index) vertex_index: u32,
+) -> VertexOutput {
+    return place_corner(
+        position_size, rotation, texture_coordinates, color, depth,
+        radiance_coordinates, radiance_intensity, vertex_index,
+    );
+}
+
+/// Transforms one corner of a sprite in a static batch into viewport clip space
+@vertex
+fn vertex_batch(
+    @location(0) position_size: vec4<f32>,
+    @location(1) rotation: f32,
+    @location(2) texture_coordinates: vec4<f32>,
+    @location(3) color: vec4<f32>,
+    @location(4) depth: f32,
+    @location(5) radiance_coordinates: vec4<f32>,
+    @location(6) radiance_intensity: f32,
+    @builtin(vertex_index) vertex_index: u32,
+) -> VertexOutput {
+    return place_corner(
+        vec4<f32>(position_size.xy + batch.origin, position_size.zw),
+        rotation, texture_coordinates, color, depth,
+        radiance_coordinates, radiance_intensity, vertex_index,
+    );
+}
+
+/// Transforms one corner of a camera-relative sprite into viewport clip space
+fn place_corner(
+    position_size: vec4<f32>,
+    rotation: f32,
+    texture_coordinates: vec4<f32>,
+    color: vec4<f32>,
+    depth: f32,
+    radiance_coordinates: vec4<f32>,
+    radiance_intensity: f32,
+    vertex_index: u32,
 ) -> VertexOutput {
     let corners: array<vec2<f32>, 4> = array<vec2<f32>, 4>(
         vec2<f32>(-0.5, 0.5),
@@ -95,6 +148,11 @@ fn vertex(
 /// Samples one sprite texel, lit by the light at its depth, and adds its emission
 @fragment
 fn fragment(input: VertexOutput) -> @location(0) vec4<f32> {
+    return lit_texel(input);
+}
+
+/// Returns one sprite texel lit by the light at its depth, with its emission added
+fn lit_texel(input: VertexOutput) -> vec4<f32> {
     let texel: vec4<f32> = textureSampleLevel(
         sprite_texture,
         sprite_sampler,
@@ -110,4 +168,34 @@ fn fragment(input: VertexOutput) -> @location(0) vec4<f32> {
     let color: vec4<f32> = texel * input.color;
     let light: vec3<f32> = background_light_at_tiles(input.camera_relative_position, input.depth);
     return vec4<f32>(color.rgb * light * color.a + radiance.rgb * input.radiance_intensity * input.color.rgb * input.color.a, color.a);
+}
+
+/// Returns one texel of a static batch lit by the light at its depth; batches emit no light, so their
+/// radiance is not sampled
+fn lit_batch_texel(input: VertexOutput) -> vec4<f32> {
+    let color: vec4<f32> = textureSampleLevel(
+        sprite_texture,
+        sprite_sampler,
+        input.texture_coordinates,
+        0.0,
+    ) * input.color;
+    let light: vec3<f32> = background_light_at_tiles(input.camera_relative_position, input.depth);
+    return vec4<f32>(color.rgb * light * color.a, color.a);
+}
+
+/// Samples one texel of a static batch like `fragment`, darkened near solid cells that stand in
+/// front of it, and skipping the texel entirely behind them
+@fragment
+fn fragment_batch(input: VertexOutput) -> @location(0) vec4<f32> {
+    if batch.contact_shadow <= 0.0 { return lit_batch_texel(input); }
+    let cell: vec2<i32> = vec2<i32>(floor(
+        (input.camera_relative_position - batch.region_origin) * batch.cellular_tile_size,
+    ));
+    let size: vec2<i32> = vec2<i32>(textureDimensions(surface_field));
+    if any(cell < vec2<i32>(0)) || any(cell >= size) { return lit_batch_texel(input); }
+    let field: vec4<f32> = textureLoad(surface_field, (cell + vec2<i32>(batch.field_offset)) % size, 0);
+    // whatever solid cells cover is never seen, and most of a scene is solid
+    if field.a > 0.5 { discard; }
+    let lit: vec4<f32> = lit_batch_texel(input);
+    return vec4<f32>(lit.rgb * (1.0 - field.r * field.r * batch.contact_shadow), lit.a);
 }

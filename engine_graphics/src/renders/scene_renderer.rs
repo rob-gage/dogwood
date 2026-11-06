@@ -6,7 +6,9 @@ use super::{
     scene_renderer_gas_pass::SceneRendererGasPass,
     scene_renderer_lighting_pass::SceneRendererLightingPass,
     scene_renderer_overlay_pass::SceneRendererOverlayPass,
+    scene_renderer_parallax_batches_pass::SceneRendererParallaxBatchesPass,
     scene_renderer_pressure_pass::SceneRendererPressurePass,
+    scene_renderer_surface_pass::SceneRendererSurfacePass,
     scene_renderer_temperature_pass::SceneRendererTemperaturePass,
     scene_renderer_sprites_pass::SceneRendererSpritesPass,
 };
@@ -59,6 +61,10 @@ pub struct SceneRenderer {
     temperature_pass: SceneRendererTemperaturePass,
     /// Renderer of cell-aligned overlays drawn over every scene view
     overlay_pass: SceneRendererOverlayPass,
+    /// Renderer of static world-aligned batches behind gameplay
+    parallax_batches_pass: SceneRendererParallaxBatchesPass,
+    /// Computation of how exposed each visible cell is
+    surface_pass: SceneRendererSurfacePass,
     /// Renderer of resident cellular tiles
     cellular_pass: SceneRendererCellularPass,
     /// Renderer of sprites with nonnegative depth, drawn above cellular content
@@ -81,6 +87,8 @@ impl SceneRenderer {
             pressure_pass: SceneRendererPressurePass::new(accelerator),
             temperature_pass: SceneRendererTemperaturePass::new(accelerator),
             overlay_pass: SceneRendererOverlayPass::new(accelerator),
+            parallax_batches_pass: SceneRendererParallaxBatchesPass::new(accelerator, lighting),
+            surface_pass: SceneRendererSurfacePass::new(accelerator),
             cellular_pass: SceneRendererCellularPass::new(accelerator, lighting),
             above_cellular_sprites_pass:
                 SceneRendererSpritesPass::new(accelerator, 0..=i32::MAX, lighting),
@@ -258,6 +266,22 @@ impl SceneRenderer {
             );
         }
         if let Some(cellular_graphics) = cellular_graphics {
+            self.surface_pass.prepare(accelerator, cellular_graphics, visible_width, visible_height);
+        }
+        if let (Some(cellular_graphics), Some(surface_field_view)) =
+            (cellular_graphics, self.surface_pass.field_view().cloned())
+        {
+            self.parallax_batches_pass.prepare(
+                accelerator,
+                format,
+                viewport_width,
+                viewport_height,
+                pixels_per_tile,
+                &graphics.parallax_batches,
+                cellular_graphics,
+                &surface_field_view,
+                graphics.material_edges,
+            );
             self.cellular_pass.prepare(
                 accelerator,
                 format,
@@ -268,6 +292,8 @@ impl SceneRenderer {
                 pixels_per_tile,
                 cellular_graphics,
                 matter_buffer.expect("cellular graphics are drawn only with resident temperatures"),
+                &surface_field_view,
+                graphics.material_surfaces.as_ref().filter(|_| graphics.material_edges),
             );
         }
         if let Some(fluid_graphics) = fluid_graphics {
@@ -354,6 +380,9 @@ impl SceneRenderer {
         if is_viewport_visible {
             self.lighting_pass.compute(&mut command_encoder);
         }
+        if cellular_graphics.is_some() && graphics.material_edges {
+            self.surface_pass.compute(&mut command_encoder);
+        }
         if let (Some(_), Some(lighting_bind_group)) = (fluid_graphics, lighting_bind_group) {
             self.fluid_pass.shade(&mut command_encoder, lighting_bind_group);
         }
@@ -386,6 +415,9 @@ impl SceneRenderer {
             render_pass.set_scissor_rect(viewport_x, viewport_y, viewport_width, viewport_height);
             if let Some(lighting_bind_group) = lighting_bind_group {
                 self.parallax_pass.draw(&mut render_pass, format, lighting_bind_group);
+                if cellular_graphics.is_some() {
+                    self.parallax_batches_pass.draw(&mut render_pass, format, lighting_bind_group);
+                }
                 self.behind_cellular_sprites_pass.draw(&mut render_pass, format, lighting_bind_group);
                 if fluid_graphics.is_some() {
                     self.fluid_pass.draw(&mut render_pass, format, lighting_bind_group);

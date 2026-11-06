@@ -94,6 +94,9 @@ impl Fixture {
                 cellular_tile_size: TILE_SIZE,
             }),
             parallax: Vec::new(),
+            parallax_batches: Vec::new(),
+            material_surfaces: None,
+            material_edges: false,
             sprites: Default::default(),
             overlays: Vec::new(),
             lighting: SceneGraphicsLighting {

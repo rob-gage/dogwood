@@ -18,6 +18,10 @@ pub enum ChunkStreamingRequest {
         coordinates: ChunkCoordinates,
         /// Identifier used to reject stale streaming responses
         streaming_request_identifier: u64,
+        /// Generator used for transient background data.
+        generator: Option<Arc<dyn SceneGenerator>>,
+        /// Stable seed supplied to the generator.
+        world_seed: u64,
     },
     /// Generate one chunk that has no persisted file
     Generate {

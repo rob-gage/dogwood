@@ -1,6 +1,7 @@
 // Copyright Rob Gage 2026
 
 mod chunk;
+mod chunk_background;
 mod chunk_data;
 mod chunk_coordinates;
 mod chunk_error;
@@ -15,6 +16,7 @@ pub use chunk::{
     Chunk,
     ChunkFluidParticle,
 };
+pub use chunk_background::{ChunkBackground, ChunkBackgroundSprite, ChunkBackgroundUpload};
 pub use chunk_data::ChunkData;
 pub use chunk_coordinates::ChunkCoordinates;
 pub use chunk_error::ChunkError;

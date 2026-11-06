@@ -3,7 +3,7 @@ title = "Materials"
 description = "Material forms, identifiers, registration, compilation, and available material table lookups."
 weight = 70
 [extra]
-sources = ["engine_world/src/materials", "engine_graphics/src/world/materials", "engine_graphics/src/sprites", "engine/src/lib.rs"]
+sources = ["engine_world/src/materials", "engine_world/src/scenes/scene_material_surfaces.rs", "engine_graphics/src/world/materials", "engine_graphics/src/world/scenes/scene_graphics_material_surfaces.rs", "engine_graphics/src/sprites", "engine/src/lib.rs"]
 +++
 
 Materials are registered in a `MaterialRegistry`, compiled into an immutable `MaterialTable`, and referenced by `MaterialIdentifier`. This page is the API reference for defining and querying materials; see [defining materials](@/examples/materials-and-sprites.md) for construction examples. The facade exports the API as `engine::materials`.
@@ -135,6 +135,14 @@ Compilation keeps the existing GPU record layouts. It waits for cellular albedo-
 readback, so it completes synchronously from the caller's perspective. See
 [material table compilation](@/internals/simulation/material-table.md) for buffer layout and tint
 details.
+
+## Material surfaces
+
+`Scene::set_material_surfaces` uploads optional art for cells where a material meets open space. Each `MaterialSurface` names a `MaterialIdentifier` and provides `top` and `under` byte slices. Each slice must contain exactly 256×256 straight-alpha sRGB RGBA8 pixels, rows from the top; invalid sizes are skipped. Alpha stores surface reach: a texel appears when the cell's closeness to open space exceeds `1 - alpha`. Closeness starts at one on a boundary and falls toward zero across nearby cells. Art repeats across the world on a cell-aligned 256-cell square, with separate layers for top and underside facing.
+
+The scene call takes `&Accelerator` and uploads the surfaces into an array texture. See [scene rendering](@/internals/rendering/cellular-pass.md#material-surfaces) for the field and shader bindings.
+
+{{ <rustdoc path="engine/scenes/struct.MaterialSurface.html" text="MaterialSurface" /> }}
 
 ## Rustdoc
 

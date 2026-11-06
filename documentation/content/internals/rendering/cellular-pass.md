@@ -3,22 +3,30 @@ title = "Cellular render pass"
 description = "GPU resources and draw setup for resident cellular tile colors."
 weight = 30
 [extra]
-sources = ["engine_graphics/src/renders/scene_renderer_cellular_pass.rs", "engine_graphics/src/renders/scene_renderer_cellular.wgsl", "engine_graphics/src/world/scenes/scene_graphics_cellular.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting_clear.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cache.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_blocks.wgsl", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl", "engine_graphics/src/world/materials/material_radiance.wgsl", "engine_world/src/materials/material_table.rs"]
+sources = ["engine_graphics/src/renders/scene_renderer_cellular_pass.rs", "engine_graphics/src/renders/scene_renderer_cellular.wgsl", "engine_graphics/src/renders/scene_renderer_surface_pass.rs", "engine_graphics/src/renders/scene_renderer_surface.wgsl", "engine_graphics/src/world/scenes/scene_graphics_cellular.rs", "engine_graphics/src/world/scenes/scene_graphics_material_surfaces.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting_clear.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cache.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_blocks.wgsl", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl", "engine_graphics/src/world/materials/material_radiance.wgsl", "engine_world/src/materials/material_table.rs", "engine_world/src/scenes/scene_material_surfaces.rs"]
 +++
 
 ## Resources
 
 This page is for engine contributors. It describes the GPU resources and draw setup of the pass that renders resident cellular tile colors.
 
-`SceneRendererCellularPass` owns a 64-byte uniform buffer, a bind group layout, a WGSL module, and render pipelines cached by target `TextureFormat`. The bind group has three fragment-visible buffers:
+`SceneRendererCellularPass` owns a 64-byte uniform buffer, a bind group layout, a WGSL module, and render pipelines cached by target `TextureFormat`. The bind group has material IDs and packed colors as read-only storage buffers, plus the surface field texture, per-thermal-index surface layer storage, and a 2D array of surface art.
 
-| Binding | Resource | Access |
+| Group 0 binding | Resource | Access |
 | --- | --- | --- |
 | 0 | Per-view uniform buffer | Uniform |
 | 1 | Material identifier buffer | Read-only storage |
 | 2 | Packed color buffer | Read-only storage |
+| 3 | Matter buffer | Read-only storage |
+| 4 | Surface field (`Rgba8Unorm`) | Texture |
+| 5 | Material surface layer indices | Read-only storage |
+| 6 | Surface art (`Rgba8UnormSrgb` array) | Texture |
 
-The two storage buffers come from the borrowed {{ <rustdoc path="engine_graphics/world/scenes/struct.SceneGraphicsCellular.html" text="SceneGraphicsCellular" /> }} input. The pass rebuilds its bind group when either storage buffer handle changes; uniforms are written for every prepared view.
+The region data comes from {{ <rustdoc path="engine_graphics/world/scenes/struct.SceneGraphicsCellular.html" text="SceneGraphicsCellular" /> }}. The view uniform contains viewport origin/size, zoom, camera-relative region origin, region size, ring offsets, cell size, and world-aligned surface-art offsets. The final three words are surface X/Y offsets modulo 256 and padding.
+
+## Material surfaces
+
+`SceneRendererSurfacePass` computes an `Rgba8Unorm` field for the visible cell region before drawing. Each texel stores R closeness to the opposite occupancy state (1 at a boundary, decaying over four cells), G/B direction toward open space mapped from -1..1 to 0..1, and A solidity (1 solid, 0 open). It searches neighboring cells up to four cells away; outside-region cells count as solid. The surface pass uses 8×8 workgroups and an eight-cell field margin. The cellular shader selects a material's two-layer art, chooses facing from the field direction, and draws a texel when closeness exceeds `1 - alpha`; the art alpha therefore encodes reach.
 
 ## Preparation and draw
 

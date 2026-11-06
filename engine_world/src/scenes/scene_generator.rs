@@ -2,6 +2,7 @@
 
 use super::chunks::{
     Chunk,
+    ChunkBackground,
     ChunkCoordinates,
 };
 use std::error::Error;
@@ -15,5 +16,13 @@ pub trait SceneGenerator: Send + Sync {
         coordinates: ChunkCoordinates,
         world_seed: u64,
     ) -> Result<Chunk, Box<dyn Error + Send + Sync>>;
+
+    /// Generates the background behind one chunk, whether it was generated or loaded, on a
+    /// streaming thread; backgrounds are not saved, so this must be deterministic
+    fn generate_background(
+        &self,
+        _coordinates: ChunkCoordinates,
+        _world_seed: u64,
+    ) -> Option<ChunkBackground> { None }
 
 }

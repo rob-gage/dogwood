@@ -42,7 +42,7 @@ linear light and alpha linearly.
 
 ## Scene graphics and renderer
 
-`SceneGraphics`, `SceneGraphicsCellular`, `SceneGraphicsFluid`, `SceneGraphicsGas`, `SceneGraphicsPressure`, `SceneGraphicsTemperature`, `SceneGraphicsOverlay`, `SceneGraphicsOverlayShape`, and `SceneGraphicsSprites`, and `SceneGraphicsParallax` (in `engine_graphics::world::scenes`) are borrowed descriptions of one frame:
+`SceneGraphics`, `SceneGraphicsCellular`, `SceneGraphicsFluid`, `SceneGraphicsGas`, `SceneGraphicsPressure`, `SceneGraphicsTemperature`, `SceneGraphicsOverlay`, `SceneGraphicsOverlayShape`, `SceneGraphicsSprites`, `SceneGraphicsParallax`, `SceneGraphicsParallaxBatch`, and `SceneGraphicsMaterialSurfaces` (in `engine_graphics::world::scenes`) are borrowed descriptions of one frame:
 
 - the visible tile dimensions;
 - optional resident cellular buffers and ring placement;
@@ -53,6 +53,8 @@ linear light and alpha linearly.
 - actor and host overlays aligned to scene cells, each a circle radius or a rectangle width and height in tiles with a packed RGBA8 color;
 - sprite albedo and radiance texture views with position, size, rotation, depth, independent
   texture regions, linear color, and radiance intensity.
+- static parallax batches with texture views, an instance buffer, instance count, and a camera-relative origin;
+- optional material surface array texture and per-material layer-index storage buffer.
 
 The actor sprite tuple that feeds the sprite data is documented on [actor components](@/external-api/actor-components.md). In `SceneGraphicsSprites`, each 12-value entry is `(albedo view, radiance view, x, y, width, height, rotation, depth, albedo region, radiance region, color, radiance intensity)`.
 

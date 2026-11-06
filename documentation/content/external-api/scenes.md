@@ -3,7 +3,7 @@ title = "Scenes"
 description = "Scene construction, streaming and simulation contracts, generators, and exact positions."
 weight = 30
 [extra]
-sources = ["engine_world/src/scenes/scene.rs", "engine_world/src/scenes/actor_sensing", "engine_world/src/scenes/cellular_tiles/cellular_tile_pass.rs", "engine_world/src/scenes/chemistry", "engine_world/src/scenes/thermal", "engine_world/src/scenes/scene_error.rs", "engine_world/src/scenes/scene_generator.rs", "engine_world/src/scenes/scene_position.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/materials/material_table.rs", "engine/src/lib.rs", "engine_world/src/actors/components/actor_light.rs"]
+sources = ["engine_world/src/scenes/scene.rs", "engine_world/src/scenes/actor_sensing", "engine_world/src/scenes/cellular_tiles/cellular_tile_pass.rs", "engine_world/src/scenes/chemistry", "engine_world/src/scenes/thermal", "engine_world/src/scenes/scene_error.rs", "engine_world/src/scenes/scene_generator.rs", "engine_world/src/scenes/scene_position.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/chunks/chunk_background.rs", "engine_world/src/scenes/scene_backgrounds.rs", "engine_world/src/scenes/scene_material_surfaces.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/materials/material_table.rs", "engine/src/lib.rs", "engine_world/src/actors/components/actor_light.rs"]
 +++
 
 This page covers the `Scene` type, the `SceneGenerator` trait, `ScenePosition`, and `SceneError`. It is for game programmers who build and drive a scene; games that use `Engine::launch` get the lifecycle calls from `GameInstance` automatically.
@@ -73,10 +73,13 @@ fn main() {}
 ```
 
 - `generate_chunk` is called when a requested chunk has no persisted file.
+- `generate_background(coordinates, world_seed)` may return a transient background for generated and loaded chunks. It runs on a streaming worker, is never saved, and should be deterministic. See [chunk backgrounds](@/external-api/world-storage.md#chunk-backgrounds).
 - It runs on the `chunk_io` worker pool.
 - The returned chunk must use the requested coordinates; mismatches are rejected as generation errors.
 - A panic in `generate_chunk` is caught and reported as `SceneError::ChunkGeneration`.
-- Generated cell colors are applied to cellular materials; see [Materials](@/external-api/materials.md).
+- Generated cell colors are resolved against material albedo by default. `Chunk::set_albedo_resolved(true)` makes supplied colors final; cells left white still take their material albedo. See [Materials](@/external-api/materials.md).
+
+`Scene::set_material_edges(bool)` turns surface art, its color shift, and contact shadows on or off; it is off by default. `Scene::set_background_sprites(Arc<SpriteSheet>)` sets the background sprite sheet. Each `ChunkBackgroundSprite` has a `crop` of its frame, which should stay tight around what the frame shows, because its quad's pixels all cost GPU time. `Scene::set_material_surfaces(&Accelerator, &[MaterialSurface])` uploads optional surface art; see [material surfaces](@/external-api/materials.md#material-surfaces).
 
 ## Position representation
 

@@ -8,6 +8,10 @@ sources = ["engine_world/src/scenes/cellular_tiles", "engine_world/src/scenes/ch
 
 This page covers the public coordinate types, size constants, and chunk storage API of the world. It is for game programmers who generate, inspect, or persist world data; most games only need the `Scene` methods in [Scenes](@/external-api/scenes.md).
 
+## Chunk backgrounds
+
+`ChunkBackground` is transient generated presentation data associated with a resident chunk; it is not part of persisted chunk files. `SceneGenerator::generate_background` may return an image and/or sprites for both loaded and newly generated chunks. See [world generation](@/examples/scene-generators.md#chunk-backgrounds) for the image encoding, sprite fields, and upload/culling behavior.
+
 ## Units and constants
 
 The world uses three nested units. A cell is one grid square; a cellular tile (short: tile) is a group of cells; a chunk is a group of tiles.

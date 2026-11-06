@@ -11,7 +11,9 @@ pub mod pressure;
 pub mod thermal;
 mod scene;
 mod scene_error;
+mod scene_backgrounds;
 mod scene_generator;
+mod scene_material_surfaces;
 mod scene_position;
 
 pub use scene::{
@@ -24,6 +26,7 @@ pub use scene::{
 };
 pub use scene_error::SceneError;
 pub use scene_generator::SceneGenerator;
+pub use scene_material_surfaces::{MaterialSurface, MATERIAL_SURFACE_SIZE};
 pub use scene_position::ScenePosition;
 pub use actor_sensing::{
     SceneActorSensing,

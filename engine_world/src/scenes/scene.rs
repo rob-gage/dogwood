@@ -52,6 +52,11 @@ use super::{
     SCENE_FLUID_CAPACITY_FACTOR_DEFAULT,
     SCENE_GRAVITY_DEFAULT,
 };
+use super::{
+    scene_backgrounds::SceneBackgrounds,
+    scene_material_surfaces::{MaterialSurface, SceneMaterialSurfaces},
+};
+use engine_graphics::sprites::SpriteSheet;
 use crate::{
     actors::{
         components::{
@@ -174,6 +179,12 @@ pub struct Scene {
     /// GPU simulation of the reactions in the active cellular tiles, absent until simulated or
     /// without reactions
     chemistry: Option<Chemistry>,
+    /// Uploaded backgrounds of resident chunks
+    backgrounds: SceneBackgrounds,
+    /// Art of the materials that show a surface where they meet open space
+    material_surfaces: Option<SceneMaterialSurfaces>,
+    /// Whether material edges are drawn
+    material_edges: bool,
     /// Requested edits awaiting their write into the GPU-resident cellular tiles
     edit_streaming_state: EditStreamingState,
     /// Whether the next stream advance must start a resident particle save snapshot
@@ -239,6 +250,9 @@ impl Scene {
             pressure: None,
             thermal: None,
             chemistry: None,
+            backgrounds: SceneBackgrounds::new(),
+            material_surfaces: None,
+            material_edges: false,
             edit_streaming_state: EditStreamingState::new(),
             is_fluid_save_requested: false,
             fluid_snapshot_chunk_region_index: None,
@@ -513,6 +527,28 @@ impl Scene {
                 .is_some_and(|state| state.is_chunk_save_requested())
     }
 
+    /// Sets the sprite sheet of the sprites in chunk backgrounds
+    pub fn set_background_sprites(&mut self, sprite_sheet: Arc<SpriteSheet>) {
+        self.backgrounds.set_sprite_sheet(sprite_sheet);
+    }
+
+    /// Sets the art shown where materials meet open space; other materials are drawn unchanged
+    pub fn set_material_surfaces(
+        &mut self,
+        accelerator: &Accelerator,
+        surfaces: &[MaterialSurface<'_>],
+    ) {
+        self.material_surfaces =
+            Some(SceneMaterialSurfaces::new(accelerator, surfaces, &self.material_table));
+    }
+
+    /// Sets whether material edges are drawn: surface art with its color shift, and the shadows
+    /// solid cells cast on backgrounds behind them; off by default, which also skips their
+    /// computation
+    pub fn set_material_edges(&mut self, material_edges: bool) {
+        self.material_edges = material_edges;
+    }
+
     /// Streams chunks and the cellular tiles around a camera actor without waiting
     pub fn stream(
         &mut self,
@@ -554,6 +590,7 @@ impl Scene {
         }
         let Some(chunk_streaming_state) = self.chunk_streaming_state.as_mut()
         else { return Ok(()); };
+        self.backgrounds.stream(accelerator, chunk_streaming_state, camera_position);
         let cellular_tile_buffers: &CellularTileBuffers = self.cellular_tile_buffers
             .get_or_insert_with(|| {
                 CellularTileBuffers::new(accelerator, region_width as u32, region_height as u32)
@@ -1009,6 +1046,14 @@ impl Scene {
             pressure: self.pressure_graphics(camera_position),
             temperature: self.temperature_graphics(camera_position),
             parallax,
+            parallax_batches: self.backgrounds.batches(
+                camera_position,
+                camera.visible_width(),
+                camera.visible_height(),
+            ),
+            material_surfaces: self.material_surfaces.as_ref()
+                .map(SceneMaterialSurfaces::graphics),
+            material_edges: self.material_edges,
             sprites,
             overlays: self.actor_registry
                 .components::<ActorOverlayComponent, ActorKinematicsPositionComponent>()

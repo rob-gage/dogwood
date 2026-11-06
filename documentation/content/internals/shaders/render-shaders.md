@@ -3,7 +3,7 @@ title = "Render shaders"
 description = "Documents cellular and sprite WGSL inputs, coordinate transforms, ring lookup, and color output."
 weight = 20
 [extra]
-sources = ["engine_graphics/src/renders/scene_renderer_fluid.wgsl", "engine_graphics/src/renders/scene_renderer_pressure.wgsl", "engine_graphics/src/renders/scene_renderer_overlay.wgsl", "engine_graphics/src/renders/scene_renderer_gas.wgsl", "engine_graphics/src/renders/scene_renderer_fluid_pass.rs", "engine_graphics/src/renders/scene_renderer_cellular.wgsl", "engine_graphics/src/renders/scene_renderer_sprites.wgsl", "engine_graphics/src/renders/scene_renderer_cellular_pass.rs", "engine_graphics/src/renders/scene_renderer_sprites_pass.rs", "engine_graphics/src/sprites/sprite_sheet.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting_clear.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cache.wgsl", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl", "engine_graphics/src/world/materials/material_radiance.wgsl"]
+sources = ["engine_graphics/src/renders/scene_renderer_fluid.wgsl", "engine_graphics/src/renders/scene_renderer_pressure.wgsl", "engine_graphics/src/renders/scene_renderer_overlay.wgsl", "engine_graphics/src/renders/scene_renderer_gas.wgsl", "engine_graphics/src/renders/scene_renderer_fluid_pass.rs", "engine_graphics/src/renders/scene_renderer_cellular.wgsl", "engine_graphics/src/renders/scene_renderer_surface.wgsl", "engine_graphics/src/renders/scene_renderer_sprites.wgsl", "engine_graphics/src/renders/scene_renderer_cellular_pass.rs", "engine_graphics/src/renders/scene_renderer_surface_pass.rs", "engine_graphics/src/renders/scene_renderer_sprites_pass.rs", "engine_graphics/src/renders/scene_renderer_parallax_batches_pass.rs", "engine_graphics/src/sprites/sprite_sheet.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting_clear.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cache.wgsl", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl", "engine_graphics/src/world/materials/material_radiance.wgsl"]
 +++
 
 This page is the reference for the cellular, fluid, gas, pressure, overlay, and sprite render shaders, for engine contributors. It covers bindings, record layouts, coordinate math, and color output. Pass resources and draw setup are in [cellular rendering](@/internals/rendering/cellular-pass.md) and [sprite rendering](@/internals/rendering/sprite-pass.md); pass order is in the [scene renderer](@/internals/rendering/scene-renderer.md).
@@ -34,7 +34,9 @@ Rust writes the 64-byte `CellularUniforms` record manually:
 | 32 / 36 | Region width / height |
 | 40 / 44 | Ring offset x / y |
 | 48 | Tile size |
-| 52-63 | Three padding words |
+| 52 | Surface-art X offset modulo 256 cells |
+| 56 | Surface-art Y offset modulo 256 cells |
+| 60 | Padding |
 
 ### Pixel to cell mapping
 
@@ -71,7 +73,7 @@ The 16-byte `SpriteUniforms` record holds viewport width, viewport height, pixel
 
 The vertex stage:
 
-1. Selects one of four corners centered on the sprite and scales it by the sprite size.
+1. Selects one of four corners centered on the sprite and scales it by the sprite size. The batch entry point adds the batch origin first.
 2. Rotates using sine and cosine and adds the sprite position.
 3. Converts from camera-relative tile coordinates to clip space using pixels per tile and viewport dimensions.
 
@@ -84,6 +86,12 @@ The fragment stage samples mip level zero, multiplies the texel by the instance 
 ### Sampler and batching
 
 The Rust pass uses a nearest, clamp-to-edge sampler. It groups consecutive instances with the same texture view into batches and draws four vertices per instance, as seen in `SceneRendererSpritesPass::prepare` and `draw`.
+
+Static parallax batches use an 80-byte instance record: position/size (16 bytes), rotation and padding (8), texture edges (16), color (16), radiance UV rectangle (16), and radiance intensity/padding (8). `vertex_batch` adds the batch origin; its 32-byte uniform stores origin, cellular-region origin, and cell size in five `f32` values. Batch uniforms use a 256-byte stride. `fragment_batch` uses the surface field for shadows cast by solid cells and applies lighting from the radiance texture.
+
+The cellular bindings also include the surface field (`texture_2d<f32>`), a read-only material-to-layer `array<u32>`, and a `texture_2d_array<f32>` for world-aligned surface art. The field comes from `scene_renderer_surface.wgsl`: R is closeness, GB is direction toward open space encoded around 0.5, and A is solidity.
+
+Cells of a styled material within the field's reach but beyond their surface art shift color in three steps of closeness: lighter and warmer facing up, darker and cooler facing down. Materials without a surface are unchanged. The surface field wraps by world position, and each frame writes alternate rows unless the region jumped, so its compute cost stays low; solid cells checked by a sparse pattern skip full sampling. `fragment_batch` skips texels behind solid cells and does not sample radiance. `Scene::set_material_edges` turns the surface art, this shift, contact shadows, and the surface field's computation on or off, and is off by default.
 
 ## Fluid shader
 

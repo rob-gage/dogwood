@@ -7,6 +7,8 @@ use super::{
     Chunk,
     ChunkCoordinates,
     ChunkData,
+    ChunkBackground,
+    ChunkBackgroundUpload,
     ChunkError,
     ChunkFluidParticle,
     ChunkRegion,
@@ -61,6 +63,8 @@ use std::{
 pub struct ChunkStreamingState {
     /// Resident chunks and their current load or save states
     chunks: HashMap<ChunkCoordinates, ChunkResident>,
+    /// Generated backgrounds of resident chunks awaiting their upload
+    backgrounds: HashMap<ChunkCoordinates, ChunkBackgroundUpload>,
     /// Persistent chunk storage used by background loads and saves
     chunk_data: ChunkData,
     /// Next identifier assigned to a chunk streaming request
@@ -91,6 +95,10 @@ pub struct ChunkStreamingState {
     thread_pool: Arc<rayon::ThreadPool>,
     /// Materials whose albedos color generated cells
     material_table: Arc<MaterialTable>,
+    /// Generator of backgrounds for chunks loaded from storage
+    generator: Option<Arc<dyn SceneGenerator>>,
+    /// World seed of those backgrounds
+    world_seed: u64,
 }
 
 
@@ -109,9 +117,12 @@ impl ChunkStreamingState {
         let pending_chunk_request_count_maximum: usize = thread_pool.current_num_threads();
         Self {
             chunks: HashMap::new(),
+            backgrounds: HashMap::new(),
             chunk_data,
             thread_pool,
             material_table,
+            generator: None,
+            world_seed: 0,
             response_sender: completion_sender,
             response_receiver: completion_receiver,
             retained_chunk_regions: BTreeMap::new(),
@@ -494,6 +505,8 @@ impl ChunkStreamingState {
         generator: &Arc<dyn SceneGenerator>,
         world_seed: u64,
     ) -> Result<(), SceneError> {
+        self.generator = Some(generator.clone());
+        self.world_seed = world_seed;
         // collect the exact coordinates requested by active regions
         let required_coordinates: HashSet<ChunkCoordinates> =
             self.stream_chunks_collect_coordinates();
@@ -560,10 +573,12 @@ impl ChunkStreamingState {
                     coordinates,
                     streaming_request_identifier,
                     result,
+                    background,
                 } | ChunkStreamingResponse::Generated {
                     coordinates,
                     streaming_request_identifier,
                     result,
+                    background,
                 } => {
                     let is_current: bool = matches!(
                         self.chunks.get(&coordinates),
@@ -581,6 +596,9 @@ impl ChunkStreamingState {
                     match result {
                         // install the loaded or generated chunk as clean scene storage
                         Ok(chunk) => {
+                            if let Some(background) = background {
+                                self.backgrounds.insert(coordinates, background);
+                            }
                             self.chunks.insert(
                                 coordinates,
                                 ChunkResident::Active {
@@ -590,6 +608,7 @@ impl ChunkStreamingState {
                             );
                         }
                         Err(error) => {
+                            self.backgrounds.remove(&coordinates);
                             self.chunks.insert(
                                 coordinates,
                                 ChunkResident::Error {
@@ -820,6 +839,8 @@ impl ChunkStreamingState {
         let stream_request: ChunkStreamingRequest = ChunkStreamingRequest::Load {
             coordinates,
             streaming_request_identifier,
+            generator: self.generator.clone(),
+            world_seed: self.world_seed,
         };
         let completion_sender: Sender<ChunkStreamingResponse> = self.response_sender.clone();
         self.chunks.insert(coordinates, ChunkResident::Loading { streaming_request_identifier });
@@ -1103,7 +1124,12 @@ impl ChunkStreamingState {
     ) -> ChunkStreamingResponse {
         match chunk_streaming_request {
             // read stored chunks and report coordinates without a persisted file
-            ChunkStreamingRequest::Load { coordinates, streaming_request_identifier } => {
+            ChunkStreamingRequest::Load {
+                coordinates,
+                streaming_request_identifier,
+                generator,
+                world_seed,
+            } => {
                 let result: Result<Chunk, SceneError> = match catch_unwind(
                     AssertUnwindSafe(|| chunk_data.load(coordinates)),
                 ) {
@@ -1125,6 +1151,9 @@ impl ChunkStreamingState {
                     coordinates,
                     streaming_request_identifier,
                     result,
+                    background: generator.and_then(|generator| {
+                        Self::stream_background(generator.as_ref(), coordinates, world_seed)
+                    }),
                 }
             }
             // generate chunks without persisted files, treating panics as generation errors, then
@@ -1136,6 +1165,8 @@ impl ChunkStreamingState {
                 world_seed,
                 material_table,
             } => {
+                let background: Option<ChunkBackgroundUpload> =
+                    Self::stream_background(generator.as_ref(), coordinates, world_seed);
                 let result: Result<Chunk, SceneError> = match catch_unwind(AssertUnwindSafe(|| {
                     generator.generate_chunk(coordinates, world_seed)
                         .map(|chunk| Self::stream_chunks_color_cells(chunk, &material_table))
@@ -1158,6 +1189,7 @@ impl ChunkStreamingState {
                     coordinates,
                     streaming_request_identifier,
                     result,
+                    background,
                 }
             }
             // preserve chunk ownership in the response so failed saves can be retried
@@ -1186,8 +1218,21 @@ impl ChunkStreamingState {
         }
     }
 
+    /// Generates and prepares a chunk's background on a streaming thread, treating panics as none
+    fn stream_background(
+        generator: &dyn SceneGenerator,
+        coordinates: ChunkCoordinates,
+        world_seed: u64,
+    ) -> Option<ChunkBackgroundUpload> {
+        let background: ChunkBackground = catch_unwind(AssertUnwindSafe(|| {
+            generator.generate_background(coordinates, world_seed)
+        })).ok().flatten()?;
+        Some(ChunkBackgroundUpload::new(background, CHUNK_SIZE as usize))
+    }
+
     /// Replaces the color of every generated cell with its material's color at the cell
     fn stream_chunks_color_cells(mut chunk: Chunk, material_table: &MaterialTable) -> Chunk {
+        let is_albedo_resolved: bool = chunk.albedo_resolved();
         let cellular_tiles_per_chunk_side: i64 = CHUNK_SIZE / CELLULAR_TILE_SIZE;
         let first_tile_x: i64 = i64::from(chunk.coordinates.x) * cellular_tiles_per_chunk_side;
         let first_tile_y: i64 = i64::from(chunk.coordinates.y) * cellular_tiles_per_chunk_side;
@@ -1210,7 +1255,9 @@ impl ChunkStreamingState {
                         x: tile_x * CELLULAR_TILE_SIZE + cell_index as i64 % CELLULAR_TILE_SIZE,
                         y: tile_y * CELLULAR_TILE_SIZE + cell_index as i64 / CELLULAR_TILE_SIZE,
                     };
-                    *color = material_table.cellular_color(*material_identifier, cell, *color);
+                    if !is_albedo_resolved || *color == u32::MAX {
+                        *color = material_table.cellular_color(*material_identifier, cell, *color);
+                    }
                     *radiance = material_table.cellular_radiance(*material_identifier, cell, *radiance);
                 }
                 let _ = chunk.set_cellular_tile_colors(coordinates, &colors);
@@ -1218,6 +1265,31 @@ impl ChunkStreamingState {
             }
         }
         chunk
+    }
+
+    /// Takes the awaiting backgrounds nearest a chunk, at most a number of them
+    pub fn take_backgrounds(
+        &mut self,
+        nearest: ChunkCoordinates,
+        count: usize,
+    ) -> Vec<(ChunkCoordinates, ChunkBackgroundUpload)> {
+        if self.backgrounds.is_empty() { return Vec::new(); }
+        let mut coordinates: Vec<ChunkCoordinates> = self.backgrounds.keys().copied().collect();
+        coordinates.sort_by_key(|chunk: &ChunkCoordinates| {
+            (i64::from(chunk.x) - i64::from(nearest.x)).abs()
+                + (i64::from(chunk.y) - i64::from(nearest.y)).abs()
+        });
+        coordinates.truncate(count);
+        coordinates.into_iter()
+            .filter_map(|chunk: ChunkCoordinates| {
+                self.backgrounds.remove(&chunk).map(|background| (chunk, background))
+            })
+            .collect()
+    }
+
+    /// Returns whether a chunk is resident
+    pub fn is_chunk_resident(&self, coordinates: ChunkCoordinates) -> bool {
+        self.chunks.contains_key(&coordinates)
     }
 
     /// Unloads clean chunks outside every active region request
@@ -1246,7 +1318,10 @@ impl ChunkStreamingState {
                     _ => None,
                 }
             }).collect();
-        for coordinates in unneeded_coordinates { self.chunks.remove(&coordinates); }
+        for coordinates in unneeded_coordinates {
+            self.chunks.remove(&coordinates);
+            self.backgrounds.remove(&coordinates);
+        }
     }
 
 }

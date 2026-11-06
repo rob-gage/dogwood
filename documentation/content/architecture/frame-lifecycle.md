@@ -3,7 +3,7 @@ title = "Frame and update lifecycle"
 description = "How the host schedules fixed updates, scene work, redraws, and presentation."
 weight = 10
 [extra]
-sources = ["engine/src", "engine_host/src/windows/window.rs", "engine_host/src/windows/window_configuration.rs", "engine_graphics/src/renders/scene_renderer.rs", "engine_user_interface/src/user_interface_context.rs", "engine_user_interface/src/user_interface_renderer.rs", "engine_user_interface/src/user_interface_window_state.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting_clear.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cache.wgsl", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl", "engine_world/src/scenes/scene.rs"]
+sources = ["engine/src", "engine_host/src/windows/window.rs", "engine_host/src/windows/window_configuration.rs", "engine_graphics/src/renders/scene_renderer.rs", "engine_graphics/src/renders/scene_renderer_surface_pass.rs", "engine_graphics/src/renders/scene_renderer_surface.wgsl", "engine_user_interface/src/user_interface_context.rs", "engine_user_interface/src/user_interface_renderer.rs", "engine_user_interface/src/user_interface_window_state.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting_clear.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cache.wgsl", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl", "engine_world/src/scenes/scene.rs"]
 +++
 
 This page follows one pass through the native host's loop: fixed updates, redraw scheduling, rendering, and presentation. It is for contributors who need to know when `Game`, scene, and renderer code runs.
@@ -19,10 +19,10 @@ event-loop iteration ──> 0..6 fixed updates
                          | pawn controls
                          | Game::update
                          | drain GameEventQueue
-                         | Scene::stream
+                         | Scene::stream (including bounded background uploads)
                          | Scene::simulate
                          v
-redraw request ──> acquire surface ──> scene ──> UI ──> present
+redraw request ──> acquire surface ──> lighting and surface field ──> parallax/background batches ──> scene ──> UI ──> present
 ```
 
 ## Fixed updates

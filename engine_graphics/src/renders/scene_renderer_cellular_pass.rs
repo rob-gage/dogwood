@@ -1,7 +1,7 @@
 // Copyright Rob Gage 2026
 
 use super::scene_renderer_lighting_pass::lighting_shader_source;
-use crate::world::scenes::SceneGraphicsCellular;
+use crate::world::scenes::{SceneGraphicsCellular, SceneGraphicsMaterialSurfaces};
 use engine_host::acceleration::Accelerator;
 use std::collections::HashMap;
 
@@ -25,6 +25,14 @@ pub struct SceneRendererCellularPass {
     color_buffer: Option<wgpu::Buffer>,
     /// Matter buffer used by the cached cellular bind group
     matter_buffer: Option<wgpu::Buffer>,
+    /// Surface field used by the cached cellular bind group
+    surface_field_view: Option<wgpu::TextureView>,
+    /// Surface art used by the cached cellular bind group
+    surface_art_view: Option<wgpu::TextureView>,
+    /// Empty art bound when no material shows a surface
+    default_surface_art_view: wgpu::TextureView,
+    /// Layers bound when no material shows a surface, leaving every cell unchanged
+    default_surface_layers: wgpu::Buffer,
 }
 
 impl SceneRendererCellularPass {
@@ -76,6 +84,36 @@ impl SceneRendererCellularPass {
                         },
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 5,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2Array,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
                 ],
             },
         );
@@ -97,8 +135,30 @@ impl SceneRendererCellularPass {
         let pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline> = HashMap::new();
         let uniform_buffer: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("`SceneRendererCellularPass.uniform_buffer`"),
-            size: 64,
+            size: 80,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let default_surface_art_view: wgpu::TextureView = device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("`SceneRendererCellularPass.default_surface_art_view`"),
+                size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
+            .create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            });
+        // zero-initialized, so no material has a surface
+        let default_surface_layers: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("`SceneRendererCellularPass.default_surface_layers`"),
+            size: 4,
+            usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
         Self {
@@ -111,6 +171,10 @@ impl SceneRendererCellularPass {
             material_identifier_buffer: None,
             color_buffer: None,
             matter_buffer: None,
+            surface_field_view: None,
+            surface_art_view: None,
+            default_surface_art_view,
+            default_surface_layers,
         }
     }
 
@@ -126,6 +190,8 @@ impl SceneRendererCellularPass {
         pixels_per_tile: f32,
         cellular_graphics: &SceneGraphicsCellular<'_>,
         matter_buffer: &wgpu::Buffer,
+        surface_field_view: &wgpu::TextureView,
+        material_surfaces: Option<&SceneGraphicsMaterialSurfaces<'_>>,
     ) {
         let device: &wgpu::Device = accelerator.device();
         if !self.pipelines.contains_key(&format) {
@@ -181,7 +247,7 @@ impl SceneRendererCellularPass {
         let ring_offset_x: u32 = cellular_graphics.ring_offset_x;
         let ring_offset_y: u32 = cellular_graphics.ring_offset_y;
         let cellular_tile_size: u32 = cellular_graphics.cellular_tile_size;
-        let mut uniform_bytes: [u8; 64] = [0; 64];
+        let mut uniform_bytes: [u8; 80] = [0; 80];
         uniform_bytes[0..4].copy_from_slice(&viewport_origin_x.to_le_bytes());
         uniform_bytes[4..8].copy_from_slice(&viewport_origin_y.to_le_bytes());
         uniform_bytes[8..12].copy_from_slice(&viewport_width_as_float.to_le_bytes());
@@ -194,7 +260,28 @@ impl SceneRendererCellularPass {
         uniform_bytes[40..44].copy_from_slice(&ring_offset_x.to_le_bytes());
         uniform_bytes[44..48].copy_from_slice(&ring_offset_y.to_le_bytes());
         uniform_bytes[48..52].copy_from_slice(&cellular_tile_size.to_le_bytes());
+        // integers keep world alignment exact however far the region lies from the origin
+        let art_size: i64 = 256;
+        let surface_art_offset_x: u32 = (cellular_graphics.region_tile_x
+            * i64::from(cellular_tile_size)).rem_euclid(art_size) as u32;
+        let surface_art_offset_y: u32 = (cellular_graphics.region_tile_y
+            * i64::from(cellular_tile_size)).rem_euclid(art_size) as u32;
+        uniform_bytes[52..56].copy_from_slice(&surface_art_offset_x.to_le_bytes());
+        uniform_bytes[56..60].copy_from_slice(&surface_art_offset_y.to_le_bytes());
+        let tile_cells: i64 = i64::from(cellular_tile_size);
+        let surface_field_offset_x: u32 = (cellular_graphics.region_tile_x * tile_cells)
+            .rem_euclid(i64::from(region_width) * tile_cells) as u32;
+        let surface_field_offset_y: u32 = (cellular_graphics.region_tile_y * tile_cells)
+            .rem_euclid(i64::from(region_height) * tile_cells) as u32;
+        uniform_bytes[64..68].copy_from_slice(&surface_field_offset_x.to_le_bytes());
+        uniform_bytes[68..72].copy_from_slice(&surface_field_offset_y.to_le_bytes());
         accelerator.queue().write_buffer(&self.uniform_buffer, 0, &uniform_bytes);
+        let surface_art_view: &wgpu::TextureView = material_surfaces
+            .map_or(&self.default_surface_art_view, |surfaces| surfaces.art);
+        let surface_layers: &wgpu::Buffer = material_surfaces
+            .map_or(&self.default_surface_layers, |surfaces| surfaces.layers);
+        let surfaces_differ: bool = self.surface_field_view.as_ref() != Some(surface_field_view)
+            || self.surface_art_view.as_ref() != Some(surface_art_view);
         let material_buffers_differ: bool = self.material_identifier_buffer.as_ref()
             != Some(cellular_graphics.material_identifier_buffer);
         let color_buffers_differ: bool = self.color_buffer.as_ref()
@@ -204,6 +291,7 @@ impl SceneRendererCellularPass {
             || material_buffers_differ
             || color_buffers_differ
             || matter_buffers_differ
+            || surfaces_differ
         {
             let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("`SceneRendererCellularPass.bind_group`"),
@@ -233,6 +321,18 @@ impl SceneRendererCellularPass {
                         binding: 3,
                         resource: matter_buffer.as_entire_binding(),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::TextureView(surface_field_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: surface_layers.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: wgpu::BindingResource::TextureView(surface_art_view),
+                    },
                 ],
             });
             self.bind_group = Some(bind_group);
@@ -240,6 +340,8 @@ impl SceneRendererCellularPass {
                 Some(cellular_graphics.material_identifier_buffer.clone());
             self.color_buffer = Some(cellular_graphics.color_buffer.clone());
             self.matter_buffer = Some(matter_buffer.clone());
+            self.surface_field_view = Some(surface_field_view.clone());
+            self.surface_art_view = Some(surface_art_view.clone());
         }
     }
 

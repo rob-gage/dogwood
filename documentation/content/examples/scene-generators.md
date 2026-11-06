@@ -3,7 +3,7 @@ title = "Generating worlds"
 description = "Implement SceneGenerator to create CPU chunks when no saved chunk exists."
 weight = 20
 [extra]
-sources = ["engine_world/src/scenes/scene_generator.rs", "engine_world/src/scenes/chunks/chunk.rs", "engine_world/src/scenes/chunks/chunk_data.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/chunks/mod.rs", "engine_world/src/scenes/chunks/chunk_coordinates.rs", "engine_world/src/scenes/mod.rs", "template/src/template_scene_generator.rs", "engine/src/lib.rs", "engine_world/src/materials/material_identifier.rs", "engine_world/src/materials/material_table.rs"]
+sources = ["engine_world/src/scenes/scene_generator.rs", "engine_world/src/scenes/chunks/chunk.rs", "engine_world/src/scenes/chunks/chunk_background.rs", "engine_world/src/scenes/chunks/chunk_data.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/chunks/mod.rs", "engine_world/src/scenes/chunks/chunk_coordinates.rs", "engine_world/src/scenes/mod.rs", "template/src/template_scene_generator.rs", "engine/src/lib.rs", "engine_world/src/materials/material_identifier.rs", "engine_world/src/materials/material_table.rs"]
 +++
 
 ## Implement `SceneGenerator`
@@ -46,7 +46,15 @@ To vary a chunk, replace one cellular tile's arrays with `set_cellular_tile_mate
 
 ### Colors
 
-A color is a `u32` built with `u32::from_le_bytes([r, g, b, a])`. After generation, Dogwood runs each nonempty cell through `MaterialTable::cellular_color`. For materials with albedo, the color tints that albedo, so white (255, 255, 255, 255) leaves it unchanged.
+A color is a `u32` built with `u32::from_le_bytes([r, g, b, a])`. After generation, Dogwood runs each nonempty cell through `MaterialTable::cellular_color`. For materials with albedo, the color tints that albedo, so white (255, 255, 255, 255) leaves it unchanged. `Chunk::set_albedo_resolved(true)` marks supplied colors final; they bypass albedo, while cells left white still receive material albedo.
+
+## Chunk backgrounds
+
+Override `SceneGenerator::generate_background(coordinates, world_seed)` to create transient background data for either loaded or generated chunks. It runs on a streaming worker and is not saved, so output should be deterministic. A `ChunkBackground` contains an optional packed RGBA8 image and background sprites. The image is little-endian straight-alpha sRGB, one pixel per cell, with rows from the bottom. A `ChunkBackgroundSprite` specifies its center and size in cells, counterclockwise rotation in radians, sprite-sheet frame, and linear RGBA multiplier. Set the sheet with `Scene::set_background_sprites`.
+
+`SceneBackgrounds` uploads at most one waiting backgrounds per stream, nearest camera chunks first. It draws all chunk images before sprites so overhanging sprites remain visible, and culls chunks beyond the viewport plus 32 tiles for overhang. See [chunk backgrounds](@/external-api/world-storage.md#chunk-backgrounds).
+
+{{ <rustdoc path="engine/scenes/chunks/struct.ChunkBackground.html" text="ChunkBackground" /> }} · {{ <rustdoc path="engine/scenes/chunks/struct.ChunkBackgroundSprite.html" text="ChunkBackgroundSprite" /> }} · {{ <rustdoc path="engine/scenes/chunks/struct.Chunk.html#method.set_albedo_resolved" text="Chunk::set_albedo_resolved" /> }}
 
 ## Seed, errors, and saved chunks
 
