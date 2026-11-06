@@ -414,6 +414,11 @@ impl<G: Game> Editor<G> {
         } else {
             self.game_instance.stream(accelerator, processor);
         }
+        // the game may have replaced its scene and the free camera with it
+        if self.camera_actor != self.game_instance.camera_actor() {
+            self.camera_actor = self.game_instance.camera_actor();
+            self.held_keys.clear();
+        }
     }
 
     /// Composes the editor, draws the game into the viewport, then draws the editor

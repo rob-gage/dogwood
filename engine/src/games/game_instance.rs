@@ -15,7 +15,12 @@ use engine_host::{
 use engine_user_interface::{UserInterfaceContext, UserInterfaceRenderer, egui};
 use engine_world::actors::{
     Actor,
-    components::{ActorIdentityComponent, ActorPawnControlComponent, ActorPawnPossessionComponent},
+    components::{
+        ActorCameraComponent,
+        ActorIdentityComponent,
+        ActorPawnControlComponent,
+        ActorPawnPossessionComponent,
+    },
 };
 use std::{collections::HashSet, mem, time::Duration};
 
@@ -67,6 +72,20 @@ impl<G: Game> GameInstance<G> {
     /// Sets a camera replacing the game's own camera for streaming and drawing, or `None`
     pub fn set_camera_actor(&mut self, camera_actor: Option<Actor>) {
         self.camera_actor = camera_actor;
+    }
+
+    /// Returns the camera replacing the game's own camera, which is dropped if it stops being a
+    /// camera in the game's current scene
+    pub fn camera_actor(&self) -> Option<Actor> { self.camera_actor }
+
+    /// Returns to the game's own camera if the replacement is no longer a camera in its scene, as
+    /// happens when the game replaces its scene
+    fn drop_missing_camera_actor(&mut self) {
+        let Some(camera_actor) = self.camera_actor else { return; };
+        let Some((scene, _)) = self.game.scene() else { return; };
+        if scene.actor_registry_mutable().component::<ActorCameraComponent>(camera_actor).is_err() {
+            self.camera_actor = None;
+        }
     }
 
     /// Sets cell-aligned areas drawn over the scene in addition to actor overlays, such as a
@@ -150,6 +169,7 @@ impl<G: Game> GameInstance<G> {
         }
         self.game.update(elapsed_time, &mut self.game_events);
         self.handle_game_events();
+        self.drop_missing_camera_actor();
         let camera_actor: Option<Actor> = self.camera_actor;
         let Some((scene, game_camera_actor)) = self.game.scene() else {
             return;
@@ -168,6 +188,7 @@ impl<G: Game> GameInstance<G> {
 
     /// Streams the game's scene around its camera without updating or simulating the game
     pub fn stream(&mut self, accelerator: &Accelerator, processor: &Processor) {
+        self.drop_missing_camera_actor();
         let camera_actor: Option<Actor> = self.camera_actor;
         let Some((scene, game_camera_actor)) = self.game.scene() else {
             return;
@@ -194,6 +215,7 @@ impl<G: Game> GameInstance<G> {
                 label: Some("`GameInstance::render`"),
             });
         // draw the scene, or clear the frame when the game shows none
+        self.drop_missing_camera_actor();
         let camera_actor: Option<Actor> = self.camera_actor;
         match self.game.scene() {
             Some((scene, game_camera_actor)) => {
