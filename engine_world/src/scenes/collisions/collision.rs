@@ -174,6 +174,8 @@ pub struct Collision {
     changed_rigid_body_cell_readbacks: AcceleratorReadback<()>,
     /// Rigid bodies of every simulated actor
     rigid_bodies: rapier2d::dynamics::RigidBodySet,
+    /// Rapier soft bodies, which every removal of a body or collider updates
+    soft_bodies: rapier2d::dynamics::SoftBodySet,
     /// Cellular tile collider and every simulated actor collider
     colliders: rapier2d::geometry::ColliderSet,
     /// Fixed timestep and solver settings
@@ -271,6 +273,7 @@ impl Collision {
                 3,
             ),
             rigid_bodies: rapier2d::dynamics::RigidBodySet::new(),
+            soft_bodies: rapier2d::dynamics::SoftBodySet::new(),
             colliders: rapier2d::geometry::ColliderSet::new(),
             // resolve stack loads before a body penetrates beyond the voxel surface contacts
             integration_parameters: rapier2d::dynamics::IntegrationParameters {
@@ -610,7 +613,10 @@ impl Collision {
                             &rapier2d::math::Pose::new(cell_center, 0.0),
                             &cell,
                         ),
-                        Ok(true),
+                        Ok(rapier2d::parry::query::ShapeIntersection {
+                            intersecting: true,
+                            ..
+                        }),
                     );
                     if is_intersecting { cells |= 1 << cell_index; }
                 }
@@ -644,6 +650,7 @@ impl Collision {
                 cellular_tile_collider,
                 &mut self.island_manager,
                 &mut self.rigid_bodies,
+                &mut self.soft_bodies,
                 false,
             );
         }
@@ -652,6 +659,7 @@ impl Collision {
                 collider,
                 &mut self.island_manager,
                 &mut self.rigid_bodies,
+                &mut self.soft_bodies,
                 false,
             );
         }
@@ -784,6 +792,7 @@ impl Collision {
                 cellular_tile_collider,
                 &mut self.island_manager,
                 &mut self.rigid_bodies,
+                &mut self.soft_bodies,
                 false,
             );
         }
@@ -924,6 +933,7 @@ impl Collision {
                 &mut self.colliders,
                 &mut self.impulse_joints,
                 &mut self.multibody_joints,
+                &mut self.soft_bodies,
                 true,
             );
         }
@@ -949,6 +959,7 @@ impl Collision {
             &mut self.colliders,
             &mut self.impulse_joints,
             &mut self.multibody_joints,
+            &mut self.soft_bodies,
             &mut self.ccd_solver,
             &(),
             &(),
@@ -1360,6 +1371,7 @@ impl Collision {
                 &mut self.colliders,
                 &mut self.impulse_joints,
                 &mut self.multibody_joints,
+                &mut self.soft_bodies,
                 true,
             );
         }
@@ -2331,6 +2343,7 @@ impl Collision {
                 &mut self.colliders,
                 &mut self.impulse_joints,
                 &mut self.multibody_joints,
+                &mut self.soft_bodies,
                 true,
             );
             return;
@@ -2585,6 +2598,7 @@ impl Collision {
                 collider_handle,
                 &mut self.island_manager,
                 &mut self.rigid_bodies,
+                &mut self.soft_bodies,
                 true,
             );
         }

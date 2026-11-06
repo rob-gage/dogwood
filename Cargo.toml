@@ -11,4 +11,5 @@ members = [
     "engine_user_interface",
     "engine_world",
 ]
+exclude = ["vendor/rapier2d"]
 resolver = "3"

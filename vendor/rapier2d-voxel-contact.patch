@@ -1,0 +1,17 @@
+--- a/src/geometry/narrow_phase/pair_update.rs
++++ b/src/geometry/narrow_phase/pair_update.rs
+@@ -795,7 +795,13 @@
+     // Composite pairs have unstable manifold ordinals (see `OUTCOME_FULL_COMPOSITE`),
+     // so signal a full rebuild. Must be checked before the `FULL_CLEAN` shortcut: a
+     // surviving manifold can look "clean" while a dropped sibling leaked its graph slot.
+-    if outcome == OUTCOME_FULL && pair.rigid().is_some_and(|r| r.workspace.is_some()) {
++    if outcome == OUTCOME_FULL
++        && (pair.rigid().is_some_and(|r| r.workspace.is_some())
++            || co1.shape.as_composite_shape().is_some()
++            || co2.shape.as_composite_shape().is_some()
++            || co1.shape.shape_type() == parry::shape::ShapeType::Voxels
++            || co2.shape.shape_type() == parry::shape::ShapeType::Voxels)
++    {
+         return OUTCOME_FULL_COMPOSITE;
+     }
+     if outcome == OUTCOME_FULL && !membership_changed {
