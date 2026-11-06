@@ -33,7 +33,7 @@ use std::collections::HashMap;
 const RESULT_BYTE_COUNT: u64 = 64;
 
 /// Bytes of the sensing uniforms
-const UNIFORM_BYTE_COUNT: usize = 64;
+const UNIFORM_BYTE_COUNT: usize = 80;
 
 /// Sensing results that may be copied for the CPU at once
 const READBACK_COUNT: usize = 3;
@@ -56,10 +56,10 @@ pub(crate) struct ActorSensingPass {
     bind_group: wgpu::BindGroup,
     /// Region layout, material layout, and limits of the next sensing step
     uniform_buffer: wgpu::Buffer,
-    /// Tag masks of every cellular static, cellular dynamic, then fluid material index
+    /// Tag masks of cellular static, cellular dynamic, fluid, then gas material indices
     tag_mask_buffer: wgpu::Buffer,
-    /// Material indices of the cellular static, cellular dynamic, and fluid forms in the masks
-    form_index_counts: [u32; 3],
+    /// Material indices of cellular static, cellular dynamic, fluid, and gas forms in the masks
+    form_index_counts: [u32; 4],
     /// Result record of every actor
     result_buffer: wgpu::Buffer,
     /// Asynchronous copies of the results with the actors they belong to, by record
@@ -113,7 +113,9 @@ impl ActorSensingPass {
                     storage_layout_entry(5, true),
                     storage_layout_entry(6, true),
                     storage_layout_entry(7, true),
-                    storage_layout_entry(8, false),
+                    storage_layout_entry(8, true),
+                    storage_layout_entry(9, true),
+                    storage_layout_entry(10, false),
                 ],
             },
         );
@@ -146,7 +148,7 @@ impl ActorSensingPass {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let form_index_counts: [u32; 3] = form_index_counts(material_table);
+        let form_index_counts: [u32; 4] = form_index_counts(material_table);
         let mask_count: u64 = form_index_counts.iter().map(|count: &u32| u64::from(*count)).sum();
         let tag_mask_buffer: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("`ActorSensingPass.tag_mask_buffer`"),
@@ -189,7 +191,18 @@ impl ActorSensingPass {
                     resource: cellular_tile_buffers.gas_buffer().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry { binding: 7, resource: tag_mask_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 8, resource: result_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: cellular_tile_buffers.matter_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: cellular_tile_buffers.pressure_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: result_buffer.as_entire_binding(),
+                },
             ],
         });
         let readbacks: AcceleratorReadback<Vec<Actor>> = AcceleratorReadback::new(
@@ -260,6 +273,8 @@ impl ActorSensingPass {
                         breathing_cell_count: result_word(
                             SCENE_ACTOR_SENSING_TAG_COUNT_MAXIMUM + 1,
                         ),
+                        maximum_temperature: f32::from_bits(result_word(10)),
+                        maximum_pressure: f32::from_bits(result_word(11)),
                     });
                 }
             },
@@ -294,12 +309,16 @@ impl ActorSensingPass {
             self.form_index_counts[0],
             self.form_index_counts[1],
             self.form_index_counts[2],
+            self.form_index_counts[3],
             FLUID_RASTER_SCALE.to_bits(),
             self.configuration.contact_margin.to_bits(),
             self.configuration.breathing_margin.to_bits(),
             (self.configuration.breathable_gas_amount * GAS_AMOUNT_PER_ATMOSPHERE).to_bits(),
             CONTACT_COVERAGE.to_bits(),
             DROWNING_COVERAGE.to_bits(),
+            (self.configuration.gas_tag_amount * GAS_AMOUNT_PER_ATMOSPHERE).to_bits(),
+            0,
+            0,
             0,
         ];
         let uniform_bytes: Vec<u8> = words.iter().flat_map(|word: &u32| word.to_le_bytes())

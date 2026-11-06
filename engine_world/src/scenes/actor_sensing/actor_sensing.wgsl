@@ -20,6 +20,8 @@ struct ActorSensingUniforms {
     dynamic_count: u32,
     /// Fluid material indices in the tag masks
     fluid_count: u32,
+    /// Gas material indices in the tag masks
+    gas_count: u32,
     /// Fixed-point units per mass unit in the fluid raster
     raster_scale: f32,
     /// Distance outside a collider, in cells, within which a cell touches it
@@ -32,8 +34,12 @@ struct ActorSensingUniforms {
     contact_coverage: f32,
     /// Fluid coverage of a cell and its eight neighbours at which it can no longer be breathed
     drowning_coverage: f32,
+    /// Minimum species amount for a gas tag to count
+    gas_tag_amount: f32,
     /// Alignment padding
     padding: u32,
+    padding_2: u32,
+    padding_3: u32,
 };
 
 /// Analytic cellular tile actor record shared with dynamic-cell collision; sensing reads only the
@@ -89,11 +95,17 @@ var<storage, read> fluid_materials: array<vec4<f32>>;
 @group(0) @binding(6)
 var<storage, read> gas: array<vec4<u32>>;
 
-/// Tag masks of every cellular static, cellular dynamic, then fluid material index
+/// Tag masks of cellular static, cellular dynamic, fluid, then gas material indices
 @group(0) @binding(7)
 var<storage, read> tag_masks: array<u32>;
 
 @group(0) @binding(8)
+var<storage, read> matter: array<vec2<u32>>;
+
+@group(0) @binding(9)
+var<storage, read> pressures: array<f32>;
+
+@group(0) @binding(10)
 var<storage, read_write> results: array<atomic<u32>>;
 
 /// Returns the physical index of a logical tile inside the toroidal region
@@ -139,7 +151,7 @@ fn actor_extent(actor: ActorSensingActor) -> f32 {
     return actor.size.x + actor.size.y;
 }
 
-/// Returns the configured tag mask of a cellular static, cellular dynamic, or fluid material
+/// Returns the configured mask of a cellular static, dynamic, fluid, or gas material
 fn material_tag_mask(identifier: u32) -> u32 {
     let form: u32 = identifier >> 30u;
     let index: u32 = identifier & 0x3fffffffu;
@@ -151,7 +163,10 @@ fn material_tag_mask(identifier: u32) -> u32 {
     } else if form == 2u {
         offset = uniforms.static_count + uniforms.dynamic_count;
         count = uniforms.fluid_count;
-    } else if form != 0u {
+    } else if form == 3u {
+        offset = uniforms.static_count + uniforms.dynamic_count + uniforms.fluid_count;
+        count = uniforms.gas_count;
+    } else {
         return 0u;
     }
     if index >= count { return 0u; }
@@ -201,12 +216,35 @@ fn sense(
         let coverage: f32 = fluid_coverage(index);
         let fluid_index: u32 = fluid_raster[index * 4u + 3u] & 0x3fffffffu;
         let is_matter: bool = material != 0u && (material >> 30u) != 3u;
-        if is_touching && !is_rigid {
+        let slots: vec4<u32> = gas[index * 2u];
+        if (is_touching || is_breathing) {
+            // the bits of finite non-negative floats order like their values, so an atomic maximum
+            // over the bits picks the largest value
+            let temperature_bits: u32 = matter[index].x;
+            if temperature_bits < 0x7f800000u {
+                atomicMax(&results[result_base + 10u], temperature_bits);
+            }
+            let pressure_bits: u32 = bitcast<u32>(abs(pressures[index]));
+            if pressure_bits < 0x7f800000u {
+                atomicMax(&results[result_base + 11u], pressure_bits);
+            }
+        }
+        if is_touching {
             var mask: u32 = 0u;
-            if is_matter {
+            if !is_rigid && is_matter {
                 mask = material_tag_mask(material);
-            } else if coverage >= uniforms.contact_coverage {
+            } else if !is_rigid && coverage >= uniforms.contact_coverage {
                 mask = material_tag_mask((2u << 30u) | fluid_index);
+            }
+            for (var slot: u32 = 0u; slot < 4u; slot++) {
+                let species: u32 = slots[slot];
+                let amount: u32 = species & 0xffffffu;
+                let gas_index: u32 = species >> 24u;
+                if amount > 0u && f32(amount) >= uniforms.gas_tag_amount
+                    && gas_index < uniforms.gas_count
+                {
+                    mask |= material_tag_mask((3u << 30u) | gas_index);
+                }
             }
             for (var tag: u32 = 0u; tag < uniforms.tag_count; tag++) {
                 if ((mask >> tag) & 1u) != 0u { atomicAdd(&results[result_base + tag], 1u); }
@@ -214,7 +252,6 @@ fn sense(
         }
         if is_breathing {
             atomicAdd(&results[result_base + BREATHING_WORD], 1u);
-            let slots: vec4<u32> = gas[index * 2u];
             let species_amount: f32 = f32(slots.x & 0xffffffu) + f32(slots.y & 0xffffffu)
                 + f32(slots.z & 0xffffffu) + f32(slots.w & 0xffffffu);
             // resting fluid leaves some cells between its particles empty, so a cell is wet

@@ -23,6 +23,8 @@ pub struct SceneActorSensingConfiguration {
     /// Largest total amount of species gas in a cell, in atmospheres, that is still breathable;
     /// the ambient air of empty cells is always breathable
     pub breathable_gas_amount: f32,
+    /// Minimum species-gas amount, in atmospheres, for its material tags to count
+    pub gas_tag_amount: f32,
 }
 
 impl Default for SceneActorSensingConfiguration {
@@ -35,6 +37,7 @@ impl Default for SceneActorSensingConfiguration {
             contact_margin: 1.5,
             breathing_margin: 2.5,
             breathable_gas_amount: 0.5,
+            gas_tag_amount: 0.05,
         }
     }
 
@@ -49,6 +52,10 @@ pub struct SceneActorSensing {
     pub breathable_cell_count: u32,
     /// All cells of the breathing band inside the active region
     pub breathing_cell_count: u32,
+    /// Highest valid cell temperature, in kelvin, in the breathing band or touching cells
+    pub maximum_temperature: f32,
+    /// Highest absolute published pressure, in gauge atmospheres, in those cells
+    pub maximum_pressure: f32,
 }
 
 /// Returns whether an actor sensing configuration has at most eight tags and finite,
@@ -59,24 +66,24 @@ pub(super) fn is_valid_configuration(configuration: &SceneActorSensingConfigurat
             configuration.contact_margin,
             configuration.breathing_margin,
             configuration.breathable_gas_amount,
+            configuration.gas_tag_amount,
         ].into_iter().all(|value: f32| value.is_finite() && value >= 0.0)
 }
 
-/// Returns the slot of a form in the tag mask layout: cellular static, cellular dynamic, then
-/// fluid; gas is not sensed by tag
+/// Returns the slot of a form in the tag mask layout: cellular static, cellular dynamic, fluid,
+/// then gas
 fn form_slot(form: MaterialForm) -> Option<usize> {
     match form {
         MaterialForm::CellularStatic => Some(0),
         MaterialForm::CellularDynamic => Some(1),
         MaterialForm::Fluid => Some(2),
-        MaterialForm::Gas => None,
+        MaterialForm::Gas => Some(3),
     }
 }
 
-/// Returns the number of material indices of the cellular static, cellular dynamic, and fluid
-/// forms, each one past the highest registered index
-fn form_index_counts(material_table: &MaterialTable) -> [u32; 3] {
-    let mut counts: [u32; 3] = [0; 3];
+/// Returns the number of material indices of each form, each one past its highest registered index
+fn form_index_counts(material_table: &MaterialTable) -> [u32; 4] {
+    let mut counts: [u32; 4] = [0; 4];
     for (identifier, _, form) in material_table.materials() {
         let Some(slot) = form_slot(form) else { continue; };
         counts[slot] = counts[slot].max(identifier.index() + 1);
@@ -84,12 +91,12 @@ fn form_index_counts(material_table: &MaterialTable) -> [u32; 3] {
     counts
 }
 
-/// Returns the tag mask of every cellular static, then cellular dynamic, then fluid material
-/// index, laid out by `form_index_counts`; bit `i` is set when the material carries tag `i`
+/// Returns masks for cellular static, dynamic, fluid, then gas indices; bit `i` is set when the
+/// material carries configured tag `i`
 fn tag_masks(material_table: &MaterialTable, tags: &[String]) -> Vec<u32> {
-    let counts: [u32; 3] = form_index_counts(material_table);
-    let offsets: [u32; 3] = [0, counts[0], counts[0] + counts[1]];
-    let mut masks: Vec<u32> = vec![0; (counts[0] + counts[1] + counts[2]) as usize];
+    let counts: [u32; 4] = form_index_counts(material_table);
+    let offsets: [u32; 4] = [0, counts[0], counts[0] + counts[1], counts[0] + counts[1] + counts[2]];
+    let mut masks: Vec<u32> = vec![0; counts.iter().sum::<u32>() as usize];
     for (identifier, _, form) in material_table.materials() {
         let Some(slot) = form_slot(form) else { continue; };
         let material_tags: Vec<String> = material_table.tags(identifier);
@@ -121,6 +128,9 @@ mod tests {
         assert!(!is_valid_configuration(&invalid));
         invalid = default.clone();
         invalid.breathable_gas_amount = f32::INFINITY;
+        assert!(!is_valid_configuration(&invalid));
+        invalid = default.clone();
+        invalid.gas_tag_amount = -0.01;
         assert!(!is_valid_configuration(&invalid));
         invalid = default;
         invalid.tags = (0..9).map(|index: i32| index.to_string()).collect();
