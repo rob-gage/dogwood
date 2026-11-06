@@ -3,7 +3,7 @@ title = "World internals"
 description = "Scene-owned streaming and simulation state, its initialization, and its update flow."
 weight = 40
 [extra]
-sources = ["engine_world/src/scenes", "engine_world/src/actors", "engine_world/src/materials"]
+sources = ["engine_world/src/scenes", "engine_world/src/actors", "engine_world/src/materials", "engine_graphics/src/renders/scene_renderer_decorations_pass.rs", "engine_graphics/src/renders/scene_renderer_decoration_field.wgsl", "engine_graphics/src/renders/scene_renderer_decorations.wgsl"]
 +++
 
 This page is for engine contributors. It describes the private state a `Scene` owns, when that state is created, and the internal calls behind `Scene::stream` and `Scene::simulate`. Public contracts are in [Scenes](@/external-api/scenes.md).

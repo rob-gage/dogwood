@@ -3,7 +3,7 @@ title = "Resources and lifetimes"
 description = "How a scene creates, shares, saves, and releases its world resources."
 weight = 50
 [extra]
-sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/pressure", "engine_world/src/scenes/thermal", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/actor_sensing", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/scene_backgrounds.rs", "engine_world/src/scenes/scene_material_surfaces.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl", "engine_host/src/acceleration/accelerator.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting_clear.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cache.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_blocks.wgsl", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl", "engine_world/src/scenes/scene_material_surfaces.rs", "engine_graphics/src/renders/scene_renderer_surface_pass.rs", "engine_graphics/src/renders/scene_renderer_surface.wgsl", "engine_graphics/src/world/materials/material_radiance.rs", "engine_world/src/materials/material_table.rs", "engine_world/src/materials/material_temperature_color.rs", "engine_world/src/scenes/chemistry", "engine_graphics/src/world/scenes/lighting_quality.rs"]
+sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/pressure", "engine_world/src/scenes/thermal", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/actor_sensing", "engine_world/src/scenes/soft_bodies", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/scene_backgrounds.rs", "engine_world/src/scenes/scene_material_surfaces.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl", "engine_host/src/acceleration/accelerator.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting_clear.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cache.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_blocks.wgsl", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl", "engine_world/src/scenes/scene_material_surfaces.rs", "engine_graphics/src/renders/scene_renderer_surface_pass.rs", "engine_graphics/src/renders/scene_renderer_surface.wgsl", "engine_graphics/src/world/materials/material_radiance.rs", "engine_world/src/materials/material_table.rs", "engine_world/src/materials/material_temperature_color.rs", "engine_world/src/scenes/chemistry", "engine_graphics/src/world/scenes/lighting_quality.rs", "engine_graphics/src/renders/scene_renderer_decorations_pass.rs", "engine_graphics/src/renders/scene_renderer_decoration_field.wgsl", "engine_graphics/src/renders/scene_renderer_decorations.wgsl", "engine_graphics/src/world/scenes/scene_graphics_decorations.rs", "engine_world/src/scenes/chunks/chunk_decoration.rs", "engine_world/src/scenes/chunks/chunk_background.rs", "engine_world/src/scenes/scene_backgrounds.rs"]
 +++
 
 This page describes what a `Scene` owns, when its GPU and streaming state is created, the fixed capacity constants, and what happens on save and drop. It is for engine contributors.
@@ -26,7 +26,9 @@ Scene
 ├── Thermal ── fluid heat, collision change lists, conversion list
 ├── Chemistry ── reacting-tile list and indirect dispatch (when reactions exist)
 ├── CellularTiles
-└── ActorSensingPass + three asynchronous result readbacks
+├── ActorSensingPass + three asynchronous result readbacks
+├── SoftBodySamplingPass + asynchronous sample readbacks (after simulation)
+└── SceneRenderer owns decoration pass, atlas batches, and motion-field textures while drawing
 ```
 
 ### Lazy initialization
@@ -91,7 +93,7 @@ These constants are fixed implementation values rather than runtime settings.
 | `COLLISION_RIGID_BODY_CCD_PREDICTION` | 1.0 tile | Prediction distance for moving rigid bodies |
 | `COLLISION_RIGID_BODY_SOLVER_ITERATION_COUNT` | 8 | Extra solver iterations for rigid-body contact islands |
 
-| `COLLISION_RIGID_BODY_COUNT_MAXIMUM` | 1024 | Rigid bodies simulated at once |
+| `COLLISION_RIGID_BODY_COUNT_MAXIMUM` | 8192 | Rigid bodies and soft-body segments simulated at once |
 | `COLLISION_RIGID_BODY_CELLULAR_TILE_COUNT_MAXIMUM` | 16384 | Tiles held across simulated rigid bodies |
 
 ### Defaults and reserved collision groups
@@ -110,8 +112,10 @@ These constants are fixed implementation values rather than runtime settings.
 | `COLLISION_GROUP_CELLULAR_TILE` | `1 << 29` | Solid cells in active cellular tiles |
 | `COLLISION_GROUP_RIGID_BODY` | `1 << 30` | Cellular rigid body collision group |
 | `COLLISION_GROUP_EDIT` | `1 << 31` | Colliders skipped by edit insertion |
+| `COLLISION_GROUP_SOFT_BODY_SOLID` | `1 << 25` | Soft bodies that collide with actors |
+| `COLLISION_GROUP_SOFT_BODY` | `1 << 26` | Soft bodies that do not collide with actors |
 
-Among the collision constants above, only `COLLISION_RIGID_BODY_COUNT_MAXIMUM` and the five `COLLISION_GROUP_*` constants are public; see [collision setup](@/examples/collision-setup.md). The other constants are private.
+`COLLISION_RIGID_BODY_COUNT_MAXIMUM` and all seven `COLLISION_GROUP_*` constants are public. The other collision tuning constants are private; see [collision setup](@/examples/collision-setup.md). Soft-body behavior is documented in [soft bodies](@/internals/simulation/soft-bodies.md).
 
 ## Fluid resources
 

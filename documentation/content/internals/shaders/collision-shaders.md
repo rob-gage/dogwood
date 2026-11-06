@@ -36,7 +36,7 @@ The output is two `u32` words per tile, where bit `y * 8 + x` marks occupancy. T
 
 ## Rigid-body cell pass
 
-`collision_rigid_body.wgsl` exposes five compute entry points, all with 64-thread workgroups: `release`, `rasterize`, `write_cells`, `read_cells`, and `copy_states`.
+`collision_rigid_body.wgsl` exposes five compute entry points, all with 64-thread workgroups: `release`, `rasterize`, `write_cells`, `read_cells`, and `copy_states`. The tile record's `is_stamped` flag makes segment tiles rasterize cells at their transformed centers, preserving thin strands; other rigid-body tiles claim destination cells under their centers.
 
 ### Rigid-body pass bindings
 
@@ -83,7 +83,7 @@ Uniforms occupy six 256-byte slots, for write, return, clear, rasterize, read, a
 
 ### Entry point behaviour
 
-- `rasterize` skips cells holding other static matter. It claims `rigid_body_cells` with compare-exchange, so the first invocation to successfully claim a contested cell wins; the shader does not impose item-order priority. Rigid-body tile cells use a 16-byte record of material, color, radiance, and padding. Rasterization writes those values, velocity, stored pressure, kinematics word, temperature, and amount only into empty cells; dynamic cells stay covered. The cell amount carries damage. It then saves the tile's mask as `previous_cells`.
+- `rasterize` skips cells holding other static matter. Its `claim_cell` helper claims `rigid_body_cells` with compare-exchange, so the first invocation to claim a contested cell wins; the shader does not impose item-order priority. Rigid-body tile cells use a 16-byte record of material, color, radiance, and padding. Rasterization writes those values, velocity, stored pressure, kinematics word, temperature, and amount only into empty cells; dynamic cells stay covered. The cell amount carries damage. It then saves the tile's mask as `previous_cells`.
 - `write_cells` takes `[x, y, new_material, expected_material]` records. It writes only if the cell still holds the expected material and has no rigid-body cell. It zeroes kinematics and stored pressure, zeroes color and radiance when the cell is emptied, and wakes the tile.
 - `read_cells` returns each cell in two `vec4<u32>` values; the second value carries radiance in `.z`, alongside stored pressure bits, kinematics word, temperature bits, and amount.
 - `copy_states` takes `[old_cell, new_cell]` rigid-body tile-cell index pairs and copies the cell state, so a split body's new tiles keep their stored pressure, kinematics word, temperature, and amount. Amount carries damage.

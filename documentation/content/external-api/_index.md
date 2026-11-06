@@ -5,7 +5,7 @@ weight = 3
 sort_by = "weight"
 template = "section.html"
 [extra]
-sources = ["engine/src/lib.rs", "engine/src/games", "engine_world/src/materials/mod.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/actor_sensing/mod.rs", "engine_host/src/lib.rs", "engine_graphics/src/lib.rs", "template/Cargo.toml.template", "documentation/site.sh", "engine_graphics/src/world/materials/material_radiance.rs"]
+sources = ["engine/src/lib.rs", "engine/src/games", "engine_world/src/materials/mod.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/actor_sensing/mod.rs", "engine_world/src/scenes/soft_bodies/mod.rs", "engine_world/src/scenes/chunks/mod.rs", "engine_world/src/scenes/chunks/chunk_decoration.rs", "engine_world/src/scenes/chunks/chunk_background.rs", "engine_world/src/scenes/scene.rs", "engine_host/src/lib.rs", "engine_graphics/src/lib.rs", "template/Cargo.toml.template", "documentation/site.sh", "engine_graphics/src/world/materials/material_radiance.rs"]
 +++
 
 The `engine` crate is the game-facing facade, and this section documents it together with the `editor` crate and the `dogwood` command-line tool. It is for game programmers who write a `Game` and need exact type, method, and module names. New readers should start with [Engine and Game](@/external-api/engine-and-games.md).
@@ -35,7 +35,7 @@ The facade re-exports selected types from the host, graphics, world, and user-in
 | `engine::runtime` | `Engine`, `EngineError` | [Engine and Game](@/external-api/engine-and-games.md) |
 | `engine::actors` | World actor module and its selected exports | [Actors](@/external-api/actors.md), [Actor components](@/external-api/actor-components.md) |
 | `engine::materials` | World material module and its selected exports, including chemical material properties and reaction types | [Materials](@/external-api/materials.md) |
-| `engine::scenes` | `Scene`, `SceneError`, `SceneGenerator`, `ScenePosition`, `SceneRayHit`, `SceneRayTarget`, `SceneRigidBody`, `ScenePawnTether`, `ScenePawnTetherBody`, `SceneActorSensing`, `SceneActorSensingConfiguration`, `SCENE_ACTOR_SENSING_TAG_COUNT_MAXIMUM`, and scene submodules | [Scenes](@/external-api/scenes.md), [Coordinates, tiles, and chunks](@/external-api/world-storage.md), [Collisions and edits](@/external-api/collisions-and-edits.md), [Actor sensing](@/internals/simulation/actor-sensing.md) |
+| `engine::scenes` | `Scene`, `SceneError`, `SceneGenerator`, `ScenePosition`, `SceneRayHit`, `SceneRayTarget`, `SceneRigidBody`, `ScenePawnTether`, `ScenePawnTetherBody`, `SceneActorSensing`, `SceneActorSensingConfiguration`, `SCENE_ACTOR_SENSING_TAG_COUNT_MAXIMUM`, and scene submodules including `soft_bodies` | [Scenes](@/external-api/scenes.md), [Coordinates, tiles, and chunks](@/external-api/world-storage.md), [Collisions and edits](@/external-api/collisions-and-edits.md), [Soft bodies](@/internals/simulation/soft-bodies.md) |
 | `engine::system_events` | Keyboard, mouse, and window events; `KeyCode`, `PhysicalKey` | [Host types](@/external-api/host.md) |
 | `engine::Accelerator`, `engine::AcceleratorError` | GPU context and initialization error | [Host types](@/external-api/host.md) |
 | `engine::Processor`, `engine::ProcessorConfiguration`, `engine::ProcessorError` | Named CPU pools and configuration | [Host types](@/external-api/host.md) |
@@ -48,7 +48,7 @@ The facade re-exports selected types from the host, graphics, world, and user-in
 
 - **Not re-exported:** `engine_host::windows` and `engine_graphics::renders`. Depend on those crates directly if you need them; see [Host types](@/external-api/host.md) for `engine_host::windows` and [Graphics](@/external-api/graphics.md) for `engine_graphics::renders`.
 - **Graphics modules:** `engine_graphics` also has `sprites` and `world` modules beyond the facade's `SpriteSheet` and material graphics re-exports.
-- **Scene submodules:** `engine::scenes` also exposes `cellular_tiles`, `chunks`, `collisions`, `edits`, and `kinematics`. Some of their public types are engine-internal.
+- **Scene submodules:** `engine::scenes` also exposes `cellular_tiles`, `chunks`, `collisions`, `edits`, `kinematics`, and `soft_bodies`. Some of their public types are engine-internal.
 
 ## Rustdoc
 

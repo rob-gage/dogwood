@@ -3,7 +3,7 @@ title = "Scene update pipeline"
 description = "The ordered streaming and simulation stages performed by a scene update."
 weight = 20
 [extra]
-sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/pressure", "engine_world/src/scenes/chemistry", "engine_world/src/scenes/thermal", "engine_world/src/scenes/actor_sensing", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/scene_backgrounds.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_pass.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/collision_cellular_tile_pass.rs", "engine_world/src/scenes/collisions/collision_rigid_body.wgsl"]
+sources = ["engine_world/src/scenes/fluids", "engine_world/src/scenes/pressure", "engine_world/src/scenes/chemistry", "engine_world/src/scenes/thermal", "engine_world/src/scenes/actor_sensing", "engine_world/src/scenes/soft_bodies", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/scene_backgrounds.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_streaming_state.rs", "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_pass.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/collision_cellular_tile_pass.rs", "engine_world/src/scenes/collisions/collision_rigid_body.wgsl", "engine_graphics/src/renders/scene_renderer_decorations_pass.rs", "engine_graphics/src/renders/scene_renderer_decoration_field.wgsl", "engine_world/src/scenes/chunks/chunk_decoration.rs"]
 +++
 
 This page defines the ordered work inside `Scene::stream` and `Scene::simulate`. The [frame lifecycle](@/architecture/frame-lifecycle.md) calls both after `Game::update`; rendering is a separate redraw operation.
@@ -21,7 +21,8 @@ Scene::stream
 Scene::simulate (when an active region exists)
   cellular kinematics using prior body state and prior fluid raster
   poll completed fluid actor feedback
-  collision / pawn movement / Rapier step / rigid-body rasterization
+  collision / pawn movement / Rapier step / soft-body terrain settling
+  prepare and rasterize rigid-body and soft-body segment cells
   fluid particles using current tile geometry and shared actor records
   gas using current tile geometry, the new fluid raster, and shared actor records
   thermal conduction and transition collection
@@ -29,10 +30,13 @@ Scene::simulate (when an active region exists)
   collision-owned changed-cell copies for the next update
   mark outgoing particle export submitted
   poll actor sensing readbacks without waiting; dispatch and copy this step's actor samples
+  poll prior soft-body samples; sample the finished cells with asynchronous readback
 
 Scene::graphics -> renderer compute shading -> scene draw -> UI -> present
   renderer prepares surface field -> static background batches -> gameplay draw
 ```
+
+Soft-body settling, cell preparation, and environment sampling are detailed in [soft bodies](@/internals/simulation/soft-bodies.md). Decoration background data is generated after its chunk, and its motion field is computed during rendering; see [chunk decorations](@/internals/rendering/decorations.md).
 
 ## Streaming order
 
@@ -55,7 +59,7 @@ When the active region is resident, `Scene::simulate` runs these steps in order.
 3. **Poll fluid actor feedback.** `Scene` polls completed fluid actor samples using the actor identities and collision settings from their submission before calling collision.
 4. **Read changed cells.** Collision consumes its prior asynchronous changed-cell copy and updates affected voxel colliders and rigid-body topology.
 5. **Apply collision topology and occupancy.** Collision applies detached-cell results and detached groups whose asynchronous material reads have arrived. Static occupancy is read when region/ring changes or edits request it; edit changed-cell reads and required occupancy reads can block. Settled dynamic occupancy uses completed snapshots, falling back to a blocking read when no matching snapshot exists. Collision updates voxel colliders, releases bodies outside the region, applies cellular and fluid impulses to rigid bodies, and updates actors and pawns using prior contacts.
-6. **Step Rapier and rasterize.** Pawn movement and Rapier advance actors and rigid bodies. Collision rasterizes rigid bodies into cellular tile buffers, retaining per-cell stored pressure and amount through rasterization and splits. Amount carries damage. It requests detached-cell GPU copies for a later collision step.
+6. **Step Rapier, settle soft bodies, and rasterize.** Pawn movement and Rapier advance actors and rigid bodies; soft-body particles are settled against terrain afterward. Collision rasterizes rigid bodies and soft-body segments into cellular tile buffers, retaining per-cell stored pressure and amount through rasterization and splits. Amount carries damage. It requests detached-cell GPU copies for a later collision step. See [soft bodies](@/internals/simulation/soft-bodies.md).
 7. **Simulate fluid particles.** The solver consumes queued edits/imports and raster-contact deltas, converts due fluid transitions and cells or gases listed by the preceding thermal tick, then predicts, solves, and updates particles against current cellular and rasterized rigid-body geometry. The first `predict` substep reads previous-tick pressure and applies pressure push. The solver rebuilds the fluid raster and queues actor/count feedback. A result copied in tick N is consumed starting in N+1; actor feedback waits only for its copy submission when a response is needed.
 8. **Measure pressure volume.** `PressureCellularTilePass` measures open volume and actor drag. It measures the full ring when the region or ring offset changes; otherwise `volume_collect` lists only tiles that may have changed: tiles whose cellular cells changed or were simulated this tick, tiles awake from edits, streaming, or moving gas, tiles near fluid or dragging actors at the last measurement, and tiles within an actor's drag range.
 9. **Collect pressure work.** `collect`, `clear`, `collect_blocks`, and `prepare` build sparse dispatches for awake pressure tiles, their neighbors, and the blocks of 2×2 tiles holding them.
@@ -65,7 +69,7 @@ When the active region is resident, `Scene::simulate` runs these steps in order.
 13. **Simulate thermal conduction and reactions.** Thermal records `collect`, `clear`, and `prepare`, then chemistry tile selection, reaction preparation, and reaction work, then thermal `step` and `apply`. Reaction heat and products therefore participate in this thermal step.
 14. **Apply fluid particle heat.** The fluid pass applies the thermal temperature changes and chemistry consumption to particles.
 15. **Request changed-cell copies.** `Collision::request_changed_cells` copies thermal and collision changes without waiting. Collision reads them next tick. The scene marks a particle export submitted only after successful fluid simulation.
-16. **Sense actors.** `ActorSensingPass` first polls a completed readback without waiting, then dispatches `actor_sensing.wgsl` over cellular tile actor records and copies this step's results into an available slot. It skips the copy if all three slots are in flight. Results are consumed on a later simulation step; sensing is last and does not feed back into this step. See [actor sensing](@/internals/simulation/actor-sensing.md) for cell rules and result latency.
+16. **Sense actors and soft bodies.** `ActorSensingPass` polls without waiting, dispatches actor sensing, and copies results into an available slot. The soft-body sampling pass likewise reads a completed sample without waiting, then samples the finished cells and fluid raster for a later step. Each skips its copy when all staging slots are in flight; neither feeds back into this step. See [actor sensing](@/internals/simulation/actor-sensing.md) and [soft bodies](@/internals/simulation/soft-bodies.md).
 
 ## Ownership
 

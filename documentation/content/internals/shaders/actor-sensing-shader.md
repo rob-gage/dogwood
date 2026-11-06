@@ -1,9 +1,9 @@
 +++
 title = "Actor sensing shader"
-description = "GPU bindings and result layout for actor cell sensing."
+description = "GPU bindings and result layout for actor cell sensing and soft-body environment sampling."
 weight = 65
 [extra]
-sources = ["engine_world/src/scenes/actor_sensing/actor_sensing.wgsl", "engine_world/src/scenes/actor_sensing/actor_sensing_pass.rs", "engine_world/src/scenes/actor_sensing/mod.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_pass.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_buffers.rs", "engine_world/src/scenes/fluids/fluid_particle.wgsl", "engine_world/src/scenes/thermal/thermal_cellular_tile.wgsl", "engine_world/src/scenes/pressure/mod.rs"]
+sources = ["engine_world/src/scenes/actor_sensing/actor_sensing.wgsl", "engine_world/src/scenes/actor_sensing/actor_sensing_pass.rs", "engine_world/src/scenes/actor_sensing/mod.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_pass.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile_buffers.rs", "engine_world/src/scenes/fluids/fluid_particle.wgsl", "engine_world/src/scenes/thermal/thermal_cellular_tile.wgsl", "engine_world/src/scenes/pressure/mod.rs", "engine_world/src/scenes/soft_bodies/soft_body_sampling.wgsl", "engine_world/src/scenes/soft_bodies/soft_body_sampling_pass.rs"]
 +++
 
 `ActorSensingPass` runs `sense` once per cellular tile actor record at the end of `Scene::simulate`. Each workgroup scans cell centers near one actor, using the active region and toroidal ring offset to address cellular and fluid buffers. The [actor sensing page](@/internals/simulation/actor-sensing.md) describes the public counts and configuration.
@@ -33,3 +33,7 @@ All resources are in group 0.
 For touching cells, cellular and fluid masks retain their existing selection and rigid-body exclusions. Eligible gas species masks are ORed into that cell's mask when their individual amount reaches `gas_tag_amount`; gas tags are counted even in rigid-body cells and cells inside an actor collider. For touching or breathing-band cells, valid shared temperatures and published pressures update the two maxima. The shared temperature already includes the thermal pass's exchange with rasterized fluid heat. For breathing-band cells, the pass counts breathability only when there is no matter or rigid-body cell, fluid coverage is below `DROWNING_COVERAGE` (0.5), and the sum of species amounts is within the configured gas limit.
 
 The Rust pass clears the result words, dispatches the compute work, and copies the active actor records into one of three asynchronous readback slots. A full set of slots skips the copy without blocking. Result words are decoded as little-endian `u32` values on a later nonblocking poll. See [GPU synchronization](@/architecture/concurrency-and-gpu-sync.md#gpu-readbacks).
+
+## Soft-body environment sampling
+
+`soft_body_sampling.wgsl` samples up to `SOFT_BODY_SAMPLE_COUNT_MAXIMUM` particle neighborhoods from cell matter, pressure, gas and fluid data, and material tag masks. Ten result words per sample encode temperature, pressure and gradient, gas velocity, fluid coverage and velocity, and tag mask. `SoftBodySamplingPass` reads prior copies without waiting and queues this step's sample copy for later use; see [soft bodies](@/internals/simulation/soft-bodies.md).

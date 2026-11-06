@@ -3,10 +3,10 @@ title = "Collisions and edits"
 description = "Public collider and edit data types, reserved collision groups, and engine-managed simulation APIs."
 weight = 80
 [extra]
-sources = ["engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/collisions/collider.rs", "engine_world/src/scenes/collisions/collider_shape.rs", "engine_world/src/scenes/collisions/collision_body.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/actors/components/actor_collision.rs", "engine_world/src/actors/components/actor_contact.rs", "engine_world/src/scenes/edits/edit.rs", "engine_world/src/scenes/edits/edit_mode.rs", "engine_world/src/scenes/edits/edit_error.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine_world/src/scenes/edits/mod.rs", "engine_world/src/scenes/cellular_tiles/mod.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/collisions/collision_cellular_tile.rs", "engine_world/src/scenes/collisions/collision_rigid_body_pass.rs", "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs", "engine/src/lib.rs"]
+sources = ["engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/soft_bodies/mod.rs", "engine_world/src/scenes/soft_bodies", "engine_world/src/scenes/collisions/collider.rs", "engine_world/src/scenes/collisions/collider_shape.rs", "engine_world/src/scenes/collisions/collision_body.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/actors/components/actor_collision.rs", "engine_world/src/actors/components/actor_contact.rs", "engine_world/src/scenes/edits/edit.rs", "engine_world/src/scenes/edits/edit_mode.rs", "engine_world/src/scenes/edits/edit_error.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine_world/src/scenes/edits/mod.rs", "engine_world/src/scenes/cellular_tiles/mod.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/collisions/collision_cellular_tile.rs", "engine_world/src/scenes/collisions/collision_rigid_body_pass.rs", "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs", "engine/src/lib.rs"]
 +++
 
-This page covers the colliders actors attach to the physics world and the `Edit` API for changing cells. It also lists the public collision and cellular tile simulation types that games do not manage. The collision types are under `engine::scenes::collisions`.
+This page covers actor colliders, edits, and collision-group constants. `engine::scenes::soft_bodies` exposes soft-body types; `Scene` provides spawn, query, tear, and control methods. See [soft bodies](@/internals/simulation/soft-bodies.md) for their API and simulation behavior.
 
 `Scene::raycast` queries the current broad phase with a collision-group mask. Ray directions are normalized internally, and distances are measured in tiles. A ray starting inside a solid reports a zero-distance hit. Terrain results identify the solid cell; actor and rigid-body hits identify their owner. Settled dynamic cells can be selected with `COLLISION_GROUP_CELLULAR_DYNAMIC`. See [scene queries](@/external-api/scenes.md).
 
@@ -42,13 +42,15 @@ The high five group bits are reserved by the engine:
 
 | Constant | Bit | Reserved use |
 |---|---:|---|
+| `COLLISION_GROUP_SOFT_BODY` | 26 | Soft bodies that do not collide with actors |
 | `COLLISION_GROUP_CELLULAR_DYNAMIC` | 27 | Settled dynamic cells; they interact only with cellular rigid bodies, and actor filters do not enable collisions with this group |
 | `COLLISION_GROUP_ACTOR` | 28 | Actor colliders |
 | `COLLISION_GROUP_CELLULAR_TILE` | 29 | Solid cells in active cellular tiles |
 | `COLLISION_GROUP_RIGID_BODY` | 30 | Cellular rigid bodies |
 | `COLLISION_GROUP_EDIT` | 31 | Colliders excluded by `EditMode::Insert` |
+| `COLLISION_GROUP_SOFT_BODY_SOLID` | 25 | Soft bodies that collide with actors |
 
-`COLLISION_RIGID_BODY_COUNT_MAXIMUM` limits detached cellular rigid bodies to 1024; actor rigid bodies do not use this pool. Other capacity values are private implementation constants.
+`COLLISION_RIGID_BODY_COUNT_MAXIMUM` is 8192 for cellular rigid bodies and soft-body segments; actor rigid bodies do not use this pool. Both soft-body group constants are public. Other capacity values are private implementation constants.
 
 ## Edits
 

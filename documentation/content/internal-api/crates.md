@@ -38,7 +38,7 @@ Engine crates pin external versions with `=version`; `cli` and `engine_host`'s `
 | Group | Crates and versions |
 |---|---|
 | GPU and windowing | `wgpu` 30.0.0, `winit` 0.30.13, `pollster` 0.4.0 |
-| Simulation | `bevy_ecs` 0.20.0, `rapier2d` 0.35.3, `rayon` 1.12.0 |
+| Simulation | `bevy_ecs` 0.20.0, `rapier2d` 0.36.1, `rayon` 1.12.0 |
 | Graphics and UI | `image` 0.25.10, `taffy` 0.14.0, `egui`, `egui-winit`, `egui-wgpu`, and `egui_extras` 0.36.2; `egui_dock` 0.21.1 |
 | CLI | `clap` 4.6.7, `home` 0.5.12, `include_dir` 0.7.4, `semver` 1.0.28, `serde_json` 1.0.151, `which` 8.0.6 |
 

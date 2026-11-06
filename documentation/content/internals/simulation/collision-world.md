@@ -3,16 +3,18 @@ title = "Rapier collision world"
 description = "How Collision maintains Rapier state, synchronizes actors and voxel colliders, and advances one fixed step."
 weight = 40
 [extra]
-sources = ["engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/collision_rigid_body_pass.rs", "engine_world/src/scenes/collisions/collision_rigid_body.wgsl", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/actors/components/actor_kinematics_rotation.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/scene.rs", "engine/src/lib.rs", "engine_world/src/actors/components/actor_identity.rs", "engine_world/src/actors/components/actor_kinematics_position.rs", "engine_world/src/actors/components/actor_collision.rs", "engine_world/src/actors/components/actor_contact.rs", "engine_world/src/scenes/scene_position.rs"]
+sources = ["engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/collisions/collision_rigid_body_pass.rs", "engine_world/src/scenes/collisions/collision_rigid_body.wgsl", "engine_world/src/scenes/collisions/mod.rs", "engine_world/src/scenes/soft_bodies", "vendor/rapier2d", "engine_world/src/actors/components/actor_kinematics_rotation.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/scene.rs", "engine/src/lib.rs", "engine_world/src/actors/components/actor_identity.rs", "engine_world/src/actors/components/actor_kinematics_position.rs", "engine_world/src/actors/components/actor_collision.rs", "engine_world/src/actors/components/actor_contact.rs", "engine_world/src/scenes/scene_position.rs"]
 +++
 
 This page is for engine contributors. It describes the `Collision` struct, its Rapier configuration, and the order of work in one fixed step. See {{ <rustdoc path="engine/scenes/collisions/struct.Collision.html" text="Collision" /> }}.
 
-`Collision` owns the Rapier 2D pipeline and its world state: rigid bodies and colliders, island and broad/narrow phase managers, joints, the CCD solver, and fixed-step integration parameters. Scene raycasts create lightweight query views over this existing broad phase; they do not rebuild a separate collision world. It also owns:
+`Collision` owns the Rapier 2D pipeline and its world state: rigid bodies, soft bodies, and colliders, island and broad/narrow phase managers, joints, the CCD solver, and fixed-step integration parameters. Dogwood uses the vendored `rapier2d` 0.36.1 source in `vendor/rapier2d`, including its voxel contact patch for soft bodies. Scene raycasts create lightweight query views over this existing broad phase; they do not rebuild a separate collision world. It also owns:
 
 - the actor-to-Rapier handles;
 - the static-cell collider and a separate settled-dynamic-cell collider;
 - the GPU passes that read tile occupancy and rasterize cellular rigid bodies.
+
+Soft bodies add Rapier particles and edges alongside these systems, with static-cell segments rasterized through the cellular rigid-body pass. Their terrain, cell cuts, and environment sampling are described in [soft bodies](@/internals/simulation/soft-bodies.md).
 
 `Scene::simulate` creates `Collision` during simulation when an active region is ready.
 
