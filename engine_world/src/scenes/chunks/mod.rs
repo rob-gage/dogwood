@@ -2,6 +2,7 @@
 
 mod chunk;
 mod chunk_background;
+mod chunk_decoration;
 mod chunk_data;
 mod chunk_coordinates;
 mod chunk_error;
@@ -17,6 +18,7 @@ pub use chunk::{
     ChunkFluidParticle,
 };
 pub use chunk_background::{ChunkBackground, ChunkBackgroundSprite, ChunkBackgroundUpload};
+pub use chunk_decoration::ChunkDecoration;
 pub use chunk_data::ChunkData;
 pub use chunk_coordinates::ChunkCoordinates;
 pub use chunk_error::ChunkError;

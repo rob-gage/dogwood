@@ -2,6 +2,7 @@
 
 use super::{
     SceneGraphicsCellular,
+    SceneGraphicsDecorations,
     SceneGraphicsFluid,
     SceneGraphicsGas,
     SceneGraphicsLighting,
@@ -38,6 +39,8 @@ pub struct SceneGraphics<'a> {
     pub parallax: Vec<super::SceneGraphicsParallax<'a>>,
     /// Static world-aligned batches drawn after `parallax` and before gameplay
     pub parallax_batches: Vec<SceneGraphicsParallaxBatch<'a>>,
+    /// Composed plants, drawn around the gameplay plane
+    pub decorations: Option<SceneGraphicsDecorations<'a>>,
     /// Art of the materials that show a surface where they meet open space
     pub material_surfaces: Option<SceneGraphicsMaterialSurfaces<'a>>,
     /// Whether material edges are drawn: surface art, its color shift, and contact shadows

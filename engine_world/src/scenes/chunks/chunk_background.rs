@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+use super::ChunkDecoration;
+
 /// Image and sprites generated behind one chunk, never saved
 #[derive(Clone, Debug, Default)]
 pub struct ChunkBackground {
@@ -8,6 +10,8 @@ pub struct ChunkBackground {
     pub image: Option<Vec<u32>>,
     /// Sprites from the scene's background sprite sheet
     pub sprites: Vec<ChunkBackgroundSprite>,
+    /// Art from the scene's decoration atlas, drawn around the gameplay plane
+    pub decorations: Vec<ChunkDecoration>,
 }
 
 /// One sprite of a chunk's background
@@ -39,6 +43,8 @@ pub struct ChunkBackgroundUpload {
     pub image: Option<Vec<u8>>,
     /// Sprites from the scene's background sprite sheet
     pub sprites: Vec<ChunkBackgroundSprite>,
+    /// Art from the scene's decoration atlas, drawn around the gameplay plane
+    pub decorations: Vec<ChunkDecoration>,
 }
 
 impl ChunkBackgroundUpload {
@@ -54,7 +60,7 @@ impl ChunkBackgroundUpload {
                 }
                 bytes
             });
-        Self { image, sprites: background.sprites }
+        Self { image, sprites: background.sprites, decorations: background.decorations }
     }
 
 }

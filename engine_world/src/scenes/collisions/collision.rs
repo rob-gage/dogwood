@@ -1469,6 +1469,11 @@ impl Collision {
         physical_tiles
     }
 
+    /// Returns every actor with a collision body
+    pub(crate) fn actors(&self) -> impl Iterator<Item = Actor> + '_ {
+        self.actors.keys().copied()
+    }
+
     /// Returns the cellular tile whose bottom-left corner is the origin of every Rapier position
     pub fn origin(&self) -> CellularTileCoordinates { self.origin }
 

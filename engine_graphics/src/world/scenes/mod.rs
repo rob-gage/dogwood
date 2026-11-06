@@ -1,6 +1,7 @@
 // Copyright Rob Gage 2026
 
 mod scene_graphics;
+mod scene_graphics_decorations;
 mod scene_graphics_parallax;
 mod scene_graphics_parallax_batch;
 mod scene_graphics_material_surfaces;
@@ -15,6 +16,11 @@ mod scene_graphics_temperature;
 mod scene_graphics_sprites;
 
 pub use scene_graphics::SceneGraphics;
+pub use scene_graphics_decorations::{
+    SceneGraphicsDecorationBatch,
+    SceneGraphicsDecorationMover,
+    SceneGraphicsDecorations,
+};
 pub use scene_graphics_parallax::{ParallaxRepeat, SceneGraphicsParallax};
 pub use scene_graphics_parallax_batch::SceneGraphicsParallaxBatch;
 pub use scene_graphics_material_surfaces::SceneGraphicsMaterialSurfaces;

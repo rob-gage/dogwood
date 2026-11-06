@@ -95,6 +95,7 @@ impl Fixture {
             }),
             parallax: Vec::new(),
             parallax_batches: Vec::new(),
+            decorations: None,
             material_surfaces: None,
             material_edges: false,
             sprites: Default::default(),

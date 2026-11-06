@@ -1165,8 +1165,6 @@ impl ChunkStreamingState {
                 world_seed,
                 material_table,
             } => {
-                let background: Option<ChunkBackgroundUpload> =
-                    Self::stream_background(generator.as_ref(), coordinates, world_seed);
                 let result: Result<Chunk, SceneError> = match catch_unwind(AssertUnwindSafe(|| {
                     generator.generate_chunk(coordinates, world_seed)
                         .map(|chunk| Self::stream_chunks_color_cells(chunk, &material_table))
@@ -1185,6 +1183,9 @@ impl ChunkStreamingState {
                         error: Arc::new(io::Error::other("Chunk generator panicked")),
                     }),
                 };
+                // after the chunk, whose generation may have worked out what its background shows
+                let background: Option<ChunkBackgroundUpload> =
+                    Self::stream_background(generator.as_ref(), coordinates, world_seed);
                 ChunkStreamingResponse::Generated {
                     coordinates,
                     streaming_request_identifier,

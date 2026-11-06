@@ -2,6 +2,7 @@
 
 mod scene_renderer;
 mod scene_renderer_cellular_pass;
+mod scene_renderer_decorations_pass;
 mod scene_renderer_parallax_batches_pass;
 mod scene_renderer_surface_pass;
 mod scene_renderer_fluid_pass;

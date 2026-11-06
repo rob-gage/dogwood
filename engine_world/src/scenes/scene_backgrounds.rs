@@ -5,6 +5,7 @@ use super::{
     chunks::{
         ChunkBackgroundSprite,
         ChunkBackgroundUpload,
+        ChunkDecoration,
         ChunkCoordinates,
         ChunkStreamingState,
         CHUNK_SIZE,
@@ -13,7 +14,7 @@ use super::{
 };
 use engine_graphics::{
     sprites::SpriteSheet,
-    world::scenes::SceneGraphicsParallaxBatch,
+    world::scenes::{SceneGraphicsDecorationBatch, SceneGraphicsParallaxBatch},
 };
 use engine_host::acceleration::Accelerator;
 use std::{
@@ -34,6 +35,8 @@ struct ResidentBackground {
     image: Option<wgpu::TextureView>,
     /// Instances of the chunk's sprites and their number
     sprites: Option<(wgpu::Buffer, u32)>,
+    /// Instances of the chunk's decorations, back layer first, and the number in each layer
+    decorations: Option<(wgpu::Buffer, u32, u32)>,
 }
 
 /// Uploaded backgrounds of a scene's resident chunks, drawn as static batches so that thousands of
@@ -41,6 +44,8 @@ struct ResidentBackground {
 pub struct SceneBackgrounds {
     /// Sheet of every sprite in the backgrounds
     sprite_sheet: Option<Arc<SpriteSheet>>,
+    /// Atlas of every decoration
+    decoration_atlas: Option<Arc<SpriteSheet>>,
     /// Radiance of backgrounds, which emit no light
     black: Option<SpriteSheet>,
     /// Backgrounds by chunk
@@ -57,6 +62,7 @@ impl SceneBackgrounds {
     pub fn new() -> Self {
         Self {
             sprite_sheet: None,
+            decoration_atlas: None,
             black: None,
             residents: HashMap::new(),
             free_images: Vec::new(),
@@ -67,6 +73,47 @@ impl SceneBackgrounds {
     /// Sets the sheet of background sprites
     pub fn set_sprite_sheet(&mut self, sprite_sheet: Arc<SpriteSheet>) {
         self.sprite_sheet = Some(sprite_sheet);
+    }
+
+    /// Sets the atlas of decorations
+    pub fn set_decoration_atlas(&mut self, atlas: Arc<SpriteSheet>) {
+        self.decoration_atlas = Some(atlas);
+    }
+
+    /// Returns the view of the atlas of decorations
+    pub fn decoration_atlas(&self) -> Option<&wgpu::TextureView> {
+        self.decoration_atlas.as_ref().map(|atlas| atlas.texture_view())
+    }
+
+    /// Returns the decorations of the chunks a camera can see, in tiles relative to it
+    pub fn decoration_batches(
+        &self,
+        camera_position: ScenePosition,
+        visible_width: f32,
+        visible_height: f32,
+    ) -> Vec<SceneGraphicsDecorationBatch<'_>> {
+        let tiles_per_chunk: i64 = CHUNK_SIZE / CELLULAR_TILE_SIZE;
+        let chunk: f64 = tiles_per_chunk as f64;
+        let half_width: f64 = f64::from(visible_width) * 0.5 + SCENE_BACKGROUND_OVERHANG;
+        let half_height: f64 = f64::from(visible_height) * 0.5 + SCENE_BACKGROUND_OVERHANG;
+        self.residents.iter().filter_map(|(coordinates, resident)| {
+            let (buffer, back_count, front_count) = resident.decorations.as_ref()?;
+            let (x, y): (f64, f64) = ScenePosition {
+                tile_x: i64::from(coordinates.x) * tiles_per_chunk,
+                tile_y: i64::from(coordinates.y) * tiles_per_chunk,
+                offset_x: 0,
+                offset_y: 0,
+            }.relative_position(camera_position);
+            if x > half_width || x + chunk < -half_width || y > half_height || y + chunk < -half_height {
+                return None;
+            }
+            Some(SceneGraphicsDecorationBatch {
+                buffer,
+                back_count: *back_count,
+                front_count: *front_count,
+                origin: [x as f32, y as f32],
+            })
+        }).collect()
     }
 
     /// Uploads a few waiting backgrounds, nearest the camera first, and drops those of unloaded
@@ -154,7 +201,18 @@ impl SceneBackgrounds {
         if self.black.is_none() {
             self.black = SpriteSheet::from_color(accelerator, 0, 0, 0, 255).ok();
         }
-        ResidentBackground { image, sprites }
+        let decorations: Option<(wgpu::Buffer, u32, u32)> = (!background.decorations.is_empty())
+            .then(|| {
+                let mut bytes: Vec<u8> =
+                    Vec::with_capacity(background.decorations.len() * ChunkDecoration::BYTE_COUNT);
+                let (front, back): (Vec<&ChunkDecoration>, Vec<&ChunkDecoration>) =
+                    background.decorations.iter().partition(|decoration| decoration.is_front);
+                for decoration in back.iter().chain(front.iter()) {
+                    bytes.extend_from_slice(&decoration.instance_bytes());
+                }
+                (instance_buffer(accelerator, &bytes), back.len() as u32, front.len() as u32)
+            });
+        ResidentBackground { image, sprites, decorations }
     }
 
     /// Returns the batches of the chunks a camera can see, every image before every sprite so that

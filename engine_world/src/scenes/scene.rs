@@ -17,7 +17,7 @@ use super::{
         ChunkRegionIndex,
         ChunkStreamingState,
     },
-    collisions::Collision,
+    collisions::{Collider, Collision, ColliderShape},
     edits::{
         Edit,
         EditError,
@@ -80,6 +80,8 @@ use engine_graphics::world::scenes::{
     LightingQuality,
     SceneGraphics,
     SceneGraphicsCellular,
+    SceneGraphicsDecorationMover,
+    SceneGraphicsDecorations,
     SceneGraphicsFluid,
     SceneGraphicsGas,
     SceneGraphicsLight,
@@ -218,6 +220,8 @@ pub struct Scene {
     actor_sensing_pass: Option<ActorSensingPass>,
     /// Newest completed sensing of each sensed actor
     actor_sensing: HashMap<Actor, SceneActorSensing>,
+    /// Simulation steps so far, the clock of decoration motion
+    simulated_ticks: u64,
     /// Resolution used to calculate radiance cascade lighting
     lighting_quality: LightingQuality,
     /// ECS world and fixed-tick systems of every live actor
@@ -269,6 +273,7 @@ impl Scene {
             actor_sensing_configuration: SceneActorSensingConfiguration::default(),
             actor_sensing_pass: None,
             actor_sensing: HashMap::new(),
+            simulated_ticks: 0,
             lighting_quality: LightingQuality::High,
             actor_registry: ActorRegistry::new(),
             material_table: Arc::new(material_table),
@@ -929,6 +934,7 @@ impl Scene {
             cellular_tile_streaming_state.cellular_tile_ring_offset(),
             &sensed_actor_records,
         );
+        self.simulated_ticks += 1;
         if let Some((streaming_request_identifier, _)) = particle_export_target {
             self.cellular_tile_streaming_state.as_mut()
                 .expect("tile streaming state exists after simulation")
@@ -1051,6 +1057,18 @@ impl Scene {
                 camera.visible_width(),
                 camera.visible_height(),
             ),
+            decorations: self.backgrounds.decoration_atlas().map(|atlas| {
+                SceneGraphicsDecorations {
+                    atlas,
+                    batches: self.backgrounds.decoration_batches(
+                        camera_position,
+                        camera.visible_width(),
+                        camera.visible_height(),
+                    ),
+                    movers: self.decoration_movers(camera_position),
+                    time: self.simulated_ticks as f32 / 60.0,
+                }
+            }),
             material_surfaces: self.material_surfaces.as_ref()
                 .map(SceneMaterialSurfaces::graphics),
             material_edges: self.material_edges,
@@ -1099,6 +1117,41 @@ impl Scene {
                     .collect(),
             },
         })
+    }
+
+    /// Returns the bounds and velocities of the actors nearest a camera, which push the motion field
+    /// that decorations read, in tiles and tiles per second relative to it
+    fn decoration_movers(&self, camera_position: ScenePosition) -> [SceneGraphicsDecorationMover; 8] {
+        let mut movers: [SceneGraphicsDecorationMover; 8] = Default::default();
+        let Some(collision) = self.collision.as_ref() else { return movers; };
+        let mut nearest: Vec<(f32, SceneGraphicsDecorationMover)> = collision.actors()
+            .filter_map(|actor| {
+                let position: ScenePosition = self.actor_registry
+                    .component::<ActorKinematicsPositionComponent>(actor).ok()?.position;
+                let collider: &Collider = &self.actor_registry
+                    .component::<ActorCollisionComponent>(actor).ok()?.collider;
+                let (x, y): (f64, f64) = position.relative_position(camera_position);
+                let half_size: [f32; 2] = match collider.shape {
+                    ColliderShape::Circle { radius } => [radius, radius],
+                    ColliderShape::Rectangle { width, height }
+                    | ColliderShape::Capsule { width, height } => [width * 0.5, height * 0.5],
+                };
+                let position: [f32; 2] = [x as f32 + collider.offset_x, y as f32 + collider.offset_y];
+                Some((position[0] * position[0] + position[1] * position[1], SceneGraphicsDecorationMover {
+                    position,
+                    half_size,
+                    velocity: collision.pawn_velocity(actor).unwrap_or([0.0, 0.0]),
+                }))
+            })
+            .collect();
+        nearest.sort_by(|a, b| a.0.total_cmp(&b.0));
+        for (mover, (_, record)) in movers.iter_mut().zip(nearest) { *mover = record; }
+        movers
+    }
+
+    /// Sets the atlas of the decorations in chunk backgrounds
+    pub fn set_decoration_atlas(&mut self, atlas: Arc<SpriteSheet>) {
+        self.backgrounds.set_decoration_atlas(atlas);
     }
 
     /// Returns the resident active region relative to a camera, or `None` before it streams

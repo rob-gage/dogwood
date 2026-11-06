@@ -1,5 +1,6 @@
 // Copyright Rob Gage 2026
 
+use super::scene_renderer_decorations_pass::SceneRendererDecorationsPass;
 use super::{
     scene_renderer_cellular_pass::SceneRendererCellularPass,
     scene_renderer_fluid_pass::SceneRendererFluidPass,
@@ -65,6 +66,8 @@ pub struct SceneRenderer {
     parallax_batches_pass: SceneRendererParallaxBatchesPass,
     /// Computation of how exposed each visible cell is
     surface_pass: SceneRendererSurfacePass,
+    /// Renderer of composed plants and the motion field they bend with
+    decorations_pass: SceneRendererDecorationsPass,
     /// Renderer of resident cellular tiles
     cellular_pass: SceneRendererCellularPass,
     /// Renderer of sprites with nonnegative depth, drawn above cellular content
@@ -89,6 +92,7 @@ impl SceneRenderer {
             overlay_pass: SceneRendererOverlayPass::new(accelerator),
             parallax_batches_pass: SceneRendererParallaxBatchesPass::new(accelerator, lighting),
             surface_pass: SceneRendererSurfacePass::new(accelerator),
+            decorations_pass: SceneRendererDecorationsPass::new(accelerator, lighting),
             cellular_pass: SceneRendererCellularPass::new(accelerator, lighting),
             above_cellular_sprites_pass:
                 SceneRendererSpritesPass::new(accelerator, 0..=i32::MAX, lighting),
@@ -321,6 +325,24 @@ impl SceneRenderer {
                 matter_buffer.expect("gas graphics are drawn only with resident temperatures"),
             );
         }
+        if let (Some(decorations), Some(cellular), Some(gas), Some(matter)) =
+            (graphics.decorations.as_ref(), cellular_graphics, gas_graphics, matter_buffer)
+        {
+            self.decorations_pass.prepare(
+                accelerator,
+                format,
+                viewport_width,
+                viewport_height,
+                pixels_per_tile,
+                graphics.cell_grid_origin,
+                decorations,
+                cellular,
+                gas,
+                matter,
+            );
+        } else {
+            self.decorations_pass.clear();
+        }
         if let Some(pressure_graphics) = pressure_graphics {
             self.pressure_pass.prepare(
                 accelerator,
@@ -380,6 +402,7 @@ impl SceneRenderer {
         if is_viewport_visible {
             self.lighting_pass.compute(&mut command_encoder);
         }
+        self.decorations_pass.compute(&mut command_encoder);
         if cellular_graphics.is_some() && graphics.material_edges {
             self.surface_pass.compute(&mut command_encoder);
         }
@@ -419,6 +442,7 @@ impl SceneRenderer {
                     self.parallax_batches_pass.draw(&mut render_pass, format, lighting_bind_group);
                 }
                 self.behind_cellular_sprites_pass.draw(&mut render_pass, format, lighting_bind_group);
+                self.decorations_pass.draw_back(&mut render_pass, format, lighting_bind_group);
                 if fluid_graphics.is_some() {
                     self.fluid_pass.draw(&mut render_pass, format, lighting_bind_group);
                 }
@@ -429,6 +453,7 @@ impl SceneRenderer {
                     self.cellular_pass.draw(&mut render_pass, format, lighting_bind_group);
                 }
                 self.above_cellular_sprites_pass.draw(&mut render_pass, format, lighting_bind_group);
+                self.decorations_pass.draw_front(&mut render_pass, format, lighting_bind_group);
             }
             if pressure_graphics.is_some() {
                 self.pressure_pass.draw(&mut render_pass, format);
