@@ -22,6 +22,7 @@ use crate::{
         cellular_tiles::{
             CellCoordinates,
             CellularTileCoordinates,
+            CellularTileRegion,
             CELLULAR_TILE_SIZE,
         },
         SceneError,
@@ -319,20 +320,20 @@ impl ChunkStreamingState {
         true
     }
 
-    /// Removes and returns dormant particles whose cells belong to selected tiles
-    pub fn take_fluid_particles_in_tiles(
+    /// Removes and returns dormant particles whose cells belong to a region of tiles
+    pub fn take_fluid_particles_in_region(
         &mut self,
-        coordinates: &[CellularTileCoordinates],
+        region: CellularTileRegion,
         maximum: usize,
     ) -> Vec<(ChunkCoordinates, ChunkFluidParticle)> {
         let mut particles: Vec<(ChunkCoordinates, ChunkFluidParticle)> = Vec::new();
-        let mut chunk_tiles: BTreeMap<ChunkCoordinates, Vec<CellularTileCoordinates>> =
-            BTreeMap::new();
-        for tile_coordinates in coordinates {
-            chunk_tiles.entry(tile_coordinates.chunk_coordinates())
-                .or_default().push(*tile_coordinates);
-        }
-        for (chunk_coordinates, tile_coordinates) in chunk_tiles {
+        let chunks: ChunkRegion = region.chunk_region();
+        let mut chunk_order: Vec<ChunkCoordinates> = (chunks.bottom_left.y..=chunks.top_right.y)
+            .flat_map(|y| (chunks.bottom_left.x..=chunks.top_right.x)
+                .map(move |x| ChunkCoordinates { x, y }))
+            .collect();
+        chunk_order.sort_unstable();
+        for chunk_coordinates in chunk_order {
             if particles.len() >= maximum { break; }
             let Some(ChunkResident::Active { chunk, is_dirty }) =
                 self.chunks.get_mut(&chunk_coordinates)
@@ -344,8 +345,8 @@ impl ChunkStreamingState {
                 chunk.remove_fluid_particle_records(&snapshot);
             }
             if had_snapshot { *is_dirty = true; }
-            let selected: Vec<ChunkFluidParticle> = chunk.take_fluid_particles_in_tiles(
-                &tile_coordinates,
+            let selected: Vec<ChunkFluidParticle> = chunk.take_fluid_particles_in_region(
+                region,
                 maximum.saturating_sub(particles.len()),
             );
             if !selected.is_empty() { *is_dirty = true; }

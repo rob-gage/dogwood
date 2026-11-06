@@ -350,11 +350,9 @@ impl CellularTileStreamingState {
             let import_count: usize = fluids.available_import_capacity()
                 .min(SCENE_FLUID_IMPORT_COUNT_MAXIMUM_PER_TICK);
             if import_count > 0 {
-                let coordinates: Vec<CellularTileCoordinates> =
-                    active_region.cellular_tile_coordinates().collect();
                 let particles: Vec<(ChunkCoordinates, ChunkFluidParticle)> =
-                    chunk_streaming_state.take_fluid_particles_in_tiles(
-                        &coordinates,
+                    chunk_streaming_state.take_fluid_particles_in_region(
+                        active_region,
                         import_count,
                     );
                 fluids.queue_chunk_particles(active_region, particles)?;

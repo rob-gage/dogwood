@@ -8,6 +8,7 @@ use super::{
 use crate::{
     scenes::cellular_tiles::{
         CellularTileCoordinates,
+        CellularTileRegion,
         CELLULAR_TILE_SIZE,
     },
     materials::{
@@ -539,13 +540,14 @@ impl Chunk {
         }
     }
 
-    /// Removes particles whose cells lie in selected tiles, taking whole tiles up to a bounded
+    /// Removes particles whose cells lie in a region of tiles, taking whole tiles up to a bounded
     /// count unless one tile alone exceeds it
-    pub(crate) fn take_fluid_particles_in_tiles(
+    pub(crate) fn take_fluid_particles_in_region(
         &mut self,
-        coordinates: &[CellularTileCoordinates],
+        region: CellularTileRegion,
         maximum: usize,
     ) -> Vec<ChunkFluidParticle> {
+        if self.fluid_particles.is_empty() { return Vec::new(); }
         let chunk_tile_origin_x: i64 = i64::from(self.coordinates.x)
             * (CHUNK_SIZE / CELLULAR_TILE_SIZE);
         let chunk_tile_origin_y: i64 = i64::from(self.coordinates.y)
@@ -560,12 +562,13 @@ impl Chunk {
         let mut tile_counts: BTreeMap<(i64, i64), usize> = BTreeMap::new();
         for particle in &self.fluid_particles {
             let (tile_x, tile_y): (i64, i64) = tile(particle);
-            if coordinates.iter().any(|tile| tile.x == tile_x && tile.y == tile_y) {
+            if region.contains(CellularTileCoordinates { x: tile_x, y: tile_y }) {
                 *tile_counts.entry((tile_x, tile_y)).or_default() += 1;
             }
         }
         // take whole tiles, so records sharing a cell enter in one batch and never reject each
         // other
+        if tile_counts.is_empty() { return Vec::new(); }
         let mut selected_tiles: BTreeSet<(i64, i64)> = BTreeSet::new();
         let mut selected_count: usize = 0;
         for (tile_coordinates, count) in tile_counts {
