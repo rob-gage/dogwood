@@ -607,7 +607,7 @@ pub(crate) fn decode_exported_particle_records(
         let amount: u32 = read_u32(record_start + 48);
         if !fraction_x.is_finite() || !(0.0..1.0).contains(&fraction_x)
             || !fraction_y.is_finite() || !(0.0..1.0).contains(&fraction_y)
-        { return Err(SceneError::FluidParticleExportRecordInvalid); }
+        { continue; }
         let chunk_x: i32 = world_x.div_euclid(CHUNK_SIZE).try_into()
             .map_err(|_| SceneError::FluidParticleExportRecordInvalid)?;
         let chunk_y: i32 = world_y.div_euclid(CHUNK_SIZE).try_into()
@@ -617,7 +617,8 @@ pub(crate) fn decode_exported_particle_records(
             world_x.rem_euclid(CHUNK_SIZE) as f32 + fraction_x,
             world_y.rem_euclid(CHUNK_SIZE) as f32 + fraction_y,
         ];
-        let particle: ChunkFluidParticle = ChunkFluidParticle::new(
+        // a single particle left unusable by the simulation is dropped rather than failing the scene
+        let Ok(particle) = ChunkFluidParticle::new(
             position,
             velocity,
             material_identifier,
@@ -625,7 +626,7 @@ pub(crate) fn decode_exported_particle_records(
             radiance,
             temperature,
             amount,
-        ).map_err(|_| SceneError::FluidParticleExportRecordInvalid)?;
+        ) else { continue; };
         particles.push((coordinates, particle));
     }
     Ok(particles)

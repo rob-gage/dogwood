@@ -32,3 +32,5 @@ The fullscreen triangle's fragment stage maps each pixel to its logical cell. It
 > **Limitation:** Gas is drawn per cell from the current gas buffer; it is not lit, shaded by depth, or reconstructed below cell resolution.
 
 Gas appearance uses material-wide radiance and samples the lighting texture. Gas material record 1 stores packed radiance in `.y`; see [lighting pass](@/internals/rendering/lighting-pass.md).
+
+The pressure solver can leave its 2×2 pressure cells alternating, so the fragment also averages half of its color with the visible cells two cells away along each axis, which cancels that checkered pattern. A pixel outside a visible cell still draws nothing, so cloud edges stay on the cell grid.

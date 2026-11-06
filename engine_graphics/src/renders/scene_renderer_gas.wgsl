@@ -167,5 +167,21 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         color += corner_color * weight;
         weight_sum += weight;
     }
-    return color / max(weight_sum, 0.000001);
+    color /= max(weight_sum, 0.000001);
+    // the pressure solver can leave its 2x2 pressure cells alternating, which reads as a checkered
+    // pattern; averaging with the cells one pressure cell away on each side cancels it
+    var across: vec4<f32> = vec4<f32>(0.0);
+    var across_weight: f32 = 0.0;
+    for (var side: u32 = 0u; side < 4u; side++) {
+        let step: vec2<i32> = vec2<i32>(
+            select(0, select(-2, 2, side == 1u), side < 2u),
+            select(0, select(-2, 2, side == 3u), side >= 2u),
+        );
+        let side_color: vec4<f32> = cell_gas_color(vec2<i32>(floor(cell_position)) + step);
+        if !is_visible(side_color) { continue; }
+        across += side_color;
+        across_weight += 1.0;
+    }
+    if across_weight == 0.0 { return color; }
+    return mix(color, across / across_weight, 0.5);
 }
