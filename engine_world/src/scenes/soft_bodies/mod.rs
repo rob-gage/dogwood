@@ -21,6 +21,7 @@ pub use soft_body_descriptor::{
 pub use soft_body_environment::SoftBodyEnvironment;
 pub(crate) use soft_body_sampling_pass::SoftBodySamplingPass;
 pub(crate) use soft_body_terrain::SoftBodyTerrain;
+pub use soft_body_terrain::SceneTerrain;
 
 /// Simulation steps a soft body must rest before it sleeps
 const SOFT_BODY_REST_STEP_COUNT: u32 = 45;

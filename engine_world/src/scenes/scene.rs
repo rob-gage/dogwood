@@ -54,6 +54,7 @@ use super::{
 };
 use super::soft_bodies::{
     SceneSoftBody,
+    SceneTerrain,
     SoftBodyAnchor,
     SoftBodyDescriptor,
     SoftBodyEnvironment,
@@ -410,6 +411,23 @@ impl Scene {
     /// Returns a soft body's particles and how they are joined now
     pub fn soft_body_particles(&self, body: SceneSoftBody) -> Option<SoftBodyParticles> {
         self.collision.as_ref()?.soft_bodies.particles(body)
+    }
+
+    /// Adds velocity in tiles per second to a pawn at its next movement step, returning whether the
+    /// actor is a simulated pawn
+    pub fn add_pawn_velocity(&mut self, actor: Actor, velocity: [f32; 2]) -> bool {
+        self.collision.as_mut().is_some_and(|collision| collision.add_pawn_velocity(actor, velocity))
+    }
+
+    /// Adds velocity like `add_pawn_velocity`, also taking away most of the pawn's footing for a
+    /// moment so that its own control does not cancel the push
+    pub fn shove_pawn(&mut self, actor: Actor, velocity: [f32; 2]) -> bool {
+        self.collision.as_mut().is_some_and(|collision| collision.shove_pawn(actor, velocity))
+    }
+
+    /// Returns the solid static cells of the simulated region as the CPU knows them
+    pub fn terrain(&self) -> Option<SceneTerrain<'_>> {
+        self.collision.as_ref()?.terrain()
     }
 
     /// Removes a soft body, returning whether it existed

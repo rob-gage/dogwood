@@ -2,6 +2,8 @@
 
 use crate::scenes::{
     cellular_tiles::{
+        CellCoordinates,
+        CellularTileCoordinates,
         CellularTileRegion,
         CELLULAR_TILE_SIZE,
     },
@@ -85,6 +87,54 @@ impl<'a> SoftBodyTerrain<'a> {
         if tile_x >= self.size[0] || tile_y >= self.size[1] { return false; }
         let bit: i64 = (y % CELLULAR_TILE_SIZE) * CELLULAR_TILE_SIZE + x % CELLULAR_TILE_SIZE;
         self.tiles[(tile_y * self.size[0] + tile_x) as usize].as_u64() >> bit & 1 == 1
+    }
+
+}
+
+/// The solid static cells of the active region as the CPU knows them: rock, but not rigid bodies
+/// or soft bodies, which move, and nothing beyond the region
+pub struct SceneTerrain<'a> {
+    /// Tile of the region's bottom-left corner
+    origin: CellularTileCoordinates,
+    /// Region size in tiles
+    size: [i64; 2],
+    /// Occupancy of the region's tiles in row-major order
+    tiles: &'a [CollisionCellularTile],
+}
+
+impl<'a> SceneTerrain<'a> {
+
+    /// Creates the view of a region's tiles
+    pub(crate) fn new(region: CellularTileRegion, tiles: &'a [CollisionCellularTile]) -> Self {
+        Self {
+            origin: region.bottom_left,
+            size: [region.width() as i64, region.height() as i64],
+            tiles,
+        }
+    }
+
+    /// Returns the tile at the region's bottom-left corner
+    pub fn origin(&self) -> CellularTileCoordinates { self.origin }
+
+    /// Returns the region's width and height in tiles
+    pub fn size(&self) -> [i64; 2] { self.size }
+
+    /// Returns a tile's solid cells as bit `y * 8 + x`, or `None` beyond the region
+    pub fn tile(&self, tile: CellularTileCoordinates) -> Option<u64> {
+        let (x, y): (i64, i64) = (tile.x - self.origin.x, tile.y - self.origin.y);
+        if x < 0 || y < 0 || x >= self.size[0] || y >= self.size[1] { return None; }
+        Some(self.tiles[(y * self.size[0] + x) as usize].as_u64())
+    }
+
+    /// Returns whether a cell is solid; cells beyond the region are not
+    pub fn is_solid(&self, cell: CellCoordinates) -> bool {
+        let tile: CellularTileCoordinates = CellularTileCoordinates {
+            x: cell.x.div_euclid(CELLULAR_TILE_SIZE),
+            y: cell.y.div_euclid(CELLULAR_TILE_SIZE),
+        };
+        let bit: i64 = cell.y.rem_euclid(CELLULAR_TILE_SIZE) * CELLULAR_TILE_SIZE
+            + cell.x.rem_euclid(CELLULAR_TILE_SIZE);
+        self.tile(tile).is_some_and(|tile: u64| tile >> bit & 1 == 1)
     }
 
 }

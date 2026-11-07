@@ -66,6 +66,7 @@ use crate::{
 };
 use crate::scenes::soft_bodies::{
     SceneSoftBody,
+    SceneTerrain,
     SoftBodies,
     SoftBodyDescriptor,
     SoftBodyRapier,
@@ -151,6 +152,10 @@ pub struct Collision {
     pawn_impact_speeds: HashMap<Actor, f32>,
     /// Tethers of pawns by actor
     pawn_tethers: HashMap<Actor, PawnTether>,
+    /// Velocity added to pawns at their next movement step
+    pawn_velocity_changes: HashMap<Actor, [f32; 2]>,
+    /// Seconds for which shoved pawns have lost their footing
+    pawn_shoves: HashMap<Actor, f32>,
     /// Character controller moving every pawn against the colliders it collides with
     pawn_movement_controller: rapier2d::control::KinematicCharacterController,
     /// GPU extraction of active cellular tile occupancies
@@ -226,6 +231,12 @@ const SOFT_BODY_RASTER_MOVE: f32 = 0.06;
 /// Squared change in rotation cosine and sine before a soft body segment is rasterized again
 const SOFT_BODY_RASTER_TURN: f32 = 0.002;
 
+/// Seconds a shove takes away a pawn's footing
+const PAWN_SHOVE_SECONDS: f32 = 0.2;
+
+/// Share of its acceleration a pawn keeps without its footing
+const PAWN_SHOVE_CONTROL: f32 = 0.2;
+
 /// Returns the rasterization record of a soft body segment: where it is and was, in cells from the
 /// collision origin, and its velocity in cells per tick
 fn soft_body_segment_record(
@@ -261,6 +272,8 @@ impl Collision {
             actor_rotations: HashMap::new(),
             pawn_impact_speeds: HashMap::new(),
             pawn_tethers: HashMap::new(),
+            pawn_velocity_changes: HashMap::new(),
+            pawn_shoves: HashMap::new(),
             // round pawns roll over steps lower than their radius, so taller ledges are walls
             pawn_movement_controller: rapier2d::control::KinematicCharacterController {
                 offset: rapier2d::control::CharacterLength::Absolute(0.01),
@@ -1136,6 +1149,9 @@ impl Collision {
                 self.pawn_impact_speeds.insert(*actor, (-velocity.dot(cellular_normal)).max(0.0));
             }
             *velocity += rapier2d::math::Vector::new(velocity_change[0], velocity_change[1]);
+            if let Some(change) = self.pawn_velocity_changes.remove(actor) {
+                *velocity += rapier2d::math::Vector::new(change[0], change[1]);
+            }
             let is_standing: bool = *is_grounded || is_cellular_grounded;
             let immersion: f32 = fluid_contact.immersion.clamp(0.0, 1.0);
             let swimming_enter_immersion: f32 =
@@ -1147,7 +1163,11 @@ impl Collision {
             } else {
                 immersion >= swimming_enter_immersion
             };
-            let velocity_change: f32 = pawn_movement.acceleration * time_step;
+            // a pawn knocked off its footing can't brake away what knocked it
+            let shove: f32 = self.pawn_shoves.get(actor).copied().unwrap_or(0.0);
+            if shove > 0.0 { self.pawn_shoves.insert(*actor, shove - time_step); }
+            let velocity_change: f32 = pawn_movement.acceleration * time_step
+                * if shove > 0.0 { PAWN_SHOVE_CONTROL } else { 1.0 };
             if *is_swimming {
                 let cells_per_tick_to_tiles_per_second: f32 =
                     1.0 / (CELLULAR_TILE_SIZE as f32 * FLUID_TIME_STEP);
@@ -1796,6 +1816,30 @@ impl Collision {
 
     /// Returns the cellular tile whose bottom-left corner is the origin of every Rapier position
     pub fn origin(&self) -> CellularTileCoordinates { self.origin }
+
+    /// Adds velocity in tiles per second to a pawn at its next movement step, returning whether the
+    /// actor is a simulated pawn
+    pub fn add_pawn_velocity(&mut self, actor: Actor, velocity: [f32; 2]) -> bool {
+        if !self.actors.get(&actor).is_some_and(|actor| actor.5.is_some()) { return false; }
+        let change: &mut [f32; 2] = self.pawn_velocity_changes.entry(actor).or_default();
+        change[0] += velocity[0];
+        change[1] += velocity[1];
+        true
+    }
+
+    /// Adds velocity like `add_pawn_velocity`, also taking away most of the pawn's footing for a
+    /// moment so that its own control does not cancel the push
+    pub fn shove_pawn(&mut self, actor: Actor, velocity: [f32; 2]) -> bool {
+        if !self.add_pawn_velocity(actor, velocity) { return false; }
+        self.pawn_shoves.insert(actor, PAWN_SHOVE_SECONDS);
+        true
+    }
+
+    /// Returns the solid cells of the region last simulated
+    pub fn terrain(&self) -> Option<SceneTerrain<'_>> {
+        let (region, tiles) = self.cellular_tiles.as_ref()?;
+        Some(SceneTerrain::new(*region, tiles))
+    }
 
     /// Returns one pawn's velocity in tiles per second
     pub(crate) fn actors(&self) -> impl Iterator<Item = Actor> + '_ {
