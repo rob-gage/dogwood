@@ -1,11 +1,12 @@
 // Copyright Rob Gage 2026
 
 use super::SceneRendererLightingPass;
+use super::super::scene_renderer_shaded_pass::SceneRendererShadedPass;
 use crate::world::{
     materials::pack_radiance,
     scenes::{
         LightingQuality, SceneGraphics, SceneGraphicsCellular, SceneGraphicsLight,
-        SceneGraphicsLighting, SceneGraphicsTemperature,
+        SceneGraphicsLighting, SceneGraphicsShaded, SceneGraphicsTemperature,
     },
 };
 use engine_host::acceleration::Accelerator;
@@ -519,3 +520,99 @@ fn backlight_world_coverage_and_physical_blur_do_not_change_with_quality() {
     }
 }
 
+/// Renders the optics of bodies drawn with `SHADED_OPTICS_TEST_SHADER`, and returns the optical field
+fn shaded_optics(
+    accelerator: &Accelerator,
+    pass: &mut SceneRendererLightingPass,
+    shaded_pass: &mut SceneRendererShadedPass,
+    fixture: &Fixture,
+    outline: Vec<[f32; 2]>,
+) -> Vec<[f32; 4]> {
+    let body = SceneGraphicsShaded {
+        fragment: SHADED_OPTICS_TEST_SHADER,
+        parameters: [[0.0; 4]; 4],
+        is_cell_snapped: false,
+        outline,
+    };
+    let graphics = fixture.graphics();
+    pass.prepare(accelerator, &graphics, &[]);
+    shaded_pass.prepare(
+        accelerator,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+        [SIDE as f32, SIDE as f32],
+        TILE_SIZE as f32,
+        TILE_SIZE as f32,
+        [0.0, 0.0],
+        &[body],
+    );
+    let mut encoder = accelerator
+        .device()
+        .create_command_encoder(&Default::default());
+    pass.compute(&mut encoder, |render_pass, lighting| {
+        shaded_pass.draw_optics(render_pass, lighting);
+    });
+    accelerator.queue().submit([encoder.finish()]);
+    let side = SIDE / fixture.quality.texel_size();
+    read_texture(accelerator, domain_texture(pass, true), side, side)
+}
+
+const SHADED_OPTICS_TEST_SHADER: &str = "
+fn shade(input: ShadeInput) -> ShadeOutput {
+    var output: ShadeOutput;
+    output.albedo = vec4<f32>(1.0);
+    output.emission = vec3<f32>(9.0);
+    output.radiance = vec3<f32>(0.5, 0.25, 0.0);
+    output.occlusion = 0.5;
+    return output;
+}
+";
+
+#[test]
+fn shaded_bodies_emit_and_occlude_like_cells_at_every_quality() {
+    let accelerator =
+        Accelerator::new().expect("GPU adapter is required for lighting regression tests");
+    let fixture_empty = Fixture::new(&accelerator, None);
+    let mut pass = SceneRendererLightingPass::new(&accelerator);
+    let mut shaded_pass = SceneRendererShadedPass::new(&accelerator, pass.bind_group_layout());
+    let square = |low: f32, high: f32| vec![[low, low], [high, low], [high, high], [low, high]];
+    let mut fixture = fixture_empty;
+    let extinction_per_cell = -(0.5_f32).ln() / TILE_SIZE as f32;
+    let mut small_body_totals = Vec::new();
+    for quality in [
+        LightingQuality::High,
+        LightingQuality::Medium,
+        LightingQuality::Low,
+    ] {
+        fixture.quality = quality;
+        let scale = quality.texel_size();
+        let side = SIDE / scale;
+        // a body covering whole texels at every quality
+        let image = shaded_optics(&accelerator, &mut pass, &mut shaded_pass, &fixture, square(1.0, 3.0));
+        let inside = image[((16 / scale) * side + 16 / scale) as usize];
+        assert!(
+            (inside[0] / scale as f32 - 0.5).abs() < 0.01,
+            "{quality:?} changed a shaded body's emission: {inside:?}"
+        );
+        assert!(
+            (inside[3] / scale as f32 - extinction_per_cell).abs() < 0.002,
+            "{quality:?} changed a shaded body's occlusion: {inside:?}"
+        );
+        assert_eq!(image[0], [0.0; 4], "{quality:?} moved a shaded body");
+        // a body smaller than the coarsest texel, off the texel grid, neither vanishes nor brightens
+        let image = shaded_optics(
+            &accelerator,
+            &mut pass,
+            &mut shaded_pass,
+            &fixture,
+            square(1.8125, 2.0625),
+        );
+        let total: f32 = image.iter().map(|pixel| pixel[0] * scale as f32).sum();
+        small_body_totals.push(total);
+    }
+    for total in &small_body_totals {
+        assert!(
+            (total / small_body_totals[0] - 1.0).abs() < 0.01 && *total > 0.0,
+            "a small shaded body's total emission depends on quality: {small_body_totals:?}"
+        );
+    }
+}

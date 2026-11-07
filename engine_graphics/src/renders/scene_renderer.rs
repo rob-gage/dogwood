@@ -413,7 +413,11 @@ impl SceneRenderer {
             });
         let lighting_bind_group: Option<&wgpu::BindGroup> = self.lighting_pass.bind_group();
         if is_viewport_visible {
-            self.lighting_pass.compute(&mut command_encoder, |_, _| {});
+            let (shaded_pass, decorations_pass) = (&self.shaded_pass, &self.decorations_pass);
+            self.lighting_pass.compute(&mut command_encoder, |render_pass, lighting_bind_group| {
+                shaded_pass.draw_optics(render_pass, lighting_bind_group);
+                decorations_pass.draw_optics(render_pass, lighting_bind_group);
+            });
         }
         self.decorations_pass.compute(&mut command_encoder);
         if cellular_graphics.is_some() && graphics.material_edges {

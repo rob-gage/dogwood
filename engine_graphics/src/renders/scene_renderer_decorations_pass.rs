@@ -1,6 +1,10 @@
 // Copyright Rob Gage 2026
 
-use super::scene_renderer_lighting_pass::lighting_shader_source;
+use super::scene_renderer_lighting_pass::{
+    lighting_shader_source,
+    LIGHTING_OPTICS_BLEND,
+    LIGHTING_OPTICS_FORMAT,
+};
 use crate::world::scenes::{
     SceneGraphicsCellular,
     SceneGraphicsDecorations,
@@ -99,6 +103,10 @@ pub struct SceneRendererDecorationsPass {
     batch_bind_group: wgpu::BindGroup,
     /// What to draw
     draws: Vec<DecorationDraw>,
+    /// Pipeline drawing glow into the lighting domain
+    optics_pipeline: Option<wgpu::RenderPipeline>,
+    /// Glowing pieces this frame: their batch uniform slot, instances, and number of instances
+    glowing: Vec<(usize, wgpu::Buffer, u32)>,
 }
 
 impl SceneRendererDecorationsPass {
@@ -311,6 +319,8 @@ impl SceneRendererDecorationsPass {
             batch_capacity,
             batch_bind_group,
             draws: Vec::new(),
+            optics_pipeline: None,
+            glowing: Vec::new(),
         }
     }
 
@@ -347,6 +357,7 @@ impl SceneRendererDecorationsPass {
     /// Prepares nothing to draw
     pub fn clear(&mut self) {
         self.draws.clear();
+        self.glowing.clear();
         self.field_is_due = false;
     }
 
@@ -421,8 +432,23 @@ impl SceneRendererDecorationsPass {
         let device: &wgpu::Device = accelerator.device();
         self.clear();
         if !self.pipelines.contains_key(&format) {
-            let pipeline: wgpu::RenderPipeline = self.create_pipeline(device, format);
+            let pipeline: wgpu::RenderPipeline = self.create_pipeline(
+                device,
+                "vertex_decoration",
+                "fragment",
+                format,
+                None,
+            );
             self.pipelines.insert(format, pipeline);
+        }
+        if self.optics_pipeline.is_none() {
+            self.optics_pipeline = Some(self.create_pipeline(
+                device,
+                "vertex_decoration_optics",
+                "fragment_optics",
+                LIGHTING_OPTICS_FORMAT,
+                Some(LIGHTING_OPTICS_BLEND),
+            ));
         }
         let field_size: (u32, u32) = (
             cellular.region_width * FIELD_TEXELS_PER_TILE,
@@ -533,8 +559,9 @@ impl SceneRendererDecorationsPass {
             }
             accelerator.queue().write_buffer(&self.field_uniform_buffer, 0, &field);
         }
-        if decorations.batches.len() > self.batch_capacity {
-            self.batch_capacity = decorations.batches.len().next_power_of_two();
+        let batch_count: usize = decorations.batches.len() + decorations.glowing.len();
+        if batch_count > self.batch_capacity {
+            self.batch_capacity = batch_count.next_power_of_two();
             self.batch_uniform_buffer = Self::batch_uniforms(device, self.batch_capacity);
             self.batch_bind_group = Self::batch_group(
                 device,
@@ -542,7 +569,7 @@ impl SceneRendererDecorationsPass {
                 &self.batch_uniform_buffer,
             );
         }
-        let mut uniforms: Vec<u8> = vec![0; decorations.batches.len() * BATCH_UNIFORM_STRIDE];
+        let mut uniforms: Vec<u8> = vec![0; batch_count * BATCH_UNIFORM_STRIDE];
         for (index, batch) in decorations.batches.iter().enumerate() {
             let start: usize = index * BATCH_UNIFORM_STRIDE;
             uniforms[start..start + 4].copy_from_slice(&batch.origin[0].to_le_bytes());
@@ -553,19 +580,33 @@ impl SceneRendererDecorationsPass {
                 front_count: batch.front_count,
             });
         }
+        for (index, batch) in decorations.glowing.iter().enumerate() {
+            let slot: usize = decorations.batches.len() + index;
+            let start: usize = slot * BATCH_UNIFORM_STRIDE;
+            uniforms[start..start + 4].copy_from_slice(&batch.origin[0].to_le_bytes());
+            uniforms[start + 4..start + 8].copy_from_slice(&batch.origin[1].to_le_bytes());
+            self.glowing.push((slot, batch.buffer.clone(), batch.count));
+        }
         if !uniforms.is_empty() {
             accelerator.queue().write_buffer(&self.batch_uniform_buffer, 0, &uniforms);
         }
     }
 
     /// Creates the pipeline of a target format
-    fn create_pipeline(&self, device: &wgpu::Device, format: wgpu::TextureFormat) -> wgpu::RenderPipeline {
+    fn create_pipeline(
+        &self,
+        device: &wgpu::Device,
+        vertex_entry_point: &str,
+        fragment_entry_point: &str,
+        format: wgpu::TextureFormat,
+        blend: Option<wgpu::BlendState>,
+    ) -> wgpu::RenderPipeline {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("`SceneRendererDecorationsPass.pipelines`"),
             layout: Some(&self.pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &self.shader_module,
-                entry_point: Some("vertex_decoration"),
+                entry_point: Some(vertex_entry_point),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: 32,
@@ -581,17 +622,37 @@ impl SceneRendererDecorationsPass {
             multisample: wgpu::MultisampleState::default(),
             fragment: Some(wgpu::FragmentState {
                 module: &self.shader_module,
-                entry_point: Some("fragment"),
+                entry_point: Some(fragment_entry_point),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
-                    blend: None,
+                    blend,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
             multiview_mask: None,
             cache: None,
         })
+    }
+
+    /// Draws the glow of every resident plant into the lighting domain, as emission
+    pub fn draw_optics(&self, render_pass: &mut wgpu::RenderPass<'_>, lighting_bind_group: &wgpu::BindGroup) {
+        let (Some(pipeline), Some((view, ..))) =
+            (self.optics_pipeline.as_ref(), self.view_bind_group.as_ref())
+        else { return; };
+        if self.glowing.is_empty() { return; }
+        render_pass.set_pipeline(pipeline);
+        render_pass.set_bind_group(0, view, &[]);
+        render_pass.set_bind_group(2, lighting_bind_group, &[]);
+        for (slot, buffer, count) in &self.glowing {
+            render_pass.set_bind_group(
+                1,
+                &self.batch_bind_group,
+                &[(*slot * BATCH_UNIFORM_STRIDE) as u32],
+            );
+            render_pass.set_vertex_buffer(0, buffer.slice(..));
+            render_pass.draw(0..4, 0..*count);
+        }
     }
 
     /// Draws the art behind fluid, gas, and cells

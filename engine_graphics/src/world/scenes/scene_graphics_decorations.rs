@@ -19,6 +19,8 @@ pub struct SceneGraphicsDecorations<'a> {
     pub atlas: &'a wgpu::TextureView,
     /// Static batches of decorations, one per chunk
     pub batches: Vec<SceneGraphicsDecorationBatch<'a>>,
+    /// The glowing pieces of every resident chunk, seen or not, since their light reaches the view
+    pub glowing: Vec<SceneGraphicsGlowingDecorationBatch<'a>>,
     /// Nearby moving things that push the motion field
     pub movers: [SceneGraphicsDecorationMover; 8],
     /// Seconds of simulated time, which moves the air
@@ -34,6 +36,17 @@ pub struct SceneGraphicsDecorationBatch<'a> {
     pub back_count: u32,
     /// Number of instances in the front layer
     pub front_count: u32,
+    /// Chunk corner relative to the camera in tiles
+    pub origin: [f32; 2],
+}
+
+/// The glowing pieces of one chunk's static decorations
+#[derive(Clone, Debug)]
+pub struct SceneGraphicsGlowingDecorationBatch<'a> {
+    /// Instances
+    pub buffer: &'a wgpu::Buffer,
+    /// Number of instances
+    pub count: u32,
     /// Chunk corner relative to the camera in tiles
     pub origin: [f32; 2],
 }

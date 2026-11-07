@@ -1310,6 +1310,7 @@ impl Scene {
                         camera.visible_width(),
                         camera.visible_height(),
                     ),
+                    glowing: self.backgrounds.glowing_decoration_batches(camera_position),
                     movers: self.decoration_movers(camera_position),
                     time: self.simulated_ticks as f32 / 60.0,
                 }

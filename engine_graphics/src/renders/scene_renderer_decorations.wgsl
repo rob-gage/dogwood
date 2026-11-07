@@ -105,21 +105,14 @@ fn carried(local: vec2<f32>, root: vec2<f32>, at_root: vec4<f32>, reach: f32, fl
     return moved;
 }
 
-/// Places one corner of one piece of a plant. The piece moves as one rigid thing, following where
-/// the field carries its pivot and its far end, so that its pixels stay square and one cell across
-/// at any position and rotation
-@vertex
-fn vertex_decoration(
-    @location(0) words: vec4<u32>,
-    @location(1) more: vec4<u32>,
-    @builtin(vertex_index) vertex_index: u32,
-) -> DecorationOutput {
+/// Places one corner of one piece of a plant, with edges pushed out by a margin in pixels, at rest
+/// unless it `moves`. The
+/// piece moves as one rigid thing, following where the field carries its pivot and its far end, so
+/// that its pixels stay square and one cell across at any position and rotation
+fn place_piece(words: vec4<u32>, more: vec4<u32>, vertex_index: u32, margin: f32, moves: bool) -> DecorationOutput {
     let cell: vec2<f32> = vec2<f32>(f32(words.x & 0xffffu), f32(words.x >> 16u));
     let root: vec2<f32> = batch.origin + (cell + 0.5) / 8.0;
     let reach: f32 = max(f32((more.x >> 8u) & 0xffu), 1.0);
-    // whatever cannot reach the view costs nothing more
-    let half_view: vec2<f32> = view.viewport * 0.5 / view.pixels_per_tile + reach * 0.15;
-    if any(abs(root) > half_view) { return nothing(); }
     let support: vec2<f32> = vec2<f32>(
         f32(i32(more.z << 24u) >> 24u),
         f32(i32(more.z << 16u) >> 24u),
@@ -147,20 +140,20 @@ fn vertex_decoration(
     let gust: f32 = sin(view.time * 0.7 + cell.x * 0.012 + batch.origin.x * 0.1)
         + 0.5 * sin(view.time * 1.6 + cell.x * 0.031 + batch.origin.x * 0.25 + phase * 0.5);
     let corner: vec2<f32> = vec2<f32>(
-        select(0.0, extent.x, (vertex_index & 1u) == 1u),
-        select(0.0, extent.y, vertex_index < 2u),
+        select(-margin, extent.x + margin, (vertex_index & 1u) == 1u),
+        select(-margin, extent.y + margin, vertex_index < 2u),
     );
     var from_pivot: vec2<f32> = corner - pivot;
     if is_mirrored { from_pivot.x = -from_pivot.x; }
     let rest_turn: f32 = f32((words.w >> 16u) & 0xffu) / 256.0 * 6.2831853;
     let up: vec2<f32> = vec2<f32>(-sin(rest_turn), cos(rest_turn)) * max(extent.y - pivot.y, 1.0);
-    let moved_pivot: vec2<f32> = offset + carried(offset, root, at_root, reach, flex, gust);
+    let moved_pivot: vec2<f32> = offset + select(vec2<f32>(0.0), carried(offset, root, at_root, reach, flex, gust), moves);
     let far_end: vec2<f32> = offset + up;
-    let moved_far: vec2<f32> = far_end + carried(far_end, root, at_root, reach, flex, gust);
+    let moved_far: vec2<f32> = far_end + select(vec2<f32>(0.0), carried(far_end, root, at_root, reach, flex, gust), moves);
     let way: vec2<f32> = moved_far - moved_pivot;
     // a leaf also trails its plant's motion around its own stalk
     let turn: f32 = atan2(way.y, way.x) - 1.5707963
-        + flutter * (sin(view.time * 2.1 + phase) * 0.09 + gust * 0.05
+        + select(0.0, 1.0, moves) * flutter * (sin(view.time * 2.1 + phase) * 0.09 + gust * 0.05
             - clamp(at_root.z * 0.05, -0.7, 0.7));
     let sine: f32 = sin(turn);
     let cosine: f32 = cos(turn);
@@ -170,7 +163,6 @@ fn vertex_decoration(
     );
     var output: DecorationOutput;
     output.place = root + local / 8.0;
-    output.position = clip(output.place);
     output.art = corner;
     output.frame = vec4<f32>(f32(words.y & 0xffffu), f32(words.y >> 16u), size);
     output.ramp = more.y & 0xffffu;
@@ -182,22 +174,64 @@ fn vertex_decoration(
     return output;
 }
 
-/// Colors one pixel of art through its ramp, lit from the cell beneath it. Nothing snaps to the
-/// cell grid, so art moves as smoothly as the screen allows
-@fragment
-fn fragment(input: DecorationOutput) -> @location(0) vec4<f32> {
+/// Places one corner of one piece of a plant in the view
+@vertex
+fn vertex_decoration(
+    @location(0) words: vec4<u32>,
+    @location(1) more: vec4<u32>,
+    @builtin(vertex_index) vertex_index: u32,
+) -> DecorationOutput {
+    let cell: vec2<f32> = vec2<f32>(f32(words.x & 0xffffu), f32(words.x >> 16u));
+    let root: vec2<f32> = batch.origin + (cell + 0.5) / 8.0;
+    let reach: f32 = max(f32((more.x >> 8u) & 0xffu), 1.0);
+    // whatever cannot reach the view costs nothing more
+    let half_view: vec2<f32> = view.viewport * 0.5 / view.pixels_per_tile + reach * 0.15;
+    if any(abs(root) > half_view) { return nothing(); }
+    var output: DecorationOutput = place_piece(words, more, vertex_index, 0.0, true);
+    if output.position.x == 2.0 { return output; }
+    output.position = clip(output.place);
+    return output;
+}
+
+/// Places one corner of one glowing piece of a plant in the lighting domain, one texel further out
+/// so that every texel it touches is drawn. Its glow is drawn at rest: the light it casts is too
+/// soft to show the sway, and a still glow lets the lighting cache keep its light between frames
+@vertex
+fn vertex_decoration_optics(
+    @location(0) words: vec4<u32>,
+    @location(1) more: vec4<u32>,
+    @builtin(vertex_index) vertex_index: u32,
+) -> DecorationOutput {
+    var output: DecorationOutput = place_piece(
+        words, more, vertex_index, f32(lighting_view.texel_size), false,
+    );
+    if output.position.x == 2.0 { return output; }
+    output.position = lighting_domain_clip(output.place);
+    return output;
+}
+
+/// One pixel of art through its ramp, if the piece covers it
+struct ArtPixel {
+    is_covered: bool,
+    color: vec3<f32>,
+    emitted: vec3<f32>,
+};
+
+/// Colors the pixel of art at a position in the art through its ramp
+fn art_pixel(input: DecorationOutput, position: vec2<f32>) -> ArtPixel {
+    var pixel: ArtPixel;
     // rows repeat along a piece drawn longer than its frame
-    var texel: vec2<f32> = floor(input.art);
+    var texel: vec2<f32> = floor(position);
     texel.y -= floor(texel.y / input.frame.w) * input.frame.w;
     if texel.x < 0.0 || texel.y < 0.0 || texel.x >= input.frame.z || texel.y >= input.frame.w {
-        discard;
+        return pixel;
     }
     let art: vec4<f32> = textureLoad(
         atlas,
         vec2<i32>(i32(input.frame.x + texel.x), i32(input.frame.y + input.frame.w - 1.0 - texel.y)),
         0,
     );
-    if art.a < 0.5 { discard; }
+    if art.a < 0.5 { return pixel; }
     // shades are stored as evenly spaced sRGB values, read here as linear light
     let shade: i32 = select(select(select(0, 1, art.r > 0.04), 2, art.r > 0.2), 3, art.r > 0.7);
     let row: i32 = i32(input.ramp) + select(0, 1, art.g > 0.5);
@@ -207,8 +241,35 @@ fn fragment(input: DecorationOutput) -> @location(0) vec4<f32> {
         vec3<f32>(0.018, 0.012, 0.009),
         scorch,
     );
-    var emitted: vec3<f32> = vec3<f32>(0.0);
-    if art.a < 0.999 { emitted = color * input.state.y * (1.0 - scorch); }
+    pixel.is_covered = true;
+    pixel.color = color;
+    if art.a < 0.999 { pixel.emitted = color * input.state.y * (1.0 - scorch); }
+    return pixel;
+}
+
+/// Draws one pixel of art, lit from the cell beneath it. Nothing snaps to the cell grid, so art
+/// moves as smoothly as the screen allows
+@fragment
+fn fragment(input: DecorationOutput) -> @location(0) vec4<f32> {
+    let pixel: ArtPixel = art_pixel(input, input.art);
+    if !pixel.is_covered { discard; }
     let center: vec2<f32> = (floor((input.place - view.grid_origin) * 8.0) + 0.5) / 8.0 + view.grid_origin;
-    return vec4<f32>(color * light_at_tiles(center) + emitted, 1.0);
+    return vec4<f32>(pixel.color * light_at_tiles(center) + pixel.emitted, 1.0);
+}
+
+/// Draws a piece's glow into the lighting domain, averaged over the art pixels of a lighting texel
+/// like the cells of a material
+@fragment
+fn fragment_optics(input: DecorationOutput) -> @location(0) vec4<f32> {
+    let across: vec2<f32> = dpdx(input.art);
+    let along: vec2<f32> = dpdy(input.art);
+    let size: u32 = lighting_view.texel_size;
+    var emission: vec3<f32> = vec3<f32>(0.0);
+    for (var y: u32 = 0u; y < size; y++) {
+        for (var x: u32 = 0u; x < size; x++) {
+            let offset: vec2<f32> = (vec2<f32>(f32(x), f32(y)) + 0.5) / f32(size) - 0.5;
+            emission += art_pixel(input, input.art + across * offset.x + along * offset.y).emitted;
+        }
+    }
+    return lighting_optics(emission / f32(size * size), 1.0);
 }

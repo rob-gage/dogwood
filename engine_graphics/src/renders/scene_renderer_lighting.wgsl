@@ -61,6 +61,37 @@ fn light_at_tiles(camera_relative: vec2<f32>) -> vec3<f32> {
     return light_at((camera_relative - lighting_view.domain_origin) * lighting_view.cellular_tile_size);
 }
 
+/// Returns where a camera-relative position in tiles falls in the lighting domain's raster targets
+fn lighting_domain_clip(camera_relative: vec2<f32>) -> vec4<f32> {
+    let domain_tiles: vec2<f32> = lighting_view.domain_size * f32(lighting_view.texel_size)
+        / lighting_view.cellular_tile_size;
+    let normalized: vec2<f32> = (camera_relative - lighting_view.domain_origin) / domain_tiles;
+    // texel rows count upward like the domain cells, so the first row is the bottom one
+    return vec4<f32>(normalized.x * 2.0 - 1.0, 1.0 - normalized.y * 2.0, 0.0, 1.0);
+}
+
+/// Returns the camera-relative center in tiles of one cell of a lighting texel at a raster position
+fn lighting_texel_cell(raster: vec2<f32>, cell: vec2<u32>) -> vec2<f32> {
+    let corner: vec2<f32> = floor(raster) * f32(lighting_view.texel_size);
+    return lighting_view.domain_origin
+        + (corner + vec2<f32>(cell) + 0.5) / lighting_view.cellular_tile_size;
+}
+
+/// Returns a raster target's color for an average linear emission per cell and transmission over
+/// the width of one lighting texel: what materials give the optical field, as sprites do
+fn lighting_optics(emission: vec3<f32>, transmission: f32) -> vec4<f32> {
+    return vec4<f32>(emission * f32(lighting_view.texel_size), 1.0 - transmission);
+}
+
+/// Returns the transmission over the width of one lighting texel of an occlusion per tile, the
+/// value materials give as their radiance alpha
+fn lighting_transmission(occlusion: f32) -> f32 {
+    return pow(
+        1.0 - clamp(occlusion, 0.0, 1.0),
+        f32(lighting_view.texel_size) / lighting_view.cellular_tile_size,
+    );
+}
+
 /// Returns the light a background at a physical depth in tiles receives from the gameplay plane
 /// in front of it: the gameplay light averaged over an area growing with depth, less the part of
 /// that area outside the domain

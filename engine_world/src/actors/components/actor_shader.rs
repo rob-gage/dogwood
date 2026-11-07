@@ -9,7 +9,11 @@ use bevy_ecs::component::Component;
 /// `distance`, how far inside the outline the point lies in tiles; `depth`, the distance of the
 /// outline's deepest point; `outward`, the direction toward the nearest part of the outline; and
 /// `parameters`, this component's parameters. `ShadeOutput` holds a linear `albedo`, lit by the
-/// scene, and an `emission` that is not
+/// scene; an `emission` that is not; a `radiance` that lights the scene as a material's radiance
+/// does; and an `occlusion` that stops the scene's light as a material's radiance alpha does. Both
+/// `radiance` and `occlusion` are zero unless set.
+/// The lighting calls `shade` once per world cell of the body at every lighting quality, so
+/// `shade` must not use derivatives
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct ActorShaderComponent {
     /// WGSL source of its `shade` function

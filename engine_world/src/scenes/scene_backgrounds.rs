@@ -14,7 +14,11 @@ use super::{
 };
 use engine_graphics::{
     sprites::SpriteSheet,
-    world::scenes::{SceneGraphicsDecorationBatch, SceneGraphicsParallaxBatch},
+    world::scenes::{
+        SceneGraphicsDecorationBatch,
+        SceneGraphicsGlowingDecorationBatch,
+        SceneGraphicsParallaxBatch,
+    },
 };
 use engine_host::acceleration::Accelerator;
 use std::{
@@ -37,6 +41,8 @@ struct ResidentBackground {
     sprites: Option<(wgpu::Buffer, u32)>,
     /// Instances of the chunk's decorations, back layer first, and the number in each layer
     decorations: Option<(wgpu::Buffer, u32, u32)>,
+    /// Instances of the glowing decorations and their number
+    glowing_decorations: Option<(wgpu::Buffer, u32)>,
 }
 
 /// Uploaded backgrounds of a scene's resident chunks, drawn as static batches so that thousands of
@@ -111,6 +117,29 @@ impl SceneBackgrounds {
                 buffer,
                 back_count: *back_count,
                 front_count: *front_count,
+                origin: [x as f32, y as f32],
+            })
+        }).collect()
+    }
+
+    /// Returns the glowing decorations of every resident chunk in tiles relative to a camera, whose
+    /// light reaches the view from outside it
+    pub fn glowing_decoration_batches(
+        &self,
+        camera_position: ScenePosition,
+    ) -> Vec<SceneGraphicsGlowingDecorationBatch<'_>> {
+        let tiles_per_chunk: i64 = CHUNK_SIZE / CELLULAR_TILE_SIZE;
+        self.residents.iter().filter_map(|(coordinates, resident)| {
+            let (buffer, count) = resident.glowing_decorations.as_ref()?;
+            let (x, y): (f64, f64) = ScenePosition {
+                tile_x: i64::from(coordinates.x) * tiles_per_chunk,
+                tile_y: i64::from(coordinates.y) * tiles_per_chunk,
+                offset_x: 0,
+                offset_y: 0,
+            }.relative_position(camera_position);
+            Some(SceneGraphicsGlowingDecorationBatch {
+                buffer,
+                count: *count,
                 origin: [x as f32, y as f32],
             })
         }).collect()
@@ -212,7 +241,16 @@ impl SceneBackgrounds {
                 }
                 (instance_buffer(accelerator, &bytes), back.len() as u32, front.len() as u32)
             });
-        ResidentBackground { image, sprites, decorations }
+        let glowing: Vec<&ChunkDecoration> =
+            background.decorations.iter().filter(|decoration| decoration.glow > 0).collect();
+        let glowing_decorations: Option<(wgpu::Buffer, u32)> = (!glowing.is_empty()).then(|| {
+            let mut bytes: Vec<u8> = Vec::with_capacity(glowing.len() * ChunkDecoration::BYTE_COUNT);
+            for decoration in &glowing {
+                bytes.extend_from_slice(&decoration.instance_bytes());
+            }
+            (instance_buffer(accelerator, &bytes), glowing.len() as u32)
+        });
+        ResidentBackground { image, sprites, decorations, glowing_decorations }
     }
 
     /// Returns the batches of the chunks a camera can see, every image before every sprite so that

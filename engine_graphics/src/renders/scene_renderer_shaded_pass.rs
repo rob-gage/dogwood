@@ -1,6 +1,10 @@
 // Copyright Rob Gage 2026
 
-use super::scene_renderer_lighting_pass::lighting_shader_source;
+use super::scene_renderer_lighting_pass::{
+    lighting_shader_source,
+    LIGHTING_OPTICS_BLEND,
+    LIGHTING_OPTICS_FORMAT,
+};
 use crate::world::scenes::SceneGraphicsShaded;
 use engine_host::acceleration::Accelerator;
 use std::{collections::HashMap, ops::Range};
@@ -27,6 +31,8 @@ pub struct SceneRendererShadedPass {
     bind_group: wgpu::BindGroup,
     /// Pipelines by shader source and target format
     pipelines: HashMap<(String, wgpu::TextureFormat), wgpu::RenderPipeline>,
+    /// Pipelines drawing into the lighting domain by shader source
+    optics_pipelines: HashMap<String, wgpu::RenderPipeline>,
     /// Reused vertex buffer
     vertex_buffer: wgpu::Buffer,
     /// Capacity of the vertex buffer in bytes
@@ -130,6 +136,7 @@ impl SceneRendererShadedPass {
             outline_buffer_capacity,
             bind_group,
             pipelines: HashMap::new(),
+            optics_pipelines: HashMap::new(),
             vertex_buffer,
             vertex_buffer_capacity,
             vertex_bytes: Vec::new(),
@@ -192,7 +199,9 @@ impl SceneRendererShadedPass {
             let end: u32 = (self.vertex_bytes.len() / VERTEX_BYTE_COUNT) as u32;
             self.draws.push((body.fragment.to_owned(), start..end));
             let key: (String, wgpu::TextureFormat) = (body.fragment.to_owned(), format);
-            if self.pipelines.contains_key(&key) { continue; }
+            if self.pipelines.contains_key(&key) && self.optics_pipelines.contains_key(body.fragment) {
+                continue;
+            }
             let source: String = lighting_shader_source(
                 1,
                 &[include_str!("scene_renderer_shaded.wgsl"), body.fragment].join("\n"),
@@ -210,39 +219,60 @@ impl SceneRendererShadedPass {
                 5 => Float32x4,
                 6 => Float32x4,
             ];
-            let pipeline: wgpu::RenderPipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("`SceneRendererShadedPass.pipelines`"),
-                layout: Some(&self.pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &module,
-                    entry_point: Some("vertex"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    buffers: &[Some(wgpu::VertexBufferLayout {
-                        array_stride: VERTEX_BYTE_COUNT as u64,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &ATTRIBUTES,
-                    })],
-                },
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &module,
-                    entry_point: Some("fragment"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format,
-                        blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                multiview_mask: None,
-                cache: None,
-            });
+            let pipeline_layout: &wgpu::PipelineLayout = &self.pipeline_layout;
+            let create_pipeline = |
+                vertex_entry_point: &str,
+                fragment_entry_point: &str,
+                format: wgpu::TextureFormat,
+                blend: wgpu::BlendState,
+            | -> wgpu::RenderPipeline {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("`SceneRendererShadedPass.pipelines`"),
+                    layout: Some(pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &module,
+                        entry_point: Some(vertex_entry_point),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        buffers: &[Some(wgpu::VertexBufferLayout {
+                            array_stride: VERTEX_BYTE_COUNT as u64,
+                            step_mode: wgpu::VertexStepMode::Vertex,
+                            attributes: &ATTRIBUTES,
+                        })],
+                    },
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    fragment: Some(wgpu::FragmentState {
+                        module: &module,
+                        entry_point: Some(fragment_entry_point),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format,
+                            blend: Some(blend),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    multiview_mask: None,
+                    cache: None,
+                })
+            };
+            let pipeline: wgpu::RenderPipeline = create_pipeline(
+                "vertex",
+                "fragment",
+                format,
+                wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+            );
+            let optics_pipeline: wgpu::RenderPipeline = create_pipeline(
+                "vertex_optics",
+                "fragment_optics",
+                LIGHTING_OPTICS_FORMAT,
+                LIGHTING_OPTICS_BLEND,
+            );
             self.pipelines.insert(key, pipeline);
+            self.optics_pipelines.insert(body.fragment.to_owned(), optics_pipeline);
         }
         let mut uniforms: [u8; 32] = [0; 32];
         for (index, value) in [
@@ -280,6 +310,19 @@ impl SceneRendererShadedPass {
         }
         if !self.outline_bytes.is_empty() {
             accelerator.queue().write_buffer(&self.outline_buffer, 0, &self.outline_bytes);
+        }
+    }
+
+    /// Draws this frame's bodies into the lighting domain, as emission and occlusion
+    pub fn draw_optics(&self, render_pass: &mut wgpu::RenderPass<'_>, lighting_bind_group: &wgpu::BindGroup) {
+        if self.draws.is_empty() { return; }
+        render_pass.set_bind_group(0, &self.bind_group, &[]);
+        render_pass.set_bind_group(1, lighting_bind_group, &[]);
+        render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        for (fragment, range) in &self.draws {
+            let Some(pipeline) = self.optics_pipelines.get(fragment) else { continue; };
+            render_pass.set_pipeline(pipeline);
+            render_pass.draw(range.clone(), 0..1);
         }
     }
 

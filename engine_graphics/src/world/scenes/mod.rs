@@ -21,6 +21,7 @@ pub use scene_graphics_decorations::{
     SceneGraphicsDecorationBatch,
     SceneGraphicsDecorationMover,
     SceneGraphicsDecorations,
+    SceneGraphicsGlowingDecorationBatch,
 };
 pub use scene_graphics_parallax::{ParallaxRepeat, SceneGraphicsParallax};
 pub use scene_graphics_parallax_batch::SceneGraphicsParallaxBatch;
