@@ -3,7 +3,7 @@ title = "Actor components"
 description = "Fields, units, and current engine use of the public actor component types."
 weight = 60
 [extra]
-sources = ["engine_world/src/scenes/pressure", "engine_world/src/scenes/fluids", "engine_world/src/actors/components", "engine_world/src/actors/actor_registry.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs", "engine/src/games/game_instance.rs", "engine/src/lib.rs", "engine_world/src/actors/components/actor_light.rs"]
+sources = ["engine_world/src/scenes/pressure", "engine_world/src/scenes/fluids", "engine_world/src/actors/components", "engine_world/src/actors/actor_registry.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs", "engine/src/games/game_instance.rs", "engine/src/lib.rs", "engine_world/src/actors/components/actor_light.rs", "engine_world/src/actors/components/actor_shader.rs", "engine_world/src/actors/components/actor_soft_body.rs"]
 +++
 
 Components are Bevy data attached to an `Actor` through `ActorRegistry`. This page is the reference for every public component, for game programmers. All are re-exported from `engine::actors::components`.
@@ -39,6 +39,8 @@ See [parallax backgrounds](@/external-api/scenes.md#parallax-backgrounds) for ph
 | `ActorSpritesComponent` | `sprites`: vector of sprite tuples | Empty vector | Read by scene graphics; see the tuple key below. |
 | `ActorOverlayComponent` | `shape: ActorOverlayShape`; `color: u32` packed RGBA8 | None | Draws a cell-aligned circle or rectangle at the actor position. |
 | `ActorLightComponent` | `color: [f32; 3]`; `intensity: f32`; `radius: f32` in tiles | White, `1.0`, `0.5` | Adds a disc light when paired with `ActorKinematicsPositionComponent`; invalid values are skipped. See [Lighting](@/external-api/lighting.md). |
+| `ActorSoftBodyComponent` | `descriptor: Option<SoftBodyDescriptor>`; `body: Option<SceneSoftBody>`; `impulses: Vec<ActorSoftBodyImpulse>`; `is_unplaced: bool` | `new(descriptor)` creates a body; `of(body)` takes over one | Couples a soft body's lifetime and position to the actor. New descriptors retry if body capacity is unavailable. Actors without persistence leave the world with their body when it reaches the active-region edge. |
+| `ActorShaderComponent` | `fragment: &'static str`; `parameters: [[f32; 4]; 4]`; `is_cell_snapped: bool` | Supplied by caller | Supplies the WGSL `shade(ShadeInput) -> ShadeOutput` function used to draw an actor's soft body. The function receives position, outline center, distance to outline, outline depth, outward direction, and parameters; it returns linear albedo and emission. |
 | `ActorAttachmentComponent` | Empty marker | `Default::default()` | No runtime consumer. |
 | `ActorKinematicsVelocityComponent` | Empty marker | `Default::default()` | No runtime consumer. |
 | `ActorKinematicsRotationComponent` | `rotation: f32`, counterclockwise radians around the actor position | `0.0` | Lets a collision body turn: dynamic bodies write their rotation back after each step, and gameplay changes turn the body. Collider placement for collision, edits, and cellular kinematics includes it. Pawns ignore it and stay upright. Sprites do not read it; copy it into the sprite tuple's rotation. |
@@ -75,6 +77,8 @@ Each `sprites` entry is `(Arc<SpriteSheet>, Arc<SpriteSheet>, u32, f32, f32, f32
 | 11 | Depth | `i32` sort key |
 
 > **Limitation:** `ActorContactComponent` creates a sensor collider, but the public API does not expose its overlap results.
+
+`ActorSoftBodyImpulse::Particle` adds velocity to one particle; `ActorSoftBodyImpulse::All` adds velocity to every particle. Both are in tiles per second and are drained when applied on the next simulation step.
 
 ## Requirements
 

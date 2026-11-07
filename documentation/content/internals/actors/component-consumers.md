@@ -3,7 +3,7 @@ title = "Who reads each component"
 description = "A map of actor components to the engine systems that currently read or write them."
 weight = 20
 [extra]
-sources = ["engine_world/src/scenes/pressure", "engine_world/src/scenes/fluids", "engine_world/src/actors/components", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine/src/games/game_instance.rs", "editor/src/editor.rs", "engine_world/src/actors/components/actor_light.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting_clear.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cache.wgsl"]
+sources = ["engine_world/src/scenes/pressure", "engine_world/src/scenes/fluids", "engine_world/src/actors/components", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/collisions/collision.rs", "engine_world/src/scenes/cellular_tiles/cellular_tiles.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine/src/games/game_instance.rs", "editor/src/editor.rs", "engine_world/src/actors/components/actor_light.rs", "engine_world/src/actors/components/actor_shader.rs", "engine_world/src/actors/components/actor_soft_body.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting_clear.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cache.wgsl", "engine_graphics/src/renders/scene_renderer_shaded_pass.rs"]
 +++
 
 This page is for engine contributors. The registry only stores components; scene, graphics, collision, and kinematics code give them behavior. The tables show which system reads or writes each component.
@@ -20,6 +20,8 @@ For component fields and defaults, see the [actor components API](@/external-api
 | `ActorParallaxComponent` | `Scene::graphics` reads it optionally alongside sprite and position components, projecting sprites into background records instead of ordinary gameplay records. Its depth is physical distance in tiles. Bevy required-component insertion adds `ActorPersistenceComponent`, preventing region-exit despawn of background anchors. |
 | `ActorSpritesComponent` | `Scene::graphics` converts sprite records to renderer-ready sprites, skipping frames outside the sheet. See [scene rendering](@/internals/rendering/scene-renderer.md). |
 | `ActorLightComponent` | `Scene::graphics` collects positioned lights into scene graphics; the lighting pass rasterizes them as disc emission. |
+| `ActorSoftBodyComponent` | `Scene::simulate` creates or adopts the component's body, applies queued `ActorSoftBodyImpulse`s, and updates the actor position from its body. Despawn removes the owned body. A nonpersistent actor is despawned when its body reaches the active-region edge. |
+| `ActorShaderComponent` | `Scene::graphics` pairs it with `ActorSoftBodyComponent` and builds a smoothed body outline for the shaded render pass. The pass calls the component's fragment `shade` function. |
 | `ActorCollisionComponent` | Collision creates and updates Rapier bodies and colliders and checks region exit. `CellularTiles` packs eligible actors' collider shape, offsets, rotation, and body-dependent mass for dynamic-cell simulation, shared fluid actor projection/sampling, pressure-volume measurement, and pressure flow drag; all use at most 32 actors per tick. Pressure contacts also push actors using prior published pressure. Edit collision queries also use actor colliders. |
 | `ActorContactComponent` | Collision creates and updates a Rapier sensor collider and checks its bounds for region exit. Engine code does not query or expose the sensor's overlap pairs. |
 | `ActorPawnPossessionComponent` | `GameInstance` selects actors with this marker and writes keyboard-derived `ActorPawnControlComponent` values to them. |
@@ -72,3 +74,7 @@ Cellular kinematics uploads collider records for fluid projection and sampling; 
 ## Pressure and overlay consumers
 
 Pressure simulation binds cellular tile actor records directly. Its volume pass measures actor-covered cells and flow drag. `ActorOverlayComponent` becomes cell-aligned graphics data; hosts append cursor overlays with `GameInstance::set_overlays`. See [pressure simulation](@/internals/simulation/pressure.md) and [scene rendering](@/internals/rendering/scene-renderer.md).
+
+## Soft-body actor consumers
+
+The scene creates, follows, and removes bodies paired with `ActorSoftBodyComponent`. It drains queued impulses on simulation steps and generates shaded outlines from actors carrying both soft-body and shader components. See [soft bodies](@/internals/simulation/soft-bodies.md) and [scene rendering](@/internals/rendering/scene-renderer.md).
