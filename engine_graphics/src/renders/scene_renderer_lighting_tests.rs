@@ -98,6 +98,7 @@ impl Fixture {
             decorations: None,
             material_surfaces: None,
             material_edges: false,
+            shaded: Vec::new(),
             sprites: Default::default(),
             overlays: Vec::new(),
             lighting: SceneGraphicsLighting {

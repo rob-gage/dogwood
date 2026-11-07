@@ -11,6 +11,7 @@ mod scene_renderer_lighting_pass;
 mod scene_renderer_overlay_pass;
 mod scene_renderer_pressure_pass;
 mod scene_renderer_temperature_pass;
+mod scene_renderer_shaded_pass;
 mod scene_renderer_sprites_pass;
 
 pub use scene_renderer::{

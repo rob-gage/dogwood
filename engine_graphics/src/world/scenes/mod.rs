@@ -13,6 +13,7 @@ mod lighting_quality;
 mod scene_graphics_overlay;
 mod scene_graphics_pressure;
 mod scene_graphics_temperature;
+mod scene_graphics_shaded;
 mod scene_graphics_sprites;
 
 pub use scene_graphics::SceneGraphics;
@@ -32,4 +33,5 @@ pub use lighting_quality::LightingQuality;
 pub use scene_graphics_overlay::{SceneGraphicsOverlay, SceneGraphicsOverlayShape};
 pub use scene_graphics_pressure::SceneGraphicsPressure;
 pub use scene_graphics_temperature::SceneGraphicsTemperature;
+pub use scene_graphics_shaded::SceneGraphicsShaded;
 pub use scene_graphics_sprites::SceneGraphicsSprites;

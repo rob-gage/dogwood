@@ -11,6 +11,7 @@ use super::{
     scene_renderer_pressure_pass::SceneRendererPressurePass,
     scene_renderer_surface_pass::SceneRendererSurfacePass,
     scene_renderer_temperature_pass::SceneRendererTemperaturePass,
+    scene_renderer_shaded_pass::SceneRendererShadedPass,
     scene_renderer_sprites_pass::SceneRendererSpritesPass,
 };
 use crate::world::scenes::{
@@ -72,6 +73,8 @@ pub struct SceneRenderer {
     cellular_pass: SceneRendererCellularPass,
     /// Renderer of sprites with nonnegative depth, drawn above cellular content
     above_cellular_sprites_pass: SceneRendererSpritesPass,
+    /// Bodies drawn with shaders the game supplies, after the cells
+    shaded_pass: SceneRendererShadedPass,
 }
 
 impl SceneRenderer {
@@ -96,6 +99,7 @@ impl SceneRenderer {
             cellular_pass: SceneRendererCellularPass::new(accelerator, lighting),
             above_cellular_sprites_pass:
                 SceneRendererSpritesPass::new(accelerator, 0..=i32::MAX, lighting),
+            shaded_pass: SceneRendererShadedPass::new(accelerator, lighting),
             lighting_pass,
         }
     }
@@ -368,6 +372,15 @@ impl SceneRenderer {
             );
         }
         if is_viewport_visible {
+            self.shaded_pass.prepare(
+                accelerator,
+                format,
+                [viewport_width as f32, viewport_height as f32],
+                pixels_per_tile,
+                graphics.cellular_tile_size as f32,
+                graphics.cell_grid_origin,
+                &graphics.shaded,
+            );
             self.above_cellular_sprites_pass.prepare(
                 accelerator,
                 format,
@@ -452,6 +465,7 @@ impl SceneRenderer {
                 if cellular_graphics.is_some() {
                     self.cellular_pass.draw(&mut render_pass, format, lighting_bind_group);
                 }
+                self.shaded_pass.draw(&mut render_pass, format, lighting_bind_group);
                 self.above_cellular_sprites_pass.draw(&mut render_pass, format, lighting_bind_group);
                 self.decorations_pass.draw_front(&mut render_pass, format, lighting_bind_group);
             }

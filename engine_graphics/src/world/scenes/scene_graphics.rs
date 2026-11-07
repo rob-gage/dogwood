@@ -45,6 +45,8 @@ pub struct SceneGraphics<'a> {
     pub material_surfaces: Option<SceneGraphicsMaterialSurfaces<'a>>,
     /// Whether material edges are drawn: surface art, its color shift, and contact shadows
     pub material_edges: bool,
+    /// Bodies drawn over the cells with shaders the game supplies
+    pub shaded: Vec<super::SceneGraphicsShaded<'a>>,
     /// Sprite content drawn around the cellular content by depth
     pub sprites: SceneGraphicsSprites<'a>,
     /// Cell-aligned areas drawn over the scene

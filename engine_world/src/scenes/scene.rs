@@ -80,6 +80,7 @@ use crate::{
             ActorParallaxComponent,
             ActorPawnControlComponent,
             ActorPersistenceComponent,
+            ActorShaderComponent,
             ActorSoftBodyComponent,
             ActorSoftBodyImpulse,
             ActorSpritesComponent,
@@ -104,6 +105,7 @@ use engine_graphics::world::scenes::{
     SceneGraphicsOverlayShape,
     SceneGraphicsParallax,
     SceneGraphicsPressure,
+    SceneGraphicsShaded,
     SceneGraphicsSprites,
     SceneGraphicsTemperature,
 };
@@ -123,6 +125,9 @@ use std::{
 /// Tiles from the edge of the simulated region at which an actor's soft body is taken away, before
 /// it reaches what is not there to stand on
 const ACTOR_SOFT_BODY_REGION_MARGIN: f32 = 2.0;
+
+/// Curve points per particle along the outline of a body drawn with a shader
+const ACTOR_SHADER_CURVE_STEPS: usize = 3;
 
 /// Stable identifier for a live cellular rigid body in one scene
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
@@ -1278,6 +1283,7 @@ impl Scene {
             }
         }
         Ok(SceneGraphics {
+            shaded: self.shaded_bodies(camera_position),
             visible_width: camera.visible_width(),
             visible_height: camera.visible_height(),
             cellular_tile_size: CELLULAR_TILE_SIZE as u32,
@@ -1429,6 +1435,71 @@ impl Scene {
             if !is_owned { collision.remove_soft_body(*body); }
             is_owned
         });
+    }
+
+    /// Returns the outlines of the soft bodies of actors with shaders, relative to a camera
+    fn shaded_bodies(&self, camera_position: ScenePosition) -> Vec<SceneGraphicsShaded<'_>> {
+        let Some(collision) = self.collision.as_ref() else { return Vec::new(); };
+        let mut shaded: Vec<SceneGraphicsShaded<'_>> = Vec::new();
+        for (component, shader) in self.actor_registry
+            .components::<ActorSoftBodyComponent, ActorShaderComponent>()
+        {
+            let Some(body) = component.body else { continue; };
+            let Some(particles) = collision.soft_bodies.particles(body) else { continue; };
+            // the outline runs particle to particle, its longest loop being what is seen
+            let next: HashMap<u32, u32> = particles.outline.iter().map(|side| (side[0], side[1])).collect();
+            let mut visited: HashSet<u32> = HashSet::new();
+            let mut best: Vec<u32> = Vec::new();
+            for side in &particles.outline {
+                if visited.contains(&side[0]) { continue; }
+                let mut chain: Vec<u32> = Vec::new();
+                let mut at: u32 = side[0];
+                while visited.insert(at) {
+                    chain.push(at);
+                    let Some(following) = next.get(&at) else { break; };
+                    at = *following;
+                }
+                if chain.len() > best.len() { best = chain; }
+            }
+            if best.len() < 3 { continue; }
+            let offset: [f64; 2] = {
+                let (x, y): (f64, f64) = particles.origin.relative_position(camera_position);
+                [x, y]
+            };
+            let points: Vec<[f32; 2]> = best.iter().filter_map(|particle| {
+                let position: [f32; 2] = *particles.positions.get(*particle as usize)?;
+                Some([
+                    (offset[0] + f64::from(position[0])) as f32,
+                    (offset[1] + f64::from(position[1])) as f32,
+                ])
+            }).collect();
+            // a smooth curve through the particles, so that no corner of the mesh ever shows
+            let mut outline: Vec<[f32; 2]> = Vec::with_capacity(points.len() * ACTOR_SHADER_CURVE_STEPS);
+            let count: usize = points.len();
+            for index in 0..count {
+                let (a, b, c, d): ([f32; 2], [f32; 2], [f32; 2], [f32; 2]) = (
+                    points[(index + count - 1) % count],
+                    points[index],
+                    points[(index + 1) % count],
+                    points[(index + 2) % count],
+                );
+                for step in 0..ACTOR_SHADER_CURVE_STEPS {
+                    let t: f32 = step as f32 / ACTOR_SHADER_CURVE_STEPS as f32;
+                    let curve = |a: f32, b: f32, c: f32, d: f32| {
+                        0.5 * (2.0 * b + (c - a) * t + (2.0 * a - 5.0 * b + 4.0 * c - d) * t * t
+                            + (3.0 * b - a - 3.0 * c + d) * t * t * t)
+                    };
+                    outline.push([curve(a[0], b[0], c[0], d[0]), curve(a[1], b[1], c[1], d[1])]);
+                }
+            }
+            shaded.push(SceneGraphicsShaded {
+                fragment: shader.fragment,
+                parameters: shader.parameters,
+                is_cell_snapped: shader.is_cell_snapped,
+                outline,
+            });
+        }
+        shaded
     }
 
     /// Returns the bounds and velocities of the actors nearest a camera, which push the motion field
