@@ -72,12 +72,16 @@ use crate::{
         components::{
             ActorCameraComponent,
             ActorCollisionComponent,
+            ActorIdentityComponent,
             ActorKinematicsPositionComponent,
             ActorLightComponent,
             ActorOverlayComponent,
             ActorOverlayShape,
             ActorParallaxComponent,
             ActorPawnControlComponent,
+            ActorPersistenceComponent,
+            ActorSoftBodyComponent,
+            ActorSoftBodyImpulse,
             ActorSpritesComponent,
         },
         Actor,
@@ -115,6 +119,10 @@ use std::{
     },
     sync::Arc,
 };
+
+/// Tiles from the edge of the simulated region at which an actor's soft body is taken away, before
+/// it reaches what is not there to stand on
+const ACTOR_SOFT_BODY_REGION_MARGIN: f32 = 2.0;
 
 /// Stable identifier for a live cellular rigid body in one scene
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
@@ -232,6 +240,8 @@ pub struct Scene {
     actor_sensing_pass: Option<ActorSensingPass>,
     /// Newest completed sensing of each sensed actor
     actor_sensing: HashMap<Actor, SceneActorSensing>,
+    /// Soft bodies and the actors whose lives they share
+    actor_soft_bodies: HashMap<SceneSoftBody, Actor>,
     /// GPU sampling of the cells around soft body particles, absent until simulated
     soft_body_sampling_pass: Option<SoftBodySamplingPass>,
     /// Simulation steps so far, the clock of decoration motion
@@ -287,6 +297,7 @@ impl Scene {
             actor_sensing_configuration: SceneActorSensingConfiguration::default(),
             actor_sensing_pass: None,
             actor_sensing: HashMap::new(),
+            actor_soft_bodies: HashMap::new(),
             soft_body_sampling_pass: None,
             simulated_ticks: 0,
             lighting_quality: LightingQuality::High,
@@ -976,6 +987,12 @@ impl Scene {
         let fluid_actor_contacts: HashMap<Actor, FluidActorContact> = self.fluids.as_mut()
             .expect("fluid storage exists with the tile buffers")
             .poll_actor_contacts(accelerator, actor_components)?;
+        Self::simulate_actor_soft_bodies(
+            collision,
+            &mut self.actor_registry,
+            &mut self.actor_soft_bodies,
+            active_region,
+        );
         collision.simulate_collisions(
             accelerator,
             active_region,
@@ -1339,6 +1356,79 @@ impl Scene {
                     .collect(),
             },
         })
+    }
+
+    /// Keeps soft bodies and the actors that own them together: creates what the actors asked for,
+    /// applies their pushes, moves them with their bodies, despawns those whose bodies reached the
+    /// edge of the region, and removes the bodies of actors that are gone
+    fn simulate_actor_soft_bodies(
+        collision: &mut Collision,
+        actor_registry: &mut ActorRegistry,
+        actor_soft_bodies: &mut HashMap<SceneSoftBody, Actor>,
+        active_region: CellularTileRegion,
+    ) {
+        let actors: Vec<Actor> = actor_registry
+            .components::<ActorIdentityComponent, ActorSoftBodyComponent>()
+            .map(|(identity, _)| identity.actor())
+            .collect();
+        let origin: CellularTileCoordinates = collision.origin();
+        let minimum: [f32; 2] = [
+            (active_region.bottom_left.x - origin.x) as f32 + ACTOR_SOFT_BODY_REGION_MARGIN,
+            (active_region.bottom_left.y - origin.y) as f32 + ACTOR_SOFT_BODY_REGION_MARGIN,
+        ];
+        let maximum: [f32; 2] = [
+            (active_region.top_right.x - origin.x + 1) as f32 - ACTOR_SOFT_BODY_REGION_MARGIN,
+            (active_region.top_right.y - origin.y + 1) as f32 - ACTOR_SOFT_BODY_REGION_MARGIN,
+        ];
+        for actor in actors {
+            let is_persistent: bool = actor_registry.component::<ActorPersistenceComponent>(actor).is_ok();
+            let Ok(component) = actor_registry.component_mutable::<ActorSoftBodyComponent>(actor)
+            else { continue; };
+            if component.body.is_none() {
+                if let Some(descriptor) = component.descriptor.as_ref() {
+                    match collision.spawn_soft_body(descriptor) {
+                        Some(body) => {
+                            component.body = Some(body);
+                            component.descriptor = None;
+                            component.is_unplaced = false;
+                        }
+                        None => component.is_unplaced = true,
+                    }
+                }
+            }
+            let Some(body) = component.body else { continue; };
+            actor_soft_bodies.insert(body, actor);
+            let impulses: Vec<ActorSoftBodyImpulse> = std::mem::take(&mut component.impulses);
+            let Some(record) = collision.soft_bodies.bodies.get(&body) else { continue; };
+            let (low, high): ([f32; 2], [f32; 2]) = (record.bounds_minimum, record.bounds_maximum);
+            let count: u32 = record.settled.len() as u32;
+            for impulse in impulses {
+                match impulse {
+                    ActorSoftBodyImpulse::Particle { particle, velocity } =>
+                        collision.soft_bodies.add_particle_velocity(body, particle as usize, velocity),
+                    ActorSoftBodyImpulse::All { velocity } => for particle in 0..count {
+                        collision.soft_bodies.add_particle_velocity(body, particle as usize, velocity);
+                    },
+                }
+            }
+            let center: ScenePosition = collision.soft_bodies
+                .scene_position([(low[0] + high[0]) * 0.5, (low[1] + high[1]) * 0.5]);
+            if let Ok(position) = actor_registry
+                .component_mutable::<ActorKinematicsPositionComponent>(actor)
+            {
+                position.position = center;
+            }
+            // what lies beyond the region is not there to stand on
+            let is_leaving: bool = low[0] < minimum[0] || low[1] < minimum[1]
+                || high[0] > maximum[0] || high[1] > maximum[1];
+            if is_leaving && !is_persistent { actor_registry.despawn(actor).ok(); }
+        }
+        actor_soft_bodies.retain(|body, actor| {
+            let is_owned: bool = actor_registry.component::<ActorSoftBodyComponent>(*actor)
+                .is_ok_and(|component| component.body == Some(*body));
+            if !is_owned { collision.remove_soft_body(*body); }
+            is_owned
+        });
     }
 
     /// Returns the bounds and velocities of the actors nearest a camera, which push the motion field
