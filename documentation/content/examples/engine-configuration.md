@@ -58,13 +58,14 @@ For pool configuration and defaults, see [Host types](@/external-api/host.md) an
 - Invalid capacities, duplicate or empty names, zero weights or worker counts, and CPU-bound allocations beyond available workers return `ProcessorError`. Pool creation can also return `ProcessorError::RayonThreadPoolBuild`.
 - On the first call to `Scene::stream`, Dogwood looks up the `chunk_io` pool and returns `SceneError::ChunkThreadPoolUnavailable` if it is missing.
 
-## Window frame rate
+## Window title and frame rate
 
 Add `engine_host` to `Cargo.toml` to name `WindowConfiguration`; it lives in `engine_host::windows` and is not re-exported by `engine`.
 
-`WindowConfiguration` currently has one field, `fps_limit`, the maximum render frames per second. Set it through the `Game::window_configuration` callback.
+`WindowConfiguration` sets the native window `title` and `fps_limit`, the maximum render frames per second. Return it through the `Game::window_configuration` callback; both the engine and editor use these settings.
 
-- The default is uncapped (`u32::MAX`).
+- The default title is `"Dogwood"`.
+- The default frame rate is uncapped (`u32::MAX`).
 - Finite limits are clamped to at least 1 FPS, so `0` means 1 FPS.
 
 ```rust
@@ -77,7 +78,10 @@ impl Game for MyGame {
     type GameEvent = ();
 
     fn window_configuration(&self) -> WindowConfiguration {
-        WindowConfiguration { fps_limit: 120 }
+        WindowConfiguration {
+            title: String::from("My Game"),
+            fps_limit: 120,
+        }
     }
 }
 ```

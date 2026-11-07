@@ -242,7 +242,9 @@ impl<'a> winit::application::ApplicationHandler for Window<'a> {
             self.next_render_time = current_time;
             self.update_accumulator = Duration::ZERO;
             match event_loop.create_window(
-                winit::window::Window::default_attributes().with_transparent(false),
+                winit::window::Window::default_attributes()
+                    .with_title(&self.window_configuration.title)
+                    .with_transparent(false),
             ) {
                 Ok(window) => {
                     let window: Arc<winit::window::Window> = Arc::new(window);

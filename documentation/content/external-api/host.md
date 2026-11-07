@@ -78,7 +78,7 @@ Each event type is the argument of the matching `Game::*_event` callback; see [E
 
 ## Window settings and errors
 
-`WindowConfiguration` has one public field, `fps_limit: u32`. `u32::MAX` means uncapped, and the default is uncapped. Finite limits are clamped to at least 1 FPS, so `0` means 1 FPS. `Game::window_configuration` returns it, and the engine passes it to the host window.
+`WindowConfiguration` exposes `title: String`, the native window title (default `"Dogwood"`), and `fps_limit: u32`. `u32::MAX` means uncapped, and the default is uncapped. Finite limits are clamped to at least 1 FPS, so `0` means 1 FPS. `Game::window_configuration` returns it, and both the engine and editor pass it to the host window. The title is applied when the native window is created.
 
 The facade does not re-export `engine_host::windows`. To use the window crate directly, depend on `engine_host`: `Window`, `WindowConfiguration`, and `WindowError` live there, and `Window::open(...) -> Result<(), WindowError>` opens the native window and dispatches host events.
 
