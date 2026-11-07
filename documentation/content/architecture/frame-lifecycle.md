@@ -68,4 +68,4 @@ For the scene-internal order of edit application, streaming, and simulation, see
 
 Within each scene simulation, cellular tiles, collision, fluids, and pressure run before thermal. Thermal records chemistry selection and reaction work between its prepare and step stages when reactions are registered. Actor sensing runs last and reads results asynchronously. See the complete [simulation order](@/architecture/scene-pipeline.md#simulation-order).
 
-During scene rendering, the renderer computes the decoration motion field alongside lighting and the optional surface field; see [chunk decorations](@/internals/rendering/decorations.md) and [lighting pass](@/internals/rendering/lighting-pass.md).
+During scene rendering, the renderer computes the decoration motion field alongside lighting and the optional surface field. Lighting draws shaded-body optics and the glowing decoration pieces, at rest; see [chunk decorations](@/internals/rendering/decorations.md) and [lighting pass](@/internals/rendering/lighting-pass.md).
