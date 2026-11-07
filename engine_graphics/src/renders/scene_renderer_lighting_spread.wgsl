@@ -14,8 +14,8 @@ struct Spread {
     adds_backlight: u32,
     /// Whether this pass also writes the light texture
     writes_light: u32,
-    /// Alignment padding
-    padding: u32,
+    /// Cells along each side of a lighting texel
+    texel_size: f32,
 };
 
 @group(0) @binding(0)
@@ -70,13 +70,22 @@ fn line_cell(line: u32, position: u32) -> vec2<u32> {
     return vec2<u32>(line, position);
 }
 
-/// Returns the fraction of light spreading into a cell from its neighbor; light spreads only
-/// into cells that occlude
+/// Extinction per cell below which matter takes no spreading light, above that of water
+const SPREAD_THIN: f32 = 0.01;
+
+/// Extinction per cell above which matter takes spreading light in full, below that of rock and of
+/// a lighting texel partly filled with it
+const SPREAD_SOLID: f32 = 0.06;
+
+/// Returns the fraction of light spreading into a cell from its neighbor. Light spreads into what
+/// is solid: the fraction falls smoothly to nothing with extinction, because thin matter such as
+/// water and smoke passes light along rays instead, and a hard cutoff would flood it with light
+/// that switches on and off with every gap between its particles. The test is on extinction per
+/// cell, and is fully open for solid matter, so that the reach of the light does not depend on the
+/// lighting resolution.
 fn attenuation(extinction: f32) -> f32 {
-    if extinction <= 0.0 {
-        return 0.0;
-    }
-    return exp(-extinction / spread.penetration);
+    let solidity: f32 = smoothstep(SPREAD_THIN, SPREAD_SOLID, extinction / spread.texel_size);
+    return solidity * exp(-extinction / spread.penetration);
 }
 
 /// One cell of a line segment: its buffer index, the fraction of light spreading into it, and

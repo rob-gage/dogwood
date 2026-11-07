@@ -92,6 +92,9 @@ const FLUID_ENERGY_SCALE: f32 = 64.0;
 /// Largest extinction per cell, beyond which a cell is opaque
 const EXTINCTION_MAXIMUM: f32 = 30.0;
 
+/// Most cells along each side of a lighting texel
+const TEXEL_SIZE_MAXIMUM: u32 = 4u;
+
 /// Returns the physical ring index of a domain cell
 fn physical_cell_index(cell: vec2<u32>) -> u32 {
     let size: u32 = optics.cellular_tile_size;
@@ -127,10 +130,15 @@ fn build(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if any(invocation.xy >= optics.domain_size) {
         return;
     }
-    var emission: vec3<f32> = vec3<f32>(0.0);
-    var cell_extinction: f32 = 0.0;
+    // the light and transmission of straight paths across this texel, one along each of its rows
+    // and each of its columns: a small solid thing stops or lights as many paths as it is wide,
+    // however little of the texel's area it fills
+    var row_radiance: array<vec3<f32>, TEXEL_SIZE_MAXIMUM>;
+    var column_radiance: array<vec3<f32>, TEXEL_SIZE_MAXIMUM>;
+    var row_transmission: array<f32, TEXEL_SIZE_MAXIMUM> = array<f32, TEXEL_SIZE_MAXIMUM>(1.0, 1.0, 1.0, 1.0);
+    var column_transmission: array<f32, TEXEL_SIZE_MAXIMUM> = array<f32, TEXEL_SIZE_MAXIMUM>(1.0, 1.0, 1.0, 1.0);
+    let texel_span: f32 = f32(optics.texel_size);
     let first_cell: vec2<u32> = invocation.xy * optics.texel_size;
-    let cell_count: f32 = f32(optics.texel_size * optics.texel_size);
     for (var y: u32 = 0u; y < optics.texel_size; y++) {
         for (var x: u32 = 0u; x < optics.texel_size; x++) {
             let cell: vec2<u32> = first_cell + vec2<u32>(x, y);
@@ -197,12 +205,33 @@ fn build(@builtin(global_invocation_id) invocation: vec3<u32>) {
                     }
                 }
             }
-            emission += cell_emission;
-            cell_extinction += sample_extinction;
+            // matches what a ray integrates in the cascades, so that cells of one material give
+            // the same radiance at every texel size
+            let transmission: f32 = exp(-sample_extinction);
+            var radiance: vec3<f32> = cell_emission;
+            if sample_extinction > 1e-4 {
+                radiance *= (1.0 - transmission) / min(sample_extinction, 1.0);
+            }
+            row_radiance[y] += row_transmission[y] * radiance;
+            row_transmission[y] *= transmission;
+            column_radiance[x] += column_transmission[x] * radiance;
+            column_transmission[x] *= transmission;
         }
     }
-    emission = emission / cell_count * f32(optics.texel_size);
-    cell_extinction = cell_extinction / cell_count * f32(optics.texel_size);
+    var path_radiance: vec3<f32> = vec3<f32>(0.0);
+    var path_transmission: f32 = 0.0;
+    for (var line: u32 = 0u; line < optics.texel_size; line++) {
+        path_radiance += row_radiance[line] + column_radiance[line];
+        path_transmission += row_transmission[line] + column_transmission[line];
+    }
+    path_radiance /= 2.0 * texel_span;
+    path_transmission /= 2.0 * texel_span;
+    var cell_extinction: f32 = -log(max(path_transmission, 1e-12));
+    // the emission per texel of path that makes a ray crossing this texel gather `path_radiance`
+    var emission: vec3<f32> = path_radiance;
+    if cell_extinction > 1e-4 * texel_span {
+        emission *= min(cell_extinction, texel_span) / max(1.0 - exp(-cell_extinction), 1e-6);
+    }
     let actor: vec4<f32> = textureLoad(actor_optics, invocation.xy, 0);
     emission += actor.rgb;
     cell_extinction += -log(max(actor.a, 1e-12));

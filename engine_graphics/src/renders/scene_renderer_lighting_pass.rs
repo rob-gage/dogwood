@@ -17,7 +17,8 @@ mod tests;
 /// Length of the finest cascade intervals in lighting texels
 const LIGHTING_INTERVAL: f32 = 2.0;
 
-/// Directions traced by the finest cascade level
+/// Directions traced by the finest cascade level per cell along the side of a lighting texel, so
+/// that rays lie equally close together at the same distance in the world at every quality
 const LIGHTING_DIRECTIONS: u32 = 4;
 
 /// Cells along each side of one backlight texel
@@ -35,6 +36,24 @@ const LIGHTING_TRACE_INVOCATIONS: u32 = 1 << 20;
 
 /// Bytes of one sprite instance, matching the sprite pass
 const LIGHTING_INSTANCE_SIZE: usize = 64;
+
+/// Blending of everything drawn into the actor optics: emission adds, and transmission per cell
+/// multiplies
+pub const LIGHTING_OPTICS_BLEND: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Add,
+    },
+    alpha: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::Zero,
+        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+        operation: wgpu::BlendOperation::Add,
+    },
+};
+
+/// Format of the actor optics
+pub const LIGHTING_OPTICS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 /// One cascade level's placement in the lighting domain
 #[derive(Clone, Copy, Debug)]
@@ -76,6 +95,7 @@ impl LightingCache {
         a: &Accelerator,
         width: u32,
         height: u32,
+        backlight_size: [u32; 2],
         optical: &wgpu::TextureView,
         backlight: &wgpu::TextureView,
         fluence: &wgpu::Buffer,
@@ -110,7 +130,7 @@ impl LightingCache {
         );
         let previous = buffer(
             (u64::from(width) * u64::from(height)
-                + u64::from(width.div_ceil(4)) * u64::from(height.div_ceil(4)))
+                + u64::from(backlight_size[0]) * u64::from(backlight_size[1]))
                 * 8,
             wgpu::BufferUsages::STORAGE,
         );
@@ -483,7 +503,12 @@ impl SceneRendererLightingPass {
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`SceneRendererLightingPass.lighting_bind_group_layout`"),
                 entries: &[
-                    buffer_entry(0, fragment_and_compute, wgpu::BufferBindingType::Uniform, false),
+                    buffer_entry(
+                        0,
+                        fragment_and_compute | wgpu::ShaderStages::VERTEX,
+                        wgpu::BufferBindingType::Uniform,
+                        false,
+                    ),
                     texture_entry(1, fragment_and_compute),
                     wgpu::BindGroupLayoutEntry {
                         binding: 2,
@@ -605,19 +630,7 @@ impl SceneRendererLightingPass {
                 ),
             },
         );
-        let additive: wgpu::BlendState = wgpu::BlendState {
-            color: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::One,
-                dst_factor: wgpu::BlendFactor::One,
-                operation: wgpu::BlendOperation::Add,
-            },
-            // transmission per cell multiplies
-            alpha: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::Zero,
-                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                operation: wgpu::BlendOperation::Add,
-            },
-        };
+        let additive: wgpu::BlendState = LIGHTING_OPTICS_BLEND;
         let over: wgpu::BlendState = wgpu::BlendState {
             color: wgpu::BlendComponent {
                 src_factor: wgpu::BlendFactor::One,
@@ -626,13 +639,17 @@ impl SceneRendererLightingPass {
             },
             alpha: wgpu::BlendComponent::OVER,
         };
-        let sprite_pipeline = |entry_point: &str, blend: wgpu::BlendState| -> wgpu::RenderPipeline {
+        let sprite_pipeline = |
+            vertex_entry_point: &str,
+            entry_point: &str,
+            blend: wgpu::BlendState,
+        | -> wgpu::RenderPipeline {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("`SceneRendererLightingPass.sprite_pipelines`"),
                 layout: Some(&sprite_pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &sprite_module,
-                    entry_point: Some("vertex"),
+                    entry_point: Some(vertex_entry_point),
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     buffers: &[Some(wgpu::VertexBufferLayout {
                         array_stride: LIGHTING_INSTANCE_SIZE as u64,
@@ -691,9 +708,9 @@ impl SceneRendererLightingPass {
                 cache: None,
             })
         };
-        let actor_pipeline: wgpu::RenderPipeline = sprite_pipeline("actor_fragment", additive);
-        let light_pipeline: wgpu::RenderPipeline = sprite_pipeline("light_fragment", additive);
-        let background_pipeline: wgpu::RenderPipeline = sprite_pipeline("background_fragment", over);
+        let actor_pipeline: wgpu::RenderPipeline = sprite_pipeline("vertex_covering", "actor_fragment", additive);
+        let light_pipeline: wgpu::RenderPipeline = sprite_pipeline("vertex_covering", "light_fragment", additive);
+        let background_pipeline: wgpu::RenderPipeline = sprite_pipeline("vertex", "background_fragment", over);
         let instance_buffer_capacity: usize = 256 * LIGHTING_INSTANCE_SIZE;
         let instance_buffer: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("`SceneRendererLightingPass.instance_buffer`"),
@@ -994,10 +1011,15 @@ impl SceneRendererLightingPass {
         let actor_optics_view: wgpu::TextureView =
             texture("`LightingDomain.actor_optics_view`", width, height, 1, attachment)
                 .create_view(&wgpu::TextureViewDescriptor::default());
+        // the same world resolution at every quality; never larger than the domain
+        let backlight_size: [u32; 2] = [
+            (width * self.texel_size).div_ceil(LIGHTING_BACKLIGHT_CELLS),
+            (height * self.texel_size).div_ceil(LIGHTING_BACKLIGHT_CELLS),
+        ];
         let backlight_view: wgpu::TextureView = texture(
             "`LightingDomain.backlight_view`",
-            width.div_ceil(LIGHTING_BACKLIGHT_CELLS),
-            height.div_ceil(LIGHTING_BACKLIGHT_CELLS),
+            backlight_size[0],
+            backlight_size[1],
             1,
             attachment,
         ).create_view(&wgpu::TextureViewDescriptor::default());
@@ -1058,6 +1080,7 @@ impl SceneRendererLightingPass {
             accelerator,
             width,
             height,
+            backlight_size,
             &optical_view,
             &backlight_view,
             &light_buffers[0],
@@ -1066,7 +1089,7 @@ impl SceneRendererLightingPass {
         // every level keeps its intervals between frames, and the finest level, which integrates
         // into the fluence, keeps none
         let interval_buffers: Vec<wgpu::Buffer> =
-            Self::domain_levels(width, height, [0, 0], self.trace_invocations)
+            Self::domain_levels(width, height, [0, 0], self.trace_invocations, self.texel_size)
             .iter()
             .enumerate()
             .map(|(level, shape)| {
@@ -1149,7 +1172,9 @@ impl SceneRendererLightingPass {
         height: u32,
         world_origin: [i64; 2],
         trace_invocations: u32,
+        texel_size: u32,
     ) -> Vec<LightingLevel> {
+        let finest_directions: u32 = LIGHTING_DIRECTIONS * texel_size;
         let diagonal: f32 = (width as f32).hypot(height as f32);
         let mut levels: Vec<LightingLevel> = Vec::new();
         for level in 0..LIGHTING_LEVEL_MAXIMUM as u32 {
@@ -1174,14 +1199,14 @@ impl SceneRendererLightingPass {
                 probe_count,
                 probe_origin,
                 spacing: spacing as f32,
-                direction_count: LIGHTING_DIRECTIONS << level,
+                direction_count: finest_directions << level,
                 interval_start,
                 interval_end,
                 // levels too coarse to fill the GPU split each ray between more invocations
                 lanes: match level {
                     0 => 1,
                     _ => {
-                        let intervals: u32 = probe_count[0] * probe_count[1] * (LIGHTING_DIRECTIONS << level);
+                        let intervals: u32 = probe_count[0] * probe_count[1] * (finest_directions << level);
                         1 << (trace_invocations / intervals).clamp(1, 16).ilog2()
                     }
                 },
@@ -1419,7 +1444,7 @@ impl SceneRendererLightingPass {
             cellular.region_tile_x * cellular.cellular_tile_size as i64 / texel_size as i64,
             cellular.region_tile_y * cellular.cellular_tile_size as i64 / texel_size as i64,
         ];
-        self.levels = Self::domain_levels(width, height, world_origin, self.trace_invocations);
+        self.levels = Self::domain_levels(width, height, world_origin, self.trace_invocations, texel_size);
         let mut cascade_bytes: Vec<u8> =
             vec![0; LIGHTING_UNIFORM_STRIDE as usize * LIGHTING_LEVEL_MAXIMUM];
         for (index, level) in self.levels.iter().enumerate() {
@@ -1464,7 +1489,7 @@ impl SceneRendererLightingPass {
                 (cellular_tile_size / texel_size as f32).to_le_bytes(),
                 adds_backlight.to_le_bytes(),
                 writes_light.to_le_bytes(),
-                0u32.to_le_bytes(),
+                (texel_size as f32).to_le_bytes(),
             ];
             for (word_index, word) in words.iter().enumerate() {
                 record[word_index * 4..word_index * 4 + 4].copy_from_slice(word);
@@ -1486,8 +1511,13 @@ impl SceneRendererLightingPass {
         );
     }
 
-    /// Records the prepared lighting computation
-    pub fn compute(&self, command_encoder: &mut wgpu::CommandEncoder) {
+    /// Records the prepared lighting computation, where `draw_optics` draws what else emits and
+    /// occludes into the render pass of the actor optics, given the lighting group
+    pub fn compute(
+        &self,
+        command_encoder: &mut wgpu::CommandEncoder,
+        draw_optics: impl FnOnce(&mut wgpu::RenderPass<'_>, &wgpu::BindGroup),
+    ) {
         let (Some(domain), Some(optical_bind_group), Some(lighting_bind_group), true) = (
             self.domain.as_ref(),
             self.optical_bind_group.as_ref(),
@@ -1533,6 +1563,7 @@ impl SceneRendererLightingPass {
                     render_pass.draw(0..4, self.light_instances.clone());
                 }
             }
+            draw_optics(&mut render_pass, lighting_bind_group);
         }
         {
             let mut render_pass: wgpu::RenderPass<'_> =

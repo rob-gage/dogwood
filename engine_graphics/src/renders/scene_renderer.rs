@@ -413,7 +413,7 @@ impl SceneRenderer {
             });
         let lighting_bind_group: Option<&wgpu::BindGroup> = self.lighting_pass.bind_group();
         if is_viewport_visible {
-            self.lighting_pass.compute(&mut command_encoder);
+            self.lighting_pass.compute(&mut command_encoder, |_, _| {});
         }
         self.decorations_pass.compute(&mut command_encoder);
         if cellular_graphics.is_some() && graphics.material_edges {

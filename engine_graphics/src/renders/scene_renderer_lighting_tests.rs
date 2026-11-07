@@ -222,7 +222,7 @@ fn run(accelerator: &Accelerator, pass: &mut SceneRendererLightingPass, fixture:
     let mut encoder = accelerator
         .device()
         .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-    pass.compute(&mut encoder);
+    pass.compute(&mut encoder, |_, _| {});
     accelerator.queue().submit([encoder.finish()]);
     accelerator
         .device()
@@ -431,7 +431,7 @@ fn sprite_and_disc_keep_world_placement_emission_and_absorption() {
         let mut encoder = accelerator
             .device()
             .create_command_encoder(&Default::default());
-        pass.compute(&mut encoder);
+        pass.compute(&mut encoder, |_, _| {});
         accelerator.queue().submit([encoder.finish()]);
         let scale = quality.texel_size();
         let side = SIDE / scale;
@@ -449,7 +449,8 @@ fn sprite_and_disc_keep_world_placement_emission_and_absorption() {
             "{quality:?} sprite absorption changed: {sprite:?}"
         );
         assert!(
-            (disc[2] / scale as f32 - 2.0).abs() < 0.005,
+            // the soft rim keeps the disc's total, taking a little from the middle of a small disc
+            (disc[2] / scale as f32 - 2.0).abs() < 0.08,
             "{quality:?} disc moved or changed emission: {disc:?}"
         );
         assert_eq!(at(0, 0), [0.0; 4]);
@@ -493,10 +494,11 @@ fn backlight_world_coverage_and_physical_blur_do_not_change_with_quality() {
         let mut encoder = accelerator
             .device()
             .create_command_encoder(&Default::default());
-        pass.compute(&mut encoder);
+        pass.compute(&mut encoder, |_, _| {});
         accelerator.queue().submit([encoder.finish()]);
         let domain = pass.domain.as_ref().unwrap();
-        let side = domain.width.div_ceil(super::LIGHTING_BACKLIGHT_CELLS);
+        // the same world resolution at every quality
+        let side = SIDE.div_ceil(super::LIGHTING_BACKLIGHT_CELLS);
         let image = read_texture(&accelerator, domain.backlight_view.texture(), side, side);
         let upper_right = image[(side * side - 1) as usize];
         assert!(
@@ -516,3 +518,4 @@ fn backlight_world_coverage_and_physical_blur_do_not_change_with_quality() {
         );
     }
 }
+
