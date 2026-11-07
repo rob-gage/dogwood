@@ -58,6 +58,7 @@ use super::soft_bodies::{
     SoftBodyDescriptor,
     SoftBodyEnvironment,
     SoftBodyEvent,
+    SoftBodyParticles,
     SoftBodySamplingPass,
 };
 use super::{
@@ -389,6 +390,28 @@ impl Scene {
         self.collision.as_mut()?.spawn_soft_body(descriptor)
     }
 
+    /// Rebuilds a soft body of no cells from a descriptor, keeping its identifier; it continues from
+    /// the descriptor's `initial_state`, so its undeformed shape can change while it stays where it is
+    pub fn reshape_soft_body(&mut self, body: SceneSoftBody, descriptor: &SoftBodyDescriptor) -> bool {
+        self.collision.as_mut().is_some_and(|collision| collision.reshape_soft_body(body, descriptor))
+    }
+
+    /// Cuts a soft body along a line between two positions: its particles split along the line,
+    /// opening a slit, and if that parts the body it comes apart, reported by `take_soft_body_events`
+    pub fn cut_soft_body(
+        &mut self,
+        body: SceneSoftBody,
+        start: ScenePosition,
+        end: ScenePosition,
+    ) -> bool {
+        self.collision.as_mut().is_some_and(|collision| collision.cut_soft_body(body, start, end))
+    }
+
+    /// Returns a soft body's particles and how they are joined now
+    pub fn soft_body_particles(&self, body: SceneSoftBody) -> Option<SoftBodyParticles> {
+        self.collision.as_ref()?.soft_bodies.particles(body)
+    }
+
     /// Removes a soft body, returning whether it existed
     pub fn remove_soft_body(&mut self, body: SceneSoftBody) -> bool {
         self.collision.as_mut().is_some_and(|collision| collision.remove_soft_body(body))
@@ -476,6 +499,18 @@ impl Scene {
     ) {
         if let Some(collision) = self.collision.as_mut() {
             collision.soft_bodies.set_particle_target(body, particle, target);
+        }
+    }
+
+    /// Sets whether a soft body particle passes through solid cells, for one caught on them
+    pub fn set_soft_body_particle_passes_terrain(
+        &mut self,
+        body: SceneSoftBody,
+        particle: usize,
+        passes: bool,
+    ) {
+        if let Some(collision) = self.collision.as_mut() {
+            collision.soft_bodies.set_particle_passes_terrain(body, particle, passes);
         }
     }
 

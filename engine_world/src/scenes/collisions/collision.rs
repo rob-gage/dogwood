@@ -1605,6 +1605,62 @@ impl Collision {
         Some(body)
     }
 
+    /// Rebuilds a soft body of no cells from a descriptor, keeping its identifier; the new body
+    /// continues from the descriptor's `initial_state`, so its undeformed shape can change while it
+    /// stays where it is, which lets it flow toward another shape
+    pub(crate) fn reshape_soft_body(
+        &mut self,
+        body: SceneSoftBody,
+        descriptor: &SoftBodyDescriptor,
+    ) -> bool {
+        self.soft_bodies.move_origin(self.origin);
+        let Some(old) = self.soft_bodies.bodies.remove(&body) else { return false; };
+        self.soft_bodies.set.remove(
+            old.handle,
+            &mut self.island_manager,
+            &mut self.rigid_bodies,
+            &mut self.colliders,
+            &mut self.impulse_joints,
+            &mut self.multibody_joints,
+        );
+        self.soft_bodies.drop_segments(old.segments, false);
+        let handles: HashMap<u64, rapier2d::dynamics::RigidBodyHandle> = self.collision_rigid_bodies
+            .iter()
+            .map(|(identifier, body)| (*identifier, body.rigid_body_handle))
+            .collect();
+        let mut rapier: SoftBodyRapier<'_> = SoftBodyRapier {
+            bodies: &mut self.rigid_bodies,
+            colliders: &mut self.colliders,
+            islands: &mut self.island_manager,
+            impulse_joints: &mut self.impulse_joints,
+            multibody_joints: &mut self.multibody_joints,
+        };
+        let fresh: SceneSoftBody =
+            self.soft_bodies.spawn(descriptor, &mut rapier, |body| handles.get(&body.0).copied());
+        let Some(mut record) = self.soft_bodies.bodies.remove(&fresh) else { return false; };
+        record.separation_grace = old.separation_grace;
+        self.soft_bodies.bodies.insert(body, record);
+        true
+    }
+
+    /// Cuts a soft body along a line, reported as `SoftBodyEvent::Torn`
+    pub(crate) fn cut_soft_body(
+        &mut self,
+        body: SceneSoftBody,
+        start: ScenePosition,
+        end: ScenePosition,
+    ) -> bool {
+        self.soft_bodies.move_origin(self.origin);
+        let mut rapier: SoftBodyRapier<'_> = SoftBodyRapier {
+            bodies: &mut self.rigid_bodies,
+            colliders: &mut self.colliders,
+            islands: &mut self.island_manager,
+            impulse_joints: &mut self.impulse_joints,
+            multibody_joints: &mut self.multibody_joints,
+        };
+        self.soft_bodies.cut(body, start, end, &mut rapier)
+    }
+
     /// Removes a soft body, returning whether it existed
     pub(crate) fn remove_soft_body(&mut self, body: SceneSoftBody) -> bool {
         let mut rapier: SoftBodyRapier<'_> = SoftBodyRapier {

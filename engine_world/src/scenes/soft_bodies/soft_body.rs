@@ -142,6 +142,14 @@ pub(crate) struct SoftBody {
     pub(crate) bounds_minimum: [f32; 2],
     /// Largest corner of the particles' bounding box in tiles
     pub(crate) bounds_maximum: [f32; 2],
+    /// Outward normal of the solid cell each particle last stopped against, zero when free
+    pub(crate) contacts: Vec<[f32; 2]>,
+    /// Coordinates that move with each particle
+    pub(crate) surface_coordinates: Vec<[f32; 2]>,
+    /// Whether each particle passes through solid cells
+    pub(crate) passes_terrain: Vec<bool>,
+    /// Steps during which other bodies do not push it, so that what was just cut can come apart
+    pub(crate) separation_grace: u32,
 }
 
 impl SoftBody {
@@ -174,6 +182,12 @@ impl SoftBody {
             rest_steps: 0,
             bounds_minimum: [0.0; 2],
             bounds_maximum: [0.0; 2],
+            contacts: vec![[0.0; 2]; count],
+            surface_coordinates: if descriptor.surface_coordinates.len() == count {
+                descriptor.surface_coordinates.clone()
+            } else { vec![[0.0; 2]; count] },
+            passes_terrain: vec![false; count],
+            separation_grace: 0,
         };
         body.update_bounds();
         body

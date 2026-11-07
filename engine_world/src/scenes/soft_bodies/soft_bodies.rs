@@ -9,7 +9,9 @@ use super::{
     SoftBodyTerrain,
     COLLISION_GROUP_SOFT_BODY,
     COLLISION_GROUP_SOFT_BODY_SOLID,
+    SOFT_BODY_CUT_GRACE,
     SOFT_BODY_REST_SPEED,
+    SOFT_BODY_SEPARATION_STEP,
     SOFT_BODY_REST_STEP_COUNT,
     SOFT_BODY_SAMPLE_COUNT_MAXIMUM,
     SOFT_BODY_STEP_SECONDS,
@@ -79,6 +81,25 @@ pub enum SoftBodyEvent {
         /// The resulting bodies with their particles' former indices
         pieces: Vec<(SceneSoftBody, Vec<u32>)>,
     },
+}
+
+/// A soft body's particles at one moment
+#[derive(Clone, Debug, PartialEq)]
+pub struct SoftBodyParticles {
+    /// Scene position its positions are relative to
+    pub origin: ScenePosition,
+    /// Particle positions in tiles from `origin`
+    pub positions: Vec<[f32; 2]>,
+    /// Particle velocities in tiles per second
+    pub velocities: Vec<[f32; 2]>,
+    /// Outward normal of the solid cell each particle rests against, zero when free
+    pub contacts: Vec<[f32; 2]>,
+    /// Elastic triangles
+    pub triangles: Vec<[u32; 3]>,
+    /// Particle pairs of its outline, oriented with its inside to the left
+    pub outline: Vec<[u32; 2]>,
+    /// Particle masses
+    pub masses: Vec<f32>,
 }
 
 /// Collects the tears Rapier reports during a step
@@ -214,7 +235,12 @@ impl SoftBodies {
         material.tear_strain = descriptor.tear_strain;
         // pieces of a single segment are allowed, since a burning body falls apart that far
         material.min_piece = Some(1);
-        let builder: SoftBodyBuilder = SoftBodyBuilder::new(
+        if let Some(elasticity) = descriptor.elasticity {
+            material.young_modulus = elasticity.young_modulus;
+            material.poisson_ratio = elasticity.poisson_ratio;
+            material.elastic_damping_ratio = elasticity.damping_ratio;
+        }
+        let mut builder: SoftBodyBuilder = SoftBodyBuilder::new(
             positions.iter().map(|position| Vector::new(position[0], position[1])).collect(),
         )
             .masses(masses)
@@ -238,7 +264,32 @@ impl SoftBodies {
                     InteractionTestMode::And,
                 ),
             ));
+        if !descriptor.touches_actors { builder = builder.no_surface_collider(); }
+        if descriptor.elasticity.is_some() && !descriptor.triangles.is_empty() {
+            builder = builder.cells(descriptor.triangles.clone())
+                .cell_model(rapier2d::dynamics::SoftBodyCellModel::Corotational);
+        }
         let handle: SoftBodyHandle = self.set.insert(builder, rapier.bodies, rapier.colliders);
+        // an existing shape continues where it was, deformed and moving
+        let mut settled: Vec<[f32; 2]> = positions;
+        if descriptor.initial_state.len() == settled.len() {
+            if let Some(soft_body) = self.set.get_mut(handle) {
+                for (particle, (position, velocity)) in descriptor.initial_state.iter().enumerate() {
+                    let local: [f32; 2] = {
+                        let (x, y): (f64, f64) = position.relative_position(ScenePosition {
+                            tile_x: self.origin.x,
+                            tile_y: self.origin.y,
+                            offset_x: 0,
+                            offset_y: 0,
+                        });
+                        [x as f32, y as f32]
+                    };
+                    settled[particle] = local;
+                    soft_body.set_particle_position(particle, Vector::new(local[0], local[1]));
+                    soft_body.set_particle_velocity(particle, Vector::new(velocity[0], velocity[1]));
+                }
+            }
+        }
         if let Some(soft_body) = self.set.get_mut(handle) {
             for anchor in &descriptor.anchors {
                 if let SoftBodyAnchor::RigidBody { particle, rigid_body: carrier } = anchor
@@ -250,7 +301,7 @@ impl SoftBodies {
         }
         let identifier: SceneSoftBody = SceneSoftBody(self.next_identifier);
         self.next_identifier += 1;
-        self.bodies.insert(identifier, SoftBody::new(handle, descriptor, positions));
+        self.bodies.insert(identifier, SoftBody::new(handle, descriptor, settled));
         identifier
     }
 
@@ -270,7 +321,7 @@ impl SoftBodies {
     }
 
     /// Hands segments to the next rasterization to clear
-    fn drop_segments(&mut self, segments: Vec<SoftBodySegment>, is_debris: bool) {
+    pub(crate) fn drop_segments(&mut self, segments: Vec<SoftBodySegment>, is_debris: bool) {
         for segment in segments {
             for tile in segment.tiles.values() { self.tile_owners.remove(&tile.index); }
             self.dropped_segments.push((segment, is_debris));
@@ -345,10 +396,13 @@ impl SoftBodies {
         parted
     }
 
-    /// Pushes awake particles out of the particles of other bodies nearby, waking what they touch
-    fn separate_bodies(&mut self) {
+    /// Pushes awake particles out of the particles of other bodies nearby, waking what they touch,
+    /// a bounded distance each step and never into solid cells
+    fn separate_bodies(&mut self, terrain: &SoftBodyTerrain<'_>) {
         if self.bodies.len() < 2 || self.bodies.values().all(|record| record.is_sleeping) { return; }
-        let bin_size: f32 = 0.5;
+        let widest: f32 = self.bodies.values().map(|record| record.radius).fold(0.0, f32::max);
+        let bin_size: f32 = (widest * 2.0).max(0.5);
+        let cells_per_tile: f32 = CELLULAR_TILE_SIZE as f32;
         let key = |position: [f32; 2]| -> (i32, i32) {
             ((position[0] / bin_size).floor() as i32, (position[1] / bin_size).floor() as i32)
         };
@@ -358,6 +412,7 @@ impl SoftBodies {
             .map(|record| (record.bounds_minimum, record.bounds_maximum))
             .collect();
         for (identifier, record) in &self.bodies {
+            if record.separation_grace > 0 { continue; }
             if !awake.iter().any(|(minimum, maximum)| record.bounds_near(*minimum, *maximum, bin_size)) {
                 continue;
             }
@@ -368,6 +423,11 @@ impl SoftBodies {
         let mut woken: BTreeSet<SceneSoftBody> = BTreeSet::new();
         for (identifier, record) in &mut self.bodies {
             if record.is_sleeping { continue; }
+            if record.separation_grace > 0 {
+                record.separation_grace -= 1;
+                continue;
+            }
+            let friction: f32 = record.friction;
             let Some(soft_body) = self.set.get_mut(record.handle) else { continue; };
             for particle in 0..record.settled.len().min(soft_body.num_particles()) {
                 if record.held[particle] || soft_body.particles()[particle].is_pinned() { continue; }
@@ -384,7 +444,8 @@ impl SoftBodies {
                             let distance: f32 = dx.hypot(dy);
                             if distance >= reach || distance < 0.0001 { continue; }
                             // each side of a touching pair moves half the way
-                            let push: f32 = (reach - distance) * 0.5 / distance;
+                            let push: f32 = ((reach - distance) * 0.5)
+                                .min(SOFT_BODY_SEPARATION_STEP) / distance;
                             position = [position[0] + dx * push, position[1] + dy * push];
                             is_pushed = true;
                             woken.insert(*other);
@@ -392,6 +453,13 @@ impl SoftBodies {
                     }
                 }
                 if is_pushed {
+                    let start: [f32; 2] = record.settled[particle];
+                    let position: [f32; 2] = if record.passes_terrain[particle] {
+                        position
+                    } else {
+                        Self::sweep(terrain, start, position, friction, cells_per_tile)
+                            .map_or(position, |(stopped, _)| stopped)
+                    };
                     record.settled[particle] = position;
                     soft_body.set_particle_position(particle, Vector::new(position[0], position[1]));
                 }
@@ -464,6 +532,56 @@ impl SoftBodies {
         Some(self.bodies.get(&body)?.settled.len())
     }
 
+    /// Returns a body's particles and how they are joined now, which cuts change
+    pub(crate) fn particles(&self, body: SceneSoftBody) -> Option<SoftBodyParticles> {
+        let record: &SoftBody = self.bodies.get(&body)?;
+        let soft_body = self.set.get(record.handle)?;
+        let count: usize = record.settled.len().min(soft_body.num_particles());
+        Some(SoftBodyParticles {
+            origin: ScenePosition { tile_x: self.origin.x, tile_y: self.origin.y, offset_x: 0, offset_y: 0 },
+            positions: record.settled[..count].to_vec(),
+            velocities: (0..count).map(|particle| {
+                let velocity: Vector = soft_body.particle_velocity(particle);
+                [velocity.x, velocity.y]
+            }).collect(),
+            contacts: record.contacts[..count].to_vec(),
+            triangles: soft_body.cells().iter().map(|cell| cell.vertices).collect(),
+            outline: soft_body.boundary().to_vec(),
+            masses: (0..count).map(|particle| soft_body.particles()[particle].mass()).collect(),
+        })
+    }
+
+    /// Cuts a body along a line between two positions: particles along the line split, opening a
+    /// slit, and if that parts the body it comes apart, reported as `SoftBodyEvent::Torn`
+    pub(crate) fn cut(
+        &mut self,
+        body: SceneSoftBody,
+        start: ScenePosition,
+        end: ScenePosition,
+        rapier: &mut SoftBodyRapier<'_>,
+    ) -> bool {
+        let Some(handle) = self.bodies.get(&body).map(|record| record.handle) else { return false; };
+        let (start, end): ([f32; 2], [f32; 2]) = (self.local_position(start), self.local_position(end));
+        let blade: [Vector; 2] = [Vector::new(start[0], start[1]), Vector::new(end[0], end[1])];
+        let Some(event) = self.set.cut(
+            handle,
+            &blade,
+            rapier.islands,
+            rapier.bodies,
+            rapier.colliders,
+            rapier.impulse_joints,
+            rapier.multibody_joints,
+        ) else { return false; };
+        self.apply_tear(&event);
+        // the pieces begin touching, and part without a kick if nothing pushes them apart at first
+        for record in self.bodies.values_mut() {
+            if record.handle == handle || event.pieces.iter().any(|piece| piece.soft_body == record.handle) {
+                record.separation_grace = SOFT_BODY_CUT_GRACE;
+            }
+        }
+        true
+    }
+
     /// Returns the anchors still holding a body
     pub(crate) fn anchors(&self, body: SceneSoftBody) -> Option<&[SoftBodyAnchor]> {
         Some(&self.bodies.get(&body)?.anchors)
@@ -513,6 +631,18 @@ impl SoftBodies {
                 if !is_anchored { soft_body.set_particle_pinned(particle, false); }
             }
         }
+    }
+
+    /// Sets whether a particle passes through solid cells
+    pub(crate) fn set_particle_passes_terrain(
+        &mut self,
+        body: SceneSoftBody,
+        particle: usize,
+        passes: bool,
+    ) {
+        let Some(record) = self.bodies.get_mut(&body) else { return; };
+        if let Some(held) = record.passes_terrain.get_mut(particle) { *held = passes; }
+        if passes { if let Some(contact) = record.contacts.get_mut(particle) { *contact = [0.0; 2]; } }
     }
 
     /// Adds velocity to a particle and wakes its body
@@ -661,6 +791,11 @@ impl SoftBodies {
             record.accelerations = former.iter().map(|source| whole.accelerations[*source as usize]).collect();
             record.environments = former.iter().map(|source| whole.environments[*source as usize]).collect();
             record.held = former.iter().map(|source| whole.held[*source as usize]).collect();
+            record.contacts = former.iter().map(|source| whole.contacts[*source as usize]).collect();
+            record.passes_terrain =
+                former.iter().map(|source| whole.passes_terrain[*source as usize]).collect();
+            record.surface_coordinates =
+                former.iter().map(|source| whole.surface_coordinates[*source as usize]).collect();
             for held in &mut segments {
                 let Some(segment) = held.as_ref() else { continue; };
                 let is_torn: bool = event.torn_edges.iter().any(|edge| {
@@ -770,6 +905,7 @@ impl SoftBodies {
             let mut fastest: f32 = 0.0;
             let mut is_pushed: bool = false;
             for particle in 0..record.settled.len().min(soft_body.num_particles()) {
+                record.contacts[particle] = [0.0; 2];
                 let start: [f32; 2] = record.settled[particle];
                 let moved: Vector = soft_body.particle_position(particle);
                 let mut end: [f32; 2] = [moved.x, moved.y];
@@ -781,6 +917,12 @@ impl SoftBodies {
                     if record.held[particle] { is_pushed = true; }
                     continue;
                 }
+                if record.passes_terrain[particle] {
+                    record.settled[particle] = end;
+                    let travel: f32 = ((end[0] - start[0]).powi(2) + (end[1] - start[1]).powi(2)).sqrt();
+                    fastest = fastest.max(travel / SOFT_BODY_STEP_SECONDS);
+                    continue;
+                }
                 let mut velocity: Vector = soft_body.particle_velocity(particle);
                 let mut is_changed: bool = false;
                 if let Some(pushed) = contact(end, record.radius, soft_body_mass(soft_body, particle)) {
@@ -790,6 +932,11 @@ impl SoftBodies {
                 if let Some((stopped, axis)) =
                     Self::sweep(terrain, start, end, record.friction, cells_per_tile)
                 {
+                    // it was stopped moving this way, or pushed out of a cell that appeared
+                    let moved_along: f32 = end[axis] - start[axis];
+                    record.contacts[particle] = if axis == 0 {
+                        [-moved_along.signum(), 0.0]
+                    } else if moved_along > 0.0 { [0.0, -1.0] } else { [0.0, 1.0] };
                     end = stopped;
                     if axis == 0 { velocity.x = 0.0; velocity.y *= 1.0 - record.friction; }
                     else { velocity.y = 0.0; velocity.x *= 1.0 - record.friction; }
@@ -826,7 +973,7 @@ impl SoftBodies {
                 record.rest_steps = 0;
             }
         }
-        self.separate_bodies();
+        self.separate_bodies(terrain);
         self.tick = self.tick.wrapping_add(1);
     }
 

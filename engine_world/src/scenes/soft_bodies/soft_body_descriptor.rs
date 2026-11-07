@@ -74,6 +74,17 @@ pub struct SoftBodySegmentDescriptor {
     pub cells: Vec<SoftBodyCell>,
 }
 
+/// Elastic triangles filling a soft body, resisting deformation without any edges
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct SoftBodyElasticity {
+    /// Stiffness in force per unit length
+    pub young_modulus: f32,
+    /// How much it resists changing area, from zero up to below one half
+    pub poisson_ratio: f32,
+    /// Damping ratio of its deformation
+    pub damping_ratio: f32,
+}
+
 /// A soft body to create: particles joined by any arrangement of edges, which may form open
 /// chains, branches, or closed loops
 #[derive(Clone, Debug, PartialEq)]
@@ -96,6 +107,9 @@ pub struct SoftBodyDescriptor {
     pub cell_temperature: f32,
     /// Whether actors are stopped by this body, instead of pushing through it
     pub blocks_actors: bool,
+    /// Whether actors touch this body at all; when not, they overlap it freely, and its owner
+    /// decides what passes between them
+    pub touches_actors: bool,
     /// Natural frequency of the edges in hertz; higher is stiffer
     pub edge_frequency: f32,
     /// Natural frequency of the bending edges in hertz; lower bends more freely
@@ -120,6 +134,15 @@ pub struct SoftBodyDescriptor {
     pub fluid_drag: f32,
     /// Fraction of gravity cancelled while fully submerged
     pub buoyancy: f32,
+    /// Particle triples, counterclockwise, of elastic triangles; used with `elasticity`
+    pub triangles: Vec<[u32; 3]>,
+    /// How its triangles deform, or `None` for a body held by its edges alone
+    pub elasticity: Option<SoftBodyElasticity>,
+    /// Where each particle starts and its velocity when not at rest, its descriptor position being
+    /// its undeformed shape; empty to start undeformed and still
+    pub initial_state: Vec<(ScenePosition, [f32; 2])>,
+    /// A coordinate for each particle that moves with it, handed to shaders; empty for none
+    pub surface_coordinates: Vec<[f32; 2]>,
 }
 
 impl SoftBodyDescriptor {
@@ -139,6 +162,7 @@ impl SoftBodyDescriptor {
             minimum_cell_count: 12,
             cell_temperature: 293.15,
             blocks_actors: false,
+            touches_actors: true,
             edge_frequency: 120.0,
             bend_frequency: 4.0,
             damping: 0.3,
@@ -151,6 +175,10 @@ impl SoftBodyDescriptor {
             gas_response: 0.0,
             fluid_drag: 0.0,
             buoyancy: 0.0,
+            triangles: Vec::new(),
+            elasticity: None,
+            initial_state: Vec::new(),
+            surface_coordinates: Vec::new(),
         }
     }
 

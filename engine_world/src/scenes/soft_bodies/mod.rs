@@ -8,13 +8,14 @@ mod soft_body_sampling_pass;
 mod soft_body_terrain;
 
 pub(crate) use soft_bodies::{SoftBodies, SoftBodyRapier, SoftBodyTearEvents};
-pub use soft_bodies::{SceneSoftBody, SoftBodyEvent};
+pub use soft_bodies::{SceneSoftBody, SoftBodyEvent, SoftBodyParticles};
 pub(crate) use soft_body::{SoftBody, SoftBodySegment, SoftBodySegmentTile};
 pub use soft_body_descriptor::{
     SoftBodyAnchor,
     SoftBodyDescriptor,
     SoftBodyParticleDescriptor,
     SoftBodyCell,
+    SoftBodyElasticity,
     SoftBodySegmentDescriptor,
 };
 pub use soft_body_environment::SoftBodyEnvironment;
@@ -32,6 +33,12 @@ const SOFT_BODY_STEP_SECONDS: f32 = 1.0 / 60.0;
 
 /// Tiles of clearance kept between a particle and the solid cell it stopped against
 const SOFT_BODY_TERRAIN_MARGIN: f32 = 0.005;
+
+/// Tiles a particle is pushed out of another body per step, which lets bodies part without a kick
+const SOFT_BODY_SEPARATION_STEP: f32 = 0.06;
+
+/// Steps during which the pieces of a cut are not pushed apart
+const SOFT_BODY_CUT_GRACE: u32 = 30;
 
 /// Largest number of particle samples one simulation step can read from the cell grid
 pub const SOFT_BODY_SAMPLE_COUNT_MAXIMUM: usize = 2048;
