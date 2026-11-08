@@ -17,6 +17,12 @@ pub struct SceneGraphicsFluid<'a> {
     pub species_buffer: wgpu::BufferBinding<'a>,
     /// Seven physics values followed by packed sRGB color per 32-byte fluid material record
     pub material_properties_buffer: &'a wgpu::Buffer,
+    /// Three `vec4<f32>` per fluid material: absorption and depth opacity, then surface
+    /// brightness, surface sheen, surface band, and a reserved value, then shimmer, texture scale,
+    /// texture speed, and crust
+    pub material_graphics_buffer: &'a wgpu::Buffer,
+    /// One u32 cellular material identifier per physical ring cell, zero is empty
+    pub material_identifier_buffer: &'a wgpu::Buffer,
     /// Horizontal offset of the region's bottom-left corner from the camera in tiles
     pub region_x: f32,
     /// Vertical offset of the region's bottom-left corner from the camera in tiles
@@ -31,4 +37,6 @@ pub struct SceneGraphicsFluid<'a> {
     pub ring_offset_y: u32,
     /// Number of cells along each side of a tile
     pub cellular_tile_size: u32,
+    /// Seconds of simulated time, which moves the fluid texture and pauses with the scene
+    pub time: f32,
 }

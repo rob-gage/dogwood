@@ -60,6 +60,7 @@ use engine::{
     MaterialColorTransformation,
     MaterialGraphicsCellularDynamic,
     MaterialGraphicsCellularStatic,
+    MaterialGraphicsFluid,
     MaterialGraphicsGas,
     SpriteSheet,
     pack_radiance,
@@ -353,6 +354,7 @@ impl TemplateGame {
             restitution: 0.0,
             edit_color: u32::from_le_bytes([40, 110, 200, 200]),
             edit_radiance: pack_radiance(water_radiance),
+            graphics: MaterialGraphicsFluid::default(),
             thermal: MaterialPropertiesThermal {
                 heat_capacity: 4.0,
                 conduction: 0.6,
@@ -380,6 +382,7 @@ impl TemplateGame {
             restitution: 0.0,
             edit_color: u32::from_le_bytes([255, 100, 20, 255]),
             edit_radiance: pack_radiance(lava_radiance),
+            graphics: MaterialGraphicsFluid::default(),
             thermal: MaterialPropertiesThermal {
                 heat_capacity: 1.0,
                 conduction: 0.4,
@@ -586,6 +589,7 @@ impl TemplateGame {
             restitution: 0.0,
             edit_color: u32::from_le_bytes([110, 220, 50, 210]),
             edit_radiance: pack_radiance(acid_radiance),
+            graphics: MaterialGraphicsFluid::default(),
             thermal: MaterialPropertiesThermal {
                 heat_capacity: 3.0,
                 conduction: 0.5,

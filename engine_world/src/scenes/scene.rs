@@ -1580,6 +1580,7 @@ impl Scene {
         let cellular_tile_streaming_state: &CellularTileStreamingState =
             self.cellular_tile_streaming_state.as_ref()?;
         let fluids: &Fluids = self.fluids.as_ref()?;
+        let cellular_tile_buffers: &CellularTileBuffers = self.cellular_tile_buffers.as_ref()?;
         let active_region: CellularTileRegion =
             cellular_tile_streaming_state.active_cellular_tile_region()?;
         let (ring_offset_x, ring_offset_y): (u32, u32) =
@@ -1597,6 +1598,8 @@ impl Scene {
             heat_buffer: fluids.fluid_heat_buffer(),
             species_buffer: fluids.fluid_species_buffer(),
             material_properties_buffer: self.material_table.fluid_properties_buffer(),
+            material_graphics_buffer: self.material_table.fluid_graphics_buffer(),
+            material_identifier_buffer: cellular_tile_buffers.material_identifier_buffer(),
             region_x: region_x as f32,
             region_y: region_y as f32,
             region_width: active_region.width() as u32,
@@ -1604,6 +1607,7 @@ impl Scene {
             ring_offset_x,
             ring_offset_y,
             cellular_tile_size: CELLULAR_TILE_SIZE as u32,
+            time: self.simulated_ticks as f32 / 60.0,
         })
     }
 

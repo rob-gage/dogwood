@@ -6,7 +6,7 @@ use engine_host::acceleration::Accelerator;
 use std::collections::HashMap;
 
 /// Rows classified above the shaded rectangle for the depth search in `scene_renderer_fluid.wgsl`
-const FLUID_DEPTH_SEARCH_ROWS: u32 = 8;
+const FLUID_DEPTH_SEARCH_ROWS: u32 = 16;
 
 /// Renderer for the cell-resolution fluid raster
 pub struct SceneRendererFluidPass {
@@ -26,7 +26,7 @@ pub struct SceneRendererFluidPass {
     uniform_buffer: wgpu::Buffer,
     /// Dominant material of each classified water cell, or zero
     water_cell_buffer: wgpu::Buffer,
-    /// Premultiplied half-precision color of each shaded cell
+    /// Four words per shaded cell: premultiplied half-precision color and surface band data
     shaded_cell_buffer: wgpu::Buffer,
     /// Width and height of the shaded cell rectangle of the prepared view
     shaded_size: (u32, u32),
@@ -36,12 +36,16 @@ pub struct SceneRendererFluidPass {
     raster_buffer: Option<wgpu::Buffer>,
     /// Material properties buffer used by the cached fluid bind group
     material_properties_buffer: Option<wgpu::Buffer>,
+    /// Fluid graphics buffer used by the cached fluid bind group
+    material_graphics_buffer: Option<wgpu::Buffer>,
     /// Particle color buffer used by the cached fluid bind group
     color_buffer: Option<wgpu::Buffer>,
     /// Fluid heat buffer used by the cached fluid bind group
     heat_buffer: Option<wgpu::Buffer>,
     /// Species buffer used to select the amount of the rendered fluid material
     species_buffer: Option<wgpu::Buffer>,
+    /// Cellular material identifier buffer used by the cached fluid bind group
+    material_identifier_buffer: Option<wgpu::Buffer>,
 }
 
 impl SceneRendererFluidPass {
@@ -133,6 +137,26 @@ impl SceneRendererFluidPass {
                         },
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 8,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 9,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             },
         );
@@ -171,7 +195,7 @@ impl SceneRendererFluidPass {
             mapped_at_creation: false,
         });
         let water_cell_buffer: wgpu::Buffer = Self::new_cell_buffer(device, 4);
-        let shaded_cell_buffer: wgpu::Buffer = Self::new_cell_buffer(device, 8);
+        let shaded_cell_buffer: wgpu::Buffer = Self::new_cell_buffer(device, 32);
         Self {
             bind_group_layout,
             pipeline_layout,
@@ -186,9 +210,11 @@ impl SceneRendererFluidPass {
             bind_group: None,
             raster_buffer: None,
             material_properties_buffer: None,
+            material_graphics_buffer: None,
             color_buffer: None,
             heat_buffer: None,
             species_buffer: None,
+            material_identifier_buffer: None,
         }
     }
 
@@ -295,8 +321,8 @@ impl SceneRendererFluidPass {
             self.water_cell_buffer = Self::new_cell_buffer(device, water_cell_count * 4);
             cell_buffers_differ = true;
         }
-        if shaded_cell_count * 8 > self.shaded_cell_buffer.size() {
-            self.shaded_cell_buffer = Self::new_cell_buffer(device, shaded_cell_count * 8);
+        if shaded_cell_count * 32 > self.shaded_cell_buffer.size() {
+            self.shaded_cell_buffer = Self::new_cell_buffer(device, shaded_cell_count * 32);
             cell_buffers_differ = true;
         }
         let mut uniform_bytes: [u8; 80] = [0; 80];
@@ -316,18 +342,23 @@ impl SceneRendererFluidPass {
         uniform_bytes[60..64].copy_from_slice(&minimum_y.to_le_bytes());
         uniform_bytes[64..68].copy_from_slice(&shaded_width.to_le_bytes());
         uniform_bytes[68..72].copy_from_slice(&shaded_height.to_le_bytes());
+        uniform_bytes[72..76].copy_from_slice(&fluid_graphics.time.to_le_bytes());
         accelerator.queue().write_buffer(&self.uniform_buffer, 0, &uniform_bytes);
         let raster_buffer_differs: bool = self.raster_buffer.as_ref()
             != Some(fluid_graphics.raster_buffer);
         let materials_buffer_differs: bool = self.material_properties_buffer.as_ref()
             != Some(fluid_graphics.material_properties_buffer);
+        let graphics_buffer_differs: bool = self.material_graphics_buffer.as_ref()
+            != Some(fluid_graphics.material_graphics_buffer);
         let color_buffer_differs: bool =
             self.color_buffer.as_ref() != Some(fluid_graphics.color_buffer);
         let heat_buffer_differs: bool =
             self.heat_buffer.as_ref() != Some(fluid_graphics.heat_buffer);
         let species_buffer_differs: bool =
             self.species_buffer.as_ref() != Some(fluid_graphics.species_buffer.buffer);
-        if self.bind_group.is_none() || raster_buffer_differs || materials_buffer_differs
+        let material_identifier_buffer_differs: bool = self.material_identifier_buffer.as_ref()
+            != Some(fluid_graphics.material_identifier_buffer);
+        if self.bind_group.is_none() || material_identifier_buffer_differs || raster_buffer_differs || materials_buffer_differs || graphics_buffer_differs
             || color_buffer_differs || heat_buffer_differs || species_buffer_differs
             || cell_buffers_differ
         {
@@ -381,15 +412,31 @@ impl SceneRendererFluidPass {
                             fluid_graphics.species_buffer.clone(),
                         ),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 8,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: fluid_graphics.material_identifier_buffer,
+                            offset: 0,
+                            size: None,
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 9,
+                        resource: fluid_graphics.material_graphics_buffer.as_entire_binding(),
+                    },
                 ],
             });
             self.bind_group = Some(bind_group);
             self.raster_buffer = Some(fluid_graphics.raster_buffer.clone());
             self.material_properties_buffer =
                 Some(fluid_graphics.material_properties_buffer.clone());
+            self.material_graphics_buffer =
+                Some(fluid_graphics.material_graphics_buffer.clone());
             self.color_buffer = Some(fluid_graphics.color_buffer.clone());
             self.heat_buffer = Some(fluid_graphics.heat_buffer.clone());
             self.species_buffer = Some(fluid_graphics.species_buffer.buffer.clone());
+            self.material_identifier_buffer =
+                Some(fluid_graphics.material_identifier_buffer.clone());
         }
     }
 

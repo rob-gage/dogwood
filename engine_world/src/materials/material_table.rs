@@ -90,6 +90,10 @@ pub struct MaterialTable {
     /// Density, nonlinear XSPH viscosity control, cohesion, artificial pressure, drag, friction,
     /// restitution, and color bits as eight 32-bit words per fluid index
     fluid_properties_buffer: wgpu::Buffer,
+    /// Absorption and depth opacity, then surface brightness, surface sheen, surface band, and a
+    /// reserved word, then shimmer, texture scale, texture speed, and crust as twelve 32-bit words
+    /// per fluid index
+    fluid_graphics_buffer: wgpu::Buffer,
     /// Mass, diffusivity, cohesion, and color bits, then opacity, radiance bits, and padding as
     /// eight 32-bit words per gas index
     gas_properties_buffer: wgpu::Buffer,
@@ -541,6 +545,46 @@ impl MaterialTable {
             &fluid_property_bytes,
         );
         accelerator.queue().write_buffer(&fluid_properties_buffer, 0, &fluid_property_bytes);
+        // serialize fluid graphics as absorption and depth opacity, then surface brightness,
+        // surface sheen, surface band, and a reserved word, then shimmer, texture scale, texture
+        // speed, and crust
+        let mut fluid_graphics_bytes: Vec<u8> = Vec::new();
+        for index in 0.. {
+            let Ok(identifier) = MaterialIdentifier::new(MaterialForm::Fluid, index)
+            else { break; };
+            let Some(properties) = material_registry.fluid_properties(identifier) else { break; };
+            let graphics = &properties.graphics;
+            if graphics.absorption.iter().any(|value| !value.is_finite() || *value < 0.0)
+                || !graphics.depth_opacity.is_finite() || graphics.depth_opacity < 0.0
+                || !graphics.surface_brightness.is_finite() || graphics.surface_brightness < 0.0
+                || !graphics.surface_sheen.is_finite() || graphics.surface_sheen < 0.0
+                || !graphics.surface_band.is_finite()
+                || !(0.0..=1.0).contains(&graphics.surface_band)
+                || !graphics.shimmer.is_finite() || graphics.shimmer < 0.0
+                || !graphics.texture_scale.is_finite() || graphics.texture_scale <= 0.0
+                || !graphics.texture_speed.is_finite() || graphics.texture_speed < 0.0
+                || !graphics.crust.is_finite() || graphics.crust < 0.0
+            {
+                return Err(MaterialError::Compilation(String::from(
+                    "fluid graphics need nonnegative finite absorption, depth opacity, surface \
+                    brightness, surface sheen, shimmer, texture speed, and crust, a positive texture \
+                    scale, and a surface band from zero to one",
+                )));
+            }
+            for value in [graphics.absorption[0], graphics.absorption[1], graphics.absorption[2],
+                graphics.depth_opacity, graphics.surface_brightness, graphics.surface_sheen,
+                graphics.surface_band, 0.0, graphics.shimmer, graphics.texture_scale,
+                graphics.texture_speed, graphics.crust] {
+                fluid_graphics_bytes.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        if fluid_graphics_bytes.is_empty() { fluid_graphics_bytes.resize(48, 0); }
+        let fluid_graphics_buffer: wgpu::Buffer = Self::create_storage_buffer(
+            device,
+            "`MaterialTable.fluid_graphics_buffer`",
+            &fluid_graphics_bytes,
+        );
+        accelerator.queue().write_buffer(&fluid_graphics_buffer, 0, &fluid_graphics_bytes);
         // serialize gas records as mass, diffusivity, cohesion, and color bits
         let mut gas_property_bytes: Vec<u8> = Vec::new();
         for index in 0.. {
@@ -926,6 +970,7 @@ impl MaterialTable {
             cellular_dynamic_damage_buffer,
             cellular_dynamic_properties_buffer,
             fluid_properties_buffer,
+            fluid_graphics_buffer,
             gas_properties_buffer,
             gas_graphics_buffer,
             thermal_properties_buffer,
@@ -1408,6 +1453,13 @@ impl MaterialTable {
     /// friction, restitution, and packed color bits
     pub fn fluid_properties_buffer(&self) -> &wgpu::Buffer {
         &self.fluid_properties_buffer
+    }
+
+    /// Returns fluid graphics as absorption and depth opacity, then surface brightness, surface
+    /// sheen, surface band, and a reserved value, then shimmer, texture scale, texture speed, and
+    /// crust
+    pub fn fluid_graphics_buffer(&self) -> &wgpu::Buffer {
+        &self.fluid_graphics_buffer
     }
 
     /// Returns gas GPU properties as mass, diffusivity, cohesion, and packed color bits, then

@@ -1,5 +1,7 @@
 // Copyright Rob Gage 2026
 
+use engine_graphics::world::materials::MaterialGraphicsFluid;
+
 use super::{MaterialPropertiesChemical, MaterialPropertiesThermal};
 
 /// Properties for a fluid material
@@ -26,6 +28,8 @@ pub struct MaterialPropertiesFluid {
     /// Packed linear HDR emission and occlusion of the particles edits create, unless they give
     /// another
     pub edit_radiance: u32,
+    /// Graphics properties of the fluid
+    pub graphics: MaterialGraphicsFluid,
     /// Thermal and phase-transition properties
     pub thermal: MaterialPropertiesThermal,
     /// Chemical reaction and amount-dependent visual properties

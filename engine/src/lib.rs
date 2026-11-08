@@ -16,6 +16,7 @@ pub use engine_graphics::{
             MaterialColorTransformation,
             MaterialGraphicsCellularDynamic,
             MaterialGraphicsCellularStatic,
+            MaterialGraphicsFluid,
             MaterialGraphicsGas,
             pack_radiance,
         },
