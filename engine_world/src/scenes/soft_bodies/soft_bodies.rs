@@ -749,6 +749,10 @@ impl SoftBodies {
             .map(|(identifier, _)| *identifier)
         else { return; };
         let Some(mut whole) = self.bodies.remove(&identifier) else { return; };
+        if whole.settled.is_empty() {
+            self.bodies.insert(identifier, whole);
+            return;
+        }
         // every segment goes with one piece, or falls apart with the edge that tore
         let mut segments: Vec<Option<SoftBodySegment>> =
             std::mem::take(&mut whole.segments).into_iter().map(Some).collect();
@@ -775,7 +779,13 @@ impl SoftBodies {
                 self.next_identifier += 1;
                 fresh
             };
-            let former: Vec<u32> = particles.iter().map(|particle| sources[*particle as usize]).collect();
+            // a body cut again before an earlier cut's event arrives can name particles this record
+            // does not know yet; those take the nearest known particle rather than panicking, and
+            // the next event brings the record up to date
+            let last: u32 = whole.settled.len().saturating_sub(1) as u32;
+            let former: Vec<u32> = particles.iter()
+                .map(|particle| sources.get(*particle as usize).copied().unwrap_or(last).min(last))
+                .collect();
             let at = |old: u32| -> Option<u32> {
                 // the piece's own copy of a particle, by its index after the tear
                 particles.iter().position(|particle| *particle == old)

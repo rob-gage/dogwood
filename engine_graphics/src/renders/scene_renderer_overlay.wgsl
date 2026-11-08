@@ -107,33 +107,31 @@ fn fragment(input: OverlayVertex) -> @location(0) vec4<f32> {
     if !contains(cell_center, input.shape, input.size, input.center) {
         discard;
     }
-    let has_outside_neighbor: bool = !contains(
+    // darken only the cell edges that face outside the shape, so the band traces the area's
+    // outline instead of boxing every boundary cell
+    let within_cell: vec2<f32> = fract(cell_position);
+    let band: f32 = 0.125;
+    let is_border: bool = (within_cell.x > 1.0 - band && !contains(
         cell_center + vec2<f32>(uniforms.cell_size, 0.0),
         input.shape,
         input.size,
         input.center,
-    ) || !contains(
+    )) || (within_cell.x < band && !contains(
         cell_center - vec2<f32>(uniforms.cell_size, 0.0),
         input.shape,
         input.size,
         input.center,
-    ) || !contains(
+    )) || (within_cell.y > 1.0 - band && !contains(
         cell_center + vec2<f32>(0.0, uniforms.cell_size),
         input.shape,
         input.size,
         input.center,
-    ) || !contains(
+    )) || (within_cell.y < band && !contains(
         cell_center - vec2<f32>(0.0, uniforms.cell_size),
         input.shape,
         input.size,
         input.center,
-    );
-    let within_cell: vec2<f32> = fract(cell_position);
-    let edge_distance: f32 = min(
-        min(within_cell.x, 1.0 - within_cell.x),
-        min(within_cell.y, 1.0 - within_cell.y),
-    );
-    let is_border: bool = has_outside_neighbor && edge_distance < 0.125;
+    ));
     let packed_color: vec4<f32> = unpack4x8unorm(input.color);
     var color: vec4<f32> = vec4<f32>(
         srgb_to_linear(packed_color.r),

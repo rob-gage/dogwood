@@ -50,7 +50,7 @@ The renderer prepares passes only when the viewport has nonzero dimensions. Cell
 7. Shaded actor soft bodies, when present.
 8. Sprites with depth `0..=i32::MAX`.
 9. Pressure or temperature tint, when its view mode is selected.
-10. Cell-aligned overlays, including actor and host cursor shapes.
+10. Cell-aligned overlays, including actor and host cursor shapes. Each tints the cells whose centers lie inside its shape and darkens only the cell edges that face outside it, tracing the shape's outline.
 
 Each pass uses premultiplied-alpha blending. `SceneRenderer` finishes its command encoder and submits it to the accelerator queue itself. This is a scene-only render: the UI overlay is a separate stage described in [User interface rendering](@/internals/rendering/user-interface.md).
 
