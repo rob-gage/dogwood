@@ -185,6 +185,7 @@ pub struct SceneRayHit {
 
 /// A playable scene
 pub struct Scene {
+    acoustics: Option<super::acoustics::Acoustics>,
     /// Persistent storage of this scene's chunks
     chunk_data: ChunkData,
     /// Handles the streaming of chunks between the disk and native memory, absent until streamed
@@ -275,6 +276,7 @@ impl Scene {
         Self {
             chunk_data,
             chunk_streaming_state: None,
+            acoustics: None,
             cellular_tile_buffers: None,
             cellular_tile_streaming_state: None,
             collision: None,
@@ -1185,6 +1187,78 @@ impl Scene {
                 .mark_fluid_particle_export_submitted(streaming_request_identifier)?;
         }
         Ok(())
+    }
+
+    /// Advisory material from the resident saved/generated chunk snapshot, without GPU reads.
+    /// Active simulation edits may be newer. Use a live raycast first to confirm a surface exists.
+    pub fn stored_material_at(
+        &self,
+        cell: CellCoordinates,
+    ) -> Option<crate::materials::MaterialIdentifier> {
+        let tile = CellularTileCoordinates {
+            x: cell.x.div_euclid(CELLULAR_TILE_SIZE),
+            y: cell.y.div_euclid(CELLULAR_TILE_SIZE),
+        };
+        let cells = self
+            .chunk_streaming_state
+            .as_ref()?
+            .cellular_tile_material_identifiers(tile)?;
+        Some(
+            cells[(cell.y.rem_euclid(CELLULAR_TILE_SIZE) * CELLULAR_TILE_SIZE
+                + cell.x.rem_euclid(CELLULAR_TILE_SIZE)) as usize],
+        )
+    }
+
+    /// Significant CPU rigid-body contacts, strongest first, capped at sixteen.
+    pub fn acoustic_impacts(
+        &self,
+    ) -> Vec<(ScenePosition, f32, crate::materials::MaterialIdentifier)> {
+        self.collision
+            .as_ref()
+            .map_or_else(Vec::new, |c| c.acoustic_impacts())
+    }
+    /// Representative material of a cellular rigid body, from its existing CPU cell records.
+    pub fn rigid_body_material(
+        &self,
+        body: SceneRigidBody,
+    ) -> Option<crate::materials::MaterialIdentifier> {
+        self.collision.as_ref()?.rigid_body_material(body)
+    }
+
+    /// Observes simulation activity asynchronously. Call at about 8 Hz. Tags, in order,
+    /// identify burning gas, corrosive fluid, hot fluid, and corrodible solids.
+    /// Keep tags fixed for a scene. No sounds or game asset names enter the engine.
+    pub fn sample_acoustics(
+        &mut self,
+        accelerator: &Accelerator,
+        center: ScenePosition,
+        half: [f32; 2],
+        tags: &[String; 4],
+    ) -> Vec<super::AcousticBucket> {
+        let (Some(buffers), Some(streaming), Some(fluids)) = (
+            &self.cellular_tile_buffers,
+            &self.cellular_tile_streaming_state,
+            &self.fluids,
+        ) else {
+            return Vec::new();
+        };
+        let Some(region) = streaming.active_cellular_tile_region() else {
+            return Vec::new();
+        };
+        self.acoustics
+            .get_or_insert_with(|| {
+                super::acoustics::Acoustics::new(accelerator, &self.material_table, tags)
+            })
+            .sample(
+                accelerator,
+                &self.material_table,
+                buffers,
+                fluids.fluid_raster_buffer(),
+                region,
+                streaming.cellular_tile_ring_offset(),
+                center,
+                half,
+            )
     }
 
     /// Returns the graphical representation of this scene seen through an actor's camera

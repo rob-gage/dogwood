@@ -45,3 +45,7 @@ This section is the reference for Dogwood's embedded WGSL shaders, for engine co
 Rendering and pass scheduling are covered in [cellular rendering](@/internals/rendering/cellular-pass.md), [sprite rendering](@/internals/rendering/sprite-pass.md), [cellular kinematics](@/internals/simulation/cellular-kinematics.md), [static cell colliders](@/internals/simulation/static-cell-colliders.md), [rigid bodies](@/internals/simulation/rigid-bodies.md), and the [edit pipeline](@/internals/simulation/edit-pipeline.md).
 
 - [Lighting pass](@/internals/rendering/lighting-pass.md): WGSL stages, optical records, cascade uniforms, and light texture.
+
+## Acoustic reduction
+
+`engine_world/src/scenes/acoustics.wgsl` reads existing cell/fluid/gas/pressure buffers and writes six floats per coarse bucket. Each workgroup uses shared-memory reduction, with bounded asynchronous CPU readback. The uniform layout, limits, measurements, and scheduling contract are described in [simulation acoustics](@/external-api/acoustics.md).

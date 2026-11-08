@@ -1901,6 +1901,91 @@ impl Collision {
         true
     }
 
+    /// Coarse CPU contact observations; normalized impulse rejects ordinary resting loads.
+    pub(crate) fn acoustic_impacts(
+        &self,
+    ) -> Vec<(ScenePosition, f32, crate::materials::MaterialIdentifier)> {
+        let mut impacts: Vec<(ScenePosition, f32, crate::materials::MaterialIdentifier)> =
+            Vec::with_capacity(16);
+        for pair in self.narrow_phase.contact_pairs() {
+            let impulse = pair.total_impulse_magnitude();
+            if impulse <= 0.0 {
+                continue;
+            }
+            for handle in [pair.collider1, pair.collider2] {
+                let Some(collider) = self.colliders.get(handle) else {
+                    continue;
+                };
+                if collider.collision_groups().memberships.bits() & COLLISION_GROUP_RIGID_BODY == 0
+                {
+                    continue;
+                }
+                let Some(body) = collider.parent().and_then(|h| self.rigid_bodies.get(h)) else {
+                    continue;
+                };
+                let speed = impulse / body.mass().max(0.01);
+                if speed < 10.0 {
+                    continue;
+                }
+                let Some(record) = self
+                    .collision_rigid_bodies
+                    .values()
+                    .find(|r| r.collider_handle == handle)
+                else {
+                    continue;
+                };
+                let material = record
+                    .cellular_tiles
+                    .values()
+                    .find_map(|(cells, ids, ..)| {
+                        if *cells == 0 {
+                            None
+                        } else {
+                            Some(ids[cells.trailing_zeros() as usize])
+                        }
+                    })
+                    .unwrap_or(crate::materials::MaterialIdentifier::EMPTY);
+                let event = (
+                    Self::scene_position(self.origin, body.translation()),
+                    speed,
+                    material,
+                );
+                if impacts.len() < 16 {
+                    impacts.push(event);
+                } else if let Some((i, smallest)) = impacts
+                    .iter()
+                    .enumerate()
+                    .min_by(|a, b| a.1.1.total_cmp(&b.1.1))
+                {
+                    if speed > smallest.1 {
+                        impacts[i] = event;
+                    }
+                }
+                break;
+            }
+        }
+        impacts.sort_unstable_by(|a, b| b.1.total_cmp(&a.1));
+        impacts.truncate(16);
+        impacts
+    }
+
+    pub(crate) fn rigid_body_material(
+        &self,
+        rigid_body: SceneRigidBody,
+    ) -> Option<crate::materials::MaterialIdentifier> {
+        self.collision_rigid_bodies
+            .get(&rigid_body.0)?
+            .cellular_tiles
+            .values()
+            .find_map(|(cells, ids, ..)| {
+                if *cells == 0 {
+                    None
+                } else {
+                    Some(ids[cells.trailing_zeros() as usize])
+                }
+            })
+    }
+
     /// Converts a scene position to a live rigid body's local frame
     pub(crate) fn rigid_body_local_point(
         &self,

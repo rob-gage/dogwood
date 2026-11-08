@@ -78,3 +78,6 @@ const SCENE_FLUID_CAPACITY_FACTOR_DEFAULT: f32 = 0.25;
 
 /// Name of the processor thread pool running chunk loads, generation, and saves
 const SCENE_CHUNK_THREAD_POOL_NAME: &str = "chunk_io";
+
+mod acoustics;
+pub use acoustics::AcousticBucket;

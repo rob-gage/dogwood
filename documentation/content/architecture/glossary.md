@@ -115,3 +115,5 @@ The `clip` expression is the sprite vertex shader's mapping.
 - **Penetration:** scene setting controlling how quickly the spread pass attenuates light moving into occluding cells.
 
 See [Lighting](@/external-api/lighting.md) and the [lighting pass](@/internals/rendering/lighting-pass.md).
+
+- **Acoustic bucket:** A positioned aggregate of six coarse simulation activity measurements, observed with bounded GPU reduction and nonblocking readback. See [simulation acoustics](@/external-api/acoustics.md).

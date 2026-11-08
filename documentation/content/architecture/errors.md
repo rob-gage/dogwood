@@ -80,3 +80,5 @@ An error may therefore be recoverable at a direct API boundary while the engine 
 `SceneError` includes invalid or fixed fluid capacity, particle mapping/poll failures, invalid export sizes (an individually invalid exported particle is dropped), inactive particle destination chunks, closed snapshot channels, and missing tile streaming request identifiers. Chunk particle validation reports capacity, material, position, and velocity errors. See [chunk format](@/internals/world-streaming/chunk-format.md). Scene drop panics if fluid particles cannot be returned to chunk storage.
 
 `SceneError` also reports invalid ambient light and light penetration settings. `SpriteSheetError` reports image decoding and invalid dimensions. See [Lighting](@/external-api/lighting.md).
+
+Optional acoustic observation logs readback mapping/poll errors and skips the observation rather than returning `SceneError` or blocking simulation. See [simulation acoustics](@/external-api/acoustics.md).

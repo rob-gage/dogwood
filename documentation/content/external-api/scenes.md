@@ -176,3 +176,7 @@ let mountains = ActorParallaxComponent {
 ## Lighting
 
 Scenes expose ambient-light and light-penetration settings. Defaults, validation, and units are listed on [Lighting](@/external-api/lighting.md#scene-and-actor-controls). The renderer consumes them with resident scene graphics.
+
+## Acoustic observations
+
+`sample_acoustics` exposes coarse GPU activity without blocking simulation; `acoustic_impacts` reads significant existing CPU rigid-body contacts. `stored_material_at` and `rigid_body_material` provide advisory material hints. These methods leave playback and game-specific thresholds to the caller. See [simulation acoustics](@/external-api/acoustics.md).

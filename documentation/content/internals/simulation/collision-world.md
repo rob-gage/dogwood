@@ -44,3 +44,5 @@ A release during this step requests a static occupancy reread; its newly rasteri
 Collision also consumes asynchronous fluid actor samples for impulses and swimming, and rigid-body fluid samples for buoyancy and drag. See [fluid coupling](@/internals/simulation/fluid-coupling.md).
 
 `Scene::pawn_impact_speed` reports the largest speed lost along a solid surface normal during the pawn's last movement step. It counts controller hits relative to moving surfaces, ground snaps, and dynamic-cell contacts; see [pawn impact speed](@/internals/actors/pawn-movement.md#pawn-impact-speed).
+
+The optional `Scene::acoustic_impacts` query summarizes strong existing rigid-body contact impulses without changing this step order or performing a GPU readback. Games apply playback cooldowns; see [simulation acoustics](@/external-api/acoustics.md#cpu-contacts-and-material-hints).

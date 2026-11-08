@@ -182,3 +182,7 @@ Pressure uses a 1/60-second tick and 3 substeps on pressure cells of 2×2 cells;
 ## Lighting and radiance resources
 
 `MATERIAL_RADIANCE_MAXIMUM` is `127`; packed radiance stores emission mantissas and shared exponent in bits 0–24 and occlusion in bits 25–31. The lighting pass uses `LIGHTING_INTERVAL = 2`, `LIGHTING_DIRECTIONS = 4`, `LIGHTING_BACKLIGHT_CELLS = 4`, and at most 16 cascade levels. The finest cascade scales its direction count by cells per lighting texel, keeping ray density per world distance constant across qualities. Backlight always uses one texel per 4 × 4 world cells. These lighting constants are private to the pass. `LightingQuality` selects 4 × 4, 2 × 2, or 1 × 1 cells per lighting texel, with High as the default. See [Lighting pass](@/internals/rendering/lighting-pass.md) for GPU layouts and [radiance API](@/external-api/lighting.md) for the public data contract.
+
+## Optional acoustic observations
+
+The first `Scene::sample_acoustics` call with resident tiles allocates a scene-owned reduction pipeline, material tag masks, a 64-byte uniform buffer, a 6,144-byte result buffer, and three 6,144-byte asynchronous staging buffers. The pass is independent of fixed-step scheduling and never waits for its GPU results. The game controls observation frequency and source lifetime; see [simulation acoustics](@/external-api/acoustics.md).

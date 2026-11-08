@@ -12,3 +12,6 @@ bevy_ecs = { version = "=0.20.0", default-features = false, features = ["std"] }
 rayon = "=1.12.0"
 rapier2d = { path = "../vendor/rapier2d" }
 wgpu = { version = "=30.0.0", default-features = false }
+
+[dev-dependencies]
+naga = { version = "=30.0.1", features = ["wgsl-in"] }

@@ -1110,6 +1110,7 @@ dependencies = [
  "bevy_ecs",
  "engine_graphics",
  "engine_host",
+ "naga",
  "rapier2d",
  "rayon",
  "wgpu",

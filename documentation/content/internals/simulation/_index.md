@@ -53,3 +53,5 @@ GPU kinematics submits work without waiting for its contact readbacks, so collis
 - [Pressure simulation](@/internals/simulation/pressure.md) — face flows, exact integer transfers, phantom air, and displacement by cells, fluid, and actors.
 
 - [Chemistry simulation](@/internals/simulation/chemistry.md) — reaction rules, block ownership, products, and limits.
+
+Optional [acoustic observations](@/external-api/acoustics.md) sample the published simulation buffers when called by a game. They do not alter fixed-step simulation order or material state.
