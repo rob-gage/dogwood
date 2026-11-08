@@ -93,6 +93,8 @@ pub struct MaterialTable {
     /// Mass, diffusivity, cohesion, and color bits, then opacity, radiance bits, and padding as
     /// eight 32-bit words per gas index
     gas_properties_buffer: wgpu::Buffer,
+    /// Texture strength, texture scale, drift, and flicker as four `f32` per gas index
+    gas_graphics_buffer: wgpu::Buffer,
     /// Heat capacity, conduction, hot and cold transitions, and transition flags as sixteen 32-bit
     /// words per material, indexed by its thermal index
     thermal_properties_buffer: wgpu::Buffer,
@@ -578,6 +580,35 @@ impl MaterialTable {
             &gas_property_bytes,
         );
         accelerator.queue().write_buffer(&gas_properties_buffer, 0, &gas_property_bytes);
+        // serialize gas graphics as texture strength, texture scale, drift, and flicker strength
+        let mut gas_graphics_bytes: Vec<u8> = Vec::new();
+        for index in 0.. {
+            let Ok(identifier) = MaterialIdentifier::new(MaterialForm::Gas, index)
+            else { break; };
+            let Some(properties) = material_registry.gas_properties(identifier) else { break; };
+            let graphics = &properties.graphics;
+            if !graphics.texture.is_finite() || graphics.texture < 0.0
+                || !graphics.texture_scale.is_finite() || graphics.texture_scale <= 0.0
+                || !graphics.drift.is_finite()
+                || !graphics.flicker.is_finite() || graphics.flicker < 0.0
+            {
+                return Err(MaterialError::Compilation(String::from(
+                    "gas graphics need a finite nonnegative texture and flicker, a positive \
+                    texture scale, and a finite drift",
+                )));
+            }
+            for value in [graphics.texture, graphics.texture_scale, graphics.drift,
+                graphics.flicker] {
+                gas_graphics_bytes.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        if gas_graphics_bytes.is_empty() { gas_graphics_bytes.resize(16, 0); }
+        let gas_graphics_buffer: wgpu::Buffer = Self::create_storage_buffer(
+            device,
+            "`MaterialTable.gas_graphics_buffer`",
+            &gas_graphics_bytes,
+        );
+        accelerator.queue().write_buffer(&gas_graphics_buffer, 0, &gas_graphics_bytes);
         let (
             mut thermal_property_bytes,
             transition_color_bytes,
@@ -896,6 +927,7 @@ impl MaterialTable {
             cellular_dynamic_properties_buffer,
             fluid_properties_buffer,
             gas_properties_buffer,
+            gas_graphics_buffer,
             thermal_properties_buffer,
             transition_color_buffer,
             reaction_buffer,
@@ -1382,6 +1414,12 @@ impl MaterialTable {
     /// opacity, packed radiance bits, and padding
     pub fn gas_properties_buffer(&self) -> &wgpu::Buffer {
         &self.gas_properties_buffer
+    }
+
+    /// Returns gas graphics as texture strength, texture scale, drift, and flicker strength per
+    /// gas index
+    pub fn gas_graphics_buffer(&self) -> &wgpu::Buffer {
+        &self.gas_graphics_buffer
     }
 
     /// Returns thermal GPU properties as heat capacity, conduction, then temperature, latent heat,

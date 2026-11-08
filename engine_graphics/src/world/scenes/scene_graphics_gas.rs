@@ -11,6 +11,9 @@ pub struct SceneGraphicsGas<'a> {
     /// Mass, diffusivity, cohesion, packed sRGB color bits, opacity, and padding as eight 32-bit
     /// words per gas index
     pub material_properties_buffer: &'a wgpu::Buffer,
+    /// Texture strength, texture scale in cells, upward drift in cells per second, and flicker
+    /// strength as one `vec4<f32>` per gas index
+    pub material_graphics_buffer: &'a wgpu::Buffer,
     /// Horizontal offset of the region's bottom-left corner from the camera in tiles
     pub region_x: f32,
     /// Vertical offset of the region's bottom-left corner from the camera in tiles
@@ -27,4 +30,6 @@ pub struct SceneGraphicsGas<'a> {
     pub cellular_tile_size: u32,
     /// Gas amount units in one atmosphere
     pub amount_per_atmosphere: f32,
+    /// Seconds of simulated time, which moves the gas texture and pauses with the scene
+    pub time: f32,
 }

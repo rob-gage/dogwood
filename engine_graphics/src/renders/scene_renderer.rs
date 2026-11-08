@@ -426,6 +426,9 @@ impl SceneRenderer {
         if let (Some(_), Some(lighting_bind_group)) = (fluid_graphics, lighting_bind_group) {
             self.fluid_pass.shade(&mut command_encoder, lighting_bind_group);
         }
+        if let (Some(_), Some(lighting_bind_group)) = (gas_graphics, lighting_bind_group) {
+            self.gas_pass.shade(&mut command_encoder, lighting_bind_group);
+        }
         let mut render_pass: wgpu::RenderPass<'_> =
             command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("`SceneRenderer::render`"),

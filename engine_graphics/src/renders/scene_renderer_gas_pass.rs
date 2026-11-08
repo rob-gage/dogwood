@@ -15,8 +15,18 @@ pub struct SceneRendererGasPass {
     shader_module: wgpu::ShaderModule,
     /// Render pipelines indexed by target format
     pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
+    /// Compute pipeline shading each cell of the shaded rectangle once
+    shade_pipeline: wgpu::ComputePipeline,
+    /// Compute pipeline cancelling the pressure checker in the shaded colors
+    cancel_checker_pipeline: wgpu::ComputePipeline,
     /// Per-view gas uniform buffer
     uniform_buffer: wgpu::Buffer,
+    /// Packed premultiplied color of each cell of the shaded rectangle
+    shaded_cell_buffer: wgpu::Buffer,
+    /// Packed premultiplied color of each cell with the pressure checker cancelled
+    filtered_cell_buffer: wgpu::Buffer,
+    /// Width and height of the shaded cell rectangle of the prepared view
+    shaded_size: (u32, u32),
     /// Cached gas bind group
     bind_group: Option<wgpu::BindGroup>,
     /// Material identifier buffer used by the cached gas bind group
@@ -25,6 +35,8 @@ pub struct SceneRendererGasPass {
     gas_buffer: Option<wgpu::Buffer>,
     /// Material properties buffer used by the cached gas bind group
     material_properties_buffer: Option<wgpu::Buffer>,
+    /// Material graphics buffer used by the cached gas bind group
+    material_graphics_buffer: Option<wgpu::Buffer>,
     /// Matter buffer used by the cached gas bind group
     matter_buffer: Option<wgpu::Buffer>,
 }
@@ -40,7 +52,7 @@ impl SceneRendererGasPass {
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,
@@ -50,7 +62,7 @@ impl SceneRendererGasPass {
                     },
                     wgpu::BindGroupLayoutEntry {
                         binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,
@@ -60,7 +72,7 @@ impl SceneRendererGasPass {
                     },
                     wgpu::BindGroupLayoutEntry {
                         binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,
@@ -70,7 +82,7 @@ impl SceneRendererGasPass {
                     },
                     wgpu::BindGroupLayoutEntry {
                         binding: 3,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,
@@ -80,7 +92,37 @@ impl SceneRendererGasPass {
                     },
                     wgpu::BindGroupLayoutEntry {
                         binding: 4,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 5,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 7,
+                        visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,
@@ -107,24 +149,55 @@ impl SceneRendererGasPass {
             },
         );
         let pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline> = HashMap::new();
+        let create_compute_pipeline = |entry_point: &str| -> wgpu::ComputePipeline {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("`SceneRendererGasPass` compute pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &shader_module,
+                entry_point: Some(entry_point),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                cache: None,
+            })
+        };
+        let shade_pipeline: wgpu::ComputePipeline = create_compute_pipeline("shade");
+        let cancel_checker_pipeline: wgpu::ComputePipeline =
+            create_compute_pipeline("cancel_checker");
         let uniform_buffer: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("`SceneRendererGasPass.uniform_buffer`"),
-            size: 64,
+            size: 80,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let shaded_cell_buffer: wgpu::Buffer = Self::new_cell_buffer(device, 32);
+        let filtered_cell_buffer: wgpu::Buffer = Self::new_cell_buffer(device, 32);
         Self {
             bind_group_layout,
             pipeline_layout,
             shader_module,
             pipelines,
+            shade_pipeline,
+            cancel_checker_pipeline,
             uniform_buffer,
+            shaded_cell_buffer,
+            filtered_cell_buffer,
+            shaded_size: (0, 0),
             bind_group: None,
             material_identifier_buffer: None,
             gas_buffer: None,
             material_properties_buffer: None,
+            material_graphics_buffer: None,
             matter_buffer: None,
         }
+    }
+
+    /// Creates a storage buffer for per-cell shading data
+    fn new_cell_buffer(device: &wgpu::Device, byte_count: u64) -> wgpu::Buffer {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("`SceneRendererGasPass` cell buffer"),
+            size: byte_count,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        })
     }
 
     /// Uploads gas uniforms and prepares the target-format pipeline
@@ -195,7 +268,36 @@ impl SceneRendererGasPass {
         let ring_offset_y: u32 = gas_graphics.ring_offset_y;
         let cellular_tile_size: u32 = gas_graphics.cellular_tile_size;
         let amount_per_atmosphere: f32 = gas_graphics.amount_per_atmosphere;
-        let mut uniform_bytes: [u8; 64] = [0; 64];
+        // shade the cells under the viewport, four cells past each edge and at most four cells past
+        // the region: the B-spline taps reach two cells and the checker filter reads two more
+        let cells_per_tile: f32 = cellular_tile_size as f32;
+        let half_width: f32 = viewport_width_as_float * 0.5 / pixels_per_tile;
+        let half_height: f32 = viewport_height_as_float * 0.5 / pixels_per_tile;
+        let region_cell_width: i32 = (region_width * cellular_tile_size) as i32;
+        let region_cell_height: i32 = (region_height * cellular_tile_size) as i32;
+        let cell_range = |center: f32, half: f32, region_cells: i32| -> (i32, i32) {
+            let minimum: i32 = ((center - half) * cells_per_tile).floor() as i32 - 4;
+            let maximum: i32 = ((center + half) * cells_per_tile).floor() as i32 + 4;
+            (minimum.max(-4), maximum.min(region_cells + 3))
+        };
+        let (minimum_x, maximum_x): (i32, i32) =
+            cell_range(camera_relative_region_x, half_width, region_cell_width);
+        let (minimum_y, maximum_y): (i32, i32) =
+            cell_range(camera_relative_region_y, half_height, region_cell_height);
+        let shaded_width: u32 = (maximum_x - minimum_x + 1).max(0) as u32;
+        let shaded_height: u32 = (maximum_y - minimum_y + 1).max(0) as u32;
+        self.shaded_size = (shaded_width, shaded_height);
+        let shaded_cell_count: u64 = u64::from(shaded_width) * u64::from(shaded_height);
+        let mut cell_buffers_differ: bool = false;
+        if shaded_cell_count * 32 > self.shaded_cell_buffer.size() {
+            self.shaded_cell_buffer = Self::new_cell_buffer(device, shaded_cell_count * 32);
+            cell_buffers_differ = true;
+        }
+        if shaded_cell_count * 32 > self.filtered_cell_buffer.size() {
+            self.filtered_cell_buffer = Self::new_cell_buffer(device, shaded_cell_count * 32);
+            cell_buffers_differ = true;
+        }
+        let mut uniform_bytes: [u8; 80] = [0; 80];
         uniform_bytes[0..4].copy_from_slice(&viewport_origin_x.to_le_bytes());
         uniform_bytes[4..8].copy_from_slice(&viewport_origin_y.to_le_bytes());
         uniform_bytes[8..12].copy_from_slice(&viewport_width_as_float.to_le_bytes());
@@ -209,15 +311,22 @@ impl SceneRendererGasPass {
         uniform_bytes[44..48].copy_from_slice(&ring_offset_y.to_le_bytes());
         uniform_bytes[48..52].copy_from_slice(&cellular_tile_size.to_le_bytes());
         uniform_bytes[52..56].copy_from_slice(&amount_per_atmosphere.to_le_bytes());
+        uniform_bytes[56..60].copy_from_slice(&minimum_x.to_le_bytes());
+        uniform_bytes[60..64].copy_from_slice(&minimum_y.to_le_bytes());
+        uniform_bytes[64..68].copy_from_slice(&shaded_width.to_le_bytes());
+        uniform_bytes[68..72].copy_from_slice(&shaded_height.to_le_bytes());
+        uniform_bytes[72..76].copy_from_slice(&gas_graphics.time.to_le_bytes());
         accelerator.queue().write_buffer(&self.uniform_buffer, 0, &uniform_bytes);
         let material_buffers_differ: bool = self.material_identifier_buffer.as_ref()
             != Some(gas_graphics.material_identifier_buffer);
         let gas_buffers_differ: bool = self.gas_buffer.as_ref() != Some(gas_graphics.gas_buffer);
         let properties_buffers_differ: bool = self.material_properties_buffer.as_ref()
             != Some(gas_graphics.material_properties_buffer);
+        let graphics_buffers_differ: bool = self.material_graphics_buffer.as_ref()
+            != Some(gas_graphics.material_graphics_buffer);
         let matter_buffers_differ: bool = self.matter_buffer.as_ref() != Some(matter_buffer);
         if self.bind_group.is_none() || material_buffers_differ || gas_buffers_differ
-            || properties_buffers_differ || matter_buffers_differ
+            || properties_buffers_differ || graphics_buffers_differ || matter_buffers_differ || cell_buffers_differ
         {
             let bind_group: wgpu::BindGroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("`SceneRendererGasPass.bind_group`"),
@@ -255,14 +364,54 @@ impl SceneRendererGasPass {
                         binding: 4,
                         resource: matter_buffer.as_entire_binding(),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: self.shaded_cell_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: self.filtered_cell_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: gas_graphics.material_graphics_buffer,
+                            offset: 0,
+                            size: None,
+                        }),
+                    },
                 ],
             });
             self.bind_group = Some(bind_group);
             self.material_identifier_buffer = Some(gas_graphics.material_identifier_buffer.clone());
             self.gas_buffer = Some(gas_graphics.gas_buffer.clone());
             self.material_properties_buffer = Some(gas_graphics.material_properties_buffer.clone());
+            self.material_graphics_buffer = Some(gas_graphics.material_graphics_buffer.clone());
             self.matter_buffer = Some(matter_buffer.clone());
         }
+    }
+
+    /// Shades the prepared view's gas cells and cancels the pressure checker before the view is
+    /// drawn
+    pub fn shade(
+        &self,
+        command_encoder: &mut wgpu::CommandEncoder,
+        lighting_bind_group: &wgpu::BindGroup,
+    ) {
+        let Some(bind_group) = self.bind_group.as_ref() else { return; };
+        let (shaded_width, shaded_height): (u32, u32) = self.shaded_size;
+        if shaded_width == 0 || shaded_height == 0 { return; }
+        let mut compute_pass: wgpu::ComputePass<'_> = command_encoder
+            .begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("`SceneRendererGasPass::shade`"),
+                timestamp_writes: None,
+            });
+        compute_pass.set_bind_group(0, bind_group, &[]);
+        compute_pass.set_bind_group(1, lighting_bind_group, &[]);
+        compute_pass.set_pipeline(&self.shade_pipeline);
+        compute_pass.dispatch_workgroups(shaded_width.div_ceil(8), shaded_height.div_ceil(8), 1);
+        compute_pass.set_pipeline(&self.cancel_checker_pipeline);
+        compute_pass.dispatch_workgroups(shaded_width.div_ceil(8), shaded_height.div_ceil(8), 1);
     }
 
     /// Draws lit gas cells for one prepared view

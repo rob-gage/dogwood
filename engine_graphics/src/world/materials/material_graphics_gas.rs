@@ -10,4 +10,12 @@ pub struct MaterialGraphicsGas {
     /// Multiplier of the atmospheres that build up the gas's opacity, so denser or thinner looking
     /// gases share one color alpha
     pub opacity: f32,
+    /// Strength of the noise that varies the gas's density, averaging out
+    pub texture: f32,
+    /// Feature size of the texture in cells
+    pub texture_scale: f32,
+    /// Upward drift of the texture in cells per second
+    pub drift: f32,
+    /// Strength of the noise varying the gas's emission, averaging out
+    pub flicker: f32,
 }

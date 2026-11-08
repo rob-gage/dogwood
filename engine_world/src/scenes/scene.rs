@@ -1630,6 +1630,7 @@ impl Scene {
             gas_buffer: cellular_tile_buffers.gas_buffer(),
             material_identifier_buffer: cellular_tile_buffers.material_identifier_buffer(),
             material_properties_buffer: self.material_table.gas_properties_buffer(),
+            material_graphics_buffer: self.material_table.gas_graphics_buffer(),
             region_x: region_x as f32,
             region_y: region_y as f32,
             region_width: active_region.width() as u32,
@@ -1638,6 +1639,7 @@ impl Scene {
             ring_offset_y,
             cellular_tile_size: CELLULAR_TILE_SIZE as u32,
             amount_per_atmosphere: GAS_AMOUNT_PER_ATMOSPHERE,
+            time: self.simulated_ticks as f32 / 60.0,
         })
     }
 
