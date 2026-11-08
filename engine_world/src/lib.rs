@@ -2,4 +2,5 @@
 
 pub mod materials;
 pub mod actors;
+pub mod particles;
 pub mod scenes;

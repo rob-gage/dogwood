@@ -52,3 +52,12 @@ impl From<engine_world::actors::ActorError> for EngineError {
         EngineError::Actor(error)
     }
 }
+
+impl From<engine_world::particles::ParticleError> for EngineError {
+    fn from(error: engine_world::particles::ParticleError) -> Self {
+        match error {
+            engine_world::particles::ParticleError::SpriteSheet(error) => EngineError::SpriteSheet(error),
+            engine_world::particles::ParticleError::Actor(error) => EngineError::Actor(error),
+        }
+    }
+}

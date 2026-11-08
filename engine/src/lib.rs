@@ -43,6 +43,7 @@ pub use engine_host::{
 pub use engine_world::{
     actors,
     materials,
+    particles,
     scenes,
 };
 pub use engine_user_interface as user_interface;
