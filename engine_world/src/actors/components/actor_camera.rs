@@ -11,6 +11,9 @@ pub struct ActorCameraComponent {
     pub height: u32,
     /// Multiplier of the visible area along each axis
     pub zoom: f32,
+    /// View offset from the actor in tiles, for transient effects such as recoil kick; streaming
+    /// and simulation stay centered on the actor
+    pub offset: [f32; 2],
 }
 
 impl ActorCameraComponent {

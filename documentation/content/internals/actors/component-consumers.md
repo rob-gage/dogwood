@@ -40,7 +40,7 @@ For component fields and defaults, see the [actor components API](@/external-api
 ### Camera consumers
 
 - **Streaming:** `Scene::stream` reads camera width and height and requests a region twice that unzoomed size.
-- **Graphics:** `Scene::graphics` uses the visible dimensions, which are width and height multiplied by zoom.
+- **Graphics:** `Scene::graphics` uses the visible dimensions, which are width and height multiplied by zoom, centered on the actor position translated by `offset`.
 - **Editor:** scales keyboard movement by the free camera's zoom-adjusted visible width and updates its zoom from the mouse wheel.
 
 ## Rotation

@@ -1190,9 +1190,13 @@ impl Scene {
     /// Returns the graphical representation of this scene seen through an actor's camera
     pub fn graphics(&self, camera_actor: Actor) -> Result<SceneGraphics<'_>, ActorError> {
         let camera: &ActorCameraComponent = self.actor_registry.component(camera_actor)?;
+        let offset: [f64; 2] = camera.offset.map(|value| {
+            if value.is_finite() { f64::from(value) } else { 0.0 }
+        });
         let camera_position: ScenePosition = self.actor_registry
             .component::<ActorKinematicsPositionComponent>(camera_actor)?
-            .position;
+            .position
+            .translate(offset[0], offset[1]);
         // place every actor sprite relative to the camera, skipping frames outside their sheet
         // and drawing one sheet pixel per cell at a scale of one
         let mut sprites: SceneGraphicsSprites<'_> = SceneGraphicsSprites::default();

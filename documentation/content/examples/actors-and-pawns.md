@@ -21,7 +21,7 @@ fn spawn_camera(scene: &mut Scene) -> Result<Actor, Box<dyn std::error::Error>> 
         ActorKinematicsPositionComponent {
             position: ScenePosition { tile_x: 0, tile_y: 0, offset_x: 0, offset_y: 0 },
         },
-        ActorCameraComponent { width: 80, height: 45, zoom: 1.0 },
+        ActorCameraComponent { width: 80, height: 45, zoom: 1.0, offset: [0.0; 2] },
     ))?)
 }
 ```
@@ -33,6 +33,7 @@ A `ScenePosition` is a cellular tile (`tile_x`, `tile_y`) plus a fixed-point sub
 `ActorCameraComponent` defines a view centered on its actor.
 
 - **Size:** `width` and `height` are cellular tiles at zoom `1.0`; `zoom` scales both.
+- **Offset:** `offset` shifts the view in tiles from the actor, for transient effects such as recoil kick. Streaming stays centered on the actor.
 - **Streaming:** the engine requests a region twice the camera size. Zoom does not change it.
 - **Contract:** `Game::scene` returns `Some((&mut Scene, camera_actor))`, or `None` when the game has no scene. The camera actor must have `ActorKinematicsPositionComponent` and `ActorCameraComponent`.
 - **Override:** a host can replace the actor with `GameInstance::set_camera_actor`, with the same component requirement.

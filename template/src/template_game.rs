@@ -1064,7 +1064,7 @@ impl TemplateGame {
             },
             ActorPawnMovementComponent::default(),
             ActorPawnPossessionComponent,
-            ActorCameraComponent { width: 80, height: 45, zoom: 1.0 },
+            ActorCameraComponent { width: 80, height: 45, zoom: 1.0, offset: [0.0; 2] },
             ActorPersistenceComponent,
         ))?;
         Ok(Self { scene, player })
