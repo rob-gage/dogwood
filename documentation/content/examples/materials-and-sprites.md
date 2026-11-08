@@ -120,6 +120,7 @@ use engine::{
     materials::{
         MaterialError, MaterialPropertiesFluid, MaterialPropertiesThermal, MaterialRegistry,
     },
+    MaterialGraphicsFluid,
 };
 
 fn register_water(registry: &mut MaterialRegistry) -> Result<(), MaterialError> {
@@ -133,13 +134,14 @@ fn register_water(registry: &mut MaterialRegistry) -> Result<(), MaterialError> 
         restitution: 0.0,
         edit_color: u32::from_le_bytes([40, 110, 200, 200]),
         edit_radiance: engine::pack_radiance([0.0, 0.0, 0.0, 0.0]),
+        graphics: MaterialGraphicsFluid::default(),
         thermal: MaterialPropertiesThermal::default(),
     })
 }
 ```
 
 Fluid edit colors use packed sRGB RGBA, whose alpha is the opacity of a full cell. Gas graphics
-use packed sRGB RGBA plus an opacity multiplier; alpha sets opacity per atmosphere. Gas heat
+use packed sRGB RGBA plus an opacity multiplier; alpha sets opacity per atmosphere. They also set `texture`, `texture_scale`, `drift`, and `flicker`; zero texture and flicker, scale `3.0`, and zero drift leave the gas untextured. Gas heat
 capacity is per atmosphere as well. Use the compiled
 identifier in world edits to fill empty cells with gas or spawn fluid particles. A fluid identifier
 written directly into a cellular material array does not create particles. See [fluid simulation](@/internals/simulation/fluids.md) and [pressure simulation](@/internals/simulation/pressure.md) for the implemented models.

@@ -3,7 +3,7 @@ title = "Material table compilation"
 description = "How MaterialRegistry::compile builds material, thermal transition, and cellular albedo data."
 weight = 20
 [extra]
-sources = ["engine_world/src/materials", "engine_graphics/src/sprites", "engine_graphics/src/world/materials/material_radiance.rs", "engine_graphics/src/world/materials/material_radiance.wgsl", "engine_world/src/materials/material_temperature_color.rs", "engine_graphics/src/world/materials/material_graphics_gas.rs", "engine_graphics/src/world/materials/material_graphics_gas.rs", "engine_graphics/src/world/materials/material_graphics_cellular_static.rs", "engine_graphics/src/world/materials/material_graphics_cellular_dynamic.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl", "engine_world/src/scenes/collisions/collision_rigid_body.rs", "engine_world/src/scenes/collisions/collision.rs"]
+sources = ["engine_world/src/materials", "engine_graphics/src/world/materials/material_graphics_fluid.rs", "engine_graphics/src/sprites", "engine_graphics/src/world/materials/material_radiance.rs", "engine_graphics/src/world/materials/material_radiance.wgsl", "engine_world/src/materials/material_temperature_color.rs", "engine_graphics/src/world/materials/material_graphics_gas.rs", "engine_graphics/src/world/materials/material_graphics_cellular_static.rs", "engine_graphics/src/world/materials/material_graphics_cellular_dynamic.rs", "engine_world/src/scenes/cellular_tiles/cellular_tile.wgsl", "engine_world/src/scenes/collisions/collision_rigid_body.rs", "engine_world/src/scenes/collisions/collision.rs"]
 +++
 
 This page is for engine contributors. It explains how `MaterialRegistry::compile` turns registered materials into the GPU property buffer and CPU albedo lookup data that the simulation uses.
@@ -54,6 +54,10 @@ an unbreakable fallback record.
 ### Fluid property buffer
 
 Each fluid record contains seven little-endian `f32` values (density, viscosity, cohesion, artificial pressure, drag, friction, restitution), followed by packed RGBA color. The `STORAGE | COPY_DST` buffer has a 32-byte stride. Edit radiance defaults are kept in `MaterialPropertiesFluid` and resolved by the CPU lookup, not this GPU record. With no fluid materials, a zeroed 32-byte record keeps the binding nonempty.
+
+A separate `fluid_graphics_buffer` holds 48 bytes per fluid in the same order, as three `vec4<f32>`: `absorption` r, g, b and `depth_opacity`, then `surface_brightness`, `surface_sheen`, `surface_band`, and a reserved `0.0`, then `shimmer`, `texture_scale`, `texture_speed`, and `crust`. Compilation rejects non-finite values, negative absorption, depth opacity, brightness, sheen, shimmer, texture speed, or crust, a non-positive texture scale, and a surface band outside `0..=1`. With no fluid materials it is a zeroed 48-byte record. `MaterialTable::fluid_graphics_buffer` exposes it.
+
+A `gas_graphics_buffer` holds 16 bytes per gas in gas index order: `[texture, texture_scale, drift, flicker]` from `MaterialGraphicsGas`. Compilation rejects non-finite values, a negative texture or flicker, and a non-positive texture scale; drift may be any finite value. With no gas materials it is a zeroed 16-byte record. `MaterialTable::gas_graphics_buffer` exposes it.
 
 Compilation validates positive finite density, viscosity and restitution in `[0, 1]`, and finite nonnegative cohesion, artificial pressure, drag, and friction.
 
