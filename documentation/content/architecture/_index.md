@@ -22,7 +22,7 @@ The `engine` crate is the game-facing facade. It re-exports scene, actor, materi
 | `engine_host` | Native window, GPU accelerator, processor pools, system input events | `engine_user_interface` |
 | `engine_user_interface` | egui integration and game UI | none |
 
-`engine_audio` declares no dependencies; `editor` is a library crate and `cli` provides the `dogwood` binary. See [crate and module boundaries](@/internal-api/crates.md) for the full workspace layout.
+`engine_audio` uses `cpal` for default-device sound output; `editor` is a library crate and `cli` provides the `dogwood` binary. See [crate and module boundaries](@/internal-api/crates.md) for the full workspace layout.
 
 ```text
 engine ──> engine_world

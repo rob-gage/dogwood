@@ -25,7 +25,7 @@ The facade re-exports selected types from the host, graphics, world, and user-in
 - [Collisions and edits](@/external-api/collisions-and-edits.md): colliders and world edits.
 - [Graphics](@/external-api/graphics.md): `SpriteSheet` and the `engine_graphics` renderer.
 - [User interface](@/external-api/user-interface.md): in-game UI.
-- [Audio](@/external-api/audio.md): one-shot sound playback.
+- [Audio](@/external-api/audio.md): stereo playback, music/SFX buses, panning, and persistent voices.
 - [Editor crate](@/external-api/editor.md): `Editor::launch`.
 - [CLI reference](@/external-api/cli.md): the `dogwood` command.
 
