@@ -3,7 +3,7 @@ title = "Error handling"
 description = "How Dogwood represents failures, propagates them, and turns some into panics."
 weight = 60
 [extra]
-sources = ["engine/src/runtime/engine_error.rs", "engine_world/src/scenes/scene_error.rs", "engine_world/src/actors/actor_error.rs", "engine_world/src/materials/material_error.rs", "engine_world/src/materials/material_registry.rs", "engine_world/src/scenes/chunks/chunk_error.rs", "engine_world/src/scenes/edits/edit_error.rs", "engine_graphics/src/sprites/sprite_sheet_error.rs", "engine_host/src/acceleration/accelerator_error.rs", "engine_host/src/acceleration/accelerator.rs", "engine_host/src/processors/processor_error.rs", "engine_host/src/processors/processor.rs", "engine_host/src/windows/window_error.rs", "engine/src/runtime/engine.rs", "engine/src/games/game_instance.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/actor_sensing", "engine_world/src/scenes/soft_bodies", "engine_world/src/scenes/soft_bodies/soft_body_sampling_pass.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine_world/src/particles/particle_error.rs"]
+sources = ["engine/src/runtime/engine_error.rs", "engine_world/src/scenes/scene_error.rs", "engine_world/src/actors/actor_error.rs", "engine_world/src/materials/material_error.rs", "engine_world/src/materials/material_registry.rs", "engine_world/src/scenes/chunks/chunk_error.rs", "engine_world/src/scenes/edits/edit_error.rs", "engine_graphics/src/sprites/sprite_sheet_error.rs", "engine_host/src/acceleration/accelerator_error.rs", "engine_host/src/acceleration/accelerator.rs", "engine_host/src/processors/processor_error.rs", "engine_host/src/processors/processor.rs", "engine_host/src/windows/window_error.rs", "engine/src/runtime/engine.rs", "engine/src/games/game_instance.rs", "engine_world/src/scenes/scene.rs", "engine_world/src/scenes/actor_sensing", "engine_world/src/scenes/soft_bodies", "engine_world/src/scenes/soft_bodies/soft_body_sampling_pass.rs", "engine_world/src/scenes/chunks/chunk_streaming_state.rs", "engine_world/src/scenes/edits/edit_streaming_state.rs", "engine_world/src/particles/particle_error.rs", "engine_audio/src/lib.rs"]
 +++
 
 This page covers the error types, how they convert and propagate, and where the runtime turns them into panics. It is for engine contributors.
@@ -52,6 +52,7 @@ The enums identify failures; they do not decide whether a caller can recover.
 | `SceneError` | Streaming, storage, tile, actor-sensing and soft-body sampling readback, collision/kinematics, ambient gas configuration, despawn, and collider failures; chunk load, save, and generation variants carry coordinates and a lower-level error. |
 | `EditError` | Inactive tiles, unregistered materials, invalid pressure, temperature, or damage inputs, or edit request capacity reached. |
 | `ParticleError` | `ParticleSystem::new` failing to create its pixel sprite sheets (`SpriteSheet`) or spawn its actor (`Actor`). |
+| `AudioError` | No output device, backend stream failures, unsupported device sample formats, or invalid WAV data. |
 | `EngineError` | Launch wrapper; see above. |
 
 ### Recovery and retry

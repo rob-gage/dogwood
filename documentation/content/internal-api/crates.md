@@ -10,10 +10,10 @@ This page maps the Dogwood workspace for engine contributors: what each crate is
 
 ## Internal dependencies
 
-Each line lists the crates that the first crate depends on by path. `engine_user_interface`, `cli`, and `engine_audio` have no internal dependencies.
+Each line lists the crates that the first crate depends on by path. `engine_user_interface`, `cli`, and `engine_audio` have no internal dependencies (`engine` depends on `engine_audio`).
 
 ```text
-engine          -> engine_world, engine_graphics, engine_host, engine_user_interface
+engine          -> engine_world, engine_graphics, engine_host, engine_user_interface, engine_audio
 engine_world    -> engine_graphics, engine_host
 engine_graphics -> engine_host
 engine_host     -> engine_user_interface
@@ -31,7 +31,7 @@ editor          -> engine, engine_host
 | `engine_user_interface` | Immediate-mode UI, widgets, game UI, and rendering integration; `advanced`, `components`, `game_ui`, plus context, renderer, theme, and window-state modules. | `taffy`, `egui`, `egui-winit`, `egui-wgpu`, `egui_extras`, `egui_dock`, `winit`, `wgpu` |
 | `editor` | Editor application and its tools, tabs, brushes, and viewport. Its modules are private; `Editor` is re-exported. | None |
 | `cli` | `dogwood` binary; commands, template handling, and utility modules. | `clap`, `home`, `include_dir`, `semver`, `serde_json`, `which` |
-| `engine_audio` | Empty crate stub: its library file contains only the copyright comment. | None |
+| `engine_audio` | One-shot audio mixer and WAV loader; see [Audio](@/external-api/audio.md). | `cpal` |
 
 Engine crates pin external versions with `=version`; `cli` and `engine_host`'s `winit` use ranges. `wgpu` is enabled with platform-specific features in `engine_host` and `engine_user_interface`. Resolved versions in `Cargo.lock`:
 

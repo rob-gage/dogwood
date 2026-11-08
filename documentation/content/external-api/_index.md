@@ -5,7 +5,7 @@ weight = 3
 sort_by = "weight"
 template = "section.html"
 [extra]
-sources = ["engine/src/lib.rs", "engine/src/games", "engine_world/src/materials/mod.rs", "engine_world/src/particles/mod.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/actor_sensing/mod.rs", "engine_world/src/scenes/soft_bodies/mod.rs", "engine_world/src/scenes/chunks/mod.rs", "engine_world/src/scenes/chunks/chunk_decoration.rs", "engine_world/src/scenes/chunks/chunk_background.rs", "engine_world/src/scenes/scene.rs", "engine_host/src/lib.rs", "engine_graphics/src/lib.rs", "template/Cargo.toml.template", "documentation/site.sh", "engine_graphics/src/world/materials/material_radiance.rs"]
+sources = ["engine/src/lib.rs", "engine/src/games", "engine_world/src/materials/mod.rs", "engine_world/src/particles/mod.rs", "engine_world/src/scenes/mod.rs", "engine_world/src/scenes/actor_sensing/mod.rs", "engine_world/src/scenes/soft_bodies/mod.rs", "engine_world/src/scenes/chunks/mod.rs", "engine_world/src/scenes/chunks/chunk_decoration.rs", "engine_world/src/scenes/chunks/chunk_background.rs", "engine_world/src/scenes/scene.rs", "engine_host/src/lib.rs", "engine_graphics/src/lib.rs", "template/Cargo.toml.template", "documentation/site.sh", "engine_graphics/src/world/materials/material_radiance.rs", "engine_audio/src/lib.rs"]
 +++
 
 The `engine` crate is the game-facing facade, and this section documents it together with the `editor` crate and the `dogwood` command-line tool. It is for game programmers who write a `Game` and need exact type, method, and module names. New readers should start with [Engine and Game](@/external-api/engine-and-games.md).
@@ -25,6 +25,7 @@ The facade re-exports selected types from the host, graphics, world, and user-in
 - [Collisions and edits](@/external-api/collisions-and-edits.md): colliders and world edits.
 - [Graphics](@/external-api/graphics.md): `SpriteSheet` and the `engine_graphics` renderer.
 - [User interface](@/external-api/user-interface.md): in-game UI.
+- [Audio](@/external-api/audio.md): one-shot sound playback.
 - [Editor crate](@/external-api/editor.md): `Editor::launch`.
 - [CLI reference](@/external-api/cli.md): the `dogwood` command.
 
@@ -44,6 +45,7 @@ The facade re-exports selected types from the host, graphics, world, and user-in
 | `engine::SpriteSheet` | Sprite sheet type | [Graphics](@/external-api/graphics.md) |
 | `engine::SceneRenderer`, `engine::SceneRendererViewMode`, `engine::SceneGraphicsOverlay`, `engine::SceneGraphicsOverlayShape`, `engine::SceneGraphicsTemperature` | Scene renderer, its view modes, and cell-aligned overlays | [Graphics](@/external-api/graphics.md) |
 | `engine::MaterialGraphicsCellularDynamic`, `engine::MaterialGraphicsCellularStatic`, `engine::MaterialGraphicsFluid`, `engine::MaterialGraphicsGas` | Graphics properties for cellular, fluid, and gas materials | [Materials](@/external-api/materials.md) |
+| `engine::audio` | Re-export of the `engine_audio` crate | [Audio](@/external-api/audio.md) |
 | `engine::user_interface` | Re-export of the `engine_user_interface` crate | [User interface](@/external-api/user-interface.md) |
 
 ### Not in the facade

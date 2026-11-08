@@ -6,3 +6,4 @@ version = "0.0.0"
 edition = "2024"
 
 [dependencies]
+cpal = { version = "=0.18.2", default-features = false }

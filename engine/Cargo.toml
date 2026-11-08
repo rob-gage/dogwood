@@ -6,6 +6,7 @@ version = "0.0.0"
 edition = "2024"
 
 [dependencies]
+engine_audio = { path = "../engine_audio" }
 engine_graphics = { path = "../engine_graphics" }
 engine_host = { path = "../engine_host" }
 engine_user_interface = { path = "../engine_user_interface" }

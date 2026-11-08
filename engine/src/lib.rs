@@ -46,4 +46,5 @@ pub use engine_world::{
     particles,
     scenes,
 };
+pub use engine_audio as audio;
 pub use engine_user_interface as user_interface;
