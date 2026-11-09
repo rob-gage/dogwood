@@ -198,6 +198,10 @@ impl PressureCellularTilePass {
                     // the step writes all its workgroup memory before reading it, so it skips
                     // clearing it for every workgroup of every substep
                     compilation_options: wgpu::PipelineCompilationOptions {
+                        constants: &[(
+                            "PRESSURE_SKIP_NOOPS",
+                            if entry_point == "step" && std::env::var_os("DOGWOOD_PRESSURE_NO_SHORTCUTS").is_none() { 1.0 } else { 0.0 },
+                        )],
                         zero_initialize_workgroup_memory: !entry_point.starts_with("step"),
                         ..Default::default()
                     },

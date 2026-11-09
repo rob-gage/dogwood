@@ -98,3 +98,19 @@ Open-volume records use two words per cell. The first stores volume at 65,536 un
 | `BULK_FRACTION_MAXIMUM` | 0.5 | Maximum total amount transferred per substep |
 
 The CPU-side per-second coefficients and fixed 3-substep tick are listed on [pressure simulation](@/internals/simulation/pressure.md#flows-volume-and-sleeping).
+
+## Gas-free no-op shortcuts
+
+The `step` pipeline enables `PRESSURE_SKIP_NOOPS`; `step_gas` keeps the reference
+path. With both velocity components exactly zero, advection keeps the existing
+face flow. Otherwise a uniform axis branch evaluates only the horizontal or
+vertical sampler needed for that face, avoiding WGSL `select`'s evaluation of both.
+A zero pressure load skips static-material damage lookups because registered
+damage thresholds are positive. Pressure forces, buoyancy, diffusion, heat,
+substeps, sleep thresholds, and damage under nonzero loads keep their existing
+calculations.
+
+`DOGWOOD_PRESSURE_NO_SHORTCUTS=1` selects the reference at pipeline creation.
+GPU comparisons check complete substep/refinement output, wake flags, and matter
+for gas and phantom air, resting signed-zero and moving flows, static matter,
+ring offsets, and odd region dimensions.

@@ -722,7 +722,8 @@ fn face_flow(
     if giver.volume <= 0.0 && receiver.volume <= 0.0 { return 0.0; }
     let mean_pressure: f32 = 0.5 * (giver.pressure + receiver.pressure);
     var carried: f32 = flow;
-    if mean_pressure > 0.0 {
+    // At zero velocity the selected sampler returns this face's unchanged flow.
+    if mean_pressure > 0.0 && !(PRESSURE_SKIP_NOOPS && flow == 0.0 && cross_flow == 0.0) {
         // move the flow along itself, measuring speed as flow per amount
         var velocity: vec2<f32> = select(
             vec2<f32>(flow, cross_flow),
@@ -731,11 +732,19 @@ fn face_flow(
         ) / mean_pressure;
         let speed: f32 = length(velocity);
         if speed > ADVECTION_SPEED_MAXIMUM { velocity *= ADVECTION_SPEED_MAXIMUM / speed; }
-        carried = select(
-            sample_flow_x(face - velocity),
-            sample_flow_y(face - velocity),
-            is_vertical,
-        );
+        if PRESSURE_SKIP_NOOPS {
+            if is_vertical {
+                carried = sample_flow_y(face - velocity);
+            } else {
+                carried = sample_flow_x(face - velocity);
+            }
+        } else {
+            carried = select(
+                sample_flow_x(face - velocity),
+                sample_flow_y(face - velocity),
+                is_vertical,
+            );
+        }
     }
     var next: f32 = carried + uniforms.gas_response * (giver.pressure - receiver.pressure)
         + uniforms.bulk_viscosity * divergence_difference;
@@ -1662,6 +1671,8 @@ fn simulate_substep(cell: vec2<i32>, local_cell: u32) {
 
 /// Damages the static cells under a pressure cell by a load in amount units of a cell
 fn damage_static_cells(cell: vec2<i32>, load: f32) {
+    // Registered damage thresholds are positive: a zero load cannot remove matter.
+    if PRESSURE_SKIP_NOOPS && load <= 0.0 { return; }
     for (var offset: u32 = 0u; offset < 4u; offset++) {
         let fine_cell: vec2<i32> = cell * 2 + vec2<i32>(i32(offset % 2u), i32(offset / 2u));
         let index: u32 = cell_index(fine_cell);
@@ -2165,3 +2176,5 @@ fn damage(
         }
     }
 }
+
+override PRESSURE_SKIP_NOOPS: bool = false;

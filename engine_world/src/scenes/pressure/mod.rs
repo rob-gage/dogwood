@@ -66,3 +66,6 @@ const PRESSURE_OPEN_RELAXATION_MINIMUM: f32 = 0.5;
 
 /// Rate per second at which a solid cell pushes the gas trapped in it out through its open faces
 const PRESSURE_TRAPPED_EXPULSION: f32 = 8.0;
+
+#[cfg(test)]
+mod pressure_shortcut_tests;
