@@ -23,7 +23,7 @@ var<storage, read_write> previous: array<vec2<u32>>;
 
 /// Cache state words. Words 0 to 1 and 4 to 8 are cleared before every frame; words 2, 3 and 9
 /// persist.
-///  - 0: either input texture differs from its previous contents
+///  - 0: changed-input flags (bit 0 optical, bit 1 backlight)
 ///  - 1: some optical cell emits
 ///  - 2: every cascade interval must be recomputed
 ///  - 3: some optical cell emitted last frame
@@ -70,7 +70,7 @@ fn compare(@builtin(global_invocation_id) global_id: vec3<u32>, @builtin(local_i
         pack2x16float(optical_value.ba),
     );
     if any(previous[index] != packed_optical) {
-        atomicStore(&changed, 1u);
+        atomicOr(&changed, 1u);
         atomicMax(&bounds[0], params.width - cell.x);
         atomicMax(&bounds[1], cell.x + 1u);
         atomicMax(&bounds[2], params.height - cell.y);
@@ -89,14 +89,19 @@ fn compare(@builtin(global_invocation_id) global_id: vec3<u32>, @builtin(local_i
             pack2x16float(backlight_value.ba),
         );
         if any(previous[backlight_index] != packed_backlight) {
-            atomicStore(&changed, 1u);
+            atomicOr(&changed, 2u);
             previous[backlight_index] = packed_backlight;
         }
     }
     }
     workgroupBarrier();
     if local == 0u {
-        if atomicLoad(&changed)!=0u {atomicStore(&dirty[0],1u);}
+        if LOCAL_DIRTY {
+            let pitch=(params.width+7u)/8u+1u;
+            let block=global_id.xy/8u+vec2<u32>(1u);
+            local_changes[block.y*pitch+block.x]=select(0u,1u,(atomicLoad(&changed)&1u)!=0u);
+        }
+        if atomicLoad(&changed)!=0u {atomicOr(&dirty[0],atomicLoad(&changed));}
         if atomicLoad(&emissive)!=0u {atomicStore(&dirty[1],1u);}
         if atomicLoad(&backlit) != 0u {atomicStore(&dirty[8], 1u);}
         if atomicLoad(&bounds[1]) != 0u {
@@ -133,4 +138,28 @@ fn arguments() {
         args[index * 3u + 1u] = counts.y;
         args[index * 3u + 2u] = counts.z;
     }
+}
+
+override LOCAL_DIRTY:bool=false;
+@group(0) @binding(7) var<storage,read_write> local_changes:array<u32>;
+
+@compute @workgroup_size(64)
+fn prefix_rows(@builtin(global_invocation_id) id:vec3<u32>) {
+    let width=(params.width+7u)/8u;
+    let height=(params.height+7u)/8u;
+    if id.x>=height {return;}
+    let row=(id.x+1u)*(width+1u);
+    local_changes[row]=0u;
+    var sum=0u;
+    for(var x=1u;x<=width;x++) {sum+=local_changes[row+x];local_changes[row+x]=sum;}
+}
+
+@compute @workgroup_size(64)
+fn prefix_columns(@builtin(global_invocation_id) id:vec3<u32>) {
+    let pitch=(params.width+7u)/8u+1u;
+    let height=(params.height+7u)/8u;
+    if id.x>=pitch {return;}
+    local_changes[id.x]=0u;
+    var sum=0u;
+    for(var y=1u;y<=height;y++) {let index=y*pitch+id.x;sum+=local_changes[index];local_changes[index]=sum;}
 }

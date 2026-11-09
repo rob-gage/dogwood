@@ -50,3 +50,8 @@ A reaction value can be a parameter of the reactants' material tags; compilation
 > **Limitation:** A fluid product whose particle finds the pool full is lost after its reactants were consumed.
 
 > **Limitation:** Flame-front speed is bounded to roughly one cell per tick by contact checking; gas flow can carry flame products farther over time.
+
+Paired-contact traversal caches which units can participate in paired reactions,
+invalidating the cache before successful events can create or consume reactants.
+This preserves same-tick product handling; see the
+[shader reference](@/internals/shaders/chemistry-shader.md) for the cache and GPU comparisons.

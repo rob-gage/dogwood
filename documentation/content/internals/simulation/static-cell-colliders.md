@@ -61,3 +61,5 @@ When an edit may have changed cells belonging to cellular rigid bodies, those bo
 - The staging-range access uses `expect` after mapping succeeds.
 
 See the [collision world](@/internals/simulation/collision-world.md) for step ordering and the [collision shader reference](@/internals/shaders/collision-shaders.md) for GPU bindings and packing.
+
+Changed-cell feedback with an empty tile list leaves cached static occupancy and its collider untouched. Rigid-body removal feedback is still consumed before this early return.

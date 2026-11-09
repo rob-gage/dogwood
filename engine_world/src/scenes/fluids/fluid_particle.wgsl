@@ -1280,7 +1280,7 @@ fn project_actors(@builtin(global_invocation_id) invocation: vec3<u32>) {
 }
 
 /// Wakes sleeping particle tiles covered or approached by an actor this tick
-@compute @workgroup_size(1)
+@compute @workgroup_size(TILE_WORKGROUP_SIZE)
 fn wake_actor_neighbors(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let tile_count: u32 = uniforms.region_width * uniforms.region_height;
     if invocation.x >= tile_count || !tile_is_sleeping(invocation.x) { return; }
@@ -1365,7 +1365,7 @@ fn prepare_wake_dispatch() {
 }
 
 /// Applies tile wake requests after the first prediction has finished
-@compute @workgroup_size(1)
+@compute @workgroup_size(TILE_WORKGROUP_SIZE)
 fn apply_pending_wakes(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let tile_count: u32 = uniforms.region_width * uniforms.region_height;
     if invocation.x >= tile_count { return; }
@@ -1380,7 +1380,7 @@ fn apply_pending_wakes(@builtin(global_invocation_id) invocation: vec3<u32>) {
 }
 
 /// Updates per-tile wake state, compares solid occupancy, and clears the new reductions
-@compute @workgroup_size(1)
+@compute @workgroup_size(TILE_WORKGROUP_SIZE)
 fn prepare_sleep(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let tile_count: u32 = uniforms.region_width * uniforms.region_height;
     if invocation.x >= tile_count { return; }
@@ -1448,7 +1448,7 @@ fn prepare_sleep(@builtin(global_invocation_id) invocation: vec3<u32>) {
 }
 
 /// Wakes particle tiles next to a tile whose solid occupancy changed
-@compute @workgroup_size(1)
+@compute @workgroup_size(TILE_WORKGROUP_SIZE)
 fn wake_solid_neighbors(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let tile_count: u32 = uniforms.region_width * uniforms.region_height;
     if invocation.x >= tile_count
@@ -1487,7 +1487,7 @@ fn wake_solid_neighbors(@builtin(global_invocation_id) invocation: vec3<u32>) {
 }
 
 /// Advances calm-tick counters and freezes tiles whose particles stayed at rest
-@compute @workgroup_size(1)
+@compute @workgroup_size(TILE_WORKGROUP_SIZE)
 fn finish_sleep(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let tile_count: u32 = uniforms.region_width * uniforms.region_height;
     if invocation.x >= tile_count { return; }
@@ -3202,3 +3202,6 @@ fn commit_actor_velocity(@builtin(global_invocation_id) invocation: vec3<u32>) {
 }
 
 override FILTER_ACTOR_MATERIALS:bool=true;
+
+/// Independent tile bookkeeping shares workgroups without changing per-tile state.
+override TILE_WORKGROUP_SIZE:u32=64u;

@@ -92,3 +92,36 @@ fn run(a:&Accelerator,source:&str,units:u32)->Vec<u32>{
     read.slice(..).map_async(wgpu::MapMode::Read,|r|r.unwrap());d.poll(wgpu::PollType::Wait{submission_index:None,timeout:None}).unwrap();
     let bytes=read.slice(..).get_mapped_range().unwrap();bytes.chunks_exact(4).map(|v|u32::from_le_bytes(v.try_into().unwrap())).collect()
 }
+
+fn shader_function(source: &str, name: &str) -> String {
+    let start = source.find(&format!("fn {name}(" )).unwrap();
+    let brace = start + source[start..].find('{').unwrap();
+    let mut depth = 0;
+    for (offset, ch) in source[brace..].char_indices() {
+        if ch == '{' { depth += 1; }
+        if ch == '}' { depth -= 1; if depth == 0 { return source[start..brace + offset + 1].to_owned(); } }
+    }
+    panic!("unterminated function")
+}
+
+#[test]
+#[ignore = "requires GPU; verifies cached paired units with stateful same-tick products"]
+fn paired_unit_cache_preserves_contact_order_and_products() {
+    let a = Accelerator::default();
+    let shader = include_str!("chemistry_cellular_tile.wgsl");
+    let marker = "@compute @workgroup_size(64)\nfn react_tiles(";
+    let traversal = shader[shader.find(marker).unwrap()..].split("// The private masks").next().unwrap();
+    let prefix = "var<private> paired_units_cache:array<u32,12>; var<private> paired_units_valid:u32;";
+    let helpers = format!("{}\n{}", shader_function(shader,"cached_paired_units"), shader_function(shader,"invalidate_paired_units"));
+    let old_pair = shader_function(HARNESS,"cells_can_pair");
+    let cached_pair = "fn cells_can_pair(a:u32,b:u32)->bool { return cached_paired_units(a)!=0u && cached_paired_units(b)!=0u; }";
+    let cached = HARNESS.replace(&old_pair,cached_pair).replace("cells[a].flags[au]=", "invalidate_paired_units(); cells[a].flags[au]=");
+    for units in 1u32..=7 {
+        let mut results = Vec::new();
+        for harness in [HARNESS, cached.as_str()] {
+            let body = traversal.replace("    let local_block: u32 = local_index % 16u;", "    let local_block: u32 = local_index % 16u;\n    trace_base=(listed*16u+local_block)*736u; trace_count=0u;");
+            results.push(run(&a,&format!("{harness}\n{prefix}\n{helpers}\n{body}"),units));
+        }
+        assert_eq!(results[0],results[1],"cached contact order or products changed for {units} units");
+    }
+}

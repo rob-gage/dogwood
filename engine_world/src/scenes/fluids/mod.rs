@@ -83,3 +83,6 @@ pub const FLUID_TIME_STEP: f32 = 1.0 / 60.0;
 
 #[cfg(test)]
 mod fluid_actor_material_tests;
+
+#[cfg(test)]
+mod fluid_tile_group_tests;

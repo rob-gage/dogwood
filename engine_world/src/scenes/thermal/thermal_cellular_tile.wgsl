@@ -116,6 +116,10 @@ var<storage, read> cellular_static_materials: array<vec4<f32>>;
 @group(1) @binding(0)
 var<storage, read_write> dispatches: array<u32>;
 
+/// Gas awake flag: the tile's gas, temperatures, or open volume changed. The buffer is shared with
+/// the pressure pass, whose other flags only schedule pressure work and do not wake thermal
+const GAS_AWAKE: u32 = 1u;
+
 /// Tile flag: the tile's temperatures changed, so it and its neighbors are simulated next tick
 const TILE_AWAKE: u32 = 1u;
 
@@ -262,7 +266,7 @@ fn collect(@builtin(global_invocation_id) invocation: vec3<u32>) {
             let index: u32 = tile_index(vec2<u32>(neighbor));
             if (atomicLoad(&thermal_awake[index]) & ~TILE_LISTED) != 0u
                 || atomicLoad(&awake[index]) != 0u
-                || atomicLoad(&gas_awake[index]) != 0u
+                || (atomicLoad(&gas_awake[index]) & GAS_AWAKE) != 0u
             {
                 is_active = true;
             }

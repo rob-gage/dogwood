@@ -524,6 +524,9 @@ fn react(
     let probability: f32 =
         1.0 - exp(-bitcast<f32>(header.x) * rate_scale * uniforms.time_step);
     if chemistry_random(seed) >= probability { return; }
+    // Any successful event may change another owned cell while placing products.
+    // Invalidate before those writes; later contacts must see the new reactant types.
+    if CACHE_PAIR_UNITS { invalidate_paired_units(); }
     // products go where the consumed reactants were, never to a catalyst outside the block
     var gas_slot: u32 = CELL_OUTSIDE;
     var first_consumed: u32 = CELL_OUTSIDE;
@@ -971,6 +974,27 @@ fn prepare_reactions() {
 /// contact can mutate the private cell snapshots to introduce a partner. Re-check at each
 /// group boundary so products from previous groups keep their original same-tick reactions.
 fn cells_can_pair(first_slot: u32, second_slot: u32) -> bool {
+    if CACHE_PAIR_UNITS {
+        let first_units = cached_paired_units(first_slot);
+        if first_units == 0u { return false; }
+        let second_units = cached_paired_units(second_slot);
+        if second_units == 0u { return false; }
+        var classes = vec4<u32>(0u);
+        for (var unit = 0u; unit < uniforms.unit_count; unit++) {
+            if (second_units & (1u << unit)) == 0u { continue; }
+            let thermal = unit_thermal_index(second_slot, unit);
+            classes[(thermal / 32u) % 4u] |= 1u << (thermal % 32u);
+        }
+        let count = uniforms.thermal_count;
+        for (var unit = 0u; unit < uniforms.unit_count; unit++) {
+            if (first_units & (1u << unit)) == 0u { continue; }
+            let thermal = unit_thermal_index(first_slot, unit);
+            let base = arrayLength(&reaction_lookup) - count * 4u + thermal * 4u;
+            let partners = vec4<u32>(reaction_lookup[base], reaction_lookup[base + 1u], reaction_lookup[base + 2u], reaction_lookup[base + 3u]);
+            if any((partners & classes) != vec4<u32>(0u)) { return true; }
+        }
+        return false;
+    }
     var classes = vec4<u32>(0u);
     for (var unit = 0u; unit < uniforms.unit_count; unit++) {
         let thermal = unit_thermal_index(second_slot, unit);
@@ -1088,4 +1112,25 @@ fn react_tiles(
     }
     for (var slot: u32 = 0u; slot < uniforms.block_cell_count; slot++) { store_cell(slot); }
     if is_reacting { atomicOr(&thermal_awake[physical_tile], THERMAL_TILE_AWAKE); }
+}
+
+// The private masks are valid only until a reaction event may change the block.
+override CACHE_PAIR_UNITS: bool = true;
+var<private> paired_units_cache: array<u32, 12>;
+var<private> paired_units_valid: u32;
+
+fn invalidate_paired_units() {
+    paired_units_valid = 0u;
+}
+
+fn cached_paired_units(slot: u32) -> u32 {
+    let bit = 1u << slot;
+    if (paired_units_valid & bit) != 0u { return paired_units_cache[slot]; }
+    var mask = 0u;
+    for (var unit = 0u; unit < uniforms.unit_count; unit++) {
+        if (unit_flags(slot, unit) & FLAG_PAIRED) != 0u { mask |= 1u << unit; }
+    }
+    paired_units_cache[slot] = mask;
+    paired_units_valid |= bit;
+    return mask;
 }
