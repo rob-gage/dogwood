@@ -62,15 +62,16 @@ For pool configuration and defaults, see [Host types](@/external-api/host.md) an
 
 Add `engine_host` to `Cargo.toml` to name `WindowConfiguration`; it lives in `engine_host::windows` and is not re-exported by `engine`.
 
-`WindowConfiguration` sets the native window `title` and `fps_limit`, the maximum render frames per second. Return it through the `Game::window_configuration` callback; both the engine and editor use these settings.
+`WindowConfiguration` sets the native window `title`, `fps_limit`, the maximum render frames per second, and `mode`, how the window occupies the screen. Return it through the `Game::window_configuration` callback; both the engine and editor use these settings.
 
 - The default title is `"Dogwood"`.
 - The default frame rate is uncapped (`u32::MAX`).
 - Finite limits are clamped to at least 1 FPS, so `0` means 1 FPS.
+- The default `mode` is `WindowMode::Windowed`. `Fullscreen` is borderless at the monitor's resolution, and `ExclusiveFullscreen` takes the monitor's highest refresh rate at that resolution, falling back to borderless where the platform has no exclusive mode. Override `Game::window_mode` to change it while the game runs.
 
 ```rust
 use engine::games::Game;
-use engine_host::windows::WindowConfiguration;
+use engine_host::windows::{WindowConfiguration, WindowMode};
 
 struct MyGame;
 
@@ -81,6 +82,7 @@ impl Game for MyGame {
         WindowConfiguration {
             title: String::from("My Game"),
             fps_limit: 120,
+            mode: WindowMode::Windowed,
         }
     }
 }

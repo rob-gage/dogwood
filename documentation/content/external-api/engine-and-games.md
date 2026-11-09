@@ -42,6 +42,7 @@ All trait methods have defaults, so implementations override only the callbacks 
 | Method | Default | Called |
 | --- | --- | --- |
 | `window_configuration(&self) -> WindowConfiguration` | `WindowConfiguration::default()` | Once during `Engine::launch`, before opening the window |
+| `window_mode(&self) -> WindowMode` | The `mode` of `window_configuration()` | Between fixed updates while the window runs; a change moves the window between windowed, borderless fullscreen, and exclusive fullscreen |
 | `update(&mut self, elapsed_time: Duration, game_events: &mut GameEventQueue<Self::GameEvent>)` | No operation | Once per fixed update, at 60 updates per second when the window loop catches up; elapsed time is one update interval |
 | `handle_game_event(&mut self, game_event: Self::GameEvent, game_events: &mut GameEventQueue<Self::GameEvent>)` | No operation | For each event queued by a callback, after that callback returns |
 | `scene(&mut self) -> Option<(&mut Scene, Actor)>` | `None` | During update, streaming, and rendering to obtain the current scene and its camera actor |
