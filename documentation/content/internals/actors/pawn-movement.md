@@ -30,6 +30,7 @@ When an actor has one or more colliders, every present collider's bounds must fi
 | `crouching_speed` | `4.0` | tiles per second |
 | `acceleration` | `80.0` | tiles per second squared |
 | `jump_speed` | `18.0` | tiles per second |
+| `maximum_slope_angle` | `50°` | radians |
 
 > **Limitation:** `acceleration` must be nonnegative. A negative value currently makes collision's velocity clamp panic.
 
@@ -57,7 +58,7 @@ Crouching only changes the target speed. It does not change the collider shape o
 ### Jumping and gravity
 
 - A jump triggers only on a newly pressed jump control while grounded. Collision remembers whether jump was held last step, so holding the button does not retrigger it.
-- Grounding comes from Rapier's character movement result, or from a dynamic-cell contact whose upward normal meets the maximum-slope threshold.
+- Grounding comes from Rapier's character movement result, or from a dynamic-cell contact whose upward normal meets the pawn's `maximum_slope_angle` threshold. The same angle limits the slopes the pawn climbs and sets where it starts to slide, and collision clamps it between zero and a right angle each step.
 - A standing pawn with nonpositive vertical velocity is held at zero vertical speed. Otherwise gravity is subtracted each step.
 - Scene gravity defaults to `50.0` tiles per second squared and can be changed with `Scene::set_gravity`.
 
