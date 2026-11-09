@@ -81,6 +81,10 @@ struct LightingCache {
     sources: wgpu::Buffer,
     arguments: wgpu::Buffer,
     dirty: wgpu::Buffer,
+    local_changes:wgpu::Buffer,
+    prefix_rows:wgpu::ComputePipeline,
+    prefix_columns:wgpu::ComputePipeline,
+    local_dirty:bool,
     bind_group: wgpu::BindGroup,
     compare: wgpu::ComputePipeline,
     build_arguments: wgpu::ComputePipeline,
@@ -100,6 +104,7 @@ impl LightingCache {
         backlight: &wgpu::TextureView,
         fluence: &wgpu::Buffer,
         light: &wgpu::TextureView,
+        local_dirty:bool,
     ) -> Self {
         let d = a.device();
         let buffer = |size, usage| {
@@ -128,6 +133,7 @@ impl LightingCache {
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
         );
+        let local_changes=buffer(u64::from((width.div_ceil(8)+1)*(height.div_ceil(8)+1))*4,wgpu::BufferUsages::STORAGE);
         let previous = buffer(
             (u64::from(width) * u64::from(height)
                 + u64::from(backlight_size[0]) * u64::from(backlight_size[1]))
@@ -151,6 +157,7 @@ impl LightingCache {
                     false,
                 ),
                 buffer_entry(6, c, rw, false),
+                buffer_entry(7,c,rw,false),
             ],
         });
         let bind_group = d.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -164,6 +171,7 @@ impl LightingCache {
                 buffer_binding(4, &dirty),
                 buffer_binding(5, &sources),
                 buffer_binding(6, &arguments),
+                buffer_binding(7,&local_changes),
             ],
         });
         let module = d.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -183,7 +191,7 @@ impl LightingCache {
                 layout: Some(&pipeline_layout),
                 module: &module,
                 entry_point: Some(entry),
-                compilation_options: Default::default(),
+                compilation_options:wgpu::PipelineCompilationOptions{constants:&[("LOCAL_DIRTY",if local_dirty {1.0}else{0.0})],..Default::default()},
                 cache: None,
             })
         };
@@ -236,6 +244,10 @@ impl LightingCache {
             sources,
             arguments,
             dirty,
+            local_changes,
+            prefix_rows:pipeline("prefix_rows"),
+            prefix_columns:pipeline("prefix_columns"),
+            local_dirty,
             bind_group,
             compare: pipeline("compare"),
             build_arguments: pipeline("arguments"),
@@ -326,6 +338,7 @@ struct LightingDomain {
 
 /// Computes the light of a scene's resident region and shares it with the appearance passes
 pub struct SceneRendererLightingPass {
+    local_dirty:bool,
     /// Layout of the lighting group sampled by the appearance passes
     lighting_bind_group_layout: wgpu::BindGroupLayout,
     /// Lighting group of the prepared view
@@ -496,6 +509,9 @@ impl SceneRendererLightingPass {
 
     /// Creates the lighting resources
     pub fn new(accelerator: &Accelerator) -> Self {
+        Self::new_local_dirty(accelerator,std::env::var_os("DOGWOOD_LIGHTING_GLOBAL_DIRTY").is_none())
+    }
+    pub(super) fn new_local_dirty(accelerator:&Accelerator,local_dirty:bool)->Self {
         let device: &wgpu::Device = accelerator.device();
         let fragment_and_compute: wgpu::ShaderStages =
             wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE;
@@ -762,12 +778,13 @@ impl SceneRendererLightingPass {
             module: &wgpu::ShaderModule,
             entry_point: &str,
         | -> wgpu::ComputePipeline {
+            let local_constants=[("LOCAL_DIRTY",if local_dirty {1.0}else{0.0})];
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(label),
                 layout: Some(layout),
                 module,
                 entry_point: Some(entry_point),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                compilation_options:wgpu::PipelineCompilationOptions{constants:if matches!(entry_point,"trace_merge"|"trace_merge_single"|"summarize"|"integrate") {&local_constants} else {&[]},..Default::default()},
                 cache: None,
             })
         };
@@ -797,6 +814,7 @@ impl SceneRendererLightingPass {
                     buffer_entry(4, wgpu::ShaderStages::COMPUTE, read_write_storage, false),
                     texture_entry(5, wgpu::ShaderStages::COMPUTE),
                     buffer_entry(6, wgpu::ShaderStages::COMPUTE, read_storage, false),
+                    buffer_entry(7, wgpu::ShaderStages::COMPUTE, read_storage, false),
                 ],
             },
         );
@@ -979,6 +997,7 @@ impl SceneRendererLightingPass {
             domain: None,
             is_lit: false,
             texel_size: 1,
+            local_dirty,
         }
     }
 
@@ -1085,6 +1104,7 @@ impl SceneRendererLightingPass {
             &backlight_view,
             &light_buffers[0],
             &light_storage_view,
+            self.local_dirty,
         );
         // every level keeps its intervals between frames, and the finest level, which integrates
         // into the fluence, keeps none
@@ -1124,6 +1144,7 @@ impl SceneRendererLightingPass {
                         buffer_binding(4, &light_buffers[0]),
                         texture_binding(5, &block_view),
                         buffer_binding(6, &cache.dirty),
+                        buffer_binding(7,&cache.local_changes),
                     ],
                 })
             })
@@ -1609,6 +1630,10 @@ impl SceneRendererLightingPass {
             let cache: &LightingCache = &domain.cache;
             let mut p=command_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{label:Some("lighting cache compare"),timestamp_writes:None});
             p.set_bind_group(0,&cache.bind_group,&[]);p.set_pipeline(&cache.compare);p.dispatch_workgroups(domain.width.div_ceil(8),domain.height.div_ceil(8),1);
+            if cache.local_dirty {
+                p.set_pipeline(&cache.prefix_rows);p.dispatch_workgroups(domain.height.div_ceil(8).div_ceil(64),1,1);
+                p.set_pipeline(&cache.prefix_columns);p.dispatch_workgroups((domain.width.div_ceil(8)+1).div_ceil(64),1,1);
+            }
             p.set_pipeline(&cache.build_arguments);p.dispatch_workgroups(1,1,1);
         }
         let mut dispatch_index=0u64;

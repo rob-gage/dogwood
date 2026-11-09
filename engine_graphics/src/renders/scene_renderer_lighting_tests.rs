@@ -655,3 +655,53 @@ fn gas_empty_support_matches_full_scan() {
         }}
     }
 }
+
+#[test]
+#[ignore = "requires GPU; compares localized optical invalidation against global bounds"]
+fn local_dirty_matches_global_bounds() {
+    let a=Accelerator::default();
+    for (width,height,quality) in [(128u32,96u32,LightingQuality::High),(136,104,LightingQuality::Medium),(136,104,LightingQuality::Low),(1280,720,LightingQuality::Low)] {
+        let count=(width*height) as usize;
+        let mut fixture=Fixture::new(&a,None);
+        fixture.quality=quality;
+        fixture.identifiers=storage_buffer(&a,"local dirty identifiers",&vec![1;count]);
+        fixture.colors=storage_buffer(&a,"local dirty colors",&vec![0;count*2]);
+        let mut matter=vec![0u32;count*2];
+        for cell in matter.chunks_exact_mut(2) {cell[0]=300f32.to_bits();cell[1]=65536;}
+        fixture.matter=storage_buffer(&a,"local dirty matter",&matter);
+        let mut passes=[SceneRendererLightingPass::new_local_dirty(&a,false),SceneRendererLightingPass::new_local_dirty(&a,true)];
+        for frame in 0u32..12 {
+            let ring=if frame>=7 {(1u32,1u32)} else {(0,0)};
+            let rw=width/8;let rh=height/8;
+            let mut colors=vec![0u32;count*2];
+            let sites=[(4+frame%3,4),(width-5,height-5-frame%3),(width/2,height/2)];
+            for y in 0..height {for x in 0..width {
+                let tile=((y/8+ring.1)%rh)*rw+(x/8+ring.0)%rw;
+                let cell=(tile*64+(y%8)*8+x%8) as usize;
+                let mut emission=[0.;4];
+                if frame!=0 && frame!=5 && frame!=6 && sites.iter().any(|p|*p==(x,y)) {
+                    emission=if frame&1==0 {[1.,0.25,0.125,0.]} else {[0.125,0.5,1.,0.]};
+                }
+                if frame>=3 && x==width/2 {emission[3]=0.95;}
+                if frame==11 {emission=[0.1,0.2,0.05,0.35];}
+                colors[cell*2+1]=pack_radiance(emission);
+            }}
+            a.queue().write_buffer(&fixture.colors,0,&colors.iter().flat_map(|v|v.to_le_bytes()).collect::<Vec<_>>());
+            let mut graphics=fixture.graphics();
+            graphics.visible_width=rw as f32;graphics.visible_height=rh as f32;
+            let c=graphics.cellular.as_mut().unwrap();c.region_width=rw;c.region_height=rh;c.ring_offset_x=ring.0;c.ring_offset_y=ring.1;
+            if frame>=9 {c.region_tile_x=-2;c.region_tile_y=1;c.region_x=-2.;c.region_y=1.;}
+            let t=graphics.temperature.as_mut().unwrap();t.region_width=rw;t.region_height=rh;t.ring_offset_x=ring.0;t.ring_offset_y=ring.1;
+            let mut images=Vec::new();
+            for pass in &mut passes {
+                pass.prepare(&a,&graphics,&[]);
+                let mut e=a.device().create_command_encoder(&Default::default());
+                pass.compute(&mut e,|_,_|{});a.queue().submit([e.finish()]);
+                let domain=pass.domain.as_ref().unwrap();
+                images.push(read_texture(&a,domain.light_view.texture(),domain.width,domain.height));
+            }
+            assert_eq!(images[0],images[1],"local invalidation changed lighting: {width}x{height}, frame {frame}");
+            if frame==1 {assert!(images[0].iter().any(|v|v[0]>0.001),"fixture produced no light");}
+        }
+    }
+}

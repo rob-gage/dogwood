@@ -324,7 +324,7 @@ fn interval_inputs_changed(position: vec2<f32>, direction: u32) -> bool {
         let dirty_high: vec2<f32> = vec2<f32>(vec2<u32>(cache_state[5], cache_state[7]));
         if all(high + vec2<f32>(CHANGE_MARGIN) >= dirty_low)
             && all(low - vec2<f32>(CHANGE_MARGIN) <= dirty_high) {
-            return true;
+            if !LOCAL_DIRTY || local_optical_changes(low-vec2<f32>(CHANGE_MARGIN),high+vec2<f32>(CHANGE_MARGIN)) {return true;}
         }
     }
     if level.has_upper != 0u {
@@ -364,7 +364,7 @@ fn cell_inputs_changed(position: vec2<f32>) -> bool {
         let dirty_low: vec2<f32> = vec2<f32>(level.domain_size - vec2<u32>(cache_state[4], cache_state[6]));
         let dirty_high: vec2<f32> = vec2<f32>(vec2<u32>(cache_state[5], cache_state[7]));
         if all(high + margin >= dirty_low) && all(low - margin <= dirty_high) {
-            return true;
+            if !LOCAL_DIRTY || local_optical_changes(low-margin,high+margin) {return true;}
         }
     }
     if level.has_upper != 0u {
@@ -476,4 +476,21 @@ fn integrate(
     let cell: u32 = invocation.y * level.domain_size.x + invocation.x;
     let light: vec3<f32> = min(radiance / f32(level.direction_count), vec3<f32>(60000.0));
     fluence[cell] = vec2<u32>(pack2x16float(light.rg), pack2x16float(vec2<f32>(light.b, 0.0)));
+}
+
+override LOCAL_DIRTY:bool=false;
+@group(0) @binding(7) var<storage,read> local_changes:array<u32>;
+
+/// Conservative rectangle query over changed 8x8 optical blocks, with a one-cell border.
+fn local_optical_changes(low:vec2<f32>,high:vec2<f32>)->bool {
+    let size=vec2<i32>(level.domain_size);
+    let first=clamp(vec2<i32>(floor(low))-vec2<i32>(1),vec2<i32>(0),size);
+    let last=clamp(vec2<i32>(ceil(high))+vec2<i32>(1),vec2<i32>(0),size);
+    if any(first>=last) {return false;}
+    let lo=vec2<u32>(first)/8u;
+    let hi=(vec2<u32>(last)+vec2<u32>(7u))/8u;
+    let pitch=(level.domain_size.x+7u)/8u+1u;
+    let total=local_changes[hi.y*pitch+hi.x]+local_changes[lo.y*pitch+lo.x]
+        -local_changes[lo.y*pitch+hi.x]-local_changes[hi.y*pitch+lo.x];
+    return total!=0u;
 }
