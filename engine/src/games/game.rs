@@ -2,7 +2,7 @@
 
 use super::GameEventQueue;
 use engine_host::system_events::{SystemKeyboardEvent, SystemMouseEvent, SystemWindowEvent};
-use engine_host::windows::WindowConfiguration;
+use engine_host::windows::{WindowConfiguration, WindowMode};
 use engine_user_interface::UserInterface;
 use engine_world::{actors::Actor, scenes::Scene};
 use std::time::Duration;
@@ -16,6 +16,12 @@ pub trait Game {
     /// Returns runtime settings for the native game window
     fn window_configuration(&self) -> WindowConfiguration {
         WindowConfiguration::default()
+    }
+
+    /// Returns how the window should occupy the screen, polled between updates so a game can
+    /// change it while running; defaults to the mode of `window_configuration`
+    fn window_mode(&self) -> WindowMode {
+        self.window_configuration().mode
     }
 
     /// Advances game state by one fixed update step

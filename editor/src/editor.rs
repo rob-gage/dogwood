@@ -79,6 +79,7 @@ use engine::{
 use engine_host::windows::{
     Window,
     WindowConfiguration,
+    WindowMode,
 };
 use std::{
     cell::RefCell,
@@ -321,6 +322,9 @@ impl<G: Game> Editor<G> {
         > = Box::new(|texture_view: &wgpu::TextureView, input: egui::RawInput| {
             editor.borrow_mut().render(engine.accelerator(), texture_view, input)
         });
+        let editor_window_mode: WindowMode = window_configuration.mode;
+        let mut window_mode_handler: Box<dyn FnMut() -> WindowMode> =
+            Box::new(move || editor_window_mode);
         let update_interval: Duration = Duration::from_nanos(
             1_000_000_000 / u64::from(EDITOR_UPDATES_PER_SECOND),
         );
@@ -330,6 +334,7 @@ impl<G: Game> Editor<G> {
             &mut mouse_event_handler,
             &mut update_handler,
             &mut render_handler,
+            &mut window_mode_handler,
             engine.accelerator(),
             &user_interface_context,
             window_configuration,
