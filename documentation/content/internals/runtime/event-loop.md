@@ -54,6 +54,10 @@ With the runtime's normal settings, a delayed iteration therefore runs at most s
 
 When a window exists but has no surface configuration, the host schedules a wakeup for the next update and skips redraw requests.
 
+### Window mode
+
+When the window is created the host applies `WindowConfiguration::mode`. Before each update batch in `about_to_wait` it calls the window mode handler the engine supplies, which asks the game for `Game::window_mode`, and when the answer differs from the mode last applied it calls `set_fullscreen`: `None` for `Windowed`, `Fullscreen::Borderless(None)` for `Fullscreen`, and for `ExclusiveFullscreen` the current monitor's highest-refresh, highest-bit-depth video mode at the monitor's size, or borderless when it has none. The applied mode is forgotten when the loop suspends and applied again when the window returns.
+
 ### Frame-rate limit
 
 `WindowConfiguration::default()` sets `fps_limit` to `u32::MAX` (unlimited). The two cases behave as follows:

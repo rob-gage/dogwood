@@ -15,7 +15,7 @@ This page explains how `Engine` bridges host callbacks to a `GameInstance`, and 
 - Asks the `Game` for its `WindowConfiguration`.
 - Creates a `RefCell<GameInstance<G>>`, where `Game` and `GameInstance` are described in [Engine and Game](@/external-api/engine-and-games.md).
 - Clones the instance's `UserInterfaceContext`.
-- Builds mutable callback closures that borrow the instance for each event, update, or render.
+- Builds mutable callback closures that borrow the instance for each event, update, or render, plus a window mode handler that asks the game for `Game::window_mode`.
 - Passes those callbacks and the shared resources to `Window::open`.
 
 This bridge lets the host event loop operate on one game instance without owning the game. The full timeline is in [Frame and update lifecycle](@/architecture/frame-lifecycle.md).
