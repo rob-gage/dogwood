@@ -342,6 +342,11 @@ impl MaterialTable {
                 }
             }
         }
+        // Additional conservative 128-class partner masks follow the legacy lookup data.
+        // The existing headers and reaction-list offsets remain unchanged.
+        for row in pair_lists.chunks(thermal_count) {
+            lookup_words.extend_from_slice(&reaction_partner_classes(row));
+        }
         if lookup_words.is_empty() { lookup_words.push(0); }
         let mut lookup_bytes: Vec<u8> = Vec::with_capacity(lookup_words.len() * 4);
         for word in lookup_words { lookup_bytes.extend_from_slice(&word.to_le_bytes()); }
@@ -1712,4 +1717,28 @@ impl ReactionValues {
         Ok(values)
     }
 
+}
+
+/// Four class words separate thermal indices that previously aliased modulo 32. Hashing
+/// modulo 128 stays conservative even for registries larger than 128 materials.
+fn reaction_partner_classes(row: &[Vec<u32>]) -> [u32; 4] {
+    let mut classes = [0; 4];
+    for (partner, reactions) in row.iter().enumerate() {
+        if !reactions.is_empty() { classes[(partner / 32) % 4] |= 1 << (partner % 32); }
+    }
+    classes
+}
+
+#[cfg(test)]
+mod reaction_class_tests {
+    use super::reaction_partner_classes;
+    #[test]
+    fn conservative_partner_classes_separate_old_aliases_and_keep_all_reactions() {
+        let mut row = vec![Vec::new(); 300];
+        row[39] = vec![1]; row[131] = vec![2]; row[299] = vec![3];
+        let classes = reaction_partner_classes(&row);
+        let accepts = |p: usize| (classes[(p / 32) % 4] & (1 << (p % 32))) != 0;
+        assert!(!accepts(7), "unrelated material 7 aliased with reacting material 39");
+        for (partner, reactions) in row.iter().enumerate() { if !reactions.is_empty() { assert!(accepts(partner)); } }
+    }
 }

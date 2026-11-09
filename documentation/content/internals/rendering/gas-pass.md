@@ -33,6 +33,8 @@ Uniform offsets are viewport origin 0, viewport size 8, zoom 16, camera-relative
 
 `cancel_checker` reads `shaded_cells` and writes `filtered_cells`. The pressure solver can leave its 2×2 pressure cells alternating, so each visible cell is mixed half-and-half with the average of the visible cells two cells away on each side along both axes. Invisible cells stay zero, and visible results never pack to zero.
 
+The empty-region fragment guard is enabled by default. `cancel_checker` writes an exact 4×4 lower-cell support marker into `filtered_cells`' second record `.z`: zero marks a support window containing no visible gas; one marks support. The marker leaves the first record and its zero/visible meaning unchanged. The fragment shader discards unsupported pixels before evaluating the spline. Setting `DOGWOOD_GAS_FULL_SCAN=1` at renderer creation selects the reference full scan. Both paths produced exactly matching GPU output over 36 comparison frames.
+
 ## Drawing
 
 The fullscreen triangle's fragment stage maps each pixel to a continuous cell position and evaluates a uniform cubic B-spline over the 4×4 cells around it, counting cells without visible gas as empty. The color and glow are not renormalized, so a cloud's edge fades smoothly over about a cell and a half instead of following the cell grid; this hides the 2×2 steps the pressure solver leaves. The texture parameters are normalized over the visible cells only. Pixels with no gas weight, or with color and glow below a tenth of `0.02`, are discarded. The draw uses premultiplied-alpha blending, between fluid and cellular matter.

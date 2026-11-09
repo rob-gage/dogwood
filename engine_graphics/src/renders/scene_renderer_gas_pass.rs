@@ -45,6 +45,9 @@ impl SceneRendererGasPass {
 
     /// Creates gas rendering resources
     pub fn new(accelerator: &Accelerator, lighting_bind_group_layout: &wgpu::BindGroupLayout) -> Self {
+        Self::new_config(accelerator,lighting_bind_group_layout,std::env::var_os("DOGWOOD_GAS_FULL_SCAN").is_none())
+    }
+    pub(super) fn new_config(accelerator:&Accelerator,lighting_bind_group_layout:&wgpu::BindGroupLayout,support:bool)->Self {
         let device: &wgpu::Device = accelerator.device();
         let bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
@@ -144,7 +147,7 @@ impl SceneRendererGasPass {
             wgpu::ShaderModuleDescriptor {
                 label: Some("`SceneRendererGasPass.shader_module`"),
                 source: wgpu::ShaderSource::Wgsl(
-                    lighting_shader_source(1, include_str!("scene_renderer_gas.wgsl")).into(),
+                    lighting_shader_source(1, &include_str!("scene_renderer_gas.wgsl").replace("const GAS_EMPTY_SUPPORT: bool = false;",if support {"const GAS_EMPTY_SUPPORT: bool = true;"}else{"const GAS_EMPTY_SUPPORT: bool = false;"})).into(),
                 ),
             },
         );

@@ -1818,6 +1818,7 @@ fn actor_contacts(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let maximum: vec2<i32> = vec2<i32>(ceil(actor.bounds.zw));
     var sampled_count: u32 = 0u;
     var total_mass: f32 = 0.0;
+    var sampled_materials = vec4<u32>(0u);
     var total_momentum: vec2<f32> = vec2<f32>(0.0);
     for (var y: i32 = minimum.y; y < maximum.y; y++) {
         for (var x: i32 = minimum.x; x < maximum.x; x++) {
@@ -1833,6 +1834,10 @@ fn actor_contacts(@builtin(global_invocation_id) invocation: vec3<u32>) {
                 0.0,
             );
             if mass <= 0.0 { continue; }
+            // A modulo-128 mask is conservative for arbitrarily large registries.
+            // Positive cells are summed in the original order for each present material.
+            let material_class = atomicLoad(&fluid_raster[base + 3u]) & 127u;
+            sampled_materials[material_class >> 5u] |= 1u << (material_class & 31u);
             total_mass += mass;
             total_momentum += vec2<f32>(
                 f32(bitcast<i32>(atomicLoad(&fluid_raster[base + 1u]))),
@@ -1846,6 +1851,8 @@ fn actor_contacts(@builtin(global_invocation_id) invocation: vec3<u32>) {
          material_index < uniforms.fluid_material_count;
          material_index++)
     {
+        let material_class = material_index & 127u;
+        if FILTER_ACTOR_MATERIALS && (sampled_materials[material_class >> 5u] & (1u << (material_class & 31u))) == 0u { continue; }
         var material_mass: f32 = 0.0;
         for (var y: i32 = minimum.y; y < maximum.y; y++) {
             for (var x: i32 = minimum.x; x < maximum.x; x++) {
@@ -3193,3 +3200,5 @@ fn commit_actor_velocity(@builtin(global_invocation_id) invocation: vec3<u32>) {
     particle.state.w = velocity.y;
     store_particle(invocation.x, output_side, particle);
 }
+
+override FILTER_ACTOR_MATERIALS:bool=true;

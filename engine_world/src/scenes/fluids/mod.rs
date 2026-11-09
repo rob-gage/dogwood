@@ -80,3 +80,6 @@ pub const FLUID_SCAN_WORKGROUP_SIZE: u32 = 256;
 
 /// Fixed duration of one scene tick in seconds
 pub const FLUID_TIME_STEP: f32 = 1.0 / 60.0;
+
+#[cfg(test)]
+mod fluid_actor_material_tests;
