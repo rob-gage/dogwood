@@ -28,9 +28,8 @@ The pass records the following work in one command encoder, using one compute pa
 
 The neighbor sort is `clear_bins`, `count_bins`, `scan_bins`, `scan_blocks`, `scan_block_prefix`, `add_block_prefix`, `scatter`. First-substep wake handling uses `reset_wake_count`, `apply_pending_wakes`, and `prepare_wake_dispatch` around prediction. Copies for count, import status, actor feedback, and outgoing exports follow compute before submission.
 
-Particle workgroups contain 128 invocations; scans use 256; raster clearing and boundary cells/nodes use 64. Tile-management and indirect-preparation kernels use one invocation per workgroup. `dilate_boundary_tiles` uses 64-thread workgroups; its Rust dispatch currently divides tile count by `FLUID_WORKGROUP_SIZE` (128), so this is not a full-coverage 64-thread dispatch for every region size.
+Particle workgroups contain 128 invocations; scans use 256; raster clearing and boundary cells/nodes use 64. Independent sleep/wake maintenance (`prepare_sleep`, `wake_actor_neighbors`, `wake_solid_neighbors`, `apply_pending_wakes`, and `finish_sleep`) uses 64 invocations per workgroup, with Rust dispatches rounded up by the same size. `DOGWOOD_FLUID_SERIAL_TILES=1` selects the one-invocation reference. Indirect-preparation kernels remain single-invocation. `dilate_boundary_tiles` uses 64-thread workgroups and its host dispatch covers the complete region by dividing tile count by 64.
 
-> **Limitation:** The boundary dilation dispatch divisor differs from the shader workgroup size. The documentation describes the current implementation; full intended tile coverage is not guaranteed by that dispatch.
 
 ## Bind groups
 

@@ -218,6 +218,8 @@ pub struct FluidParticlePass {
     snapshot_response_sender: Sender<Result<(), wgpu::BufferAsyncError>>,
     /// Snapshot mapping response receiver
     snapshot_response_receiver: Receiver<Result<(), wgpu::BufferAsyncError>>,
+    /// Invocation count for independent per-tile sleep and wake maintenance
+    tile_workgroup_size: u32,
     /// Particle capacity fixed when the cellular tile buffers were created
     capacity: u32,
     /// Number of allocated dense neighbor bins
@@ -238,6 +240,11 @@ impl FluidParticlePass {
         region_height: u32,
     ) -> Self {
         let device: &wgpu::Device = accelerator.device();
+        let tile_workgroup_size = if std::env::var_os("DOGWOOD_FLUID_SERIAL_TILES").is_some() {
+            1
+        } else {
+            64
+        };
         let cell_width: u32 = region_width * CELLULAR_TILE_SIZE as u32;
         let cell_height: u32 = region_height * CELLULAR_TILE_SIZE as u32;
         let bin_width: u32 = (cell_width as f32 / FLUID_BIN_SIZE).ceil() as u32;
@@ -612,10 +619,12 @@ impl FluidParticlePass {
                     module: &shader_module,
                     entry_point: Some(entry_point),
                     compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: &[(
-                            "FILTER_ACTOR_MATERIALS",
+                        constants: &[
+                            ("TILE_WORKGROUP_SIZE", tile_workgroup_size as f64),
+                            ("FILTER_ACTOR_MATERIALS",
                             if std::env::var_os("DOGWOOD_FLUID_ALL_ACTOR_MATERIALS").is_some() { 0.0 } else { 1.0 },
-                        )],
+                            ),
+                        ],
                         ..Default::default()
                     },
                     cache: None,
@@ -1128,6 +1137,7 @@ impl FluidParticlePass {
             snapshot_origin: None,
             snapshot_response_sender,
             snapshot_response_receiver,
+            tile_workgroup_size,
             capacity,
             bin_count,
             state_side: 0,
@@ -2027,7 +2037,7 @@ impl FluidParticlePass {
             // widen the particle tiles by the kernel and motion margin in one pass over the region
             compute_pass.set_pipeline(&pipelines["dilate_boundary_tiles"]);
             compute_pass.dispatch_workgroups(
-                (width * height).div_ceil(FLUID_WORKGROUP_SIZE),
+                (width * height).div_ceil(64),
                 1,
                 1,
             );
@@ -2052,13 +2062,13 @@ impl FluidParticlePass {
             compute_pass.dispatch_workgroups_indirect(&self.dispatch_buffer, 0);
             set_slot(&mut compute_pass, 3);
             compute_pass.set_pipeline(&pipelines["prepare_sleep"]);
-            compute_pass.dispatch_workgroups(width * height, 1, 1);
+            compute_pass.dispatch_workgroups((width * height).div_ceil(self.tile_workgroup_size), 1, 1);
             set_actor_projection_slot(&mut compute_pass, 3);
             compute_pass.set_pipeline(&pipelines["wake_actor_neighbors"]);
-            compute_pass.dispatch_workgroups(width * height, 1, 1);
+            compute_pass.dispatch_workgroups((width * height).div_ceil(self.tile_workgroup_size), 1, 1);
             set_slot(&mut compute_pass, 3);
             compute_pass.set_pipeline(&pipelines["wake_solid_neighbors"]);
-            compute_pass.dispatch_workgroups(width * height, 1, 1);
+            compute_pass.dispatch_workgroups((width * height).div_ceil(self.tile_workgroup_size), 1, 1);
             set_prepare_slot(&mut compute_pass, 3);
             compute_pass.set_pipeline(&pipelines["prepare_boundary"]);
             compute_pass.set_bind_group(1, &self.dispatch_bind_group, &[]);
@@ -2104,7 +2114,7 @@ impl FluidParticlePass {
                 if substep == 0 {
                     set_slot(&mut compute_pass, predict_slot);
                     compute_pass.set_pipeline(&pipelines["apply_pending_wakes"]);
-                    compute_pass.dispatch_workgroups(width * height, 1, 1);
+                    compute_pass.dispatch_workgroups((width * height).div_ceil(self.tile_workgroup_size), 1, 1);
                     set_prepare_slot(&mut compute_pass, predict_slot);
                     compute_pass.set_pipeline(&pipelines["prepare_wake_dispatch"]);
                     compute_pass.set_bind_group(1, &self.dispatch_bind_group, &[]);
@@ -2190,7 +2200,7 @@ impl FluidParticlePass {
             }
             set_slot(&mut compute_pass, 3);
             compute_pass.set_pipeline(&pipelines["finish_sleep"]);
-            compute_pass.dispatch_workgroups(width * height, 1, 1);
+            compute_pass.dispatch_workgroups((width * height).div_ceil(self.tile_workgroup_size), 1, 1);
             set_prepare_slot(&mut compute_pass, 3);
             compute_pass.set_pipeline(&pipelines["prepare"]);
             compute_pass.set_bind_group(1, &self.dispatch_bind_group, &[]);

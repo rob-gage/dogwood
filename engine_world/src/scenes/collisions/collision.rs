@@ -547,6 +547,7 @@ impl Collision {
         }
         let Some(((read_region, read_ring_offset), bytes)) = changed_tiles else { return Ok(()); };
         let count: usize = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
+        if count == 0 { return Ok(()); }
         if count > COLLISION_CHANGED_CELLULAR_TILE_COUNT_MAXIMUM as usize {
             self.is_cellular_tile_read_requested = true;
             return Ok(());
