@@ -186,3 +186,7 @@ Pressure uses a 1/60-second tick and 3 substeps on pressure cells of 2×2 cells;
 ## Optional acoustic observations
 
 The first `Scene::sample_acoustics` call with resident tiles allocates a scene-owned reduction pipeline, material tag masks, a 64-byte uniform buffer, a 6,144-byte result buffer, and three 6,144-byte asynchronous staging buffers. The pass is independent of fixed-step scheduling and never waits for its GPU results. The game controls observation frequency and source lifetime; see [simulation acoustics](@/external-api/acoustics.md).
+
+## Game resource catalogue
+
+`engine::resources::Resources` owns a loose catalogue or an in-memory package index. Keep one instance for the game lifetime. Each `ResourceReader` owns an independent bounded file handle or a decompressed byte cursor and may outlive the catalogue. Music workers own their readers; dropping a music stream cancels and joins its decoder outside the audio callback. See [Resources and distributions](@/external-api/resources-build.md).

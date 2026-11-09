@@ -28,6 +28,7 @@ The facade re-exports selected types from the host, graphics, world, and user-in
 - [Audio](@/external-api/audio.md): stereo playback, music/SFX buses, panning, and persistent voices.
 - [Simulation acoustics](@/external-api/acoustics.md): coarse GPU activity buckets, CPU contacts, and advisory material hints.
 - [Editor crate](@/external-api/editor.md): `Editor::launch`.
+- [Resources and distributions](@/external-api/resources-build.md): catalogue, resource readers, packaging and native builds.
 - [CLI reference](@/external-api/cli.md): the `dogwood` command.
 
 ## Facade map
@@ -46,6 +47,7 @@ The facade re-exports selected types from the host, graphics, world, and user-in
 | `engine::SpriteSheet` | Sprite sheet type | [Graphics](@/external-api/graphics.md) |
 | `engine::SceneRenderer`, `engine::SceneRendererViewMode`, `engine::SceneGraphicsOverlay`, `engine::SceneGraphicsOverlayShape`, `engine::SceneGraphicsTemperature` | Scene renderer, its view modes, and cell-aligned overlays | [Graphics](@/external-api/graphics.md) |
 | `engine::MaterialGraphicsCellularDynamic`, `engine::MaterialGraphicsCellularStatic`, `engine::MaterialGraphicsFluid`, `engine::MaterialGraphicsGas` | Graphics properties for cellular, fluid, and gas materials | [Materials](@/external-api/materials.md) |
+| `engine::resources` | Re-export of the `engine_resources` crate | [Resources and distributions](@/external-api/resources-build.md) |
 | `engine::audio` | Re-export of the `engine_audio` crate | [Audio](@/external-api/audio.md) |
 | `engine::user_interface` | Re-export of the `engine_user_interface` crate | [User interface](@/external-api/user-interface.md) |
 

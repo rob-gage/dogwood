@@ -36,7 +36,7 @@ The host initializer returns `UnsupportedPlatform` outside Linux, Windows, and m
 
 ### Device request
 
-Device creation requests `max_storage_buffers_per_shader_stage = 20` and `max_compute_workgroup_storage_size = 32768`, which the pressure step's halo needs. All other limits and device descriptor fields use WGPU defaults. The combined buffer budget remains 28; Metal exposes 29 usable slots shared by storage, uniform, and vertex buffers. Individual buffer maxima are not added together. Before requesting a device, the initializer checks all requested limits against the adapter and reports the first unsupported limit with the adapter name, backend, required value, and supported value. The fluid particle bind group requires twenty storage buffers per compute stage.
+Device creation requests `max_storage_buffers_per_shader_stage = 24` and `max_compute_workgroup_storage_size = 32768`, which the pressure step's halo needs. All other limits and device descriptor fields use WGPU defaults. The combined buffer budget remains 28; Metal exposes 29 usable slots shared by storage, uniform, and vertex buffers. Individual buffer maxima are not added together. Before requesting a device, the initializer checks all requested limits against the adapter and reports the first unsupported limit with the adapter name, backend, required value, and supported value. The fluid particle bind group requires up to twenty-four storage buffers per compute stage.
 
 ## Initialization and errors
 
@@ -47,3 +47,5 @@ Device creation requests `max_storage_buffers_per_shader_stage = 20` and `max_co
 - Any failure makes `Accelerator::default()` panic with the error text; `Accelerator::new()` returns the error instead.
 
 For surface format choice and recovery, see [windows and surfaces](@/internals/runtime/surfaces.md).
+
+`DOGWOOD_PROCESS_PRIORITY=above-normal` requests an optional process-local scheduling hint before initialization; failure is nonfatal. The selected GPU and backend are printed once per initialized accelerator. See [Resources and distributions](@/external-api/resources-build.md#shaders-and-performance).
