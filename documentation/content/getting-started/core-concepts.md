@@ -42,7 +42,7 @@ Materials also carry optical radiance used for emitted light and occlusion durin
 
 Fluid materials use [GPU particles](@/internals/simulation/fluids.md) separate from cellular slots and render from a cell raster.
 
-Gas species [flow between cells through the pressure substrate](@/internals/simulation/pressure.md) in each cell's gas slots and render as cell-aligned clouds.
+Gas species [flow between cells through the pressure substrate](@/internals/simulation/pressure.md) in each cell's gas slots and render as clouds whose edges are smoothed across cells.
 
 ### Actors and pawns
 

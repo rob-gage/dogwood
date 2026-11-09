@@ -1,6 +1,6 @@
 +++
 title = "Gas render pass"
-description = "Cell-aligned gas cloud drawing and compositing."
+description = "Smoothly edged gas cloud drawing and compositing."
 weight = 36
 [extra]
 sources = ["engine_graphics/src/renders/scene_renderer_gas_pass.rs", "engine_graphics/src/renders/scene_renderer_gas.wgsl", "engine_graphics/src/world/scenes/scene_graphics_gas.rs", "engine_graphics/src/world/materials/material_graphics_gas.rs", "engine_world/src/materials/material_table.rs", "engine_graphics/src/renders/scene_renderer.rs", "engine_world/src/scenes/scene.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting_clear.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cache.wgsl", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl"]
@@ -35,7 +35,7 @@ Uniform offsets are viewport origin 0, viewport size 8, zoom 16, camera-relative
 
 ## Drawing
 
-The fullscreen triangle's fragment stage maps each pixel to its logical cell and discards the pixel unless `filtered_cells` holds a visible cell there, so cloud edges follow the cell grid. Inside, it evaluates a uniform cubic B-spline over the 4×4 cells around the pixel, skipping invisible cells and normalizing by the remaining weights, so edge cells keep their density up to the edge. The draw uses premultiplied-alpha blending, between fluid and cellular matter.
+The fullscreen triangle's fragment stage maps each pixel to a continuous cell position and evaluates a uniform cubic B-spline over the 4×4 cells around it, counting cells without visible gas as empty. The color and glow are not renormalized, so a cloud's edge fades smoothly over about a cell and a half instead of following the cell grid; this hides the 2×2 steps the pressure solver leaves. The texture parameters are normalized over the visible cells only. Pixels with no gas weight, or with color and glow below a tenth of `0.02`, are discarded. The draw uses premultiplied-alpha blending, between fluid and cellular matter.
 
 ## Texturing
 

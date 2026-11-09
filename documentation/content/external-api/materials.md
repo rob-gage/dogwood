@@ -77,7 +77,7 @@ linear light and linear alpha. See [lighting](@/external-api/lighting.md) for sp
 
 Fluid materials use [particle simulation](@/internals/simulation/fluids.md) and [raster-based rendering](@/internals/rendering/fluid-pass.md). Material density supplies physical mass; the pressure solver uses a shared rest spacing.
 
-Gas species use the shared [pressure substrate](@/internals/simulation/pressure.md) in the cellular tiles and [cell-aligned rendering](@/internals/rendering/gas-pass.md).
+Gas species use the shared [pressure substrate](@/internals/simulation/pressure.md) in the cellular tiles and [smoothed cloud rendering](@/internals/rendering/gas-pass.md).
 
 Placing a fluid identifier directly in a cellular array does not create a particle; use edits or chunk particle records.
 
