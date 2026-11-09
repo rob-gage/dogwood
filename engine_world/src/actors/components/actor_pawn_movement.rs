@@ -13,6 +13,8 @@ pub struct ActorPawnMovementComponent {
     pub acceleration: f32,
     /// Upward speed at the start of a jump in tiles per second
     pub jump_speed: f32,
+    /// Steepest slope in radians the pawn walks up, and the slope past which it slides down
+    pub maximum_slope_angle: f32,
     /// Maximum speed relative to the sampled fluid current, in tiles per second
     pub swimming_maximum_speed: f32,
     /// Swim thrust acceleration in tiles per second squared
@@ -36,6 +38,7 @@ impl Default for ActorPawnMovementComponent {
             crouching_speed: 4.0,
             acceleration: 80.0,
             jump_speed: 18.0,
+            maximum_slope_angle: 50.0_f32.to_radians(),
             swimming_maximum_speed: 3.5,
             swimming_acceleration: 30.0,
             swimming_density: 0.57,

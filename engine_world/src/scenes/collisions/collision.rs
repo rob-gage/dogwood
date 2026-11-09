@@ -1114,8 +1114,12 @@ impl Collision {
         fluid_actor_contacts: &HashMap<Actor, FluidActorContact>,
     ) {
         let time_step: f32 = self.integration_parameters.dt;
-        let maximum_slope_cosine: f32 = self.pawn_movement_controller.max_slope_climb_angle.cos();
         for (actor, pawn_movement, pawn_control) in pawns {
+            let maximum_slope_angle: f32 = pawn_movement.maximum_slope_angle
+                .clamp(0.0, std::f32::consts::FRAC_PI_2);
+            self.pawn_movement_controller.max_slope_climb_angle = maximum_slope_angle;
+            self.pawn_movement_controller.min_slope_slide_angle = maximum_slope_angle;
+            let maximum_slope_cosine: f32 = maximum_slope_angle.cos();
             self.pawn_impact_speeds.insert(*actor, 0.0);
             // dynamic cells push the pawn by the momentum of the cells it shoved, and hold it like
             // ground where they could not get out of its way
