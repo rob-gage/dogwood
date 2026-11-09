@@ -345,10 +345,11 @@ fn gas_noise(position: vec2<f32>, drift: f32, time: f32) -> f32 {
     return noise;
 }
 
-/// Draws one gas framebuffer pixel: only inside cells holding visible gas, so cloud edges follow
-/// the cell grid like fluid, with a continuous cubic B-spline of the visible cells around the
-/// pixel inside, normalized over those cells so edge cells keep their density up to the edge, then
-/// textured by noise whose average leaves the cells' look unchanged
+/// Draws one gas framebuffer pixel from a continuous cubic B-spline of the visible cells around
+/// it. Cells without gas count as empty, so a cloud's edge fades smoothly across a few cells
+/// instead of following the cell grid, which hides the 2x2 steps the pressure solver leaves. The
+/// color and emission fall off with the missing weight, while the texture parameters are
+/// normalized over the visible cells, and the noise averages out so the cells' look is unchanged
 @fragment
 fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let pixel: vec2<f32> = position.xy - uniforms.viewport_origin;
@@ -359,10 +360,6 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     );
     let local: vec2<f32> = uniforms.camera_relative_region + world_offset;
     let cell_position: vec2<f32> = local * f32(uniforms.cellular_tile_size);
-    let own_index: i32 = shaded_index(vec2<i32>(floor(cell_position)));
-    if own_index < 0 || !is_shaded(filtered_cells[own_index * 2]) {
-        discard;
-    }
     let continuous_cell: vec2<f32> = cell_position - vec2<f32>(0.5);
     let lower_cell: vec2<i32> = vec2<i32>(floor(continuous_cell));
     let fraction: vec2<f32> = fract(continuous_cell);
@@ -381,7 +378,15 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
             weight_sum += weight;
         }
     }
-    gas = scale_cell(gas, 1.0 / max(weight_sum, 1e-6));
+    if weight_sum <= 0.0 {
+        discard;
+    }
+    // only the texture parameters are normalized; the color fades out toward the cloud's edge
+    gas.texture = gas.texture / weight_sum;
+    if max(gas.body.a, max(gas.emission.r, max(gas.emission.g, gas.emission.b)))
+        < VISIBLE_ALPHA_MINIMUM * 0.1 {
+        discard;
+    }
     var body: vec4<f32> = gas.body;
     var emission: vec3<f32> = gas.emission;
     let feature_cells: f32 = max(gas.texture.y, 0.25);
