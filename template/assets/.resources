@@ -1,0 +1,8 @@
+[package]
+target_size_mib = 64
+default_compression = "auto"
+
+[[rules]]
+pattern = "sprites/**/*.png"
+type = "texture"
+compression = "none"

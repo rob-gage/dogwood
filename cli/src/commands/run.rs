@@ -30,6 +30,7 @@ pub fn run(
         verbose,
     );
     let mut command: Command = Command::new(cargo_path);
+    command.env("DOGWOOD_ASSET_ROOT",path.canonicalize()?.join("assets"));
     command.arg("run").current_dir(path);
     if !verbose { command.arg("--quiet"); }
     if !debug { command.arg("--release"); }

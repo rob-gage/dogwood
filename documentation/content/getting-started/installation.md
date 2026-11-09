@@ -16,7 +16,7 @@ Dogwood uses wgpu and winit; the workspace enables these backends and window sys
 |---|---|---|
 | Linux | Vulkan | X11 and Wayland |
 | macOS | Metal | Native macOS windowing |
-| Windows | DirectX 12 and Vulkan | Native Windows windowing |
+| Windows | Vulkan | Native Windows windowing |
 
 ## Install the CLI
 

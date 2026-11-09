@@ -7,3 +7,9 @@ edition = "2024"
 
 [dependencies]
 cpal = { version = "=0.18.2", default-features = false }
+
+lewton = "0.10.2"
+crossbeam-queue = "0.3.14"
+
+[dev-dependencies]
+serde_json = "1"

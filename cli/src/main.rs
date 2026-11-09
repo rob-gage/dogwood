@@ -33,6 +33,10 @@ enum Subcommand {
     },
     /// Builds a project that uses the engine
     Build {
+        #[arg(long)]
+        target: Option<String>,
+        #[arg(long, conflicts_with = "debug")]
+        release: bool,
         /// Builds the project in debug mode if set
         #[arg(long)]
         debug: bool,
@@ -93,15 +97,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             commands::new(name, destination)
         }
         Subcommand::Build {
+            target,
+            release: _,
             debug,
             verbose,
             path,
             output,
         } => {
             let cargo_path: PathBuf = locate_cargo().unwrap_or_else(|()| exit(1));
-            let _build_directory: PathBuf =
-                commands::build(cargo_path, path, debug, output, verbose);
-            Ok(())
+            let _ = verbose;
+            commands::distribute(cargo_path, path, debug, target, output).map_err(|e| e as Box<dyn std::error::Error>)
         }
         Subcommand::Run {
             debug,

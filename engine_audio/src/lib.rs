@@ -2,6 +2,10 @@
 
 //! Low-latency stereo playback with bounded voices and independent mixing buses.
 
+mod music;
+use music::MusicVoice;
+pub use music::{MusicStatus, MusicStream};
+
 use cpal::{
     FromSample, SizedSample, Stream, StreamConfig,
     traits::{DeviceTrait, HostTrait, StreamTrait},
@@ -89,12 +93,17 @@ struct Mixer {
     master_volume: f32,
     counter: u64,
     buses: [f32; 2],
+    music: [Option<MusicVoice>; 2],
 }
 
 impl Mixer {
     fn mix<T: SizedSample + FromSample<f32>>(&mut self, output: &mut [T], channels: usize) {
         for frame in output.chunks_mut(channels) {
             let mut sum = [0.0f32; 2];
+            // Resolve every scheduled start before advancing any source this frame.
+            for music in self.music.iter().flatten() {
+                music.begin_frame();
+            }
             for voice in &mut self.voices {
                 let len = voice.sound.len();
                 if len == 0 {
@@ -128,6 +137,12 @@ impl Mixer {
                 sum[1] += sample[1] * gain * (1.0 + voice.pan).sqrt();
                 voice.position += voice.step;
             }
+            for music in self.music.iter_mut().flatten() {
+                let sample =
+                    music.sample(self.master_volume * self.buses[Bus::Music as usize] > 0.0001);
+                sum[0] += sample[0] * self.buses[Bus::Music as usize];
+                sum[1] += sample[1] * self.buses[Bus::Music as usize];
+            }
             for (channel, sample) in frame.iter_mut().enumerate() {
                 let value = if channels == 1 {
                     (sum[0] + sum[1]) * 0.5
@@ -149,6 +164,7 @@ pub struct Audio {
     _stream: Stream,
     mixer: Arc<Mutex<Mixer>>,
     sample_rate: u32,
+    music_workers: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl Audio {
@@ -167,6 +183,7 @@ impl Audio {
             master_volume: 1.0,
             counter: 0,
             buses: [1.0; 2],
+            music: [None, None],
         }));
         let stream = match format {
             cpal::SampleFormat::F32 => build::<f32>(&device, config.clone(), &mixer),
@@ -182,6 +199,7 @@ impl Audio {
             _stream: stream,
             mixer,
             sample_rate: config.sample_rate,
+            music_workers: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         })
     }
 
@@ -287,6 +305,11 @@ impl Audio {
     }
     pub fn stop_bus(&self, bus: Bus) {
         if let Ok(mut m) = self.mixer.lock() {
+            if bus == Bus::Music {
+                for voice in m.music.iter().flatten() {
+                    voice.stop();
+                }
+            }
             for v in &mut m.voices {
                 if v.bus == bus {
                     v.target = 0.0;
@@ -297,10 +320,17 @@ impl Audio {
     pub fn stop_all(&self) {
         if let Ok(mut m) = self.mixer.lock() {
             m.voices.clear();
+            for voice in m.music.iter().flatten() {
+                voice.stop();
+            }
+            m.music = [None, None];
         }
     }
     pub fn active_voices(&self) -> usize {
-        self.mixer.lock().map(|m| m.voices.len()).unwrap_or(0)
+        self.mixer
+            .lock()
+            .map(|m| m.voices.len() + m.music.iter().flatten().filter(|v| v.active()).count())
+            .unwrap_or(0)
     }
     pub fn set_bus_volume(&self, bus: Bus, volume: f32) {
         if let Ok(mut m) = self.mixer.lock() {
@@ -326,7 +356,7 @@ fn build<T: SizedSample + FromSample<f32>>(
     device
         .build_output_stream(
             config,
-            move |data: &mut [T], _| match mixer.lock() {
+            move |data: &mut [T], _| match mixer.try_lock() {
                 Ok(mut mixer) => mixer.mix(data, channels),
                 Err(_) => data.fill(T::EQUILIBRIUM),
             },
@@ -414,6 +444,7 @@ mod tests {
             master_volume: 1.0,
             counter: 0,
             buses: [1.0; 2],
+            music: [None, None],
         };
         mixer.voices.push(Voice {
             sound: Arc::new(ramp.iter().map(|&v| [v; 2]).collect()),
@@ -535,6 +566,7 @@ mod mixing_tests {
             master_volume: 1.0,
             counter: 1,
             buses: [1.0; 2],
+            music: [None, None],
         }
     }
     #[test]

@@ -3,7 +3,7 @@ title = "Audio"
 description = "Stereo sound playback, mixing buses, panning, and persistent voices through engine::audio."
 weight = 110
 [extra]
-sources = ["engine_audio/src/lib.rs", "engine_audio/Cargo.toml", "engine/src/lib.rs"]
+sources = ["engine_audio/src/lib.rs", "engine_audio/src/music.rs", "engine_audio/Cargo.toml", "engine/src/lib.rs"]
 +++
 
 `engine::audio` re-exports `engine_audio`. `Audio` owns a `cpal` output stream and a bounded stereo mixer; keep it alive on its creating thread.
@@ -22,8 +22,10 @@ sources = ["engine_audio/src/lib.rs", "engine_audio/Cargo.toml", "engine/src/lib
 
 `set_master_volume` scales both buses before the limiter. `set_bus_volume(Bus::Sfx, gain)` and `set_bus_volume(Bus::Music, gain)` independently affect existing and future voices. Gains are linear and clamped to 0–2; nonfinite gains become zero. Voice gain changes smooth over about 20 ms at 48 kHz; loop starts fade in from zero. Source pitch is clamped to 0.1–8.
 
-The callback mixes at most 32 voices behind a short `Mutex`, with at most four copies of one decoded `Sound`. Global voice stealing chooses the lowest priority, then oldest voice. The copy limit replaces the oldest copy. Neither path replaces a higher-priority voice with a lower-priority request. Larger priority values take precedence; rejected requests return `None`.
+The callback mixes at most 32 SFX voices plus two streaming music voices behind a nonblocking `Mutex::try_lock` (silence if contended), with at most four copies of one decoded `Sound`. Global voice stealing chooses the lowest priority, then oldest voice. The copy limit replaces the oldest copy. Neither path replaces a higher-priority voice with a lower-priority request. Larger priority values take precedence; rejected requests return `None`.
 
 Panning uses square-root left/right gains. Mono devices receive the mean stereo signal; other output channels alternate left/right. Each channel passes peaks unchanged below 0.8 of full scale and bends louder peaks toward full scale with a `tanh` knee. Supported output formats are `f32`, `i16`, `u16`, and `i32`.
 
-> **Limitation:** Sounds are decoded in memory. Streaming, compressed audio, non-16-bit WAV decoding, automatic music scheduling, and sample-loop seam preparation are not implemented. Games prepare loop assets and schedule persistent voices.
+`prepare_music(path, frames, rate)` and `prepare_music_reader(reader, frames, rate)` prepare stereo Vorbis music on a background worker, resampling to the output rate with a bounded four-second queue. `transition_music` schedules an equal-power handoff against a predecessor's sample clock. `MusicStream::status` exposes readiness, audible/position clocks, underruns and errors. At most two decoder slots exist; dropping the last stream cancels and joins its worker off the callback. `cancel_pending_music`, `cancel_music`, and `stop_music` manage transitions. Games supply exact frame/rate metadata and adaptive scheduling policy.
+
+> **Limitation:** WAV sounds are decoded in memory; non-16-bit WAV decoding and automatic music scheduling policy are not implemented. Games prepare loop assets and select transitions.

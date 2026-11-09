@@ -64,7 +64,7 @@ On resume, the window creates the native window and a `'static` WGPU surface bac
 
 `Accelerator` is cloneable and privately owns a WGPU instance, adapter, device, and queue. Public getters expose references to all four.
 
-- The instance backend mask is Vulkan on Linux, Vulkan | DX12 on Windows, and Metal on macOS.
+- The instance backend mask is Vulkan on Linux, Vulkan on Windows, and Metal on macOS.
 - It requests a high-performance adapter without a compatible surface or fallback adapter.
 - Device requirements and the shared Metal buffer budget are described in [GPU accelerator](@/internals/runtime/accelerator.md).
 - `Accelerator::new` returns initialization errors; `Default` panics on failure. Initialization blocks through `pollster::block_on`.

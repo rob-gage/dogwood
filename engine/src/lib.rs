@@ -48,3 +48,5 @@ pub use engine_world::{
 };
 pub use engine_audio as audio;
 pub use engine_user_interface as user_interface;
+
+pub use engine_resources as resources;

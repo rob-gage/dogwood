@@ -22,7 +22,7 @@ The instance enables these backends and is created without a display handle:
 | Target | Backends |
 | --- | --- |
 | Linux | Vulkan |
-| Windows | Vulkan and DX12 |
+| Windows | Vulkan |
 | macOS | Metal |
 
 The host initializer returns `UnsupportedPlatform` outside Linux, Windows, and macOS; this does not imply that the remaining workspace dependencies support those targets.

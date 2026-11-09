@@ -16,7 +16,7 @@ winit = { version = "=0.30.13", default-features = false, features = ["rwh_06", 
 wgpu = { version = "=30.0.0", default-features = false, features = ["std", "wgsl"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-wgpu = { version = "=30.0.0", default-features = false, features = ["dx12", "vulkan"] }
+wgpu = { version = "=30.0.0", default-features = false, features = ["vulkan"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 wgpu = { version = "=30.0.0", default-features = false, features = ["vulkan"] }

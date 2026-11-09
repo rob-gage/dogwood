@@ -1,0 +1,5 @@
+[[assets]]
+id = "greeting"
+path = "greeting.txt"
+type = "text"
+compression = "zstd"

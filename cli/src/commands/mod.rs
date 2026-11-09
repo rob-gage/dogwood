@@ -13,3 +13,6 @@ pub use edit_template::edit_template;
 pub use new::new;
 pub use run::run;
 pub use run_template::run_template;
+
+mod distribute;
+pub use distribute::distribute;

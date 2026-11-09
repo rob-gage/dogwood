@@ -20,7 +20,7 @@ impl Accelerator {
     /// Creates a WGPU instance for the current platform
     fn create_instance() -> Result<wgpu::Instance, AcceleratorError> {
         #[cfg(target_os = "windows")]
-        let backends: wgpu::Backends = wgpu::Backends::VULKAN | wgpu::Backends::DX12;
+        let backends: wgpu::Backends = wgpu::Backends::VULKAN;
         #[cfg(target_os = "linux")]
         let backends: wgpu::Backends = wgpu::Backends::VULKAN;
         #[cfg(target_os = "macos")]
@@ -48,6 +48,7 @@ impl Accelerator {
             })
             .await
             .map_err(AcceleratorError::RequestAdapter)?;
+        eprintln!("Dogwood GPU: {} ({:?})",adapter.get_info().name,adapter.get_info().backend);
         // Metal shares buffer slots between storage, uniforms, and vertex buffers, so the storage
         // budget stays well below its 31 slots: compute stages bind at most a few uniforms beside
         // their storage buffers.
@@ -80,6 +81,7 @@ impl Accelerator {
 
     /// Creates a GPU context, returning backend, adapter, or device failures
     pub fn new() -> Result<Self, AcceleratorError> {
+        super::performance::configure();
         let instance = Self::create_instance()?;
         let (adapter, device, queue) = pollster::block_on(Self::initialize(&instance))?;
         Ok(Self { instance, adapter, device, queue })

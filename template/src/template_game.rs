@@ -203,7 +203,7 @@ impl TemplateGame {
             edit_color: MaterialGraphicsCellularDynamic {
                 sprite_sheet: Arc::new(SpriteSheet::from_png(
                     accelerator,
-                    include_bytes!("../assets/sprites/gravel.png"),
+                    crate::asset!("sprites/gravel.png"),
                     1,
                     1,
                 )?),
@@ -240,7 +240,7 @@ impl TemplateGame {
             edit_color: MaterialGraphicsCellularDynamic {
                 sprite_sheet: Arc::new(SpriteSheet::from_png(
                     accelerator,
-                    include_bytes!("../assets/sprites/snow.png"),
+                    crate::asset!("sprites/snow.png"),
                     1,
                     1,
                 )?),
@@ -273,7 +273,7 @@ impl TemplateGame {
             edit_color: MaterialGraphicsCellularStatic {
                 sprite_sheet: Arc::new(SpriteSheet::from_png(
                     accelerator,
-                    include_bytes!("../assets/sprites/stone.png"),
+                    crate::asset!("sprites/stone.png"),
                     1,
                     1,
                 )?),
@@ -312,7 +312,7 @@ impl TemplateGame {
             edit_color: MaterialGraphicsCellularStatic {
                 sprite_sheet: Arc::new(SpriteSheet::from_png(
                     accelerator,
-                    include_bytes!("../assets/sprites/ice.png"),
+                    crate::asset!("sprites/ice.png"),
                     1,
                     1,
                 )?),
@@ -438,7 +438,7 @@ impl TemplateGame {
             edit_color: MaterialGraphicsCellularStatic {
                 sprite_sheet: Arc::new(SpriteSheet::from_png(
                     accelerator,
-                    include_bytes!("../assets/sprites/wood.png"),
+                    crate::asset!("sprites/wood.png"),
                     1,
                     1,
                 )?),
@@ -491,7 +491,7 @@ impl TemplateGame {
                 edit_color: MaterialGraphicsCellularDynamic {
                     sprite_sheet: Arc::new(SpriteSheet::from_png(
                         accelerator,
-                        include_bytes!("../assets/sprites/wood_chips.png"),
+                        crate::asset!("sprites/wood_chips.png"),
                         1,
                         1,
                     )?),
@@ -754,38 +754,38 @@ impl TemplateGame {
             (
                 "red",
                 [1.0, 0.0, 0.0],
-                include_bytes!("../assets/sprites/glowstone_red.png").as_slice(),
-                include_bytes!("../assets/sprites/glowstone_gravel_red.png").as_slice(),
+                crate::asset!("sprites/glowstone_red.png"),
+                crate::asset!("sprites/glowstone_gravel_red.png"),
             ),
             (
                 "green",
                 [0.0, 1.0, 0.0],
-                include_bytes!("../assets/sprites/glowstone_green.png").as_slice(),
-                include_bytes!("../assets/sprites/glowstone_gravel_green.png").as_slice(),
+                crate::asset!("sprites/glowstone_green.png"),
+                crate::asset!("sprites/glowstone_gravel_green.png"),
             ),
             (
                 "blue",
                 [0.0, 0.0, 1.0],
-                include_bytes!("../assets/sprites/glowstone_blue.png").as_slice(),
-                include_bytes!("../assets/sprites/glowstone_gravel_blue.png").as_slice(),
+                crate::asset!("sprites/glowstone_blue.png"),
+                crate::asset!("sprites/glowstone_gravel_blue.png"),
             ),
             (
                 "cyan",
                 [0.0, 1.0, 1.0],
-                include_bytes!("../assets/sprites/glowstone_cyan.png").as_slice(),
-                include_bytes!("../assets/sprites/glowstone_gravel_cyan.png").as_slice(),
+                crate::asset!("sprites/glowstone_cyan.png"),
+                crate::asset!("sprites/glowstone_gravel_cyan.png"),
             ),
             (
                 "magenta",
                 [1.0, 0.0, 1.0],
-                include_bytes!("../assets/sprites/glowstone_magenta.png").as_slice(),
-                include_bytes!("../assets/sprites/glowstone_gravel_magenta.png").as_slice(),
+                crate::asset!("sprites/glowstone_magenta.png"),
+                crate::asset!("sprites/glowstone_gravel_magenta.png"),
             ),
             (
                 "yellow",
                 [1.0, 1.0, 0.0],
-                include_bytes!("../assets/sprites/glowstone_yellow.png").as_slice(),
-                include_bytes!("../assets/sprites/glowstone_gravel_yellow.png").as_slice(),
+                crate::asset!("sprites/glowstone_yellow.png"),
+                crate::asset!("sprites/glowstone_gravel_yellow.png"),
             ),
         ] {
             let glowstone: String = format!("glowstone_{color_name}");
@@ -1007,9 +1007,9 @@ impl TemplateGame {
             },
         ))?;
         for (pixels, depth, elevation, apparent_width, vertical_scroll) in [
-            (include_bytes!("../assets/sprites/parallax_far_slopes.png").as_slice(), 24.0, 2.0, 120.0, 0.1),
-            (include_bytes!("../assets/sprites/parallax_middle_slopes.png").as_slice(), 8.0, 1.0, 112.0, 0.25),
-            (include_bytes!("../assets/sprites/parallax_near_slopes.png").as_slice(), 2.0, 0.5, 80.0, 0.5),
+            (crate::asset!("sprites/parallax_far_slopes.png"), 24.0, 2.0, 120.0, 0.1),
+            (crate::asset!("sprites/parallax_middle_slopes.png"), 8.0, 1.0, 112.0, 0.25),
+            (crate::asset!("sprites/parallax_near_slopes.png"), 2.0, 0.5, 80.0, 0.5),
         ] {
             let sheet = Arc::new(SpriteSheet::from_png(accelerator, pixels, 1, 1)?);
             let distance = 1.0 + depth;

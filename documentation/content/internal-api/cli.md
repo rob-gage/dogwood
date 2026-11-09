@@ -85,3 +85,7 @@ The build helper always invokes `cargo metadata --no-deps --format-version 1` in
 Quiet mode captures build output and prints it on build failure. Verbose mode prints the metadata and build commands; metadata stdout remains captured for its JSON, while the build command inherits the terminal.
 
 For how a launched game is updated and rendered after startup, see [frame lifecycle](@/architecture/frame-lifecycle.md).
+
+## Distribution builds
+
+`build` dispatches to `commands::distribute`, independently of the legacy build helper used by run/edit. It resolves Cargo metadata, validates catalogues and assembled shaders, invokes Cargo or cargo-xwin, and stages executable/resources and native metadata before replacing the final directory. See [Resources and distributions](@/external-api/resources-build.md) for format, platform prerequisites, and limitations.

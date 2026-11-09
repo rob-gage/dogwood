@@ -28,7 +28,7 @@ impl fmt::Display for AcceleratorError {
 
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::RequestAdapter(error) => write!(formatter, "No suitable WGPU adapter: {error}"),
+            Self::RequestAdapter(error) => write!(formatter, "No suitable native graphics adapter (Vulkan on Linux/Windows, Metal on macOS). Check the GPU driver and system Vulkan loader where applicable: {error}"),
             Self::RequestDevice(error) => write!(formatter, "WGPU device request failed: {error}"),
             Self::UnsupportedLimit { adapter, name, required, supported } =>
                 write!(formatter, "GPU {adapter} does not meet {name}: engine requires {required}, adapter supports {supported}"),

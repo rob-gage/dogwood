@@ -5,6 +5,7 @@ members = [
     "cli",
     "editor",
     "engine",
+    "engine_resources",
     "engine_audio",
     "engine_graphics",
     "engine_host",
@@ -13,3 +14,9 @@ members = [
 ]
 exclude = ["vendor/rapier2d"]
 resolver = "3"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+debug = 0

@@ -15,7 +15,7 @@ The canonical template is the starter project that `dogwood new` copies; see [Te
 | Command | Options | Behavior |
 |---|---|---|
 | `dogwood new NAME` | `--path PATH` (default `./NAME`) | Creates a project from the canonical template at `./NAME` or `--path`; the destination must not exist. See [Your first project](@/getting-started/first-project.md). |
-| `dogwood build` | `--debug`; `--verbose`; `--path PATH` (default `.`); `-o, --output PATH` (default: Cargo metadata's `target_directory`) | Builds the project in release mode by default. `--output` chooses Cargo's target directory. |
+| `dogwood build` | `--target TARGET`; `--release` or `--debug`; `--verbose`; `--path PATH` (default `.`); `-o, --output PATH` (default: Cargo metadata's `target_directory`) | Builds and packages a native distribution in release mode by default. `--output` chooses Cargo's intermediate target directory. See [Resources and distributions](@/external-api/resources-build.md). |
 | `dogwood run` | `--debug`; `--verbose`; `--path PATH` (default `.`) | Builds, then runs the default Cargo target. Uses release mode by default. |
 | `dogwood edit` | `--verbose`; `--path PATH` (default `.`) | Builds in release mode, then runs binary `editor` with feature `editor`. |
 | `dogwood run-template` | `--debug`; `--verbose` | Runs the canonical template in the CLI's stable temporary cache. Release mode is the default. |
@@ -29,11 +29,11 @@ The canonical template is the starter project that `dogwood new` copies; see [Te
 
 ### Output and verbosity
 
-- `--verbose` prints Cargo commands and streams build and run output to the terminal. `cargo metadata` stdout remains captured as JSON.
+- Distribution builds stream Cargo diagnostics and always print the final distribution path. Other commands use `--verbose` to print Cargo commands and streams build and run output to the terminal. `cargo metadata` stdout remains captured as JSON.
 - Without `--verbose`, build output is captured and emitted if the build fails. `run` and `edit` also pass Cargo `--quiet` for their run step.
 - `edit` always uses release mode and has no debug or custom output-directory option.
 
-> **Limitation:** A relative `--output` is joined to `--path`, then Cargo interprets it from the project working directory while Dogwood canonicalizes it from the CLI working directory. When both paths are relative and `--path` is not `.`, this can make the build fail; use an absolute `--path` or `--output` to avoid the ambiguity.
+> **Limitation:** For the legacy run/edit build helper, a relative `--output` is joined to `--path`, then Cargo interprets it from the project working directory while Dogwood canonicalizes it from the CLI working directory. When both paths are relative and `--path` is not `.`, this can make the build fail; use an absolute `--path` or `--output` to avoid the ambiguity.
 
 ## Examples
 
@@ -55,8 +55,8 @@ dogwood edit-template --verbose
 |---|---|
 | Invalid arguments, help, or version requests | Handled by Clap before command dispatch; invalid arguments exit with status 2, while help and version requests exit with status 0. |
 | Cargo not found on `PATH` or under Cargo home | Prints installation guidance and exits with status 1. |
-| `build` fails (metadata, JSON parsing, missing target directory, process start, build, or canonicalization) | Prints `Build failed.`; exits with Cargo's status where one exists, otherwise 1. |
-| `build` succeeds | Prints `Build complete.` |
+| Distribution build fails | Returns a contextual error and nonzero status; preserves an existing distribution. |
+| `build` succeeds | Prints `Distribution:` and its path. |
 | `run` or `edit` | Exits with Cargo's exit code when available, otherwise 1. |
 | `new` validation, template, or filesystem error; template-cache or command setup error | Returned from `main`; nonzero status. |
 
