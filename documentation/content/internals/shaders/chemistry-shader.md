@@ -31,3 +31,16 @@ internal faces, four owned cells, twelve loaded cells, two neighboring axes, thr
 and four gas slots. Runtime bounds keep driver compilation from expanding the reaction solver.
 One ordered contact loop shares the solver across unary, same-cell, internal-face, and neighboring
 catalyst checks. Internal faces retain order `(0, 1)`, `(2, 3)`, `(0, 2)`, `(1, 3)`.
+
+Paired-contact traversal caches each loaded cell's paired-reactant unit mask in
+invocation-private storage. Empty masks reject contact groups before rebuilding
+partner classes, which include only units eligible for paired reactions. A reaction
+that passes its deterministic event roll invalidates every cached mask before any
+product or consumption write, including writes to other owned cells. Later contacts
+therefore see new reactants in the original order. Failed rolls and range checks
+leave the cache valid because they cannot change unit types.
+
+`DOGWOOD_CHEMISTRY_NO_PAIR_CACHE=1` selects the uncached reference at pipeline
+creation. GPU regressions compare stateful contact traces and complete solver
+output with the cache enabled and disabled, including new paired products,
+catalysts, ring offsets, block offsets, and material class aliases above 128.

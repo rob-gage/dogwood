@@ -10,3 +10,6 @@ const CHEMISTRY_TIME_STEP: f32 = 1.0 / 60.0;
 
 #[cfg(test)]
 mod contact_traversal_tests;
+
+#[cfg(test)]
+mod pair_cache_solver_tests;

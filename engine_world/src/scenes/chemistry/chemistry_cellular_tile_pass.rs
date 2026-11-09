@@ -156,7 +156,13 @@ impl ChemistryCellularTilePass {
                     }),
                     module: &shader_module,
                     entry_point: Some(entry_point),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: wgpu::PipelineCompilationOptions {
+                        constants: &[(
+                            "CACHE_PAIR_UNITS",
+                            if std::env::var_os("DOGWOOD_CHEMISTRY_NO_PAIR_CACHE").is_some() { 0.0 } else { 1.0 },
+                        )],
+                        ..Default::default()
+                    },
                     cache: None,
                 },
             ));
