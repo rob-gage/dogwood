@@ -611,7 +611,13 @@ impl FluidParticlePass {
                     layout: Some(layout),
                     module: &shader_module,
                     entry_point: Some(entry_point),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: wgpu::PipelineCompilationOptions {
+                        constants: &[(
+                            "FILTER_ACTOR_MATERIALS",
+                            if std::env::var_os("DOGWOOD_FLUID_ALL_ACTOR_MATERIALS").is_some() { 0.0 } else { 1.0 },
+                        )],
+                        ..Default::default()
+                    },
                     cache: None,
                 },
             ));

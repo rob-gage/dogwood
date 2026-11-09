@@ -40,6 +40,8 @@ Face contacts queue opposite velocity changes to fluid. The body's CPU response 
 
 The particle solver reports projection reaction impulse plus immersion, average current, dominant density, and drag. Sampling tests cell centers against an expanded rotated shape with a `2.5`-cell margin, skipping solid or rigid-body cells. Immersion is average sampled fluid mass divided by dominant density, clamped to `[0, 1]`. Dominance is selected by summing mass attributed to each raster material. Average current is total momentum divided by total mass.
 
+Actor sampling records a conservative 128-bit mask of positive-mass raster material identifiers during the existing total-mass traversal. The dominance pass skips only materials absent from that mask; identifiers alias modulo 128, so larger registries only introduce extra work. Material traversal, positive-mass summation, and tie order remain unchanged. `DOGWOOD_FLUID_ALL_ACTOR_MATERIALS=1` selects the reference scan for comparisons. The actual contact kernel matches the reference exactly in GPU regression cases covering empty, mixed, and aliased materials and all three actor shapes.
+
 Readbacks carry actor identity, collision settings, and submission tick. Samples are rejected when the actor disappears or its collision settings change. The newest matching sample replaces the cache; otherwise the previous sample remains.
 
 Dynamic actors receive the projection impulse and upward impulse from `actor_mass * gravity * immersion * fluid_density / actor_density * dt`. Actor density is mass divided by analytic collider area in cells. Fixed actors receive no CPU fluid response. Generic dynamic actors do not use the sampled material `drag` for an additional drag law.

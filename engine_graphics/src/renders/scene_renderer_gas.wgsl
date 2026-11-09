@@ -267,7 +267,18 @@ fn cancel_checker(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let first: vec4<u32> = shaded_cells[index * 2u];
     if !is_shaded(first) {
         filtered_cells[index * 2u] = vec4<u32>(0u);
-        filtered_cells[index * 2u + 1u] = vec4<u32>(0u);
+        var support=0u;
+        if GAS_EMPTY_SUPPORT {
+            let cell=uniforms.shaded_origin+vec2<i32>(invocation.xy);
+            for(var row= -1;row<=2;row++) {
+                for(var column= -1;column<=2;column++) {
+                    let neighbor=shaded_index(cell+vec2<i32>(column,row));
+                    if neighbor>=0 && is_shaded(shaded_cells[neighbor*2]) {support=1u;break;}
+                }
+                if support!=0u {break;}
+            }
+        }
+        filtered_cells[index * 2u + 1u] = vec4<u32>(0u,0u,support,0u);
         return;
     }
     let cell: vec2<i32> = uniforms.shaded_origin + vec2<i32>(invocation.xy);
@@ -295,6 +306,7 @@ fn cancel_checker(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let packed: array<vec4<u32>, 2> = pack_cell(filtered);
     filtered_cells[index * 2u] = packed[0];
     filtered_cells[index * 2u + 1u] = packed[1];
+    if GAS_EMPTY_SUPPORT {filtered_cells[index*2u+1u].z=1u;}
 }
 
 /// Returns the uniform cubic B-spline weights of the four cells around a fraction
@@ -362,6 +374,10 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let cell_position: vec2<f32> = local * f32(uniforms.cellular_tile_size);
     let continuous_cell: vec2<f32> = cell_position - vec2<f32>(0.5);
     let lower_cell: vec2<i32> = vec2<i32>(floor(continuous_cell));
+    if GAS_EMPTY_SUPPORT {
+        let support_index=shaded_index(lower_cell);
+        if support_index>=0 && filtered_cells[support_index*2+1].z==0u {discard;}
+    }
     let fraction: vec2<f32> = fract(continuous_cell);
     let weights_x: vec4<f32> = spline_weights(fraction.x);
     let weights_y: vec4<f32> = spline_weights(fraction.y);
@@ -406,3 +422,5 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     }
     return vec4<f32>(body.rgb + emission, body.a);
 }
+
+const GAS_EMPTY_SUPPORT: bool = false;

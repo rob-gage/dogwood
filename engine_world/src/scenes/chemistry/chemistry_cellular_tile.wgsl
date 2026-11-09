@@ -235,13 +235,14 @@ var<private> is_reacting: bool;
 /// Cells across the region a workgroup reads: the cells its blocks own and the ring around them
 const REGION_SIZE: i32 = 10;
 
-/// The classes of the units every cell of the workgroup's region holds, bit `thermal % 32` for
-/// each unit's thermal index
-var<workgroup> region_classes: array<u32, 100>;
+/// The classes of each region cell's units: word `(thermal / 32) % 4`, bit `thermal % 32`
+var<workgroup> region_classes: array<vec4<u32>, 100>;
 
-/// The reaction flags and partner classes of every cell of the workgroup's region, of all its
-/// units together
-var<workgroup> region_reactions: array<vec2<u32>, 100>;
+/// The conservative partner classes of all units in each region cell
+var<workgroup> region_reactions: array<vec4<u32>, 100>;
+
+/// The reaction flags of all units in each region cell
+var<workgroup> region_unary: array<u32, 100>;
 
 /// The blocks of the workgroup's tile that can react, one bit per block
 var<workgroup> reactive_blocks: atomic<u32>;
@@ -912,29 +913,31 @@ fn select_tiles(
             && all(region_position <= vec2<i32>(8));
         let units: array<u32, 7> =
             position_units(owned_origin - 1 + region_position, is_owned);
-        var classes: u32 = 0u;
-        var reactions: vec2<u32> = vec2<u32>(0u);
+        var classes: vec4<u32> = vec4<u32>(0u);
+        var reactions: vec4<u32> = vec4<u32>(0u);
+        var flags: u32 = 0u;
         for (var unit: u32 = 0u; unit < UNIT_COUNT; unit++) {
             let thermal: u32 = units[unit];
             if thermal == UNIT_MISSING { continue; }
-            classes |= 1u << (thermal % 32u);
-            reactions |= vec2<u32>(
-                reaction_lookup[count * count + count + thermal],
-                reaction_lookup[count * count + 2u * count + thermal],
-            );
+            classes[(thermal / 32u) % 4u] |= 1u << (thermal % 32u);
+            flags |= reaction_lookup[count * count + count + thermal];
+            let partner = arrayLength(&reaction_lookup) - count * 4u + thermal * 4u;
+            reactions |= vec4<u32>(reaction_lookup[partner], reaction_lookup[partner + 1u],
+                reaction_lookup[partner + 2u], reaction_lookup[partner + 3u]);
         }
+        region_unary[region_index] = flags;
         region_classes[region_index] = classes;
         region_reactions[region_index] = reactions;
     }
     workgroupBarrier();
     let region_index: u32 = (local_index / 8u + 1u) * u32(REGION_SIZE) + local_index % 8u + 1u;
     let block_bit: u32 = 1u << ((local_index / 16u) * 4u + (local_index % 8u) / 2u);
-    let nearby: u32 = region_classes[region_index]
+    let nearby: vec4<u32> = region_classes[region_index]
         | region_classes[region_index - 1u] | region_classes[region_index + 1u]
         | region_classes[region_index - u32(REGION_SIZE)]
         | region_classes[region_index + u32(REGION_SIZE)];
-    let reactions: vec2<u32> = region_reactions[region_index];
-    if (reactions.x & FLAG_UNARY) != 0u || (reactions.y & nearby) != 0u {
+    let reactions: vec4<u32> = region_reactions[region_index];
+    if (region_unary[region_index] & FLAG_UNARY) != 0u || any((reactions & nearby) != vec4<u32>(0u)) {
         atomicOr(&reactive_blocks, block_bit);
     }
     workgroupBarrier();
@@ -962,6 +965,27 @@ fn prepare_reactions() {
     dispatches[1] = 1u;
     dispatches[2] = 1u;
     atomicStore(&reacting_tiles[0], 0u);
+}
+
+/// Rejects a whole contact group only when no current unit types can pair. No skipped
+/// contact can mutate the private cell snapshots to introduce a partner. Re-check at each
+/// group boundary so products from previous groups keep their original same-tick reactions.
+fn cells_can_pair(first_slot: u32, second_slot: u32) -> bool {
+    var classes = vec4<u32>(0u);
+    for (var unit = 0u; unit < uniforms.unit_count; unit++) {
+        let thermal = unit_thermal_index(second_slot, unit);
+        if thermal != UNIT_MISSING { classes[(thermal / 32u) % 4u] |= 1u << (thermal % 32u); }
+    }
+    let count = uniforms.thermal_count;
+    for (var unit = 0u; unit < uniforms.unit_count; unit++) {
+        let thermal = unit_thermal_index(first_slot, unit);
+        if thermal == UNIT_MISSING { continue; }
+        if (reaction_lookup[count * count + count + thermal] & FLAG_PAIRED) == 0u { continue; }
+        let base = arrayLength(&reaction_lookup) - count * 4u + thermal * 4u;
+        let partners = vec4<u32>(reaction_lookup[base],reaction_lookup[base+1u],reaction_lookup[base+2u],reaction_lookup[base+3u]);
+        if any((partners & classes) != vec4<u32>(0u)) { return true; }
+    }
+    return false;
 }
 
 /// Reacts the matter of every block of a reacting tile: one invocation owns the four cells of a
@@ -1005,9 +1029,11 @@ fn react_tiles(
         var first_unit: u32;
         var second_unit: u32 = 0u;
         var scale: f32 = 1.0;
+        var pair_group: u32 = 0u;
         if contact < cell_contacts {
             first_slot = contact / per_cell;
             let local: u32 = contact % per_cell;
+            if local == units { pair_group = pairs; }
             if local < units {
                 first_unit = local;
                 second_slot = CELL_OUTSIDE;
@@ -1026,6 +1052,7 @@ fn react_tiles(
         } else if contact < cell_contacts + face_contacts {
             let local: u32 = contact - cell_contacts;
             let face: u32 = local / per_face;
+            if local % per_face == 0u { pair_group = per_face; }
             first_slot = face_first[face];
             second_slot = face_second[face];
             first_unit = (local % per_face) / units;
@@ -1034,13 +1061,29 @@ fn react_tiles(
         } else {
             let local: u32 = contact - cell_contacts - face_contacts;
             let face: u32 = local / per_face;
+            if local % per_face == 0u { pair_group = per_face; }
             first_slot = face / 2u;
             second_slot = 4u + face;
             first_unit = (local % per_face) / units;
             second_unit = local % units;
         }
+        if pair_group != 0u && !cells_can_pair(first_slot, second_slot) {
+            contact += pair_group - 1u;
+            continue;
+        }
         if cells[first_slot].index == CELL_OUTSIDE { continue; }
         if second_slot != CELL_OUTSIDE && cells[second_slot].index == CELL_OUTSIDE { continue; }
+        // Missing/non-paired first units cannot react with any later second unit in this
+        // row. The skipped calls have no side effects, so a row cannot create its own first
+        // reactant. Re-read flags after every real contact so newly created products retain
+        // exactly their original traversal order.
+        let paired = second_slot != CELL_OUTSIDE;
+        let required = select(FLAG_UNARY, FLAG_PAIRED, paired);
+        if (unit_flags(first_slot, first_unit) & required) == 0u {
+            if paired { contact += units - second_unit - 1u; }
+            continue;
+        }
+        if paired && (unit_flags(second_slot, second_unit) & FLAG_PAIRED) == 0u { continue; }
         react_contact(first_slot, first_unit, second_slot, second_unit, scale);
     }
     for (var slot: u32 = 0u; slot < uniforms.block_cell_count; slot++) { store_cell(slot); }

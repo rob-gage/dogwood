@@ -616,3 +616,42 @@ fn shaded_bodies_emit_and_occlude_like_cells_at_every_quality() {
         );
     }
 }
+
+#[test]
+#[ignore = "requires GPU; exact smooth gas rendering with empty-support rejection"]
+fn gas_empty_support_matches_full_scan() {
+    use super::super::scene_renderer_gas_pass::SceneRendererGasPass;
+    use crate::world::scenes::SceneGraphicsGas;
+    let a=Accelerator::default();let mut f=Fixture::new(&a,None);f.quality=LightingQuality::Low;
+    let gas=storage_buffer(&a,"gas support test cells",&vec![0u32;(SIDE*SIDE*8) as usize]);
+    let properties=storage_buffer(&a,"gas support test material",&[1f32.to_bits(),0,0,0xff80a060,0.4f32.to_bits(),0,0,0]);
+    let appearance=storage_buffer(&a,"gas support test texture",&[0.4f32.to_bits(),2f32.to_bits(),0.3f32.to_bits(),0.2f32.to_bits()]);
+    let mut lighting=SceneRendererLightingPass::new(&a);
+    let mut graphics=f.graphics();graphics.lighting.ambient=[1.;3];lighting.prepare(&a,&graphics,&[]);
+    let mut reference=SceneRendererGasPass::new_config(&a,lighting.bind_group_layout(),false);
+    let mut optimized=SceneRendererGasPass::new_config(&a,lighting.bind_group_layout(),true);
+    for (width,height) in [(128u32,96u32),(127,73)] {
+        let target=a.device().create_texture(&wgpu::TextureDescriptor{label:None,size:wgpu::Extent3d{width,height,depth_or_array_layers:1},mip_level_count:1,sample_count:1,dimension:wgpu::TextureDimension::D2,format:wgpu::TextureFormat::Rgba16Float,usage:wgpu::TextureUsages::RENDER_ATTACHMENT|wgpu::TextureUsages::COPY_SRC,view_formats:&[]});
+        let view=target.create_view(&Default::default());
+        for pattern in [1,0,2,3,4,0] {for fraction in [0.0f32,0.03125,0.09375] {
+            let mut cells=vec![0u32;(SIDE*SIDE*8) as usize];
+            for y in 0..SIDE {for x in 0..SIDE {
+                let present=match pattern {1=>true,2=>x==16&&y==16,3=>(x+y)%3==0,4=>x==0||x==SIDE-1||y==0||y==SIDE-1,_=>false};
+                let tile=((y/8+3)%REGION_SIDE)*REGION_SIDE+(x/8+2)%REGION_SIDE;
+                let index=tile*64+y%8*8+x%8;
+                if present {cells[index as usize*8]=4096;}
+            }}
+            a.queue().write_buffer(&gas,0,&cells.iter().flat_map(|v|v.to_le_bytes()).collect::<Vec<_>>());
+            let g=SceneGraphicsGas{gas_buffer:&gas,material_identifier_buffer:&f.identifiers,material_properties_buffer:&properties,material_graphics_buffer:&appearance,region_x:-2.+fraction,region_y:-2.-fraction,region_width:REGION_SIDE,region_height:REGION_SIDE,ring_offset_x:2,ring_offset_y:3,cellular_tile_size:8,amount_per_atmosphere:4096.,time:0.375};
+            let mut images=Vec::new();
+            for pass in [&mut reference,&mut optimized] {
+                pass.prepare(&a,wgpu::TextureFormat::Rgba16Float,0,0,width,height,width as f32/4.0+0.125,&g,&f.matter);
+                let mut encoder=a.device().create_command_encoder(&Default::default());pass.shade(&mut encoder,lighting.bind_group().unwrap());
+                {let mut p=encoder.begin_render_pass(&wgpu::RenderPassDescriptor{label:None,color_attachments:&[Some(wgpu::RenderPassColorAttachment{view:&view,depth_slice:None,resolve_target:None,ops:wgpu::Operations{load:wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),store:wgpu::StoreOp::Store}})],..Default::default()});pass.draw(&mut p,wgpu::TextureFormat::Rgba16Float,lighting.bind_group().unwrap());}
+                a.queue().submit([encoder.finish()]);images.push(read_texture(&a,&target,width,height));
+            }
+            let mismatch=images[0].iter().zip(&images[1]).position(|(a,b)|a!=b);
+            assert!(mismatch.is_none(),"gas mask changed pixels: {width}x{height}, pattern={pattern}, fraction={fraction}, pixel={mismatch:?}");
+        }}
+    }
+}
