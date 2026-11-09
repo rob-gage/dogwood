@@ -3,6 +3,7 @@
 use super::{
     WindowConfiguration,
     WindowError,
+    WindowMode,
 };
 use crate::{
     acceleration::Accelerator,
@@ -50,6 +51,10 @@ pub struct Window<'a> {
     /// Consumer of native redraw requests, drawing into the acquired surface texture with the
     /// user interface input received since the previous frame and returning its platform output
     render_handler: &'a mut dyn FnMut(&wgpu::TextureView, egui::RawInput) -> egui::PlatformOutput,
+    /// Source of the window mode the game currently wants, polled between updates
+    window_mode_handler: &'a mut dyn FnMut() -> WindowMode,
+    /// Window mode last applied to the native window
+    applied_window_mode: Option<WindowMode>,
     /// Runtime settings for the native game window
     window_configuration: WindowConfiguration,
     /// Duration between fixed-step updates
@@ -76,6 +81,7 @@ impl<'a> Window<'a> {
             &wgpu::TextureView,
             egui::RawInput,
         ) -> egui::PlatformOutput,
+        window_mode_handler: &'a mut dyn FnMut() -> WindowMode,
         accelerator: &'a Accelerator,
         user_interface_context: &'a UserInterfaceContext,
         window_configuration: WindowConfiguration,
@@ -110,6 +116,8 @@ impl<'a> Window<'a> {
             mouse_event_handler,
             update_handler,
             render_handler,
+            window_mode_handler,
+            applied_window_mode: None,
             window_configuration,
             update_interval,
             maximum_accumulated_time,
@@ -119,6 +127,35 @@ impl<'a> Window<'a> {
         };
         event_loop.run_app(&mut window).map_err(WindowError::from)?;
         window.error.map_or(Ok(()), Err)
+    }
+
+    /// Puts the native window into a mode, falling back to borderless fullscreen where exclusive
+    /// fullscreen is unavailable
+    fn apply_window_mode(&mut self, mode: WindowMode) {
+        let Some(window) = self.window.as_ref() else { return; };
+        let fullscreen: Option<winit::window::Fullscreen> = match mode {
+            WindowMode::Windowed => None,
+            WindowMode::Fullscreen => Some(winit::window::Fullscreen::Borderless(None)),
+            WindowMode::ExclusiveFullscreen => Some(
+                window.current_monitor()
+                    .and_then(|monitor: winit::monitor::MonitorHandle| {
+                        let size: winit::dpi::PhysicalSize<u32> = monitor.size();
+                        monitor.video_modes()
+                            .filter(|video_mode: &winit::monitor::VideoModeHandle| {
+                                video_mode.size() == size
+                            })
+                            .max_by_key(|video_mode: &winit::monitor::VideoModeHandle| {
+                                (video_mode.refresh_rate_millihertz(), video_mode.bit_depth())
+                            })
+                    })
+                    .map_or(
+                        winit::window::Fullscreen::Borderless(None),
+                        winit::window::Fullscreen::Exclusive,
+                    ),
+            ),
+        };
+        window.set_fullscreen(fullscreen);
+        self.applied_window_mode = Some(mode);
     }
 
     /// Resizes the presentation surface or suspends it for a zero-sized window
@@ -288,6 +325,8 @@ impl<'a> winit::application::ApplicationHandler for Window<'a> {
                     ));
                     window.request_redraw();
                     self.window = Some(window);
+                    let mode: WindowMode = self.window_configuration.mode;
+                    self.apply_window_mode(mode);
                     // games learn the initial size the same way they learn later resizes
                     (self.window_event_handler)(SystemWindowEvent::Resized {
                         width: size.width,
@@ -410,6 +449,7 @@ impl<'a> winit::application::ApplicationHandler for Window<'a> {
         self.surface_configuration = None;
         self.user_interface_window_state = None;
         self.window = None;
+        self.applied_window_mode = None;
         self.update_accumulator = Duration::ZERO;
     }
 
@@ -418,6 +458,10 @@ impl<'a> winit::application::ApplicationHandler for Window<'a> {
         if self.window.is_none() {
             event_loop.set_control_flow(winit::event_loop::ControlFlow::Wait);
             return;
+        }
+        let wanted_mode: WindowMode = (self.window_mode_handler)();
+        if self.applied_window_mode != Some(wanted_mode) {
+            self.apply_window_mode(wanted_mode);
         }
         let current_time: Instant = Instant::now();
         let elapsed_time: Duration = current_time.duration_since(self.last_update_time);

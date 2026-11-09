@@ -6,7 +6,7 @@ use engine_host::{
     acceleration::Accelerator,
     processors::Processor,
     system_events::{SystemKeyboardEvent, SystemMouseEvent, SystemWindowEvent},
-    windows::{Window, WindowConfiguration},
+    windows::{Window, WindowConfiguration, WindowMode},
 };
 use engine_user_interface::{UserInterfaceContext, egui};
 use std::{cell::RefCell, time::Duration};
@@ -71,6 +71,8 @@ impl Engine {
                 .borrow_mut()
                 .render(self.accelerator(), texture_view, input)
         });
+        let mut window_mode_handler: Box<dyn FnMut() -> WindowMode> =
+            Box::new(|| game_instance.borrow_mut().game_mutable().window_mode());
         let update_interval: Duration =
             Duration::from_nanos(1_000_000_000 / u64::from(UPDATES_PER_SECOND));
         let maximum_accumulated_time: Duration = update_interval * MAXIMUM_ACCUMULATED_UPDATES;
@@ -80,6 +82,7 @@ impl Engine {
             &mut mouse_event_handler,
             &mut update_handler,
             &mut render_handler,
+            &mut window_mode_handler,
             self.accelerator(),
             &user_interface_context,
             window_configuration,
