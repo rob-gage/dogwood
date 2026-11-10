@@ -1,0 +1,3 @@
+
+# Preserve hashes of official Vulkan runtime components and licenses.
+third_party/vulkan/** -text

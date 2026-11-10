@@ -27,6 +27,13 @@ The instance enables these backends and is created without a display handle:
 
 The host initializer returns `UnsupportedPlatform` outside Linux, Windows, and macOS; this does not imply that the remaining workspace dependencies support those targets.
 
+On Windows, `windows_vulkan::ensure_loaded` preloads the system Vulkan loader,
+using a System32-only search, before constructing the WGPU instance. If unavailable,
+it loads `<executable-directory>/vulkan/vulkan-1.dll` by absolute path. A `OnceLock`
+retains the selected module for the process lifetime. Both failures return
+`AcceleratorError::VulkanLoader`; adapter failures never switch loaders. See
+[Resources and distributions](@/external-api/resources-build.md) for vendoring and updates.
+
 ### Adapter request
 
 - `PowerPreference::HighPerformance`.

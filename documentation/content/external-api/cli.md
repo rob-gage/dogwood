@@ -15,7 +15,7 @@ The canonical template is the starter project that `dogwood new` copies; see [Te
 | Command | Options | Behavior |
 |---|---|---|
 | `dogwood new NAME` | `--path PATH` (default `./NAME`) | Creates a project from the canonical template at `./NAME` or `--path`; the destination must not exist. See [Your first project](@/getting-started/first-project.md). |
-| `dogwood build` | `--target TARGET`; `--release` or `--debug`; `--verbose`; `--path PATH` (default `.`); `-o, --output PATH` (default: Cargo metadata's `target_directory`) | Builds and packages a native distribution in release mode by default. `--output` chooses Cargo's intermediate target directory. See [Resources and distributions](@/external-api/resources-build.md). |
+| `dogwood build` | `--target TARGET`; `--release` or `--debug`; `--verbose`; `--path PATH` (default `.`); `-o, --output PATH` (default: `<project>/dist`) | Builds and packages a native distribution in release mode by default. `--output DIR` chooses the distribution root; Cargo files go in `DIR/intermediate/`. See [Resources and distributions](@/external-api/resources-build.md). |
 | `dogwood run` | `--debug`; `--verbose`; `--path PATH` (default `.`) | Builds, then runs the default Cargo target. Uses release mode by default. |
 | `dogwood edit` | `--verbose`; `--path PATH` (default `.`) | Builds in release mode, then runs binary `editor` with feature `editor`. |
 | `dogwood run-template` | `--debug`; `--verbose` | Runs the canonical template in the CLI's stable temporary cache. Release mode is the default. |
@@ -42,7 +42,7 @@ dogwood new cave_game
 cd cave_game
 dogwood run --debug
 dogwood edit --verbose
-dogwood build --path . --output /tmp/dogwood-target
+dogwood build --path . --output /tmp/dogwood-builds
 dogwood run-template
 dogwood edit-template --verbose
 ```
@@ -63,3 +63,7 @@ dogwood edit-template --verbose
 ### Template cache
 
 `run-template` and `edit-template` share a stable temporary project directory. Cache refreshes preserve files you changed since the previous generated baseline, so edits to the template project can persist across these commands. See [CLI internals](@/internal-api/cli.md) for cache behavior. For editor use, see [Using the editor](@/examples/using-the-editor.md).
+
+Windows distribution targets are `windows-x64` (`x86_64-pc-windows-msvc`) and
+`windows-arm64` (`aarch64-pc-windows-msvc`). Both package a matching Vulkan fallback
+loader; see [Resources and distributions](@/external-api/resources-build.md).

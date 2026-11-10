@@ -20,6 +20,8 @@ impl Accelerator {
     /// Creates a WGPU instance for the current platform
     fn create_instance() -> Result<wgpu::Instance, AcceleratorError> {
         #[cfg(target_os = "windows")]
+        super::windows_vulkan::ensure_loaded().map_err(AcceleratorError::VulkanLoader)?;
+        #[cfg(target_os = "windows")]
         let backends: wgpu::Backends = wgpu::Backends::VULKAN;
         #[cfg(target_os = "linux")]
         let backends: wgpu::Backends = wgpu::Backends::VULKAN;

@@ -16,6 +16,7 @@ Host types are the GPU, CPU, input, and window primitives under the engine. This
 
 `AcceleratorError` variants:
 
+- `VulkanLoader(String)` when neither Windows loader can load
 - `RequestAdapter(wgpu::RequestAdapterError)`
 - `RequestDevice(wgpu::RequestDeviceError)`
 - `UnsupportedLimit { adapter, name, required, supported }`

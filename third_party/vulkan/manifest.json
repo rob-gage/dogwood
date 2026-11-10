@@ -1,0 +1,22 @@
+{
+  "catalogue_url": "https://vulkan.lunarg.com/sdk/files.json",
+  "updated_utc": "2026-11-10T22:05:53.152924+00:00",
+  "loaders": {
+    "windows-x64": {
+      "version": "1.4.363.0",
+      "url": "https://sdk.lunarg.com/sdk/download/1.4.363.0/windows/VulkanRT-X64-1.4.363.0-Components.zip",
+      "archive_sha256": "a25a927aa8b9f0371048f1861cf88ac3b9bc9b1fb332c42d897c8ab32695769a",
+      "dll_sha256": "e1fcfc9489beefa6a6d9d11d6c7517f6a2b7f16e0d3fb8f4103bee0210f314a3",
+      "license_sha256": "404deb98dabf3e54bf9070d59676b31d69a3da2f9f6e56bdf09ad315c04c718c",
+      "pe_machine": "0x8664"
+    },
+    "windows-arm64": {
+      "version": "1.4.363.0",
+      "url": "https://sdk.lunarg.com/sdk/download/1.4.363.0/warm/VulkanRT-ARM64-1.4.363.0-Components.zip",
+      "archive_sha256": "fede2cc8b62e55d3b0607019e1f8ca612bc663ae9301be5de10a52329a552271",
+      "dll_sha256": "d9af47f5a66108d3456f1b42b5da092b5d1a6d35e202beee1c1e2c1bd483bff9",
+      "license_sha256": "404deb98dabf3e54bf9070d59676b31d69a3da2f9f6e56bdf09ad315c04c718c",
+      "pe_machine": "0xaa64"
+    }
+  }
+}

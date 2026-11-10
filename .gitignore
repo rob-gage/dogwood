@@ -3,3 +3,6 @@
 /target/
 
 /.idea/
+# Checked-in, architecture-verified Vulkan fallback loaders.
+!third_party/vulkan/windows-x64/vulkan-1.dll
+!third_party/vulkan/windows-arm64/vulkan-1.dll

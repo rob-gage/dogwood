@@ -82,3 +82,8 @@ An error may therefore be recoverable at a direct API boundary while the engine 
 `SceneError` also reports invalid ambient light and light penetration settings. `SpriteSheetError` reports image decoding and invalid dimensions. See [Lighting](@/external-api/lighting.md).
 
 Optional acoustic observation logs readback mapping/poll errors and skips the observation rather than returning `SceneError` or blocking simulation. See [simulation acoustics](@/external-api/acoustics.md).
+
+Windows GPU initialization returns `AcceleratorError::VulkanLoader` if neither the
+system nor executable-relative bundled loader can load. Its message includes both
+failures; loader selection precedes adapter requests. See
+[Resources and distributions](@/external-api/resources-build.md).

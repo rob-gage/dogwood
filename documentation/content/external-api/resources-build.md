@@ -3,7 +3,7 @@ title = "Resources and distributions"
 description = "Declarative catalogues, indexed resources, and portable native builds."
 weight = 125
 [extra]
-sources = ["engine_resources", "cli/build.rs", "cli/src/commands/distribute.rs", "tests/fixtures/resource-game", "engine_host/src/acceleration/performance.rs", "template/assets/.resources", "Cargo.toml"]
+sources = ["engine_resources", "cli/build.rs", "cli/src/commands/distribute.rs", "cli/src/commands/windows_vulkan.rs", "tools/update_vulkan_loaders.py", "tools/test_update_vulkan_loaders.py", "third_party/vulkan", "engine_host/src/acceleration/windows_vulkan.rs", "tests/fixtures/resource-game", "engine_host/src/acceleration/performance.rs", "template/assets/.resources", "Cargo.toml"]
 +++
 
 Install the CLI from an engine checkout with `cargo install --path cli --locked`.
@@ -12,6 +12,7 @@ Run builds in a game package with `Cargo.toml` and `assets/.resources`:
 ```sh
 dogwood build --target linux-x64 --release
 dogwood build --target windows-x64 --release
+dogwood build --target windows-arm64 --release
 dogwood build --target linux-x64 --debug
 # On a Mac with Xcode Command Line Tools:
 dogwood build --target macos-arm64 --release
@@ -20,8 +21,11 @@ dogwood build --target macos-x64 --release
 
 Release is the default. Target defaults to the host; `linux`, `windows`, `macos`, and
 the corresponding Rust triples are aliases. `macos` selects Apple Silicon.
-`--path` selects the game directory; `--output` selects Cargo's intermediate target
-directory. Final output is always `dist/<target>/<name>/` in the game directory.
+`--path` selects the game directory. With `--output DIR`, final output is
+`DIR/<target>/<name>/` and Cargo build files live in `DIR/intermediate/`.
+Relative output paths resolve against the game directory. Without `--output`,
+final output remains `dist/<target>/<name>/` in the game directory and Cargo uses
+its metadata target directory.
 A failed compilation preserves an existing distribution. Packaging stages under
 Cargo's target directory; target and dist must share a filesystem for final rename.
 Concurrent builds of the same game and target are not supported.
@@ -140,6 +144,11 @@ runs on every distribution build; Cargo retains its normal compilation cache.
 
 ## Platform prerequisites
 
+Distribution builds query `RUSTC` (or `rustc` on PATH) for its target library directory and
+require its `std` and `core` libraries for the selected target. Native distro Rust
+installations work without rustup. For missing cross-target libraries, install the
+compiler's target packages or use `rustup target add TARGET` with a rustup toolchain.
+
 Linux uses Vulkan exclusively, system `libvulkan.so.1` and the installed GPU driver.
 The game also needs ALSA (`libasound.so.2`), glibc, libgcc, and the desktop libraries
 loaded by winit (Wayland/X11). Do not copy a host Vulkan loader or vendor driver.
@@ -155,7 +164,7 @@ On Linux, Windows builds use `cargo-xwin`, not bare Cargo cross-linking:
 
 ```sh
 cargo install cargo-xwin --locked
-rustup target add x86_64-pc-windows-msvc
+rustup target add x86_64-pc-windows-msvc aarch64-pc-windows-msvc
 # Fedora: sudo dnf install clang lld llvm
 # Debian/Ubuntu: sudo apt install clang lld llvm
 ```
@@ -166,16 +175,30 @@ CRT, avoiding VC runtime DLL deployment. Native Windows uses Cargo with Visual S
 Build Tools (Desktop development with C++) and the MSVC Rust target. Inspect imports
 with `dumpbin /dependents` or `llvm-objdump -p`.
 
-> **Partial:** Windows distributions require the system `vulkan-1.dll` installed by
-> a current GPU driver. They contain `VULKAN-RUNTIME.txt`, not a private loader DLL.
-> Private loader acquisition, provenance verification, licensing redistribution, and
-> update policy are not implemented. No arbitrary developer DLL is copied. A loader
-> alone cannot provide a GPU driver. This is the system-loader fallback, not completion
-> of private Vulkan loader deployment.
+Windows distributions support x64 (`windows-x64`, `x86_64-pc-windows-msvc`)
+and ARM64 (`windows-arm64`, `aarch64-pc-windows-msvc`). A native Windows build
+without `--target` selects the host architecture. Each distribution includes the
+matching official LunarG loader under `vulkan/vulkan-1.dll`, its runtime license,
+and a provenance manifest. These files are embedded in the CLI at compile time.
+
+Before wgpu initializes, the host loads `vulkan-1.dll` from the Windows system
+directory using `LOAD_LIBRARY_SEARCH_SYSTEM32`. Only if that loader cannot load
+does it open the executable-relative `vulkan/vulkan-1.dll` by absolute path.
+The selected module remains loaded for the process lifetime, so ash's subsequent
+name-based load reuses it. DLL selection never searches the working directory.
+A loader that loads successfully but finds no suitable GPU does not trigger a
+fallback switch; a loader alone cannot supply the GPU driver.
+
+Refresh the checked-in copies with `python3 tools/update_vulkan_loaders.py`, then
+reinstall the CLI. The updater selects the newest public runtime component ZIP
+for each architecture from [LunarG's catalogue](https://vulkan.lunarg.com/sdk/files.json),
+checks the published archive SHA-256 and PE architecture, and preserves its license.
+`third_party/vulkan/manifest.json` records versions, URLs, archive/DLL/license hashes
+and update time. SDK patch releases may not contain a new runtime. Run
+`python3 tools/update_vulkan_loaders.py --check` to verify vendored files offline.
 
 The [Vulkan loader documentation](https://vulkan.lunarg.com/doc/view/latest/windows/LoaderApplicationInterface.html)
-describes driver/system installation; [Khronos packaging guidance](https://docs.vulkan.org/tutorial/latest/Building_a_Simple_Engine/Tooling/06_packaging_and_distribution.html)
-also discusses system-installed loaders.
+describes the system loader and driver interface.
 
 macOS requires a Mac, Xcode Command Line Tools (`xcode-select --install`), and
 `rustup target add aarch64-apple-darwin x86_64-apple-darwin`. Native Metal is used.

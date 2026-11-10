@@ -50,7 +50,7 @@ dogwood edit
 
 | Command | Default behavior | Options |
 |---|---|---|
-| `dogwood build` | Builds in release mode. | `--debug` selects debug mode; `--output PATH` or `-o PATH` sets Cargo's target directory. |
+| `dogwood build` | Builds in release mode. | `--debug` selects debug mode; `--output PATH` or `-o PATH` sets the distribution root, with Cargo files under `PATH/intermediate/`. |
 | `dogwood run` | Builds and runs in release mode. | `--debug` selects debug mode. |
 | `dogwood edit` | Builds and runs the `editor` binary in release mode with the `editor` feature enabled. | No debug or custom output-directory option. |
 

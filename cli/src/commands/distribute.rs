@@ -16,6 +16,28 @@ struct Config {
 fn error(s: impl Into<String>) -> std::io::Error {
     std::io::Error::other(s.into())
 }
+/// Query RUSTC or the compiler on PATH, including distro toolchains without rustup.
+fn require_target_standard_library(triple: &str) -> Result<()> {
+    let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+    let output = Command::new(&rustc)
+        .args(["--print", "target-libdir", "--target", triple])
+        .output()
+        .map_err(|e| error(format!("could not run Rust compiler {rustc:?}: {e}; install Rust or set RUSTC to its executable")))?;
+    let library_dir = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    let libraries: Vec<_> = fs::read_dir(&library_dir)
+        .into_iter().flatten().flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    if !output.status.success() || !["libstd-", "libcore-"].iter().all(|prefix| {
+        libraries.iter().any(|name| name.starts_with(prefix) && name.ends_with(".rlib"))
+    }) {
+        return Err(error(format!(
+            "missing Rust standard library for {triple}; install your compiler's target libraries or run: rustup target add {triple}. {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )).into());
+    }
+    Ok(())
+}
 fn run(command: &mut Command) -> Result<()> {
     let status = command.status()?;
     if !status.success() {
@@ -207,6 +229,17 @@ fn mac_bundle(
     )?;
     Ok((mac, res))
 }
+/// Explicit output replaces the distribution root and owns its Cargo intermediates.
+fn build_directories(project: &Path, cargo_target: &Path, output: Option<&Path>) -> (PathBuf, PathBuf) {
+    match output {
+        Some(output) => {
+            let root = if output.is_absolute() { output.to_owned() } else { project.join(output) };
+            (root.join("intermediate"), root)
+        }
+        None => (cargo_target.to_owned(), project.join("dist")),
+    }
+}
+
 pub fn distribute(
     cargo: PathBuf,
     path: PathBuf,
@@ -217,7 +250,7 @@ pub fn distribute(
     let path = path.canonicalize()?;
     let target = target.unwrap_or_else(|| {
         if cfg!(target_os = "windows") {
-            "windows-x64"
+            if cfg!(target_arch = "aarch64") { "windows-arm64" } else { "windows-x64" }
         } else if cfg!(target_os = "macos") {
             if cfg!(target_arch = "aarch64") {
                 "macos-arm64"
@@ -232,6 +265,9 @@ pub fn distribute(
     let (target, triple, metal) = match target.as_str() {
         "linux" | "linux-x64" | "x86_64-unknown-linux-gnu" => {
             ("linux-x64", "x86_64-unknown-linux-gnu", false)
+        }
+        "windows-arm64" | "aarch64-pc-windows-msvc" => {
+            ("windows-arm64", "aarch64-pc-windows-msvc", false)
         }
         "windows" | "windows-x64" | "x86_64-pc-windows-msvc" => {
             ("windows-x64", "x86_64-pc-windows-msvc", false)
@@ -302,23 +338,14 @@ pub fn distribute(
     if metal && !cfg!(target_os = "macos") {
         return Err(error("macOS compilation requires a Mac with Xcode Command Line Tools: xcode-select --install; rustup target add aarch64-apple-darwin x86_64-apple-darwin").into());
     }
-    let installed = Command::new("rustup")
-        .args(["target", "list", "--installed"])
-        .output()?;
-    if !String::from_utf8_lossy(&installed.stdout)
-        .lines()
-        .any(|l| l == triple)
-    {
-        return Err(error(format!(
-            "missing Rust target; run: rustup target add {triple}"
-        ))
-        .into());
-    }
-    let target_dir = output
-        .map(|o| if o.is_absolute() { o } else { path.join(o) })
-        .unwrap_or_else(|| PathBuf::from(metadata["target_directory"].as_str().unwrap()));
+    require_target_standard_library(triple)?;
+    let (target_dir, distribution_root) = build_directories(
+        &path,
+        Path::new(metadata["target_directory"].as_str().unwrap()),
+        output.as_deref(),
+    );
     let mut build = Command::new(&cargo);
-    if target == "windows-x64" && !cfg!(target_os = "windows") {
+    if target.starts_with("windows-") && !cfg!(target_os = "windows") {
         if which::which("cargo-xwin").is_err()
             || which::which("clang-cl").is_err()
             || which::which("lld-link").is_err()
@@ -359,7 +386,7 @@ pub fn distribute(
     if !debug {
         build.arg("--release");
     }
-    if target == "windows-x64" {
+    if target.starts_with("windows-") {
         let flags = std::env::var("RUSTFLAGS").unwrap_or_default();
         build.env(
             "RUSTFLAGS",
@@ -383,7 +410,7 @@ pub fn distribute(
     } else {
         (stage.clone(), stage.clone())
     };
-    let suffix = if target == "windows-x64" { ".exe" } else { "" };
+    let suffix = if target.starts_with("windows-") { ".exe" } else { "" };
     fs::copy(
         target_dir
             .join(triple)
@@ -396,17 +423,8 @@ pub fn distribute(
     } else {
         catalogue.pack(&data_dir.join("resources"))?;
     }
-    if target == "windows-x64" {
-        // Prefer the driver's system-installed loader. Never copy an unverified developer DLL.
-        fs::write(
-            stage.join("VULKAN-RUNTIME.txt"),
-            "Requires a current 64-bit GPU driver with Vulkan support and its system vulkan-1.dll. No private loader or vendor driver is bundled. Update the GPU driver if Vulkan initialization fails. See Dogwood build documentation.\n",
-        )?;
-        eprintln!(
-            "Windows uses the system Vulkan loader installed by the GPU driver; no unverified vulkan-1.dll is bundled."
-        );
-    }
-    let destination = path.join("dist").join(target).join(&name);
+    super::windows_vulkan::package(target, &exe_dir)?;
+    let destination = distribution_root.join(target).join(&name);
     fs::create_dir_all(destination.parent().unwrap())?;
     let backup = destination.with_extension("previous");
     if backup.exists() {
@@ -435,6 +453,35 @@ pub fn distribute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn output_selects_distribution_root_with_intermediate_subdirectory() {
+        let project = std::env::temp_dir().join("dogwood-project");
+        let cargo = project.join("target");
+        assert_eq!(build_directories(&project, &cargo, None), (cargo.clone(), project.join("dist")));
+        let relative = Path::new("builds");
+        assert_eq!(build_directories(&project, &cargo, Some(relative)),
+            (project.join("builds/intermediate"), project.join("builds")));
+        let absolute = std::env::temp_dir().join("dogwood-output");
+        assert_eq!(build_directories(&project, &cargo, Some(&absolute)),
+            (absolute.join("intermediate"), absolute));
+    }
+
+
+    #[test]
+    fn target_check_accepts_the_active_compiler_without_requiring_rustup() {
+        let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+        let output = Command::new(rustc).arg("-vV").output().unwrap();
+        let text = String::from_utf8(output.stdout).unwrap();
+        let host = text.lines().find_map(|line| line.strip_prefix("host: ")).unwrap();
+        require_target_standard_library(host).unwrap();
+    }
+    #[test]
+    fn missing_target_reports_the_target_and_installation_remedy() {
+        let message = require_target_standard_library("unknown-dogwood-target").unwrap_err().to_string();
+        assert!(message.contains("unknown-dogwood-target"));
+        assert!(message.contains("standard library"));
+        assert!(message.contains("rustup target add"));
+    }
     #[test]
     fn engine_shaders_translate_to_both_native_backends() {
         for metal in [false, true] {

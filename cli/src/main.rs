@@ -46,7 +46,7 @@ enum Subcommand {
         /// Path to the project to build
         #[arg(long, value_name = "PATH", default_value = ".")]
         path: PathBuf,
-        /// Writes Cargo build files to this target directory
+        /// Writes distributions here, with Cargo build files in an intermediate subdirectory
         #[arg(short, long, value_name = "PATH")]
         output: Option<PathBuf>,
     },
