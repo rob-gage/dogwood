@@ -3,6 +3,7 @@
 use crate::world::{
     materials::MATERIAL_RADIANCE_WGSL,
     scenes::{
+        LightingQuality,
         SceneGraphics,
         SceneGraphicsParallax,
     },
@@ -29,6 +30,19 @@ const LIGHTING_UNIFORM_STRIDE: u64 = 256;
 
 /// Largest number of cascade levels
 const LIGHTING_LEVEL_MAXIMUM: usize = 16;
+
+/// Consecutive frames Medium quality keeps the previous light before computing it again
+const LIGHTING_THROTTLE_FRAMES_MEDIUM: u32 = 1;
+
+/// Consecutive frames Low quality keeps the previous light before computing it again; its light is
+/// already soft and costs the least to recompute, so it can lag the most
+const LIGHTING_THROTTLE_FRAMES_LOW: u32 = 2;
+
+/// Returns the consecutive frames Low and Medium quality may keep the previous light instead of
+/// the defaults, set by `DOGWOOD_LIGHTING_THROTTLE`, with zero computing every frame
+fn lighting_throttle_override() -> Option<u32> {
+    std::env::var("DOGWOOD_LIGHTING_THROTTLE").ok().and_then(|value| value.parse().ok())
+}
 
 /// Invocations a cascade level aims to fill on a discrete GPU by splitting its rays, up to 16 per
 /// interval; other GPUs fill with far fewer, so they aim for `1 << 15`
@@ -421,6 +435,19 @@ pub struct SceneRendererLightingPass {
     is_lit: bool,
     /// Cells along each side of a lighting texel
     texel_size: u32,
+    /// Placement and settings of the light the last computed frame left in the domain, or `None`
+    /// for a fresh domain
+    computed_key: Option<[i64; 7]>,
+    /// Whether the prepared frame keeps the previous light instead of computing it
+    is_throttled: bool,
+    /// Consecutive frames that kept the previous light
+    throttled_frames: u32,
+    /// Most consecutive frames Low and Medium quality keep the previous light instead of their
+    /// defaults, zero to compute every frame
+    throttle_frames: Option<u32>,
+    /// Percent of the finest cascade level's directions Low and Medium trace, which High always
+    /// traces in full
+    direction_percent: u32,
 }
 
 /// Returns an appearance shader's source with the lighting functions bound at a group prepended
@@ -997,6 +1024,11 @@ impl SceneRendererLightingPass {
             domain: None,
             is_lit: false,
             texel_size: 1,
+            computed_key: None,
+            is_throttled: false,
+            throttled_frames: 0,
+            throttle_frames: lighting_throttle_override(),
+            direction_percent: 100,
             local_dirty,
         }
     }
@@ -1109,7 +1141,7 @@ impl SceneRendererLightingPass {
         // every level keeps its intervals between frames, and the finest level, which integrates
         // into the fluence, keeps none
         let interval_buffers: Vec<wgpu::Buffer> =
-            Self::domain_levels(width, height, [0, 0], self.trace_invocations, self.texel_size)
+            Self::domain_levels(width, height, [0, 0], self.trace_invocations, self.texel_size, self.direction_percent)
             .iter()
             .enumerate()
             .map(|(level, shape)| {
@@ -1194,8 +1226,13 @@ impl SceneRendererLightingPass {
         world_origin: [i64; 2],
         trace_invocations: u32,
         texel_size: u32,
+        direction_percent: u32,
     ) -> Vec<LightingLevel> {
-        let finest_directions: u32 = LIGHTING_DIRECTIONS * texel_size;
+        let finest_directions: u32 = if texel_size == 1 {
+            LIGHTING_DIRECTIONS
+        } else {
+            (LIGHTING_DIRECTIONS * texel_size * direction_percent / 100).max(LIGHTING_DIRECTIONS)
+        };
         let diagonal: f32 = (width as f32).hypot(height as f32);
         let mut levels: Vec<LightingLevel> = Vec::new();
         for level in 0..LIGHTING_LEVEL_MAXIMUM as u32 {
@@ -1275,6 +1312,7 @@ impl SceneRendererLightingPass {
                 })
             {
                 self.domain = Some(self.create_domain(accelerator, width, height));
+                self.computed_key = None;
             }
             domain_origin = [cellular.region_x, cellular.region_y];
             view_bytes[0..4].copy_from_slice(&(width as f32).to_le_bytes());
@@ -1465,7 +1503,7 @@ impl SceneRendererLightingPass {
             cellular.region_tile_x * cellular.cellular_tile_size as i64 / texel_size as i64,
             cellular.region_tile_y * cellular.cellular_tile_size as i64 / texel_size as i64,
         ];
-        self.levels = Self::domain_levels(width, height, world_origin, self.trace_invocations, texel_size);
+        self.levels = Self::domain_levels(width, height, world_origin, self.trace_invocations, texel_size, self.direction_percent);
         let mut cascade_bytes: Vec<u8> =
             vec![0; LIGHTING_UNIFORM_STRIDE as usize * LIGHTING_LEVEL_MAXIMUM];
         for (index, level) in self.levels.iter().enumerate() {
@@ -1530,6 +1568,31 @@ impl SceneRendererLightingPass {
                 i64::from(graphics.cellular_tile_size),
             ],
         );
+        // Low and Medium keep the previous light every other frame while nothing about its
+        // placement changed. The cache compares against the last computed inputs, so the next
+        // computed frame traces every change made meanwhile and no light moves, only lags one frame.
+        let key: [i64; 7] = [
+            world_origin[0],
+            world_origin[1],
+            i64::from(width),
+            i64::from(height),
+            i64::from(texel_size),
+            i64::from(lighting.penetration.max(1.0).to_bits()),
+            i64::from(graphics.cellular_tile_size),
+        ];
+        self.is_throttled = lighting.quality != LightingQuality::High
+            && self.computed_key == Some(key)
+            && self.throttled_frames < self.throttle_frames.unwrap_or(match lighting.quality {
+                LightingQuality::High => 0,
+                LightingQuality::Medium => LIGHTING_THROTTLE_FRAMES_MEDIUM,
+                LightingQuality::Low => LIGHTING_THROTTLE_FRAMES_LOW,
+            });
+        if self.is_throttled {
+            self.throttled_frames += 1;
+        } else {
+            self.throttled_frames = 0;
+            self.computed_key = Some(key);
+        }
     }
 
     /// Records the prepared lighting computation, where `draw_optics` draws what else emits and
@@ -1543,7 +1606,7 @@ impl SceneRendererLightingPass {
             self.domain.as_ref(),
             self.optical_bind_group.as_ref(),
             self.lighting_bind_group.as_ref(),
-            self.is_lit,
+            self.is_lit && !self.is_throttled,
         ) else {
             return;
         };

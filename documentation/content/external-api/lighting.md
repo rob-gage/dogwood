@@ -19,7 +19,7 @@ A common nonemissive, transparent choice is `SpriteSheet::from_color(accelerator
 
 ## Scene and actor controls
 
-`LightingQuality` controls radiance cascade resolution. `Low` uses one texel for each 4 × 4 cells, `Medium` for each 2 × 2 cells, and `High` for each cell. `High` is the default. Backlight uses one texel per 4 × 4 world cells at every quality. `Scene::lighting_quality()` returns the setting and `set_lighting_quality` changes it.
+`LightingQuality` controls radiance cascade resolution. `Low` uses one texel for each 4 × 4 cells, `Medium` for each 2 × 2 cells, and `High` for each cell. `High` is the default. Backlight uses one texel per 4 × 4 world cells at every quality. While the lit region has not moved, `Medium` recomputes light every second frame and `Low` every third, so light follows changes up to one or two frames late; `High` recomputes every frame (see [lighting transport](@/internals/rendering/lighting-pass.md)). `Scene::lighting_quality()` returns the setting and `set_lighting_quality` changes it.
 
 `Scene::ambient_light()` returns the linear RGB ambient floor. It defaults to `[1, 1, 1]`; `set_ambient_light` accepts finite nonnegative channels and reports `SceneError::InvalidAmbientLight` otherwise. `light_penetration()` defaults to `8` tiles; `set_light_penetration` accepts finite values of at least `1` and reports `InvalidLightPenetration` otherwise.
 

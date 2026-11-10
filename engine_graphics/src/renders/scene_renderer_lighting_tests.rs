@@ -254,6 +254,7 @@ fn quality_switches_resize_domain_and_keep_gpu_light_live() {
         emission: [2.0, 0.5, 0.25],
     });
     let mut pass = SceneRendererLightingPass::new(&accelerator);
+    pass.throttle_frames = Some(0);
     for (quality, expected_side) in [
         (LightingQuality::High, 32),
         (LightingQuality::Medium, 16),
@@ -283,6 +284,7 @@ fn optical_coefficients_and_dense_emission_preserve_world_units() {
     let accelerator =
         Accelerator::new().expect("GPU adapter is required for lighting regression tests");
     let mut pass = SceneRendererLightingPass::new(&accelerator);
+    pass.throttle_frames = Some(0);
     // Exercise both volumetric integration and the optically thick surface-emission cutoff.
     for occlusion in [0.5, 1.0] {
         let mut fixture = Fixture::new(&accelerator, Some([1.5, 0.75, 0.25, occlusion]));
@@ -340,6 +342,7 @@ fn actor_disc_has_spatial_coverage_and_fades_with_distance() {
         emission: [4.0, 1.0, 0.5],
     });
     let mut pass = SceneRendererLightingPass::new(&accelerator);
+    pass.throttle_frames = Some(0);
     run(&accelerator, &mut pass, &fixture);
     let image = read_texture(&accelerator, domain_texture(&pass, false), SIDE, SIDE);
     let at = |x: usize, y: usize| image[y * SIDE as usize + x][0];
@@ -407,6 +410,7 @@ fn sprite_and_disc_keep_world_placement_emission_and_absorption() {
     });
     let radiance = radiance_texture(&accelerator, &[[128, 64, 0, 128]]);
     let mut pass = SceneRendererLightingPass::new(&accelerator);
+    pass.throttle_frames = Some(0);
     for quality in [
         LightingQuality::High,
         LightingQuality::Medium,
@@ -481,6 +485,7 @@ fn backlight_world_coverage_and_physical_blur_do_not_change_with_quality() {
         radiance_intensity: 1.0,
     };
     let mut pass = SceneRendererLightingPass::new(&accelerator);
+    pass.throttle_frames = Some(0);
     for quality in [
         LightingQuality::High,
         LightingQuality::Medium,
@@ -573,6 +578,7 @@ fn shaded_bodies_emit_and_occlude_like_cells_at_every_quality() {
         Accelerator::new().expect("GPU adapter is required for lighting regression tests");
     let fixture_empty = Fixture::new(&accelerator, None);
     let mut pass = SceneRendererLightingPass::new(&accelerator);
+    pass.throttle_frames = Some(0);
     let mut shaded_pass = SceneRendererShadedPass::new(&accelerator, pass.bind_group_layout());
     let square = |low: f32, high: f32| vec![[low, low], [high, low], [high, high], [low, high]];
     let mut fixture = fixture_empty;
@@ -627,6 +633,7 @@ fn gas_empty_support_matches_full_scan() {
     let properties=storage_buffer(&a,"gas support test material",&[1f32.to_bits(),0,0,0xff80a060,0.4f32.to_bits(),0,0,0]);
     let appearance=storage_buffer(&a,"gas support test texture",&[0.4f32.to_bits(),2f32.to_bits(),0.3f32.to_bits(),0.2f32.to_bits()]);
     let mut lighting=SceneRendererLightingPass::new(&a);
+    lighting.throttle_frames=Some(0);
     let mut graphics=f.graphics();graphics.lighting.ambient=[1.;3];lighting.prepare(&a,&graphics,&[]);
     let mut reference=SceneRendererGasPass::new_config(&a,lighting.bind_group_layout(),false);
     let mut optimized=SceneRendererGasPass::new_config(&a,lighting.bind_group_layout(),true);
@@ -670,6 +677,7 @@ fn local_dirty_matches_global_bounds() {
         for cell in matter.chunks_exact_mut(2) {cell[0]=300f32.to_bits();cell[1]=65536;}
         fixture.matter=storage_buffer(&a,"local dirty matter",&matter);
         let mut passes=[SceneRendererLightingPass::new_local_dirty(&a,false),SceneRendererLightingPass::new_local_dirty(&a,true)];
+        for pass in &mut passes {pass.throttle_frames=Some(0);}
         for frame in 0u32..12 {
             let ring=if frame>=7 {(1u32,1u32)} else {(0,0)};
             let rw=width/8;let rh=height/8;
@@ -702,6 +710,150 @@ fn local_dirty_matches_global_bounds() {
             }
             assert_eq!(images[0],images[1],"local invalidation changed lighting: {width}x{height}, frame {frame}");
             if frame==1 {assert!(images[0].iter().any(|v|v[0]>0.001),"fixture produced no light");}
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires GPU; compares throttled lighting against computing every frame"]
+fn throttled_light_matches_unthrottled_when_computed() {
+    let a=Accelerator::default();
+    for (width,height,quality) in [(136u32,104u32,LightingQuality::Medium),(136,104,LightingQuality::Low),(1280,720,LightingQuality::Low),(128,96,LightingQuality::High)] {
+        let count=(width*height) as usize;
+        let mut fixture=Fixture::new(&a,None);
+        fixture.quality=quality;
+        fixture.identifiers=storage_buffer(&a,"throttle identifiers",&vec![1;count]);
+        fixture.colors=storage_buffer(&a,"throttle colors",&vec![0;count*2]);
+        let mut matter=vec![0u32;count*2];
+        for cell in matter.chunks_exact_mut(2) {cell[0]=300f32.to_bits();cell[1]=65536;}
+        fixture.matter=storage_buffer(&a,"throttle matter",&matter);
+        let mut passes=[SceneRendererLightingPass::new(&a),SceneRendererLightingPass::new(&a)];
+        passes[0].throttle_frames=Some(0);
+        passes[1].throttle_frames=None;
+        let mut previous: Option<Vec<[f32;4]>>=None;
+        let mut throttled=0;
+        for frame in 0u32..14 {
+            let rw=width/8;let rh=height/8;
+            let mut colors=vec![0u32;count*2];
+            let sites=[(4+frame%3,4),(width-5,height-5-frame%3),(width/2,height/2)];
+            for y in 0..height {for x in 0..width {
+                let tile=(y/8)*rw+x/8;
+                let cell=(tile*64+(y%8)*8+x%8) as usize;
+                let mut emission=[0.;4];
+                if frame!=0 && sites.iter().any(|p|*p==(x,y)) {
+                    emission=if frame&1==0 {[1.,0.25,0.125,0.]} else {[0.125,0.5,1.,0.]};
+                }
+                if frame>=3 && x==width/2 {emission[3]=0.95;}
+                colors[cell*2+1]=pack_radiance(emission);
+            }}
+            a.queue().write_buffer(&fixture.colors,0,&colors.iter().flat_map(|v|v.to_le_bytes()).collect::<Vec<_>>());
+            let mut graphics=fixture.graphics();
+            graphics.visible_width=width as f32;graphics.visible_height=height as f32;
+            let c=graphics.cellular.as_mut().unwrap();c.region_width=rw;c.region_height=rh;
+            let t=graphics.temperature.as_mut().unwrap();t.region_width=rw;t.region_height=rh;
+            // the region moves on frame 9, which no frame may keep stale light across
+            if frame>=9 {
+                let c=graphics.cellular.as_mut().unwrap();c.region_tile_x=-2;c.region_tile_y=1;c.region_x=-2.;c.region_y=1.;
+            }
+            let mut images=Vec::new();
+            for pass in &mut passes {
+                pass.prepare(&a,&graphics,&[]);
+                let mut e=a.device().create_command_encoder(&Default::default());
+                pass.compute(&mut e,|_,_|{});a.queue().submit([e.finish()]);
+                let domain=pass.domain.as_ref().unwrap();
+                images.push(read_texture(&a,domain.light_view.texture(),domain.width,domain.height));
+            }
+            if passes[1].is_throttled {
+                throttled+=1;
+                assert!(quality!=LightingQuality::High,"High kept stale light at frame {frame}");
+                assert!(frame!=0 && frame!=9,"{quality:?} kept stale light across a fresh domain or moved region at frame {frame}");
+                assert_eq!(Some(&images[1]),previous.as_ref(),"a throttled frame changed the light: {quality:?} {width}x{height} frame {frame}");
+            } else {
+                assert_eq!(images[0],images[1],"throttled lighting differs when computed: {quality:?} {width}x{height} frame {frame}");
+            }
+            previous=Some(images.remove(1));
+        }
+        if quality==LightingQuality::High {assert_eq!(throttled,0,"High throttled");} else {assert!(throttled>=4,"{quality:?} never throttled: {throttled}");}
+    }
+}
+
+/// Renders one emitter scene at several qualities and ray counts, writing tone-mapped images to
+/// `DOGWOOD_LIGHTING_IMAGE_DIR` and printing how far each differs from High
+#[test]
+#[ignore = "requires GPU; writes comparison images and prints metrics"]
+fn lighting_direction_reduction_report() {
+    let a=Accelerator::default();
+    let (width,height)=(1280u32,720u32);
+    let count=(width*height) as usize;
+    let (rw,rh)=(width/8,height/8);
+    let mut colors=vec![0u32;count*2];
+    let mut set=|x:u32,y:u32,emission:[f32;4]| {
+        let tile=(y/8)*rw+x/8;
+        let cell=(tile*64+(y%8)*8+x%8) as usize;
+        colors[cell*2+1]=pack_radiance(emission);
+    };
+    // point emitters of different colors and strengths in open air
+    for (x,y,e) in [(300u32,360u32,[8.,4.,2.,0.]),(900,200,[2.,6.,8.,0.]),(640,600,[6.,6.,1.,0.]),(1100,500,[1.,1.,10.,0.])] { set(x,y,e); }
+    // a one-cell-wide dim emitter and a three-cell lamp
+    set(150,150,[1.,0.2,0.2,0.]);
+    for dx in 0..3 { set(500+dx,120,[5.,5.,5.,0.]); }
+    // walls and a block that shade the emitters
+    for y in 250..470 { set(600,y,[0.,0.,0.,0.95]); set(601,y,[0.,0.,0.,0.95]); }
+    for y in 330..400 { for x in 960..1000 { set(x,y,[0.,0.,0.,0.9]); } }
+    let mut results: Vec<(String,u32,Vec<[f32;4]>)>=Vec::new();
+    for (name,quality,percent) in [
+        ("high",LightingQuality::High,100u32),
+        ("medium100",LightingQuality::Medium,100),("medium50",LightingQuality::Medium,50),
+        ("low100",LightingQuality::Low,100),("low75",LightingQuality::Low,75),("low50",LightingQuality::Low,50),("low25",LightingQuality::Low,25),
+    ] {
+        let mut fixture=Fixture::new(&a,None);
+        fixture.quality=quality;
+        fixture.identifiers=storage_buffer(&a,"report identifiers",&vec![1;count]);
+        fixture.colors=storage_buffer(&a,"report colors",&colors);
+        let mut matter=vec![0u32;count*2];
+        for cell in matter.chunks_exact_mut(2) {cell[0]=300f32.to_bits();cell[1]=65536;}
+        fixture.matter=storage_buffer(&a,"report matter",&matter);
+        let mut pass=SceneRendererLightingPass::new(&a);
+        pass.throttle_frames=Some(0);pass.direction_percent=percent;
+        let mut graphics=fixture.graphics();
+        graphics.visible_width=width as f32;graphics.visible_height=height as f32;
+        let c=graphics.cellular.as_mut().unwrap();c.region_width=rw;c.region_height=rh;
+        let t=graphics.temperature.as_mut().unwrap();t.region_width=rw;t.region_height=rh;
+        pass.prepare(&a,&graphics,&[]);
+        let mut e=a.device().create_command_encoder(&Default::default());
+        pass.compute(&mut e,|_,_|{});a.queue().submit([e.finish()]);
+        let domain=pass.domain.as_ref().unwrap();
+        let image=read_texture(&a,domain.light_view.texture(),domain.width,domain.height);
+        results.push((name.to_string(),quality.texel_size(),image));
+    }
+    let reference=results[0].2.clone();
+    let directory=std::env::var("DOGWOOD_LIGHTING_IMAGE_DIR").ok();
+    for (name,texel,image) in &results {
+        let (w,h)=(width/texel,height/texel);
+        // High box-averaged to this resolution
+        let mut expected=vec![[0f32;3];(w*h) as usize];
+        for y in 0..height {for x in 0..width {
+            let p=reference[(y*width+x) as usize];
+            let e=&mut expected[((y/texel)*w+x/texel) as usize];
+            for k in 0..3 {e[k]+=p[k]/(texel*texel) as f32;}
+        }}
+        let (mut error,mut total,mut ghost)=(0f64,0f64,0f64);
+        let mut peak=0f32;
+        for i in 0..(w*h) as usize {
+            let (p,r)=(image[i],expected[i]);
+            let (pl,rl)=((p[0]+p[1]+p[2])/3.,(r[0]+r[1]+r[2])/3.);
+            error+=(pl-rl).abs() as f64;total+=rl as f64;
+            ghost+=(pl-rl*1.5-0.01).max(0.) as f64;
+            peak=peak.max(pl);
+        }
+        println!("LIGHT_REPORT {name}: size={w}x{h} mean_abs_error/total={:.4} ghost_excess/total={:.4} peak={peak:.3}",error/total,ghost/total);
+        if let Some(directory)=&directory {
+            let mut bytes=format!("P6\n{w} {h}\n255\n").into_bytes();
+            for y in (0..h).rev() {for x in 0..w {
+                let p=image[(y*w+x) as usize];
+                for k in 0..3 {bytes.push(((1.0-(-p[k]*2.0).exp()).powf(1.0/2.2)*255.0).clamp(0.,255.) as u8);}
+            }}
+            std::fs::write(format!("{directory}/{name}.ppm"),bytes).unwrap();
         }
     }
 }
