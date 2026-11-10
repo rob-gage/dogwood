@@ -103,7 +103,7 @@ The binding uses 152 bytes at each 256-byte dynamic stride. Four setup slots pre
 | 120–132 | World origin low xy and high xy |
 | 136–148 | Actor count, contact scale, actor time, tick |
 
-Sparse contact clearing sizes the shared indirect dispatch for contact tiles. The pass restores the live-particle dispatch before prediction, sorting, and the solver substeps.
+The density solve uses `lambda_lanes` and `correct_lanes`: `FLUID_LANES = 4` invocations share one particle's neighbor loop, each summing every fourth neighbor of the particle's bin rows, and the particle's first lane adds the partial sums in lane order, then runs the boundary sampling, solid projection, and stores. A workgroup of 128 solves 32 particles, dispatched indirectly from words 6..8 of the dispatch buffer, which `prepare` writes beside the particle dispatch in words 0..2 and the wake dispatch in words 3..5, so the buffer holds 36 bytes. The sums add in a different order than `lambda` and `correct`, which remain as the reference path selected by `DOGWOOD_FLUID_LANES=0`; results agree to rounding. Sparse contact clearing sizes the shared indirect dispatch for contact tiles. The pass restores the live-particle dispatch before prediction, sorting, and the solver substeps.
 
 The two particle buffers alternate during compaction, scattering, and commit. Predicted positions alternate during scatter and Jacobi correction. CPU uniform slot selection tracks both sides; the WGSL is not free to select arbitrary current buffers.
 

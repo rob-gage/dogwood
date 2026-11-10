@@ -435,6 +435,15 @@ fn fluid_vector_is_finite(value: vec2<f32>) -> bool {
 /// Number of invocations used by particle passes
 const PARTICLE_WORKGROUP_SIZE: u32 = 128u;
 
+/// Invocations that share one particle's neighbor loop in `lambda_lanes` and `correct_lanes`
+const FLUID_LANES: u32 = 4u;
+
+/// Particles one workgroup of lane kernels solves
+const FLUID_LANE_PARTICLES: u32 = PARTICLE_WORKGROUP_SIZE / FLUID_LANES;
+
+/// Per-lane partial neighbor sums, combined in lane order by each particle's first lane
+var<workgroup> lane_sums: array<vec4<f32>, 128>;
+
 /// Tile keys shared while reducing sleep values within one workgroup
 var<workgroup> sleep_reduction_tiles: array<atomic<u32>, 128>;
 /// Maximum speed or constraint shared for each workgroup tile
@@ -1320,6 +1329,10 @@ fn prepare() {
         / PARTICLE_WORKGROUP_SIZE);
     dispatch_arguments[1] = 1u;
     dispatch_arguments[2] = 1u;
+    dispatch_arguments[6] = max(1u, (particle_count + FLUID_LANE_PARTICLES - 1u)
+        / FLUID_LANE_PARTICLES);
+    dispatch_arguments[7] = 1u;
+    dispatch_arguments[8] = 1u;
 }
 
 /// Writes an indirect particle dispatch from the pending chemistry fluid products
@@ -3059,6 +3072,173 @@ fn correct(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let candidate: vec2<f32> = position + correction;
     let projection: FluidProjectionResult = project_from_solids(candidate);
     store_predicted(invocation.x, 1u - uniforms.predicted_side, projection.position);
+}
+
+/// Computes the lambdas like `lambda`, with `FLUID_LANES` invocations splitting each particle's
+/// neighbor loop and its first lane combining their partial sums in lane order
+@compute @workgroup_size(PARTICLE_WORKGROUP_SIZE)
+fn lambda_lanes(
+    @builtin(workgroup_id) workgroup: vec3<u32>,
+    @builtin(local_invocation_index) local_index: u32,
+) {
+    atomicStore(&sleep_reduction_tiles[local_index], SLEEP_REDUCTION_EMPTY);
+    atomicStore(&sleep_reduction_values[local_index], 0u);
+    workgroupBarrier();
+    let particle_count: u32 = atomicLoad(&control[0]);
+    let lane: u32 = local_index % FLUID_LANES;
+    let particle: u32 = workgroup.x * FLUID_LANE_PARTICLES + local_index / FLUID_LANES;
+    let is_present: bool = particle < particle_count;
+    var position: vec2<f32> = vec2<f32>(0.0);
+    var is_awake: bool = false;
+    var partial: vec4<f32> = vec4<f32>(0.0);
+    if is_present {
+        position = load_predicted(particle, uniforms.predicted_side);
+        is_awake = !neighbor_is_sleeping(particle);
+        if is_awake {
+            let rows: vec2<i32> = neighbor_rows(position);
+            for (var bin_y: i32 = rows.x; bin_y <= rows.y; bin_y++) {
+                let row: vec2<u32> = neighbor_row_range(position, bin_y, particle_count);
+                for (var neighbor_index: u32 = row.x + lane; neighbor_index < row.y;
+                     neighbor_index += FLUID_LANES) {
+                    if neighbor_index == particle { continue; }
+                    let neighbor_position: vec2<f32> =
+                        load_predicted(neighbor_index, uniforms.predicted_side);
+                    let difference: vec2<f32> = position - neighbor_position;
+                    let distance_squared: f32 = dot(difference, difference);
+                    if distance_squared >= KERNEL_RADIUS_SQUARED { continue; }
+                    let gradient: vec2<f32> = spiky_gradient(difference, distance_squared)
+                        / uniforms.rho0;
+                    partial.x += poly6_squared(distance_squared);
+                    partial.y += gradient.x;
+                    partial.z += gradient.y;
+                    if !neighbor_is_sleeping(neighbor_index) {
+                        partial.w += dot(gradient, gradient);
+                    }
+                }
+            }
+        }
+    }
+    lane_sums[local_index] = partial;
+    workgroupBarrier();
+    if is_present && lane == 0u {
+        if !is_awake {
+            lambdas[particle] = 0.0;
+        } else {
+            var total: vec4<f32> = vec4<f32>(0.0);
+            for (var other: u32 = 0u; other < FLUID_LANES; other++) {
+                total += lane_sums[local_index + other];
+            }
+            var density: f32 = poly6_squared(0.0) + total.x;
+            var gradient_sum: vec2<f32> = total.yz;
+            let gradient_norm_sum: f32 = total.w;
+            let boundary: vec4<f32> = sample_boundary(position);
+            density += boundary.x;
+            gradient_sum += boundary.yz / uniforms.rho0;
+            let constraint: f32 = density / uniforms.rho0 - 1.0;
+            let tile_index: u32 = particle_tile_index(position);
+            let reduction_slot: u32 = sleep_reduction_slot(tile_index);
+            atomicMax(
+                &sleep_reduction_values[reduction_slot],
+                bitcast<u32>(max(constraint, 0.0)),
+            );
+            let denominator: f32 = dot(gradient_sum, gradient_sum)
+                + gradient_norm_sum + uniforms.relaxation;
+            lambdas[particle] = -constraint / denominator;
+        }
+    }
+    workgroupBarrier();
+    let tile_index: u32 = atomicLoad(&sleep_reduction_tiles[local_index]);
+    if tile_index != SLEEP_REDUCTION_EMPTY {
+        let tile_base: u32 = sleep_tile_offset(tile_index);
+        atomicMax(
+            &control[tile_base + 1u],
+            atomicLoad(&sleep_reduction_values[local_index]),
+        );
+    }
+}
+
+/// Applies the position correction like `correct`, with `FLUID_LANES` invocations splitting each
+/// particle's neighbor loop and its first lane combining their partial sums in lane order
+@compute @workgroup_size(PARTICLE_WORKGROUP_SIZE)
+fn correct_lanes(
+    @builtin(workgroup_id) workgroup: vec3<u32>,
+    @builtin(local_invocation_index) local_index: u32,
+) {
+    let particle_count: u32 = atomicLoad(&control[0]);
+    let lane: u32 = local_index % FLUID_LANES;
+    let particle: u32 = workgroup.x * FLUID_LANE_PARTICLES + local_index / FLUID_LANES;
+    let is_present: bool = particle < particle_count;
+    var position: vec2<f32> = vec2<f32>(0.0);
+    var is_awake: bool = false;
+    var partial: vec2<f32> = vec2<f32>(0.0);
+    if is_present {
+        position = load_predicted(particle, uniforms.predicted_side);
+        is_awake = !neighbor_is_sleeping(particle);
+        if is_awake {
+            let lambda_i: f32 = lambdas[particle];
+            let cohesion_i: f32 = load_neighbor_cohesion(particle);
+            let pressure_i: f32 = load_neighbor_pressure(particle);
+            let rows: vec2<i32> = neighbor_rows(position);
+            for (var bin_y: i32 = rows.x; bin_y <= rows.y; bin_y++) {
+                let row: vec2<u32> = neighbor_row_range(position, bin_y, particle_count);
+                for (var neighbor_index: u32 = row.x + lane; neighbor_index < row.y;
+                     neighbor_index += FLUID_LANES) {
+                    if neighbor_index == particle { continue; }
+                    let neighbor_position: vec2<f32> =
+                        load_predicted(neighbor_index, uniforms.predicted_side);
+                    let difference: vec2<f32> = position - neighbor_position;
+                    let distance_squared: f32 = dot(difference, difference);
+                    if distance_squared >= KERNEL_RADIUS_SQUARED
+                        || distance_squared <= 0.0000000001
+                    { continue; }
+                    let distance: f32 = sqrt(distance_squared);
+                    let remaining: f32 = KERNEL_RADIUS - distance;
+                    let kernel_difference: f32 = KERNEL_RADIUS_SQUARED - distance_squared;
+                    let kernel_difference_cubed: f32 =
+                        kernel_difference * kernel_difference * kernel_difference;
+                    let kernel_ratio: f32 = POLY6_COEFFICIENT * kernel_difference_cubed
+                        * S_CORR_DELTA_Q_KERNEL_INVERSE;
+                    let kernel_ratio_squared: f32 = kernel_ratio * kernel_ratio;
+                    let kernel_ratio_fourth: f32 = kernel_ratio_squared * kernel_ratio_squared;
+                    let correction_kernel: f32 = -pressure_i * kernel_ratio_fourth;
+                    let pressure: f32 = lambda_i + lambdas[neighbor_index] + correction_kernel;
+                    let direction: vec2<f32> = difference / distance;
+                    let spiky_scale: f32 = SPIKY_COEFFICIENT * remaining * remaining;
+                    partial += pressure * spiky_scale * direction / uniforms.rho0;
+                    let cohesion_j: f32 = load_neighbor_cohesion(neighbor_index);
+                    let cohesion: f32 = (cohesion_i + cohesion_j) * 0.5;
+                    partial -= direction * cohesion * uniforms.cohesion_scale
+                        * cohesion_spline(distance, remaining, distance_squared);
+                }
+            }
+        }
+    }
+    lane_sums[local_index] = vec4<f32>(partial, 0.0, 0.0);
+    workgroupBarrier();
+    if is_present && lane == 0u {
+        if !is_awake {
+            store_predicted(particle, 1u - uniforms.predicted_side, position);
+        } else {
+            var correction: vec2<f32> = vec2<f32>(0.0);
+            for (var other: u32 = 0u; other < FLUID_LANES; other++) {
+                correction += lane_sums[local_index + other].xy;
+            }
+            let boundary: vec4<f32> = sample_boundary(position);
+            correction += lambdas[particle] * boundary.yz / uniforms.rho0;
+            if !fluid_vector_is_finite(correction) {
+                correction = vec2<f32>(0.0);
+            }
+            correction *= __FLUID_POSITION_RELAXATION__;
+            let correction_length: f32 = length(correction);
+            if correction_length > MAX_POSITION_CORRECTION {
+                let scale: f32 = MAX_POSITION_CORRECTION / correction_length;
+                correction *= scale;
+            }
+            let candidate: vec2<f32> = position + correction;
+            let projection: FluidProjectionResult = project_from_solids(candidate);
+            store_predicted(particle, 1u - uniforms.predicted_side, projection.position);
+        }
+    }
 }
 
 /// Commits corrected positions and reconstructs substep velocities

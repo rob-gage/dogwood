@@ -220,6 +220,8 @@ pub struct FluidParticlePass {
     snapshot_response_receiver: Receiver<Result<(), wgpu::BufferAsyncError>>,
     /// Invocation count for independent per-tile sleep and wake maintenance
     tile_workgroup_size: u32,
+    /// Whether the density solve splits each particle's neighbor loop across lanes
+    use_lanes: bool,
     /// Particle capacity fixed when the cellular tile buffers were created
     capacity: u32,
     /// Number of allocated dense neighbor bins
@@ -582,6 +584,8 @@ impl FluidParticlePass {
             "scatter",
             "lambda",
             "correct",
+            "lambda_lanes",
+            "correct_lanes",
             "commit",
             "xsph",
             "apply_xsph",
@@ -698,7 +702,7 @@ impl FluidParticlePass {
         );
         let dispatch_buffer: wgpu::Buffer = create_buffer(
             "`FluidParticlePass.dispatch_buffer`",
-            24,
+            36,
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
         );
         let edit_buffer: wgpu::Buffer = create_buffer(
@@ -1138,6 +1142,7 @@ impl FluidParticlePass {
             snapshot_response_sender,
             snapshot_response_receiver,
             tile_workgroup_size,
+            use_lanes: std::env::var_os("DOGWOOD_FLUID_LANES").is_none_or(|value| value != "0"),
             capacity,
             bin_count,
             state_side: 0,
@@ -2165,11 +2170,21 @@ impl FluidParticlePass {
                 for iteration in 0..FLUID_ITERATION_COUNT {
                     let lambda_slot: usize = predict_slot + 3 + iteration * 2;
                     set_slot(&mut compute_pass, lambda_slot);
-                    compute_pass.set_pipeline(&pipelines["lambda"]);
-                    compute_pass.dispatch_workgroups_indirect(&self.dispatch_buffer, 0);
+                    if self.use_lanes {
+                        compute_pass.set_pipeline(&pipelines["lambda_lanes"]);
+                        compute_pass.dispatch_workgroups_indirect(&self.dispatch_buffer, 24);
+                    } else {
+                        compute_pass.set_pipeline(&pipelines["lambda"]);
+                        compute_pass.dispatch_workgroups_indirect(&self.dispatch_buffer, 0);
+                    }
                     set_slot(&mut compute_pass, lambda_slot + 1);
-                    compute_pass.set_pipeline(&pipelines["correct"]);
-                    compute_pass.dispatch_workgroups_indirect(&self.dispatch_buffer, 0);
+                    if self.use_lanes {
+                        compute_pass.set_pipeline(&pipelines["correct_lanes"]);
+                        compute_pass.dispatch_workgroups_indirect(&self.dispatch_buffer, 24);
+                    } else {
+                        compute_pass.set_pipeline(&pipelines["correct"]);
+                        compute_pass.dispatch_workgroups_indirect(&self.dispatch_buffer, 0);
+                    }
                     if !actors.is_empty() {
                         set_actor_projection_slot(&mut compute_pass, lambda_slot + 1);
                         compute_pass.set_pipeline(&pipelines["project_actors"]);
