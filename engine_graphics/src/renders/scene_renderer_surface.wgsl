@@ -114,3 +114,93 @@ fn compute(@builtin(global_invocation_id) id: vec3<u32>) {
         vec4<f32>(closeness, unit * 0.5 + 0.5, select(0.0, 1.0, solid)),
     );
 }
+
+/// Cells of halo around a workgroup's cells held in `solid_tile`, the farthest an offset reaches
+const HALO: i32 = 4;
+
+/// Side of the workgroup's cells plus its halo on both sides
+const TILE_SIDE: u32 = 16u;
+
+/// Whether each cell of a workgroup and its halo holds a material, loaded once so the offsets
+/// around a cell read workgroup memory instead of recomputing ring positions in storage
+var<workgroup> solid_tile: array<u32, 256>;
+
+/// Returns whether the cell at an offset from a workgroup-local cell holds a material
+fn tile_is_solid(local: vec2<i32>, offset: vec2<i32>) -> bool {
+    let position: vec2<i32> = local + offset + vec2<i32>(HALO);
+    return solid_tile[u32(position.y) * TILE_SIDE + u32(position.x)] != 0u;
+}
+
+/// Same field as `compute`, reading neighbors from workgroup memory
+@compute @workgroup_size(8, 8, 1)
+fn compute_shared(
+    @builtin(global_invocation_id) id: vec3<u32>,
+    @builtin(local_invocation_id) local_id: vec3<u32>,
+    @builtin(workgroup_id) group: vec3<u32>,
+    @builtin(local_invocation_index) local_index: u32,
+) {
+    let origin: vec2<i32> = vec2<i32>(group.xy) * 8 + vec2<i32>(
+        i32(uniforms.first_cell_x),
+        i32(uniforms.first_cell_y),
+    ) - vec2<i32>(HALO);
+    for (var load: u32 = local_index; load < TILE_SIDE * TILE_SIDE; load += 64u) {
+        let position: vec2<i32> = vec2<i32>(i32(load % TILE_SIDE), i32(load / TILE_SIDE));
+        solid_tile[load] = select(0u, 1u, is_solid(origin + position));
+    }
+    workgroupBarrier();
+    let cell: vec2<i32> = vec2<i32>(id.xy) + vec2<i32>(
+        i32(uniforms.first_cell_x),
+        i32(uniforms.first_cell_y),
+    );
+    if cell.x >= i32(uniforms.region_width * uniforms.tile_size)
+        || cell.y >= i32(uniforms.region_height * uniforms.tile_size)
+    { return; }
+    let size: vec2<i32> = vec2<i32>(
+        i32(uniforms.region_width * uniforms.tile_size),
+        i32(uniforms.region_height * uniforms.tile_size),
+    );
+    let target_cell: vec2<i32> = (cell + vec2<i32>(
+        i32(uniforms.field_offset_x),
+        i32(uniforms.field_offset_y),
+    )) % size;
+    if uniforms.phase < 2u && (u32(target_cell.y) & 1u) != uniforms.phase { return; }
+    let local: vec2<i32> = vec2<i32>(local_id.xy);
+    let solid: bool = tile_is_solid(local, vec2<i32>(0));
+    var is_exposed: bool = false;
+    for (var index: u32 = 0u; index < 4u; index += 1u) {
+        if tile_is_solid(local, OFFSETS[index]) != solid { is_exposed = true; }
+    }
+    for (var index: u32 = 12u; index < 16u; index += 1u) {
+        if tile_is_solid(local, OFFSETS[index]) != solid { is_exposed = true; }
+    }
+    for (var index: u32 = 20u; index < 24u; index += 1u) {
+        if tile_is_solid(local, OFFSETS[index]) != solid { is_exposed = true; }
+    }
+    if !is_exposed {
+        textureStore(surface_field, target_cell, vec4<f32>(0.0, 0.5, 0.5, select(0.0, 1.0, solid)));
+        return;
+    }
+    var nearest: f32 = 0.0;
+    var direction: vec2<f32> = vec2<f32>(0.0);
+    for (var index: u32 = 0u; index < OFFSET_COUNT; index += 1u) {
+        let offset: vec2<i32> = OFFSETS[index];
+        if tile_is_solid(local, offset) != solid {
+            let distance: f32 = DISTANCES[index / 4u];
+            if nearest == 0.0 { nearest = distance; }
+            let sign: f32 = select(-1.0, 1.0, solid);
+            direction += sign * vec2<f32>(offset) / (distance * distance);
+        }
+    }
+    let closeness: f32 = select(0.0, 1.0 - (nearest - 1.0) / 4.0, nearest > 0.0);
+    let length_squared: f32 = dot(direction, direction);
+    let unit: vec2<f32> = select(
+        vec2<f32>(0.0),
+        direction / sqrt(max(length_squared, 1e-6)),
+        length_squared > 1e-6,
+    );
+    textureStore(
+        surface_field,
+        target_cell,
+        vec4<f32>(closeness, unit * 0.5 + 0.5, select(0.0, 1.0, solid)),
+    );
+}

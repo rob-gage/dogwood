@@ -8,6 +8,10 @@ const SURFACE_FIELD_MARGIN: i64 = 32;
 /// Cells the region may move in a frame before the whole field is written at once
 const SURFACE_FIELD_JUMP: i64 = 24;
 
+#[cfg(test)]
+#[path = "scene_renderer_surface_tests.rs"]
+mod tests;
+
 /// Compute pass deriving, from the live materials, how exposed each visible cell is
 ///
 /// Terrain rarely changes between frames, so alternate rows are written each frame, and the field
@@ -17,8 +21,12 @@ const SURFACE_FIELD_JUMP: i64 = 24;
 pub struct SceneRendererSurfacePass {
     /// Layout of the uniforms, materials, and field
     bind_group_layout: wgpu::BindGroupLayout,
-    /// Pipeline writing the field
-    pipeline: wgpu::ComputePipeline,
+    /// Pipeline writing the field, reading neighbors one cell at a time from storage
+    reference_pipeline: wgpu::ComputePipeline,
+    /// Pipeline writing the same field from a workgroup-memory copy of each cell's surroundings
+    shared_pipeline: wgpu::ComputePipeline,
+    /// Whether the field is written by the workgroup-memory pipeline
+    use_shared: bool,
     /// Uniforms of the current view
     uniform_buffer: wgpu::Buffer,
     /// Field view, recreated with the region's size
@@ -92,16 +100,20 @@ impl SceneRendererSurfacePass {
                 immediate_size: 0,
             },
         );
-        let pipeline: wgpu::ComputePipeline = device.create_compute_pipeline(
-            &wgpu::ComputePipelineDescriptor {
-                label: Some("`SceneRendererSurfacePass.pipeline`"),
+        let create_pipeline = |label: &str, entry_point: &str| -> wgpu::ComputePipeline {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(label),
                 layout: Some(&pipeline_layout),
                 module: &shader_module,
-                entry_point: Some("compute"),
+                entry_point: Some(entry_point),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 cache: None,
-            },
-        );
+            })
+        };
+        let reference_pipeline: wgpu::ComputePipeline =
+            create_pipeline("`SceneRendererSurfacePass.reference_pipeline`", "compute");
+        let shared_pipeline: wgpu::ComputePipeline =
+            create_pipeline("`SceneRendererSurfacePass.shared_pipeline`", "compute_shared");
         let uniform_buffer: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("`SceneRendererSurfacePass.uniform_buffer`"),
             size: 48,
@@ -110,7 +122,9 @@ impl SceneRendererSurfacePass {
         });
         Self {
             bind_group_layout,
-            pipeline,
+            reference_pipeline,
+            shared_pipeline,
+            use_shared: std::env::var_os("DOGWOOD_SURFACE_SHARED").is_none_or(|value| value != "0"),
             uniform_buffer,
             field_view: None,
             field_size: (0, 0),
@@ -147,7 +161,14 @@ impl SceneRendererSurfacePass {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Rgba8Unorm,
-                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+                // tests also copy the field out to compare it
+                usage: wgpu::TextureUsages::STORAGE_BINDING
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | if cfg!(test) {
+                        wgpu::TextureUsages::COPY_SRC
+                    } else {
+                        wgpu::TextureUsages::empty()
+                    },
                 view_formats: &[],
             });
             self.field_view = Some(texture.create_view(&wgpu::TextureViewDescriptor::default()));
@@ -230,7 +251,11 @@ impl SceneRendererSurfacePass {
                 timestamp_writes: None,
             },
         );
-        compute_pass.set_pipeline(&self.pipeline);
+        compute_pass.set_pipeline(if self.use_shared {
+            &self.shared_pipeline
+        } else {
+            &self.reference_pipeline
+        });
         compute_pass.set_bind_group(0, bind_group, &[]);
         compute_pass.dispatch_workgroups(self.workgroups.0, self.workgroups.1, 1);
     }
