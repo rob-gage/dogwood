@@ -86,6 +86,7 @@ Open-volume records use two words per cell. The first stores volume at 65,536 un
 | `RELAXATION_TOLERANCE` | 0.01 atm | Gas pressure difference from ambient below which relaxation stops |
 | `SLEEP_PHANTOM_CHANGE_MAXIMUM` | 64 | Largest phantom-air change per substep that lets a tile sleep |
 | `SLEEP_FLOW_MINIMUM` | 16 | Smallest face flow that keeps a tile awake |
+| `SLEEP_FLOW_MINIMUM_GAS_FREE` | 256 | Same threshold for blocks whose halo holds no gas, used by `sleep_flow_minimum()` |
 | `PRESSURE_CELLS_PER_TILE` | 4 | Pressure cells across a cellular tile |
 | `AMOUNT_PER_ATMOSPHERE` | 4096 | Gas amount units per atmosphere |
 | `AMOUNT_MAXIMUM` | 16,773,120 | Largest amount leaving room under the 4095-atmosphere pressure cap |

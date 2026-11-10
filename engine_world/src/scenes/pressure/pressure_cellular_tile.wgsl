@@ -281,6 +281,16 @@ const SLEEP_PHANTOM_CHANGE_MAXIMUM: u32 = 64u;
 /// moves no whole amount unit through its face
 const SLEEP_FLOW_MINIMUM: f32 = 16.0;
 
+/// Smallest face flow that keeps a tile awake or wakes a sleeping neighbor where no halo cell holds
+/// gas. Such flows only move ambient air, whose sustained residual circulation is far below what
+/// any actor, fluid, or stored pressure can feel, so they must not keep wide areas awake
+const SLEEP_FLOW_MINIMUM_GAS_FREE: f32 = 256.0;
+
+/// Returns the smallest face flow that keeps the simulated block's tiles awake
+fn sleep_flow_minimum() -> f32 {
+    return select(SLEEP_FLOW_MINIMUM, SLEEP_FLOW_MINIMUM_GAS_FREE, is_halo_gas_free);
+}
+
 /// Tile flag: the tile's gas, stored pressure, or open volume changed, so it and its neighbors
 /// are simulated
 const TILE_AWAKE: u32 = 1u;
@@ -1209,7 +1219,7 @@ fn cell_flows(cell: vec2<i32>) -> vec2<f32> {
         }
         // a sleeping neighbor wakes for the next tick instead of exchanging this tick
         if !neighbor.is_active {
-            if abs(flow) >= SLEEP_FLOW_MINIMUM {
+            if abs(flow) >= sleep_flow_minimum() {
                 atomicOr(&pressure_awake[tile_index(coarse_tile(neighbor_cell))], TILE_AWAKE);
             }
             continue;
@@ -1650,7 +1660,7 @@ fn simulate_substep(cell: vec2<i32>, local_cell: u32) {
         || u32(abs(i32(phantom) - i32(center.phantom))) > SLEEP_PHANTOM_CHANGE_MAXIMUM
         || stored != center.stored
         || is_relaxing
-        || any(abs(flows) >= vec2<f32>(SLEEP_FLOW_MINIMUM))
+        || any(abs(flows) >= vec2<f32>(sleep_flow_minimum()))
     {
         atomicOr(&pressure_awake[tile_index(coarse_tile(cell))], TILE_AWAKE);
     }
