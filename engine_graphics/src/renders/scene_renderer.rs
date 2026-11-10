@@ -423,6 +423,9 @@ impl SceneRenderer {
         if cellular_graphics.is_some() && graphics.material_edges {
             self.surface_pass.compute(&mut command_encoder);
         }
+        if let (Some(_), Some(lighting_bind_group)) = (cellular_graphics, lighting_bind_group) {
+            self.cellular_pass.shade(&mut command_encoder, lighting_bind_group);
+        }
         if let (Some(_), Some(lighting_bind_group)) = (fluid_graphics, lighting_bind_group) {
             self.fluid_pass.shade(&mut command_encoder, lighting_bind_group);
         }

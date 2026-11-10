@@ -861,3 +861,92 @@ fn lighting_direction_reduction_report() {
         }
     }
 }
+
+/// Renders random cells with surface art through the per-pixel path and the cell cache and compares
+/// every pixel, which differ only by the half floats the cache stores
+#[test]
+#[ignore = "requires GPU; compares cached cellular shading against shading in every pixel"]
+fn cellular_cache_matches_per_pixel_shading() {
+    use super::super::scene_renderer_cellular_pass::SceneRendererCellularPass;
+    use super::super::scene_renderer_surface_pass::SceneRendererSurfacePass;
+    use crate::world::scenes::{SceneGraphicsCellular, SceneGraphicsMaterialSurfaces};
+    let a=Accelerator::default();
+    let (region_width,region_height)=(16u32,12u32);
+    let cells=(region_width*region_height*64) as usize;
+    let mut seed: u32=0x9e37_79b9;
+    let mut next=move || {seed^=seed<<13;seed^=seed>>17;seed^=seed<<5;seed};
+    let mut identifiers=vec![0u32;cells];
+    let mut colors=vec![0u32;cells*2];
+    let mut matter=vec![0u32;cells*2];
+    for index in 0..cells {
+        // blobs of material with specks of air, so surfaces, rims, and open cells all appear
+        let solid=((index/5+index/389)%7<4)!=(next()%17==0);
+        identifiers[index]=if solid {1+next()%3} else {0};
+        colors[index*2]=next()|0xff00_0000;
+        colors[index*2+1]=pack_radiance([(next()%8) as f32*0.05,(next()%8) as f32*0.03,(next()%8) as f32*0.02,0.0]);
+        matter[index*2]=(250.0+(next()%900) as f32).to_bits();
+        matter[index*2+1]=65536/(1+next()%3);
+    }
+    let identifier_buffer=storage_buffer(&a,"cache test identifiers",&identifiers);
+    let color_buffer=storage_buffer(&a,"cache test colors",&colors);
+    let matter_buffer=storage_buffer(&a,"cache test matter",&matter);
+    let mut fixture=Fixture::new(&a,None);
+    fixture.identifiers=storage_buffer(&a,"cache test lighting identifiers",&identifiers);
+    fixture.colors=storage_buffer(&a,"cache test lighting colors",&colors);
+    fixture.matter=storage_buffer(&a,"cache test lighting matter",&matter);
+    let (width,height)=(512u32,384u32);
+    // surface art with four layers, two styled materials
+    let art_texture=a.device().create_texture(&wgpu::TextureDescriptor{label:Some("cache test art"),size:wgpu::Extent3d{width:256,height:256,depth_or_array_layers:4},mip_level_count:1,sample_count:1,dimension:wgpu::TextureDimension::D2,format:wgpu::TextureFormat::Rgba8UnormSrgb,usage:wgpu::TextureUsages::TEXTURE_BINDING|wgpu::TextureUsages::COPY_DST,view_formats:&[]});
+    let mut art=vec![0u8;256*256*4*4];
+    for byte in art.iter_mut() {*byte=(next()>>8) as u8;}
+    a.queue().write_texture(wgpu::TexelCopyTextureInfo{texture:&art_texture,mip_level:0,origin:wgpu::Origin3d::ZERO,aspect:wgpu::TextureAspect::All},&art,wgpu::TexelCopyBufferLayout{offset:0,bytes_per_row:Some(256*4),rows_per_image:Some(256)},wgpu::Extent3d{width:256,height:256,depth_or_array_layers:4});
+    let art_view=art_texture.create_view(&wgpu::TextureViewDescriptor{dimension:Some(wgpu::TextureViewDimension::D2Array),..Default::default()});
+    let layers=storage_buffer(&a,"cache test layers",&[0,1,3,0]);
+    let surfaces=SceneGraphicsMaterialSurfaces{art:&art_view,layers:&layers};
+    let mut lighting=SceneRendererLightingPass::new(&a);
+    lighting.throttle_frames=Some(0);
+    let mut graphics=fixture.graphics();
+    graphics.lighting.ambient=[0.7,0.8,0.9];
+    {let c=graphics.cellular.as_mut().unwrap();c.region_width=region_width;c.region_height=region_height;c.ring_offset_x=3;c.ring_offset_y=5;}
+    {let t=graphics.temperature.as_mut().unwrap();t.region_width=region_width;t.region_height=region_height;t.ring_offset_x=3;t.ring_offset_y=5;}
+    lighting.prepare(&a,&graphics,&[]);
+    let mut reference=SceneRendererCellularPass::new_config(&a,lighting.bind_group_layout(),false);
+    let mut cached=SceneRendererCellularPass::new_config(&a,lighting.bind_group_layout(),true);
+    let mut surface=SceneRendererSurfacePass::new(&a);
+    let format=wgpu::TextureFormat::Rgba16Float;
+    let target=a.device().create_texture(&wgpu::TextureDescriptor{label:None,size:wgpu::Extent3d{width,height,depth_or_array_layers:1},mip_level_count:1,sample_count:1,dimension:wgpu::TextureDimension::D2,format,usage:wgpu::TextureUsages::RENDER_ATTACHMENT|wgpu::TextureUsages::COPY_SRC,view_formats:&[]});
+    let view=target.create_view(&Default::default());
+    // the last two views are small ones in a large target: pixels beyond the cached cells shade
+    // their own, and the last is zoomed out past one pixel per cell, where nothing is cached
+    for (view_width,view_height,pixels_per_tile,region_x,region_y,tile_x,tile_y) in [
+        (512u32,384u32,32.0f32,-8.0f32,-6.0f32,0i64,0i64),(512,384,32.0,-7.7,-6.3,0,0),
+        (512,384,32.0,-8.4375,-5.5625,1,0),(512,384,32.0,-3.0,-9.0,0,2),
+        (128,96,32.0,-8.0,-6.0,0,0),(128,96,6.0,-8.0,-6.0,0,0),
+    ] {
+        let cellular=SceneGraphicsCellular{material_identifier_buffer:&identifier_buffer,color_buffer:&color_buffer,region_x,region_y,region_tile_x:tile_x,region_tile_y:tile_y,region_width,region_height,ring_offset_x:3,ring_offset_y:5,cellular_tile_size:8};
+        surface.prepare(&a,&cellular,view_width as f32/pixels_per_tile,view_height as f32/pixels_per_tile);
+        let mut images=Vec::new();
+        for pass in [&mut reference,&mut cached] {
+            pass.prepare(&a,format,0,0,view_width,view_height,pixels_per_tile,&cellular,&matter_buffer,surface.field_view().unwrap(),Some(&surfaces));
+            let mut encoder=a.device().create_command_encoder(&Default::default());
+            surface.compute(&mut encoder);
+            pass.shade(&mut encoder,lighting.bind_group().unwrap());
+            {let mut p=encoder.begin_render_pass(&wgpu::RenderPassDescriptor{label:None,color_attachments:&[Some(wgpu::RenderPassColorAttachment{view:&view,depth_slice:None,resolve_target:None,ops:wgpu::Operations{load:wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),store:wgpu::StoreOp::Store}})],..Default::default()});pass.draw(&mut p,format,lighting.bind_group().unwrap());}
+            a.queue().submit([encoder.finish()]);
+            images.push(read_texture(&a,&target,width,height));
+        }
+        let lit=images[0].iter().filter(|pixel|pixel[3]>0.0).count();
+        let minimum_lit=if view_width==512 {images[0].len()/4} else {100};
+        assert!(lit>minimum_lit && lit<images[0].len()*9/10,"reference should show both cells and open space: {lit} of {}",images[0].len());
+        let mut worst=0.0f32;
+        for (index,(first,second)) in images[0].iter().zip(&images[1]).enumerate() {
+            for channel in 0..4 {
+                let difference=(first[channel]-second[channel]).abs();
+                let allowed=0.002+0.002*first[channel].abs().max(second[channel].abs());
+                worst=worst.max(difference/allowed);
+                assert!(difference<=allowed,"cached shading differs at pixel {index} channel {channel}: {} against {}, camera {region_x},{region_y}",first[channel],second[channel]);
+            }
+        }
+        println!("CELLULAR_CACHE view={view_width}x{view_height} zoom={pixels_per_tile} camera=({region_x},{region_y}) lit_pixels={lit} worst_difference_over_tolerance={worst:.3}");
+    }
+}

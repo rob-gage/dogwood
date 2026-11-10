@@ -18,6 +18,10 @@ struct CellularUniforms {
     /// Region-local cell offset to the surface field, which wraps by world position
     surface_field_offset_x: u32,
     surface_field_offset_y: u32,
+    /// Logical cell at the lower left of the cached cell rectangle
+    cache_origin: vec2<i32>,
+    /// Width and height of the cached cell rectangle
+    cache_size: vec2<u32>,
 };
 
 @group(0) @binding(0)
@@ -44,6 +48,11 @@ var<storage, read> surface_layers: array<u32>;
 /// World-aligned surface art with color and, in alpha, how deep each texel reaches
 @group(0) @binding(6)
 var surface_art: texture_2d_array<f32>;
+
+/// One packed record per cell of the cached rectangle: the cell's color and radiance before light,
+/// as half floats, with a one beside the radiance for a cell holding a material and zero for none
+@group(0) @binding(7)
+var<storage, read_write> cell_cache: array<vec4<u32>>;
 
 /// Side length of each surface art tile
 const SURFACE_ART_SIZE: u32 = 256u;
@@ -117,6 +126,78 @@ fn vertex(@builtin(vertex_index) vertex_index: u32) -> @builtin(position) vec4<f
     return vec4<f32>(position, 0.0, 1.0);
 }
 
+/// What one cell shows before light reaches it
+struct CellColors {
+    /// Color after the material's amount and temperature transforms
+    color: vec4<f32>,
+    /// Radiance after the same transforms
+    radiance: vec3<f32>,
+};
+
+/// Returns the physical buffer index of an in-region logical cell
+fn physical_cell_index(cell: vec2<i32>) -> u32 {
+    let cell_size: i32 = i32(uniforms.cellular_tile_size);
+    let tile: vec2<i32> = cell / cell_size;
+    let in_tile: vec2<i32> = cell % cell_size;
+    let physical_x: u32 = (u32(tile.x) + uniforms.ring_offset_x) % uniforms.region_width;
+    let physical_y: u32 = (u32(tile.y) + uniforms.ring_offset_y) % uniforms.region_height;
+    let slot: u32 = physical_y * uniforms.region_width + physical_x;
+    return slot * uniforms.cellular_tile_size * uniforms.cellular_tile_size
+        + u32(in_tile.y) * uniforms.cellular_tile_size
+        + u32(in_tile.x);
+}
+
+/// Returns the color and radiance of a cell holding a material, each cell keeping the color and
+/// radiance it was given when created, shown through its material's temperature colors
+fn cell_colors(cell: vec2<i32>, cell_index: u32, material_identifier: u32) -> CellColors {
+    let srgb_color: vec4<f32> = unpack4x8unorm(colors[cell_index].x);
+    let thermal: u32 = thermal_index(material_identifier);
+    let linear_color: vec4<f32> = surfaced_color(
+        vec4<f32>(
+            srgb_to_linear(srgb_color.r),
+            srgb_to_linear(srgb_color.g),
+            srgb_to_linear(srgb_color.b),
+            srgb_color.a,
+        ),
+        cell,
+        thermal,
+    );
+    let temperature: f32 = bitcast<f32>(matter[cell_index].x);
+    let amount: f32 = f32(matter[cell_index].y) / 65536.0;
+    let amount_color_value: vec4<f32> = amount_color(thermal, amount, linear_color, false);
+    let amount_radiance: vec4<f32> = amount_color(
+        thermal, amount, unpack_radiance(colors[cell_index].y), true);
+    let color: vec4<f32> = temperature_color(thermal, temperature, amount_color_value, false);
+    let radiance: vec4<f32> = temperature_color(thermal, temperature, amount_radiance, true);
+    return CellColors(color, radiance.rgb);
+}
+
+/// Computes the cached record of every cell of the cached rectangle once, so a cell shown by
+/// several pixels is shaded once
+@compute @workgroup_size(8, 8)
+fn cache_cells(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    if any(invocation.xy >= uniforms.cache_size) { return; }
+    let index: u32 = invocation.y * uniforms.cache_size.x + invocation.x;
+    let cell: vec2<i32> = uniforms.cache_origin + vec2<i32>(invocation.xy);
+    let region_cell_width: i32 = i32(uniforms.region_width * uniforms.cellular_tile_size);
+    let region_cell_height: i32 = i32(uniforms.region_height * uniforms.cellular_tile_size);
+    var record: vec4<u32> = vec4<u32>(0u);
+    if cell.x >= 0 && cell.y >= 0 && cell.x < region_cell_width && cell.y < region_cell_height {
+        let cell_index: u32 = physical_cell_index(cell);
+        let material_identifier: u32 = material_identifiers[cell_index];
+        if material_identifier != 0u {
+            let shown: CellColors = cell_colors(cell, cell_index, material_identifier);
+            record = vec4<u32>(
+                pack2x16float(shown.color.rg),
+                pack2x16float(shown.color.ba),
+                pack2x16float(shown.radiance.rg),
+                pack2x16float(vec2<f32>(shown.radiance.b, 1.0)),
+            );
+        }
+    }
+    cell_cache[index] = record;
+}
+
 /// Draws one cellular framebuffer pixel
 @fragment
 fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
@@ -134,39 +215,26 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     if cell.x < 0 || cell.y < 0 || cell.x >= region_cell_width || cell.y >= region_cell_height {
         discard;
     }
-    let cell_size: i32 = i32(uniforms.cellular_tile_size);
-    let tile: vec2<i32> = cell / cell_size;
-    let in_tile: vec2<i32> = cell % cell_size;
-    let physical_x: u32 = (u32(tile.x) + uniforms.ring_offset_x) % uniforms.region_width;
-    let physical_y: u32 = (u32(tile.y) + uniforms.ring_offset_y) % uniforms.region_height;
-    let slot: u32 = physical_y * uniforms.region_width + physical_x;
-    let cell_index: u32 = slot * uniforms.cellular_tile_size * uniforms.cellular_tile_size
-        + u32(in_tile.y) * uniforms.cellular_tile_size
-        + u32(in_tile.x);
+    let cached: vec2<i32> = cell - uniforms.cache_origin;
+    if CELLULAR_CACHED && all(cached >= vec2<i32>(0)) && all(vec2<u32>(cached) < uniforms.cache_size) {
+        let record: vec4<u32> = cell_cache[u32(cached.y) * uniforms.cache_size.x + u32(cached.x)];
+        let radiance_blue: vec2<f32> = unpack2x16float(record.w);
+        if radiance_blue.y == 0.0 {
+            discard;
+        }
+        return lit_color(
+            vec4<f32>(unpack2x16float(record.x), unpack2x16float(record.y)),
+            light_at(local * cellular_tile_size_float),
+            vec3<f32>(unpack2x16float(record.z), radiance_blue.x),
+        );
+    }
+    let cell_index: u32 = physical_cell_index(cell);
     let material_identifier: u32 = material_identifiers[cell_index];
     if material_identifier == 0u {
         discard;
     }
-    let srgb_color: vec4<f32> = unpack4x8unorm(colors[cell_index].x);
-    let thermal: u32 = thermal_index(material_identifier);
-    let linear_color: vec4<f32> = surfaced_color(
-        vec4<f32>(
-            srgb_to_linear(srgb_color.r),
-            srgb_to_linear(srgb_color.g),
-            srgb_to_linear(srgb_color.b),
-            srgb_color.a,
-        ),
-        cell,
-        thermal,
-    );
-    // each cell keeps the color and radiance it was given when created, shown through its
-    // material's temperature colors
-    let temperature: f32 = bitcast<f32>(matter[cell_index].x);
-    let amount: f32 = f32(matter[cell_index].y) / 65536.0;
-    let amount_color_value: vec4<f32> = amount_color(thermal, amount, linear_color, false);
-    let amount_radiance: vec4<f32> = amount_color(
-        thermal, amount, unpack_radiance(colors[cell_index].y), true);
-    let color: vec4<f32> = temperature_color(thermal, temperature, amount_color_value, false);
-    let radiance: vec4<f32> = temperature_color(thermal, temperature, amount_radiance, true);
-    return lit_color(color, light_at(local * cellular_tile_size_float), radiance.rgb);
+    let shown: CellColors = cell_colors(cell, cell_index, material_identifier);
+    return lit_color(shown.color, light_at(local * cellular_tile_size_float), shown.radiance);
 }
+
+const CELLULAR_CACHED: bool = false;

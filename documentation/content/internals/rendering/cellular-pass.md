@@ -10,7 +10,7 @@ sources = ["engine_graphics/src/renders/scene_renderer_cellular_pass.rs", "engin
 
 This page is for engine contributors. It describes the GPU resources and draw setup of the pass that renders resident cellular tile colors.
 
-`SceneRendererCellularPass` owns a 64-byte uniform buffer, a bind group layout, a WGSL module, and render pipelines cached by target `TextureFormat`. The bind group has material IDs and packed colors as read-only storage buffers, plus the surface field texture, per-thermal-index surface layer storage, and a 2D array of surface art.
+`SceneRendererCellularPass` owns a 96-byte uniform buffer, a bind group layout, a WGSL module, and render pipelines cached by target `TextureFormat`. The bind group has material IDs and packed colors as read-only storage buffers, plus the surface field texture, per-thermal-index surface layer storage, and a 2D array of surface art.
 
 | Group 0 binding | Resource | Access |
 | --- | --- | --- |
@@ -23,6 +23,11 @@ This page is for engine contributors. It describes the GPU resources and draw se
 | 6 | Surface art (`Rgba8UnormSrgb` array) | Texture |
 
 The region data comes from {{ <rustdoc path="engine_graphics/world/scenes/struct.SceneGraphicsCellular.html" text="SceneGraphicsCellular" /> }}. The view uniform contains viewport origin/size, zoom, camera-relative region origin, region size, ring offsets, cell size, and world-aligned surface-art offsets. The final three words are surface X/Y offsets modulo 256 and padding.
+
+
+## Cell cache
+
+Each cell covers several pixels, so `SceneRendererCellularPass::shade` runs the `cache_cells` compute entry point before the render pass, over the cells under the viewport plus two on each side, and writes one 16-byte record per cell into `cell_cache` (binding 7, read-write in both stages like the gas scratch buffers): the cell's color and radiance after the surface art and the amount and temperature transforms, as half floats, with a one beside the radiance for a cell holding a material and zero for none. The fragment shader reads the record, discards a zero one, and applies per-pixel light with `lit_color`. `cell_colors` computes the color and radiance for both `cache_cells` and the fragment shader's own path, which pixels outside the cached rectangle use. Prepare skips the cache, leaving its size zero, when a cell would cover fewer than about 1.25 pixels, since shading each pixel's cell is then cheaper. Setting `DOGWOOD_CELLULAR_FULL_SHADE=1` at renderer creation shades in every pixel as before. The cache stores half floats, so its pixels can differ from the per-pixel path by under a thousandth of the value; the GPU test renders random cells with surface art through both and compares every pixel.
 
 ## Material surfaces
 
