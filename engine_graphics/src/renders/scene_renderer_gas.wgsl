@@ -30,8 +30,9 @@ struct GasUniforms {
     shaded_size: vec2<u32>,
     /// Simulated scene time in seconds, which moves the gas texture
     time: f32,
-    /// Uniform alignment padding
-    padding_1: u32,
+    /// Whether every block is shaded this frame, which sparse shading needs when the shaded
+    /// rectangle or its buffers changed
+    force_all: u32,
 };
 
 @group(0) @binding(0)
@@ -63,6 +64,15 @@ var<storage, read_write> filtered_cells: array<vec4<u32>>;
 /// cells per second, and emission flicker strength
 @group(0) @binding(7)
 var<storage, read> gas_graphics: array<vec4<f32>>;
+
+/// Five words per 8 by 8 block of the shaded rectangle, which sparse shading keeps: whether the
+/// block holds any gas now, whether its shaded records may hold gas from the last frame, whether
+/// its filtered records may, and whether `shade` and `cancel_checker` must process it this frame
+@group(0) @binding(8)
+var<storage, read_write> block_flags: array<u32>;
+
+/// Words of one block in `block_flags`
+const BLOCK_WORDS: u32 = 5u;
 
 /// Opacity below which a cell's gas is not drawn and ends the cloud
 const VISIBLE_ALPHA_MINIMUM: f32 = 0.02;
@@ -240,9 +250,85 @@ fn shaded_index(cell: vec2<i32>) -> i32 {
     return local.y * i32(uniforms.shaded_size.x) + local.x;
 }
 
+/// Returns the width of the shaded rectangle in blocks of eight cells
+fn block_columns() -> u32 { return (uniforms.shaded_size.x + 7u) / 8u; }
+
+/// Returns the height of the shaded rectangle in blocks of eight cells
+fn block_rows() -> u32 { return (uniforms.shaded_size.y + 7u) / 8u; }
+
+/// Whether any block cell may hold gas
+var<workgroup> block_has_gas: atomic<u32>;
+
+/// Returns whether a cell may show gas, which is false only where `cell_gas` is exactly empty
+fn cell_may_hold_gas(cell: vec2<i32>) -> bool {
+    let region_cell_width: i32 = i32(uniforms.region_width * uniforms.cellular_tile_size);
+    let region_cell_height: i32 = i32(uniforms.region_height * uniforms.cellular_tile_size);
+    if cell.x < 0 || cell.y < 0 || cell.x >= region_cell_width || cell.y >= region_cell_height {
+        return false;
+    }
+    let cell_index: u32 = physical_cell_index(cell);
+    if material_identifiers[cell_index] != 0u { return false; }
+    let slots: vec4<u32> = gas_cells[cell_index * 2u];
+    return ((slots.x | slots.y | slots.z | slots.w) & 0x00ffffffu) != 0u;
+}
+
+/// Finds the blocks holding any gas, and the blocks `shade` must process: those holding gas and
+/// those whose records may still hold gas from the last frame
+@compute @workgroup_size(8, 8)
+fn classify(
+    @builtin(global_invocation_id) invocation: vec3<u32>,
+    @builtin(local_invocation_index) local_index: u32,
+    @builtin(workgroup_id) workgroup: vec3<u32>,
+) {
+    if local_index == 0u { atomicStore(&block_has_gas, 0u); }
+    workgroupBarrier();
+    if all(invocation.xy < uniforms.shaded_size)
+        && cell_may_hold_gas(uniforms.shaded_origin + vec2<i32>(invocation.xy))
+    {
+        atomicOr(&block_has_gas, 1u);
+    }
+    workgroupBarrier();
+    if local_index == 0u {
+        let base: u32 = (workgroup.y * block_columns() + workgroup.x) * BLOCK_WORDS;
+        let has_gas: u32 = atomicLoad(&block_has_gas);
+        let was_dirty: u32 = block_flags[base + 1u];
+        block_flags[base] = has_gas;
+        block_flags[base + 1u] = has_gas;
+        block_flags[base + 3u] = select(has_gas | was_dirty, 1u, uniforms.force_all != 0u);
+    }
+}
+
+/// Finds the blocks `cancel_checker` must process: those within one block of gas, whose filter
+/// and support reach two cells, and those whose records may still hold gas from the last frame
+@compute @workgroup_size(8, 8)
+fn dilate(@builtin(global_invocation_id) invocation: vec3<u32>) {
+    if invocation.x >= block_columns() || invocation.y >= block_rows() { return; }
+    var is_near: u32 = 0u;
+    for (var row: i32 = -1; row <= 1; row++) {
+        for (var column: i32 = -1; column <= 1; column++) {
+            let neighbor: vec2<i32> = vec2<i32>(invocation.xy) + vec2<i32>(column, row);
+            if neighbor.x < 0 || neighbor.y < 0
+                || neighbor.x >= i32(block_columns()) || neighbor.y >= i32(block_rows())
+            { continue; }
+            is_near |= block_flags[(u32(neighbor.y) * block_columns() + u32(neighbor.x)) * BLOCK_WORDS];
+        }
+    }
+    let base: u32 = (invocation.y * block_columns() + invocation.x) * BLOCK_WORDS;
+    let was_dirty: u32 = block_flags[base + 2u];
+    block_flags[base + 2u] = is_near;
+    block_flags[base + 4u] = select(is_near | was_dirty, 1u, uniforms.force_all != 0u);
+}
+
 /// Shades every cell of the shaded rectangle once, leaving zero where no gas is visible
 @compute @workgroup_size(8, 8)
-fn shade(@builtin(global_invocation_id) invocation: vec3<u32>) {
+fn shade(
+    @builtin(global_invocation_id) invocation: vec3<u32>,
+    @builtin(workgroup_id) workgroup: vec3<u32>,
+) {
+    // a block without gas whose records are already zero keeps them
+    if GAS_SPARSE
+        && block_flags[(workgroup.y * block_columns() + workgroup.x) * BLOCK_WORDS + 3u] == 0u
+    { return; }
     if any(invocation.xy >= uniforms.shaded_size) { return; }
     let gas: GasCell = cell_gas(uniforms.shaded_origin + vec2<i32>(invocation.xy));
     let index: u32 = invocation.y * uniforms.shaded_size.x + invocation.x;
@@ -261,7 +347,14 @@ fn is_shaded(first: vec4<u32>) -> bool {
 /// pattern; averaging each visible cell with the visible cells one pressure cell away on each side
 /// cancels it
 @compute @workgroup_size(8, 8)
-fn cancel_checker(@builtin(global_invocation_id) invocation: vec3<u32>) {
+fn cancel_checker(
+    @builtin(global_invocation_id) invocation: vec3<u32>,
+    @builtin(workgroup_id) workgroup: vec3<u32>,
+) {
+    // a block away from gas whose records are already zero keeps them
+    if GAS_SPARSE
+        && block_flags[(workgroup.y * block_columns() + workgroup.x) * BLOCK_WORDS + 4u] == 0u
+    { return; }
     if any(invocation.xy >= uniforms.shaded_size) { return; }
     let index: u32 = invocation.y * uniforms.shaded_size.x + invocation.x;
     let first: vec4<u32> = shaded_cells[index * 2u];
@@ -424,3 +517,5 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
 }
 
 const GAS_EMPTY_SUPPORT: bool = false;
+
+const GAS_SPARSE: bool = false;

@@ -635,15 +635,15 @@ fn gas_empty_support_matches_full_scan() {
     let mut lighting=SceneRendererLightingPass::new(&a);
     lighting.throttle_frames=Some(0);
     let mut graphics=f.graphics();graphics.lighting.ambient=[1.;3];lighting.prepare(&a,&graphics,&[]);
-    let mut reference=SceneRendererGasPass::new_config(&a,lighting.bind_group_layout(),false);
-    let mut optimized=SceneRendererGasPass::new_config(&a,lighting.bind_group_layout(),true);
+    let mut reference=SceneRendererGasPass::new_config(&a,lighting.bind_group_layout(),false,false);
+    let mut optimized=SceneRendererGasPass::new_config(&a,lighting.bind_group_layout(),true,true);
     for (width,height) in [(128u32,96u32),(127,73)] {
         let target=a.device().create_texture(&wgpu::TextureDescriptor{label:None,size:wgpu::Extent3d{width,height,depth_or_array_layers:1},mip_level_count:1,sample_count:1,dimension:wgpu::TextureDimension::D2,format:wgpu::TextureFormat::Rgba16Float,usage:wgpu::TextureUsages::RENDER_ATTACHMENT|wgpu::TextureUsages::COPY_SRC,view_formats:&[]});
         let view=target.create_view(&Default::default());
-        for pattern in [1,0,2,3,4,0] {for fraction in [0.0f32,0.03125,0.09375] {
+        for pattern in [1,0,2,3,4,5,0,6,0,2,5,1] {for fraction in [0.0f32,0.03125,0.09375,0.125,0.5,0.625] {
             let mut cells=vec![0u32;(SIDE*SIDE*8) as usize];
             for y in 0..SIDE {for x in 0..SIDE {
-                let present=match pattern {1=>true,2=>x==16&&y==16,3=>(x+y)%3==0,4=>x==0||x==SIDE-1||y==0||y==SIDE-1,_=>false};
+                let present=match pattern {1=>true,2=>x==16&&y==16,3=>(x+y)%3==0,4=>x==0||x==SIDE-1||y==0||y==SIDE-1,5=>x<3&&y<3,6=>x>=SIDE-2&&y>=SIDE-2,_=>false};
                 let tile=((y/8+3)%REGION_SIDE)*REGION_SIDE+(x/8+2)%REGION_SIDE;
                 let index=tile*64+y%8*8+x%8;
                 if present {cells[index as usize*8]=4096;}
@@ -657,6 +657,10 @@ fn gas_empty_support_matches_full_scan() {
                 {let mut p=encoder.begin_render_pass(&wgpu::RenderPassDescriptor{label:None,color_attachments:&[Some(wgpu::RenderPassColorAttachment{view:&view,depth_slice:None,resolve_target:None,ops:wgpu::Operations{load:wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),store:wgpu::StoreOp::Store}})],..Default::default()});pass.draw(&mut p,wgpu::TextureFormat::Rgba16Float,lighting.bind_group().unwrap());}
                 a.queue().submit([encoder.finish()]);images.push(read_texture(&a,&target,width,height));
             }
+            // the reference must show gas exactly where the pattern puts it, or nothing is compared
+            let is_lit=images[0].iter().any(|pixel|pixel[3]>0.0);
+            if pattern==1 {assert!(is_lit,"full gas is not visible: fraction={fraction}");}
+            if pattern==0 {assert!(!is_lit,"empty gas is visible: fraction={fraction}");}
             let mismatch=images[0].iter().zip(&images[1]).position(|(a,b)|a!=b);
             assert!(mismatch.is_none(),"gas mask changed pixels: {width}x{height}, pattern={pattern}, fraction={fraction}, pixel={mismatch:?}");
         }}

@@ -4,6 +4,7 @@ use super::scene_renderer_lighting_pass::lighting_shader_source;
 use crate::world::scenes::SceneGraphicsGas;
 use engine_host::acceleration::Accelerator;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// Renderer for gas cells
 pub struct SceneRendererGasPass {
@@ -19,6 +20,20 @@ pub struct SceneRendererGasPass {
     shade_pipeline: wgpu::ComputePipeline,
     /// Compute pipeline cancelling the pressure checker in the shaded colors
     cancel_checker_pipeline: wgpu::ComputePipeline,
+    /// Compute pipeline finding the blocks of the shaded rectangle that hold gas
+    classify_pipeline: wgpu::ComputePipeline,
+    /// Compute pipeline finding the blocks within one block of gas
+    dilate_pipeline: wgpu::ComputePipeline,
+    /// Whether blocks away from gas are skipped
+    is_sparse: bool,
+    /// Per-block flags that sparse shading keeps between frames
+    block_flag_buffer: wgpu::Buffer,
+    /// Width of the shaded rectangle when the block flags were last brought up to date
+    processed_width: AtomicU32,
+    /// Height of the shaded rectangle when the block flags were last brought up to date
+    processed_height: AtomicU32,
+    /// Whether the next shading must process every block because the buffers were replaced
+    is_force_pending: AtomicBool,
     /// Per-view gas uniform buffer
     uniform_buffer: wgpu::Buffer,
     /// Packed premultiplied color of each cell of the shaded rectangle
@@ -45,9 +60,9 @@ impl SceneRendererGasPass {
 
     /// Creates gas rendering resources
     pub fn new(accelerator: &Accelerator, lighting_bind_group_layout: &wgpu::BindGroupLayout) -> Self {
-        Self::new_config(accelerator,lighting_bind_group_layout,std::env::var_os("DOGWOOD_GAS_FULL_SCAN").is_none())
+        Self::new_config(accelerator,lighting_bind_group_layout,std::env::var_os("DOGWOOD_GAS_FULL_SCAN").is_none(),std::env::var_os("DOGWOOD_GAS_FULL_SHADE").is_none())
     }
-    pub(super) fn new_config(accelerator:&Accelerator,lighting_bind_group_layout:&wgpu::BindGroupLayout,support:bool)->Self {
+    pub(super) fn new_config(accelerator:&Accelerator,lighting_bind_group_layout:&wgpu::BindGroupLayout,support:bool,sparse:bool)->Self {
         let device: &wgpu::Device = accelerator.device();
         let bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
@@ -133,6 +148,16 @@ impl SceneRendererGasPass {
                         },
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 8,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             },
         );
@@ -147,7 +172,7 @@ impl SceneRendererGasPass {
             wgpu::ShaderModuleDescriptor {
                 label: Some("`SceneRendererGasPass.shader_module`"),
                 source: wgpu::ShaderSource::Wgsl(
-                    lighting_shader_source(1, &include_str!("scene_renderer_gas.wgsl").replace("const GAS_EMPTY_SUPPORT: bool = false;",if support {"const GAS_EMPTY_SUPPORT: bool = true;"}else{"const GAS_EMPTY_SUPPORT: bool = false;"})).into(),
+                    lighting_shader_source(1, &include_str!("scene_renderer_gas.wgsl").replace("const GAS_EMPTY_SUPPORT: bool = false;",if support {"const GAS_EMPTY_SUPPORT: bool = true;"}else{"const GAS_EMPTY_SUPPORT: bool = false;"}).replace("const GAS_SPARSE: bool = false;",if sparse {"const GAS_SPARSE: bool = true;"}else{"const GAS_SPARSE: bool = false;"})).into(),
                 ),
             },
         );
@@ -165,6 +190,8 @@ impl SceneRendererGasPass {
         let shade_pipeline: wgpu::ComputePipeline = create_compute_pipeline("shade");
         let cancel_checker_pipeline: wgpu::ComputePipeline =
             create_compute_pipeline("cancel_checker");
+        let classify_pipeline: wgpu::ComputePipeline = create_compute_pipeline("classify");
+        let dilate_pipeline: wgpu::ComputePipeline = create_compute_pipeline("dilate");
         let uniform_buffer: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("`SceneRendererGasPass.uniform_buffer`"),
             size: 80,
@@ -173,6 +200,7 @@ impl SceneRendererGasPass {
         });
         let shaded_cell_buffer: wgpu::Buffer = Self::new_cell_buffer(device, 32);
         let filtered_cell_buffer: wgpu::Buffer = Self::new_cell_buffer(device, 32);
+        let block_flag_buffer: wgpu::Buffer = Self::new_cell_buffer(device, 20);
         Self {
             bind_group_layout,
             pipeline_layout,
@@ -180,6 +208,13 @@ impl SceneRendererGasPass {
             pipelines,
             shade_pipeline,
             cancel_checker_pipeline,
+            classify_pipeline,
+            dilate_pipeline,
+            is_sparse: sparse,
+            block_flag_buffer,
+            processed_width: AtomicU32::new(0),
+            processed_height: AtomicU32::new(0),
+            is_force_pending: AtomicBool::new(true),
             uniform_buffer,
             shaded_cell_buffer,
             filtered_cell_buffer,
@@ -287,8 +322,15 @@ impl SceneRendererGasPass {
             cell_range(camera_relative_region_x, half_width, region_cell_width);
         let (minimum_y, maximum_y): (i32, i32) =
             cell_range(camera_relative_region_y, half_height, region_cell_height);
-        let shaded_width: u32 = (maximum_x - minimum_x + 1).max(0) as u32;
-        let shaded_height: u32 = (maximum_y - minimum_y + 1).max(0) as u32;
+        let mut shaded_width: u32 = (maximum_x - minimum_x + 1).max(0) as u32;
+        let mut shaded_height: u32 = (maximum_y - minimum_y + 1).max(0) as u32;
+        // sparse shading keeps flags per 8 by 8 block, so it shades whole blocks: the rectangle then
+        // only changes size, and restarts the flags, when it crosses a block boundary instead of
+        // whenever the camera moves by a cell, and no block holds rows that fell outside it
+        if self.is_sparse {
+            shaded_width = shaded_width.next_multiple_of(8);
+            shaded_height = shaded_height.next_multiple_of(8);
+        }
         self.shaded_size = (shaded_width, shaded_height);
         let shaded_cell_count: u64 = u64::from(shaded_width) * u64::from(shaded_height);
         let mut cell_buffers_differ: bool = false;
@@ -300,6 +342,18 @@ impl SceneRendererGasPass {
             self.filtered_cell_buffer = Self::new_cell_buffer(device, shaded_cell_count * 32);
             cell_buffers_differ = true;
         }
+        // block flags are kept per block of the shaded rectangle, so they restart whenever its size
+        // or any of the buffers change, which processes every block once
+        let block_flag_bytes: u64 = u64::from(shaded_width.div_ceil(8))
+            * u64::from(shaded_height.div_ceil(8)) * 20;
+        if block_flag_bytes > self.block_flag_buffer.size() {
+            self.block_flag_buffer = Self::new_cell_buffer(device, block_flag_bytes);
+            cell_buffers_differ = true;
+        }
+        if cell_buffers_differ { self.is_force_pending.store(true, Ordering::Relaxed); }
+        let is_forced: bool = self.is_force_pending.load(Ordering::Relaxed)
+            || self.processed_width.load(Ordering::Relaxed) != shaded_width
+            || self.processed_height.load(Ordering::Relaxed) != shaded_height;
         let mut uniform_bytes: [u8; 80] = [0; 80];
         uniform_bytes[0..4].copy_from_slice(&viewport_origin_x.to_le_bytes());
         uniform_bytes[4..8].copy_from_slice(&viewport_origin_y.to_le_bytes());
@@ -319,6 +373,7 @@ impl SceneRendererGasPass {
         uniform_bytes[64..68].copy_from_slice(&shaded_width.to_le_bytes());
         uniform_bytes[68..72].copy_from_slice(&shaded_height.to_le_bytes());
         uniform_bytes[72..76].copy_from_slice(&gas_graphics.time.to_le_bytes());
+        uniform_bytes[76..80].copy_from_slice(&u32::from(is_forced).to_le_bytes());
         accelerator.queue().write_buffer(&self.uniform_buffer, 0, &uniform_bytes);
         let material_buffers_differ: bool = self.material_identifier_buffer.as_ref()
             != Some(gas_graphics.material_identifier_buffer);
@@ -383,6 +438,10 @@ impl SceneRendererGasPass {
                             size: None,
                         }),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 8,
+                        resource: self.block_flag_buffer.as_entire_binding(),
+                    },
                 ],
             });
             self.bind_group = Some(bind_group);
@@ -411,10 +470,22 @@ impl SceneRendererGasPass {
             });
         compute_pass.set_bind_group(0, bind_group, &[]);
         compute_pass.set_bind_group(1, lighting_bind_group, &[]);
+        let (block_columns, block_rows): (u32, u32) =
+            (shaded_width.div_ceil(8), shaded_height.div_ceil(8));
+        if self.is_sparse {
+            compute_pass.set_pipeline(&self.classify_pipeline);
+            compute_pass.dispatch_workgroups(block_columns, block_rows, 1);
+            compute_pass.set_pipeline(&self.dilate_pipeline);
+            compute_pass.dispatch_workgroups(block_columns.div_ceil(8), block_rows.div_ceil(8), 1);
+        }
         compute_pass.set_pipeline(&self.shade_pipeline);
-        compute_pass.dispatch_workgroups(shaded_width.div_ceil(8), shaded_height.div_ceil(8), 1);
+        compute_pass.dispatch_workgroups(block_columns, block_rows, 1);
         compute_pass.set_pipeline(&self.cancel_checker_pipeline);
-        compute_pass.dispatch_workgroups(shaded_width.div_ceil(8), shaded_height.div_ceil(8), 1);
+        compute_pass.dispatch_workgroups(block_columns, block_rows, 1);
+        // every block is now consistent with the flags, whatever the shaded rectangle held before
+        self.processed_width.store(shaded_width, Ordering::Relaxed);
+        self.processed_height.store(shaded_height, Ordering::Relaxed);
+        self.is_force_pending.store(false, Ordering::Relaxed);
     }
 
     /// Draws lit gas cells for one prepared view
