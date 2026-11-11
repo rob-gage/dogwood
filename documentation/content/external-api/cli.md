@@ -65,5 +65,4 @@ dogwood edit-template --verbose
 `run-template` and `edit-template` share a stable temporary project directory. Cache refreshes preserve files you changed since the previous generated baseline, so edits to the template project can persist across these commands. See [CLI internals](@/internal-api/cli.md) for cache behavior. For editor use, see [Using the editor](@/examples/using-the-editor.md).
 
 Windows distribution targets are `windows-x64` (`x86_64-pc-windows-msvc`) and
-`windows-arm64` (`aarch64-pc-windows-msvc`). Both package a matching Vulkan fallback
-loader; see [Resources and distributions](@/external-api/resources-build.md).
+`windows-arm64` (`aarch64-pc-windows-msvc`). Both package a matching DXC shader compiler for the DX12 backend; see [Resources and distributions](@/external-api/resources-build.md).

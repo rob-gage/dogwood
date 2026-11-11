@@ -3,7 +3,7 @@ title = "Resources and distributions"
 description = "Declarative catalogues, indexed resources, and portable native builds."
 weight = 125
 [extra]
-sources = ["engine_resources", "cli/build.rs", "cli/src/commands/distribute.rs", "cli/src/commands/windows_vulkan.rs", "tools/update_vulkan_loaders.py", "tools/test_update_vulkan_loaders.py", "third_party/vulkan", "engine_host/src/acceleration/windows_vulkan.rs", "tests/fixtures/resource-game", "engine_host/src/acceleration/performance.rs", "template/assets/.resources", "Cargo.toml"]
+sources = ["engine_resources", "cli/build.rs", "cli/src/commands/distribute.rs", "cli/src/commands/windows_dxc.rs", "tools/update_dxc.py", "third_party/dxc", "tests/fixtures/resource-game", "engine_host/src/acceleration/performance.rs", "engine_host/build.rs", "template/assets/.resources", "Cargo.toml"]
 +++
 
 Install the CLI from an engine checkout with `cargo install --path cli --locked`.
@@ -176,29 +176,20 @@ Build Tools (Desktop development with C++) and the MSVC Rust target. Inspect imp
 with `dumpbin /dependents` or `llvm-objdump -p`.
 
 Windows distributions support x64 (`windows-x64`, `x86_64-pc-windows-msvc`)
-and ARM64 (`windows-arm64`, `aarch64-pc-windows-msvc`). A native Windows build
-without `--target` selects the host architecture. Each distribution includes the
-matching official LunarG loader under `vulkan/vulkan-1.dll`, its runtime license,
-and a provenance manifest. These files are embedded in the CLI at compile time.
+and ARM64 (`windows-arm64`, `aarch64-pc-windows-msvc`). They use DirectX 12 only.
+Each distribution includes the matching official Microsoft DXC 1.8.2505.1
+`dxcompiler.dll` beside its executable, plus licenses, release notes and provenance
+under `licenses/dxc/`. The CLI embeds these files at compile time. Windows 10/11
+include DirectX 12; a capable adapter and driver are still required. No Vulkan
+loader or driver is used by the Windows backend.
 
-Before wgpu initializes, the host loads `vulkan-1.dll` from the Windows system
-directory using `LOAD_LIBRARY_SEARCH_SYSTEM32`. Only if that loader cannot load
-does it open the executable-relative `vulkan/vulkan-1.dll` by absolute path.
-The selected module remains loaded for the process lifetime, so ash's subsequent
-name-based load reuses it. DLL selection never searches the working directory.
-A loader that loads successfully but finds no suitable GPU does not trigger a
-fallback switch; a loader alone cannot supply the GPU driver.
-
-Refresh the checked-in copies with `python3 tools/update_vulkan_loaders.py`, then
-reinstall the CLI. The updater selects the newest public runtime component ZIP
-for each architecture from [LunarG's catalogue](https://vulkan.lunarg.com/sdk/files.json),
-checks the published archive SHA-256 and PE architecture, and preserves its license.
-`third_party/vulkan/manifest.json` records versions, URLs, archive/DLL/license hashes
-and update time. SDK patch releases may not contain a new runtime. Run
-`python3 tools/update_vulkan_loaders.py --check` to verify vendored files offline.
-
-The [Vulkan loader documentation](https://vulkan.lunarg.com/doc/view/latest/windows/LoaderApplicationInterface.html)
-describes the system loader and driver interface.
+The host selects DXC by absolute executable-relative path, with no FXC fallback.
+For ordinary Cargo builds, `engine_host/build.rs` stages DXC beside binaries and
+test executables. This DXC release uses its internal open source validator and
+requires no separate `dxil.dll`. The release notes map the binaries to the bundled
+LLVM license. Run `python3 tools/update_dxc.py --check` for offline checksum and
+architecture verification, or omit `--check` to restore the pinned official files.
+Reinstall the CLI after changes to bundled compilers.
 
 macOS requires a Mac, Xcode Command Line Tools (`xcode-select --install`), and
 `rustup target add aarch64-apple-darwin x86_64-apple-darwin`. Native Metal is used.
@@ -212,7 +203,7 @@ GPU limits, fullscreen, and runtime behavior require testing on Apple hardware.
 ## Shaders and performance
 
 The CLI embeds the engine WGSL corpus, validates assembled modules using Naga 30,
-and checks SPIR-V translation for Linux/Windows or MSL 2.4 translation for Mac.
+and checks SPIR-V translation as a portable structural check for Linux/Windows, or MSL 2.4 translation for Mac. Windows HLSL/DXIL compilation happens through DXC at runtime.
 Game WGSL is validated too; `shade(input: ShadeInput)` fragments receive Dogwood's
 lighting/shaded prelude. Fluid material offsets/alignment use representative legal
 values for build validation; runtime still substitutes actual material/device values.
@@ -221,14 +212,15 @@ validation remains necessary. Engine test reference fragments are excluded from 
 runtime corpus and checked by their respective tests.
 
 The renderer still consumes WGSL through safe wgpu APIs; wgpu/Naga creates native
-SPIR-V/MSL. No unused `.metallib`, unsafe SPIR-V passthrough, or driver-specific
+SPIR-V on Linux, HLSL/DXIL through DXC on Windows, or MSL on macOS. No unused `.metallib`, unsafe SPIR-V passthrough, or driver-specific
 pipeline cache files are shipped. Existing pass pipelines and bind groups are reused;
 game-supplied shaded pipelines remain lazily cached on first use. Intentional CPU
 readbacks and simulation scheduling are unchanged.
 
 All platforms request a high-performance adapter and check actual required limits.
-Windows/Linux use only Vulkan; Mac uses only Metal. Release wgpu defaults avoid debug
-instance flags; debug builds retain validation. Existing VSync/window controls remain.
+Windows uses only DX12; Linux uses only Vulkan; Mac uses only Metal. Windows
+explicitly disables shader debug compilation so DXC optimizations remain enabled
+even in debug Rust builds. Release Windows builds clear instance validation flags. Existing VSync/window controls remain.
 `DOGWOOD_PROCESS_PRIORITY=above-normal` opts into Windows above-normal priority or
 Linux nice -5, best effort with a diagnostic on refusal. No root/admin dependency,
 realtime scheduling, or system power-plan changes are introduced. Windows uses the wgpu high-performance adapter preference for GPU selection. macOS uses normal interactive

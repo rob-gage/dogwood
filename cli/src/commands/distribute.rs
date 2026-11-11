@@ -423,7 +423,7 @@ pub fn distribute(
     } else {
         catalogue.pack(&data_dir.join("resources"))?;
     }
-    super::windows_vulkan::package(target, &exe_dir)?;
+    super::windows_dxc::package(target, &exe_dir)?;
     let destination = distribution_root.join(target).join(&name);
     fs::create_dir_all(destination.parent().unwrap())?;
     let backup = destination.with_extension("previous");

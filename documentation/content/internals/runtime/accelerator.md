@@ -22,17 +22,17 @@ The instance enables these backends and is created without a display handle:
 | Target | Backends |
 | --- | --- |
 | Linux | Vulkan |
-| Windows | Vulkan |
+| Windows | DirectX 12 |
 | macOS | Metal |
 
 The host initializer returns `UnsupportedPlatform` outside Linux, Windows, and macOS; this does not imply that the remaining workspace dependencies support those targets.
 
-On Windows, `windows_vulkan::ensure_loaded` preloads the system Vulkan loader,
-using a System32-only search, before constructing the WGPU instance. If unavailable,
-it loads `<executable-directory>/vulkan/vulkan-1.dll` by absolute path. A `OnceLock`
-retains the selected module for the process lifetime. Both failures return
-`AcceleratorError::VulkanLoader`; adapter failures never switch loaders. See
-[Resources and distributions](@/external-api/resources-build.md) for vendoring and updates.
+On Windows, only DirectX 12 is compiled and requested. The host selects
+`Dx12Compiler::DynamicDxc` with the absolute executable-relative `dxcompiler.dll`
+path. Missing DXC returns `AcceleratorError::ShaderCompiler`; there is no FXC
+fallback. The `DEBUG` instance flag is removed even in debug builds because it
+makes wgpu pass `-Od` to DXC. Release builds clear all instance validation flags.
+See [Resources and distributions](@/external-api/resources-build.md) for deployment.
 
 ### Adapter request
 

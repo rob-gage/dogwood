@@ -20,9 +20,7 @@ impl Accelerator {
     /// Creates a WGPU instance for the current platform
     fn create_instance() -> Result<wgpu::Instance, AcceleratorError> {
         #[cfg(target_os = "windows")]
-        super::windows_vulkan::ensure_loaded().map_err(AcceleratorError::VulkanLoader)?;
-        #[cfg(target_os = "windows")]
-        let backends: wgpu::Backends = wgpu::Backends::VULKAN;
+        let backends: wgpu::Backends = wgpu::Backends::DX12;
         #[cfg(target_os = "linux")]
         let backends: wgpu::Backends = wgpu::Backends::VULKAN;
         #[cfg(target_os = "macos")]
@@ -31,9 +29,25 @@ impl Accelerator {
         let backends: wgpu::Backends = wgpu::Backends::empty();
         if backends.is_empty() { return Err(AcceleratorError::UnsupportedPlatform); }
 
-        let mut instance_descriptor: wgpu::InstanceDescriptor =
-            wgpu::InstanceDescriptor::new_without_display_handle();
-        instance_descriptor.backends = backends;
+        #[cfg(not(target_os = "windows"))]
+        let instance_descriptor = {
+            let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+            descriptor.backends = backends;
+            descriptor
+        };
+        #[cfg(target_os = "windows")]
+        let instance_descriptor = {
+            let path = std::env::current_exe()
+                .map_err(|e| AcceleratorError::ShaderCompiler(e.to_string()))?
+                .with_file_name("dxcompiler.dll");
+            if !path.is_file() {
+                return Err(AcceleratorError::ShaderCompiler(format!(
+                    "Missing bundled DXC: {}. Extract the complete Windows package.", path.display()
+                )));
+            }
+            eprintln!("Dogwood GPU: DirectX 12, bundled DXC, shader optimizations enabled");
+            windows_descriptor(path.to_string_lossy().into_owned())
+        };
         Ok(wgpu::Instance::new(instance_descriptor))
     }
 
@@ -110,4 +124,34 @@ impl Default for Accelerator {
         Self::new().unwrap_or_else(|error| panic!("{error}"))
     }
 
+}
+
+/// DXC must be explicit: Auto can silently fall back to FXC. DEBUG makes wgpu pass
+/// -Od to DXC even when the Rust executable itself was compiled with optimizations.
+#[cfg(any(target_os = "windows", test))]
+fn windows_descriptor(dxc_path: String) -> wgpu::InstanceDescriptor {
+    let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+    descriptor.backends = wgpu::Backends::DX12;
+    descriptor.backend_options.dx12.shader_compiler = wgpu::Dx12Compiler::DynamicDxc { dxc_path };
+    descriptor.flags.remove(wgpu::InstanceFlags::DEBUG);
+    if !cfg!(debug_assertions) {
+        descriptor.flags = wgpu::InstanceFlags::empty();
+    }
+    descriptor
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn windows_requires_dx12_and_bundled_dxc_with_shader_optimization() {
+        let descriptor = windows_descriptor("C:/game/dxcompiler.dll".into());
+        assert_eq!(descriptor.backends, wgpu::Backends::DX12);
+        assert!(!descriptor.flags.contains(wgpu::InstanceFlags::DEBUG));
+        match descriptor.backend_options.dx12.shader_compiler {
+            wgpu::Dx12Compiler::DynamicDxc { dxc_path } => assert_eq!(dxc_path, "C:/game/dxcompiler.dll"),
+            other => panic!("DXC must never silently fall back to FXC: {other:?}"),
+        }
+    }
 }

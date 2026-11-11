@@ -83,7 +83,7 @@ An error may therefore be recoverable at a direct API boundary while the engine 
 
 Optional acoustic observation logs readback mapping/poll errors and skips the observation rather than returning `SceneError` or blocking simulation. See [simulation acoustics](@/external-api/acoustics.md).
 
-Windows GPU initialization returns `AcceleratorError::VulkanLoader` if neither the
-system nor executable-relative bundled loader can load. Its message includes both
-failures; loader selection precedes adapter requests. See
+Windows GPU initialization returns `AcceleratorError::ShaderCompiler` if the
+executable-relative bundled DXC compiler is missing. Windows uses only DirectX 12
+and explicitly selects DXC without falling back to FXC. See
 [Resources and distributions](@/external-api/resources-build.md).

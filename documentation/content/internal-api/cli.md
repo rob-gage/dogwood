@@ -92,6 +92,7 @@ For how a launched game is updated and rendered after startup, see [frame lifecy
 
 `build` dispatches to `commands::distribute`, independently of the legacy build helper used by run/edit. It resolves Cargo metadata, validates catalogues and assembled shaders, checks `std` and `core` in the target library directory reported by `RUSTC` or `rustc` on PATH (without requiring rustup), invokes Cargo or cargo-xwin, and stages executable/resources and native metadata before replacing the final directory. See [Resources and distributions](@/external-api/resources-build.md) for format, platform prerequisites, and limitations.
 
-`commands::windows_vulkan::package` embeds the checked-in x64 and ARM64 Vulkan
-loaders, licenses and manifest in the CLI and writes the target-specific copy to
-the distribution’s `vulkan/` subdirectory. Neither Linux nor macOS receives these DLLs.
+`commands::windows_dxc::package` embeds the checked-in x64 and ARM64 DXC
+compilers, licenses, release notes and manifest. It writes the target-specific
+`dxcompiler.dll` beside the executable and notices under `licenses/dxc/`.
+Neither Linux nor macOS receives these files.

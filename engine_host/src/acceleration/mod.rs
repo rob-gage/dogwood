@@ -11,5 +11,3 @@ pub use accelerator_readback::AcceleratorReadback;
 pub use accelerator_readback_error::AcceleratorReadbackError;
 
 mod performance;
-
-mod windows_vulkan;
