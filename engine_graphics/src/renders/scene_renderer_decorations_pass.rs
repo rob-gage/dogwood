@@ -271,7 +271,7 @@ impl SceneRendererDecorationsPass {
                 ),
             },
         );
-        let field_pipeline: wgpu::ComputePipeline = device.create_compute_pipeline(
+        let field_pipeline: wgpu::ComputePipeline = engine_host::acceleration::create_compute_pipeline(device,
             &wgpu::ComputePipelineDescriptor {
                 label: Some("`SceneRendererDecorationsPass.field_pipeline`"),
                 layout: Some(&field_pipeline_layout),
@@ -601,7 +601,7 @@ impl SceneRendererDecorationsPass {
         format: wgpu::TextureFormat,
         blend: Option<wgpu::BlendState>,
     ) -> wgpu::RenderPipeline {
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        engine_host::acceleration::create_render_pipeline(device, &wgpu::RenderPipelineDescriptor {
             label: Some("`SceneRendererDecorationsPass.pipelines`"),
             layout: Some(&self.pipeline_layout),
             vertex: wgpu::VertexState {

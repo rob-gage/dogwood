@@ -11,3 +11,6 @@ pub use accelerator_readback::AcceleratorReadback;
 pub use accelerator_readback_error::AcceleratorReadbackError;
 
 mod performance;
+
+mod pipelines;
+pub use pipelines::{create_compute_pipeline, create_render_pipeline, pipeline_creation_count};

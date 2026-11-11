@@ -132,7 +132,7 @@ impl ActorSensingPass {
                 source: wgpu::ShaderSource::Wgsl(include_str!("actor_sensing.wgsl").into()),
             },
         );
-        let pipeline: wgpu::ComputePipeline = device.create_compute_pipeline(
+        let pipeline: wgpu::ComputePipeline = engine_host::acceleration::create_compute_pipeline(device,
             &wgpu::ComputePipelineDescriptor {
                 label: Some("`ActorSensingPass.pipeline`"),
                 layout: Some(&pipeline_layout),

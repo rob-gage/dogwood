@@ -43,7 +43,7 @@ impl Acoustics {
             label: Some("acoustics"),
             source: wgpu::ShaderSource::Wgsl(include_str!("acoustics.wgsl").into()),
         });
-        let pipeline = d.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let pipeline = engine_host::acceleration::create_compute_pipeline(d, &wgpu::ComputePipelineDescriptor {
             label: Some("acoustics"),
             layout: None,
             module: &shader,

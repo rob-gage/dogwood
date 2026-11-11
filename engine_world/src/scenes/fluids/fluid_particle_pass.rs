@@ -616,7 +616,7 @@ impl FluidParticlePass {
             } else {
                 &pipeline_layout
             };
-            pipelines.insert(entry_point, device.create_compute_pipeline(
+            pipelines.insert(entry_point, engine_host::acceleration::create_compute_pipeline(device,
                 &wgpu::ComputePipelineDescriptor {
                     label: Some("`FluidParticlePass.pipelines`"),
                     layout: Some(layout),

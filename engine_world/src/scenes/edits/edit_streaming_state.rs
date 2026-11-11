@@ -66,6 +66,13 @@ impl EditStreamingState {
         Self { edits: Vec::new(), edit_cellular_tile_pass: None }
     }
 
+    /// Compile the edit pass without mutating any cells.
+    pub(crate) fn prepare_pipeline(&mut self, accelerator: &Accelerator,
+        buffers: &CellularTileBuffers, table: &MaterialTable) {
+        self.edit_cellular_tile_pass.get_or_insert_with(||
+            EditCellularTilePass::new(accelerator, buffers, table));
+    }
+
     /// Requests an edit of resident cells, written before the next stream moves resident tiles,
     /// giving each filled cell its material's color tinted by the edit's color and, without a
     /// temperature, its material's edit temperature or, when emptied, the ambient gas temperature,

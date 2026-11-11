@@ -101,7 +101,7 @@ impl SceneRendererSurfacePass {
             },
         );
         let create_pipeline = |label: &str, entry_point: &str| -> wgpu::ComputePipeline {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            engine_host::acceleration::create_compute_pipeline(device, &wgpu::ComputePipelineDescriptor {
                 label: Some(label),
                 layout: Some(&pipeline_layout),
                 module: &shader_module,

@@ -924,6 +924,18 @@ impl Scene {
         Ok(())
     }
 
+    /// Prepare optional runtime passes after the first stream/simulation, without needing an
+    /// edit, a soft body, or an audio sample to trigger compilation during gameplay.
+    pub fn prepare_runtime_pipelines(&mut self, accelerator: &Accelerator, acoustic_tags: &[String; 4]) {
+        let (Some(buffers), Some(fluids)) = (&self.cellular_tile_buffers, &self.fluids)
+        else { return; };
+        self.edit_streaming_state.prepare_pipeline(accelerator, buffers, &self.material_table);
+        self.soft_body_sampling_pass.get_or_insert_with(|| SoftBodySamplingPass::new(
+            accelerator, buffers, &self.material_table, fluids.fluid_raster_buffer()));
+        self.acoustics.get_or_insert_with(||
+            super::acoustics::Acoustics::new(accelerator, &self.material_table, acoustic_tags));
+    }
+
     /// Simulates the active dynamic cells against actors and rigid bodies, then actor and rigid
     /// body collisions against the active cellular tiles, waiting for the GPU when
     /// collisions read settled occupancies or changed cells

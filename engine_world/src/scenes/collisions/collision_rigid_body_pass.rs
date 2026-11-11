@@ -160,7 +160,7 @@ impl CollisionRigidBodyPass {
         );
         let mut pipelines: HashMap<&'static str, wgpu::ComputePipeline> = HashMap::new();
         for entry_point in ["release", "rasterize", "write_cells", "read_cells", "copy_states"] {
-            pipelines.insert(entry_point, device.create_compute_pipeline(
+            pipelines.insert(entry_point, engine_host::acceleration::create_compute_pipeline(device,
                 &wgpu::ComputePipelineDescriptor {
                     label: Some("`CollisionRigidBodyPass.pipelines`"),
                     layout: Some(&pipeline_layout),

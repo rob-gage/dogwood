@@ -301,7 +301,7 @@ impl SceneRendererParallaxBatchesPass {
         device: &wgpu::Device,
         format: wgpu::TextureFormat,
     ) -> wgpu::RenderPipeline {
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        engine_host::acceleration::create_render_pipeline(device, &wgpu::RenderPipelineDescriptor {
             label: Some("`SceneRendererParallaxBatchesPass.pipelines`"),
             layout: Some(&self.pipeline_layout),
             vertex: wgpu::VertexState {

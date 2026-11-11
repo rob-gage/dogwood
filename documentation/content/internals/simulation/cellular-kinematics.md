@@ -47,7 +47,7 @@ A later stage handles collisions between dynamic cells that remain in place.
 
 ### Actor selection and upload
 
-`CellularTiles` selects actors with position and collision components whose collision filter includes `COLLISION_GROUP_CELLULAR_TILE`, within four tiles of the active region. At most 32 actors are uploaded per tick.
+`CellularTiles` selects actors with position and collision components whose collision filter includes `COLLISION_GROUP_CELLULAR_TILE`, within four tiles of the active region. At most 32 actors are uploaded per tick. Selection prioritizes possessed pawns, then other pawns, then ordinary colliders; within a class, actors nearest the resident region center come first, with stable actor identity breaking ties. The same ordered records feed cellular contact, fluid coupling, and sensing, so a crowded region cannot evict the local player in favor of ordinary debris.
 
 - Fixed actors are assigned a very large simulation mass (`1.0e20`); kinematic and dynamic actors use their component mass.
 - The host converts actor position changes since the previous call into cell-space per-tick velocities and clamps each axis to ±8 cells per tick before upload.

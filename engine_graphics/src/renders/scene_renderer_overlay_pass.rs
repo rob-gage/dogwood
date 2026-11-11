@@ -109,7 +109,7 @@ impl SceneRendererOverlayPass {
             let attributes: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
                 0 => Float32x2, 1 => Uint32, 2 => Float32x2, 3 => Uint32
             ];
-            let render_pipeline: wgpu::RenderPipeline = device.create_render_pipeline(
+            let render_pipeline: wgpu::RenderPipeline = engine_host::acceleration::create_render_pipeline(device,
                 &wgpu::RenderPipelineDescriptor {
                     label: Some("`SceneRendererOverlayPass.pipelines`"),
                     layout: Some(&self.pipeline_layout),

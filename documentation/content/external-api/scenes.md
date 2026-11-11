@@ -38,6 +38,12 @@ This page covers the `Scene` type, the `SceneGenerator` trait, `ScenePosition`, 
 
 ## Lifecycle
 
+After the initial region has streamed and simulated, `prepare_runtime_pipelines(&mut self,
+accelerator: &Accelerator, acoustic_tags: &[String; 4])` compiles optional edit, soft-body sampling,
+and acoustics passes without applying an edit or creating a body. Call it during a game's loading
+phase to avoid first-use compilation during play. It is a no-op before tile/fluid buffers exist;
+the supplied acoustic tags are used when initializing the acoustic masks.
+
 Call `stream` and `simulate` each fixed update, and `graphics` when drawing. `GameInstance` already does this for games launched with `Engine::launch`; see [Frame and update lifecycle](@/architecture/frame-lifecycle.md) for the order and internal steps.
 
 - `stream(&Accelerator, &Processor, camera_actor) -> Result<(), SceneError>` moves the active region toward a region centered on the camera, twice its unzoomed width and height. It does not wait for I/O. The actor needs camera and kinematics-position components, and the processor needs a `chunk_io` pool ([Host types](@/external-api/host.md)).

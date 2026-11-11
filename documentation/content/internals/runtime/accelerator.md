@@ -56,3 +56,12 @@ Device creation requests `max_storage_buffers_per_shader_stage = 24` and `max_co
 For surface format choice and recovery, see [windows and surfaces](@/internals/runtime/surfaces.md).
 
 `DOGWOOD_PROCESS_PRIORITY=above-normal` requests an optional process-local scheduling hint before initialization; failure is nonfatal. The selected GPU and backend are printed once per initialized accelerator. See [Resources and distributions](@/external-api/resources-build.md#shaders-and-performance).
+
+## Pipeline creation diagnostics
+
+Engine graphics and world passes create pipelines through the host's
+`acceleration::create_compute_pipeline` and `create_render_pipeline` helpers. Each call logs
+its label, start, and completion duration. `pipeline_creation_count()` returns the process-wide
+number of pipeline creations begun; an isolated warmup/descent test can compare it before and
+after runtime transitions to detect first-use compilation. This counter does not include
+third-party egui pipelines or driver-internal compilation work.

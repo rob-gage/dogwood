@@ -185,7 +185,7 @@ impl SceneRendererSpritesPass {
     ) {
         let device: &wgpu::Device = accelerator.device();
         if !self.pipelines.contains_key(&format) {
-            let render_pipeline: wgpu::RenderPipeline = device.create_render_pipeline(
+            let render_pipeline: wgpu::RenderPipeline = engine_host::acceleration::create_render_pipeline(device,
                 &wgpu::RenderPipelineDescriptor {
                     label: Some("`SceneRendererSpritesPass.pipelines`"),
                     layout: Some(&self.pipeline_layout),

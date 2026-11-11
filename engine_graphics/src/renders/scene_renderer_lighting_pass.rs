@@ -91,6 +91,8 @@ struct LightingLevel {
 /// Exact optical/backlight cache. Indirect zero dispatches retain the previous light field, and
 /// with no light source the light is zero.
 struct LightingCache {
+    layout: wgpu::BindGroupLayout,
+    clear_layout: wgpu::BindGroupLayout,
     params: wgpu::Buffer,
     sources: wgpu::Buffer,
     arguments: wgpu::Buffer,
@@ -119,6 +121,7 @@ impl LightingCache {
         fluence: &wgpu::Buffer,
         light: &wgpu::TextureView,
         local_dirty:bool,
+        template: Option<&Self>,
     ) -> Self {
         let d = a.device();
         let buffer = |size, usage| {
@@ -156,7 +159,7 @@ impl LightingCache {
         );
         let c = wgpu::ShaderStages::COMPUTE;
         let rw = wgpu::BufferBindingType::Storage { read_only: false };
-        let layout = d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let layout = if let Some(t) = template { t.layout.clone() } else { d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("lighting cache"),
             entries: &[
                 buffer_entry(0, c, wgpu::BufferBindingType::Uniform, false),
@@ -173,7 +176,7 @@ impl LightingCache {
                 buffer_entry(6, c, rw, false),
                 buffer_entry(7,c,rw,false),
             ],
-        });
+        }) };
         let bind_group = d.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("lighting cache"),
             layout: &layout,
@@ -188,6 +191,29 @@ impl LightingCache {
                 buffer_binding(7,&local_changes),
             ],
         });
+        let clear_layout = if let Some(t) = template { t.clear_layout.clone() } else { d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("zero fluence"),
+            entries: &[
+                buffer_entry(0, c, wgpu::BufferBindingType::Uniform, false),
+                buffer_entry(1, c, rw, false),
+                storage_texture_entry(2),
+            ],
+        }) };
+        let clear_bind_group = d.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("zero fluence"),
+            layout: &clear_layout,
+            entries: &[
+                buffer_binding(0, &params),
+                buffer_binding(1, fluence),
+                texture_binding(2, light),
+            ],
+        });
+        let (prefix_rows, prefix_columns, compare, build_arguments, clear_fluence, clear_light) =
+            if let Some(t) = template {
+                debug_assert_eq!(t.local_dirty, local_dirty);
+                (t.prefix_rows.clone(), t.prefix_columns.clone(), t.compare.clone(),
+                    t.build_arguments.clone(), t.clear_fluence.clone(), t.clear_light.clone())
+            } else {
         let module = d.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("lighting cache"),
             source: wgpu::ShaderSource::Wgsl(
@@ -200,7 +226,7 @@ impl LightingCache {
             immediate_size: 0,
         });
         let pipeline = |entry| {
-            d.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            engine_host::acceleration::create_compute_pipeline(d, &wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
                 layout: Some(&pipeline_layout),
                 module: &module,
@@ -209,23 +235,6 @@ impl LightingCache {
                 cache: None,
             })
         };
-        let clear_layout = d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("zero fluence"),
-            entries: &[
-                buffer_entry(0, c, wgpu::BufferBindingType::Uniform, false),
-                buffer_entry(1, c, rw, false),
-                storage_texture_entry(2),
-            ],
-        });
-        let clear_bind_group = d.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("zero fluence"),
-            layout: &clear_layout,
-            entries: &[
-                buffer_binding(0, &params),
-                buffer_binding(1, fluence),
-                texture_binding(2, light),
-            ],
-        });
         let clear_module = d.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("zero fluence"),
             source: wgpu::ShaderSource::Wgsl(
@@ -237,7 +246,7 @@ impl LightingCache {
             bind_group_layouts: &[Some(&clear_layout)],
             immediate_size: 0,
         });
-        let clear_fluence = d.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let clear_fluence = engine_host::acceleration::create_compute_pipeline(d, &wgpu::ComputePipelineDescriptor {
             label: Some("zero fluence"),
             layout: Some(&clear_pipeline_layout),
             module: &clear_module,
@@ -245,7 +254,7 @@ impl LightingCache {
             compilation_options: Default::default(),
             cache: None,
         });
-        let clear_light = d.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let clear_light = engine_host::acceleration::create_compute_pipeline(d, &wgpu::ComputePipelineDescriptor {
             label: Some("zero light"),
             layout: Some(&clear_pipeline_layout),
             module: &clear_module,
@@ -253,18 +262,23 @@ impl LightingCache {
             compilation_options: Default::default(),
             cache: None,
         });
+                (pipeline("prefix_rows"), pipeline("prefix_columns"), pipeline("compare"),
+                    pipeline("arguments"), clear_fluence, clear_light)
+            };
         Self {
+            layout,
+            clear_layout,
             params,
             sources,
             arguments,
             dirty,
             local_changes,
-            prefix_rows:pipeline("prefix_rows"),
-            prefix_columns:pipeline("prefix_columns"),
+            prefix_rows,
+            prefix_columns,
             local_dirty,
             bind_group,
-            compare: pipeline("compare"),
-            build_arguments: pipeline("arguments"),
+            compare,
+            build_arguments,
             clear_fluence,
             clear_light,
             clear_bind_group,
@@ -687,7 +701,7 @@ impl SceneRendererLightingPass {
             entry_point: &str,
             blend: wgpu::BlendState,
         | -> wgpu::RenderPipeline {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            engine_host::acceleration::create_render_pipeline(device, &wgpu::RenderPipelineDescriptor {
                 label: Some("`SceneRendererLightingPass.sprite_pipelines`"),
                 layout: Some(&sprite_pipeline_layout),
                 vertex: wgpu::VertexState {
@@ -806,7 +820,7 @@ impl SceneRendererLightingPass {
             entry_point: &str,
         | -> wgpu::ComputePipeline {
             let local_constants=[("LOCAL_DIRTY",if local_dirty {1.0}else{0.0})];
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            engine_host::acceleration::create_compute_pipeline(device, &wgpu::ComputePipelineDescriptor {
                 label: Some(label),
                 layout: Some(layout),
                 module,
@@ -919,7 +933,7 @@ impl SceneRendererLightingPass {
         );
         let spread_module=device.create_shader_module(wgpu::ShaderModuleDescriptor{label:Some("spread module"),source:wgpu::ShaderSource::Wgsl(include_str!("scene_renderer_lighting_spread.wgsl").into())});
         let spread_pipelines:Vec<wgpu::ComputePipeline>=[32u32,64,128,256].into_iter().map(|size|{
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor{label:Some("spread pipeline"),layout:Some(&spread_pipeline_layout),module:&spread_module,entry_point:Some("spread_lines"),compilation_options:wgpu::PipelineCompilationOptions{constants:&[("WORKGROUP_SIZE",f64::from(size))],..Default::default()},cache:None})
+            engine_host::acceleration::create_compute_pipeline(device, &wgpu::ComputePipelineDescriptor{label:Some("spread pipeline"),layout:Some(&spread_pipeline_layout),module:&spread_module,entry_point:Some("spread_lines"),compilation_options:wgpu::PipelineCompilationOptions{constants:&[("WORKGROUP_SIZE",f64::from(size))],..Default::default()},cache:None})
         }).collect();
         let spread_buffer: wgpu::Buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("`SceneRendererLightingPass.spread_buffer`"),
@@ -1137,6 +1151,7 @@ impl SceneRendererLightingPass {
             &light_buffers[0],
             &light_storage_view,
             self.local_dirty,
+            self.domain.as_ref().map(|domain| &domain.cache),
         );
         // every level keeps its intervals between frames, and the finest level, which integrates
         // into the fluence, keeps none

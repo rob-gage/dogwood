@@ -116,7 +116,7 @@ impl SoftBodySamplingPass {
                 source: wgpu::ShaderSource::Wgsl(include_str!("soft_body_sampling.wgsl").into()),
             },
         );
-        let pipeline: wgpu::ComputePipeline = device.create_compute_pipeline(
+        let pipeline: wgpu::ComputePipeline = engine_host::acceleration::create_compute_pipeline(device,
             &wgpu::ComputePipelineDescriptor {
                 label: Some("`SoftBodySamplingPass.pipeline`"),
                 layout: Some(&pipeline_layout),

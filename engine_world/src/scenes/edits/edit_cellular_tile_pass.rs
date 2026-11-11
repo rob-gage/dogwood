@@ -82,7 +82,7 @@ impl EditCellularTilePass {
                 source: wgpu::ShaderSource::Wgsl(include_str!("edit_cellular_tile.wgsl").into()),
             },
         );
-        let pipeline: wgpu::ComputePipeline = device.create_compute_pipeline(
+        let pipeline: wgpu::ComputePipeline = engine_host::acceleration::create_compute_pipeline(device,
             &wgpu::ComputePipelineDescriptor {
                 label: Some("`EditCellularTilePass.pipeline`"),
                 layout: Some(&pipeline_layout),

@@ -13,6 +13,8 @@ use crate::{
             ActorIdentityComponent,
             ActorKinematicsPositionComponent,
             ActorKinematicsRotationComponent,
+            ActorPawnPossessionComponent,
+            ActorPawnMovementComponent,
         },
         Actor,
         ActorRegistry,
@@ -155,7 +157,20 @@ impl CellularTiles {
             ));
             fluid_actors.push((actor, collision));
         }
-        fluid_actors.truncate(super::CELLULAR_TILE_ACTOR_COUNT_MAXIMUM);
+        // ECS archetype order is not a priority order. Keeping the first 32 can evict the
+        // controlled pawn from both fluid coupling and hazard sensing in a crowded region.
+        let mut records: Vec<_> = actors.into_iter().zip(fluid_actors).collect();
+        records.sort_by(|(a, _), (b, _)| {
+            gpu_actor_priority(actor_registry, a.0).cmp(&gpu_actor_priority(actor_registry, b.0))
+                .then_with(|| {
+                    let distance = |p: [f32; 2]| (p[0] - region_width as f32 * 0.5).powi(2)
+                        + (p[1] - region_height as f32 * 0.5).powi(2);
+                    distance(a.2).total_cmp(&distance(b.2))
+                })
+                .then(a.0.cmp(&b.0))
+        });
+        records.truncate(super::CELLULAR_TILE_ACTOR_COUNT_MAXIMUM);
+        let (actors, fluid_actors): (Vec<_>, Vec<_>) = records.into_iter().unzip();
         self.fluid_actors = fluid_actors;
         self.actor_positions = actor_positions;
         let (contacts, rigid_body_contacts): (
@@ -186,4 +201,37 @@ impl CellularTiles {
         Ok((self.cellular_contacts.clone(), rigid_body_contacts))
     }
 
+}
+
+// Possessed pawns first, then other pawns, then ordinary colliders.
+fn gpu_actor_priority(registry: &ActorRegistry, actor: Actor) -> u8 {
+    if registry.component::<ActorPawnPossessionComponent>(actor).is_ok() { 0 }
+    else if registry.component::<ActorPawnMovementComponent>(actor).is_ok() { 1 }
+    else { 2 }
+}
+
+#[cfg(test)]
+mod priority_tests {
+    use super::*;
+
+    #[test]
+    fn crowded_actor_budget_retains_controlled_pawn_regardless_of_spawn_order() {
+        let mut registry = ActorRegistry::new();
+        for _ in 0..80 {
+            registry.spawn((ActorKinematicsPositionComponent { position: ScenePosition::default() },)).unwrap();
+        }
+        let controlled = registry.spawn((ActorPawnPossessionComponent, ActorPawnMovementComponent::default(),
+            ActorKinematicsPositionComponent { position: ScenePosition::default() })).unwrap();
+        let other_pawn = registry.spawn((ActorPawnMovementComponent::default(),
+            ActorKinematicsPositionComponent { position: ScenePosition::default() })).unwrap();
+        let mut actors: Vec<_> = registry.components::<ActorIdentityComponent, ActorKinematicsPositionComponent>()
+            .map(|(identity, _)| identity.actor()).collect();
+        assert!(actors.iter().position(|actor| *actor == controlled).unwrap()
+            >= super::super::CELLULAR_TILE_ACTOR_COUNT_MAXIMUM,
+            "the fixture must reproduce the old ECS-order truncation bug");
+        actors.sort_by_key(|actor| (gpu_actor_priority(&registry, *actor), *actor));
+        actors.truncate(super::super::CELLULAR_TILE_ACTOR_COUNT_MAXIMUM);
+        assert_eq!(actors[0], controlled);
+        assert_eq!(actors[1], other_pawn);
+    }
 }
