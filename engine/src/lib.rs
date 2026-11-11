@@ -22,6 +22,7 @@ pub use engine_graphics::{
         },
         scenes::{
             LightingQuality,
+            SceneGraphicsShaded,
             SceneGraphicsOverlay,
             SceneGraphicsOverlayShape,
             SceneGraphicsTemperature,

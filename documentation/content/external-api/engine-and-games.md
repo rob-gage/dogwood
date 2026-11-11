@@ -45,11 +45,19 @@ All trait methods have defaults, so implementations override only the callbacks 
 | `window_mode(&self) -> WindowMode` | The `mode` of `window_configuration()` | Between fixed updates while the window runs; a change moves the window between windowed, borderless fullscreen, and exclusive fullscreen |
 | `update(&mut self, elapsed_time: Duration, game_events: &mut GameEventQueue<Self::GameEvent>)` | No operation | Once per fixed update, at 60 updates per second when the window loop catches up; elapsed time is one update interval |
 | `handle_game_event(&mut self, game_event: Self::GameEvent, game_events: &mut GameEventQueue<Self::GameEvent>)` | No operation | For each event queued by a callback, after that callback returns |
+| `take_prepared_renderer(&mut self) -> Option<SceneRenderer>` | `None` | Before scene rendering each frame; transfers an offscreen-prepared renderer into the runtime, replacing any previous renderer |
 | `scene(&mut self) -> Option<(&mut Scene, Actor)>` | `None` | During update, streaming, and rendering to obtain the current scene and its camera actor |
 | `user_interface(&mut self, user_interface: &mut UserInterface, game_events: &mut GameEventQueue<Self::GameEvent>)` | No operation | Every rendered frame to compose UI |
 | `window_event(&mut self, event: SystemWindowEvent, game_events: &mut GameEventQueue<Self::GameEvent>)` | No operation | When the host emits a window event |
 | `keyboard_event(&mut self, event: SystemKeyboardEvent, game_events: &mut GameEventQueue<Self::GameEvent>)` | No operation | When the host emits a keyboard event |
 | `mouse_event(&mut self, event: SystemMouseEvent, game_events: &mut GameEventQueue<Self::GameEvent>)` | No operation | When the host emits a mouse event |
+
+`GameInstance::new` creates no scene renderer. A game can display a loading UI while a worker
+constructs and warms a `SceneRenderer` using the same `Accelerator`, then transfer it through
+`take_prepared_renderer`. Return `None` after transfer. Without a prepared renderer, the first
+scene draw creates one synchronously. UI-only frames do not compile scene pipelines. The
+runtime applies its selected view mode to a transferred renderer; scene shaders and resources
+that were not exercised during preparation can still initialize lazily.
 
 `GameEventQueue<E>` is a FIFO queue with `push`, `pop`, `len`, and `is_empty`. After each callback that receives it, the engine passes queued events to `handle_game_event` in order. Events queued by a handler are handled in the same drain. A handler that always queues another event never returns. During `update`, event handling finishes before the engine streams and simulates the scene.
 

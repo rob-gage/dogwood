@@ -60,7 +60,7 @@ With a nonzero-sized surface and a cap, the host requests a redraw at each rende
 
 ### Rendering
 
-On `RedrawRequested`, `GameInstance::render` draws the scene (or clears to black if the game has no scene), then runs the game UI. `SceneRenderer` submits the scene command buffer; `GameInstance` then submits the UI callback buffers and UI command buffer. The host applies UI platform output and presents the acquired surface texture.
+On `RedrawRequested`, `GameInstance::render` first accepts any renderer transferred by `Game::take_prepared_renderer`, replacing the previous renderer. Without one, scene renderer construction is deferred until the first scene draw; UI-only frames do not create it. It then draws the scene (or clears to black if the game has no scene), then runs the game UI. `SceneRenderer` submits the scene command buffer; `GameInstance` then submits the UI callback buffers and UI command buffer. The host applies UI platform output and presents the acquired surface texture.
 
 Timeouts and occluded surfaces skip a frame. Outdated or lost surfaces are reconfigured before retrying presentation. See [window surfaces](@/internals/runtime/surfaces.md) and [scene rendering](@/internals/rendering/scene-renderer.md).
 

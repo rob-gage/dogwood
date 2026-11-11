@@ -45,7 +45,7 @@ The facade re-exports selected types from the host, graphics, world, and user-in
 | `engine::Accelerator`, `engine::AcceleratorError` | GPU context and initialization error | [Host types](@/external-api/host.md) |
 | `engine::Processor`, `engine::ProcessorConfiguration`, `engine::ProcessorError` | Named CPU pools and configuration | [Host types](@/external-api/host.md) |
 | `engine::SpriteSheet` | Sprite sheet type | [Graphics](@/external-api/graphics.md) |
-| `engine::SceneRenderer`, `engine::SceneRendererViewMode`, `engine::SceneGraphicsOverlay`, `engine::SceneGraphicsOverlayShape`, `engine::SceneGraphicsTemperature` | Scene renderer, its view modes, and cell-aligned overlays | [Graphics](@/external-api/graphics.md) |
+| `engine::SceneRenderer`, `engine::SceneRendererViewMode`, `engine::SceneGraphicsShaded`, `engine::SceneGraphicsOverlay`, `engine::SceneGraphicsOverlayShape`, `engine::SceneGraphicsTemperature` | Scene renderer, its view modes, and cell-aligned overlays | [Graphics](@/external-api/graphics.md) |
 | `engine::MaterialGraphicsCellularDynamic`, `engine::MaterialGraphicsCellularStatic`, `engine::MaterialGraphicsFluid`, `engine::MaterialGraphicsGas` | Graphics properties for cellular, fluid, and gas materials | [Materials](@/external-api/materials.md) |
 | `engine::resources` | Re-export of the `engine_resources` crate | [Resources and distributions](@/external-api/resources-build.md) |
 | `engine::audio` | Re-export of the `engine_audio` crate | [Audio](@/external-api/audio.md) |

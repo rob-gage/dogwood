@@ -37,7 +37,8 @@ pub struct GameInstance<G: Game> {
     /// Additional overlays supplied by the host for the next rendered frames
     overlays: Vec<SceneGraphicsOverlay>,
     /// Renderer of the game's scene
-    scene_renderer: SceneRenderer,
+    scene_renderer: Option<SceneRenderer>,
+    view_mode: SceneRendererViewMode,
     /// User interface composed by the game over its scene
     user_interface_context: UserInterfaceContext,
     /// Renderer of the game's user interface, absent until the first frame reveals its format
@@ -46,14 +47,15 @@ pub struct GameInstance<G: Game> {
 
 impl<G: Game> GameInstance<G> {
     /// Creates a new `GameInstance` of a `Game` drawn with an accelerator
-    pub fn new(accelerator: &Accelerator, game: G) -> GameInstance<G> {
+    pub fn new(_accelerator: &Accelerator, game: G) -> GameInstance<G> {
         GameInstance {
             game,
             game_events: GameEventQueue::new(),
             held_keys: HashSet::new(),
             camera_actor: None,
             overlays: Vec::new(),
-            scene_renderer: SceneRenderer::new(accelerator),
+            scene_renderer: None,
+            view_mode: SceneRendererViewMode::Graphics,
             user_interface_context: UserInterfaceContext::new(),
             user_interface_renderer: None,
         }
@@ -96,7 +98,8 @@ impl<G: Game> GameInstance<G> {
 
     /// Sets the scene appearance drawn by this game instance
     pub fn set_view_mode(&mut self, view_mode: SceneRendererViewMode) {
-        self.scene_renderer.set_view_mode(view_mode);
+        self.view_mode = view_mode;
+        if let Some(renderer) = &mut self.scene_renderer { renderer.set_view_mode(view_mode); }
     }
 
     /// Handles a host window event, releasing held keys when focus is lost
@@ -217,14 +220,18 @@ impl<G: Game> GameInstance<G> {
         // draw the scene, or clear the frame when the game shows none
         self.drop_missing_camera_actor();
         let camera_actor: Option<Actor> = self.camera_actor;
+        if let Some(renderer) = self.game.take_prepared_renderer() {
+            self.scene_renderer = Some(renderer);
+        }
         match self.game.scene() {
             Some((scene, game_camera_actor)) => {
                 let mut graphics: SceneGraphics<'_> = scene
                     .graphics(camera_actor.unwrap_or(game_camera_actor))
                     .unwrap_or_else(|error| panic!("Scene graphics failed: {error:?}"));
                 graphics.overlays.extend(self.overlays.iter().copied());
-                self.scene_renderer
-                    .render(accelerator, texture_view, &graphics);
+                let renderer = self.scene_renderer.get_or_insert_with(|| SceneRenderer::new(accelerator));
+                renderer.set_view_mode(self.view_mode);
+                renderer.render(accelerator, texture_view, &graphics);
             }
             None => {
                 command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

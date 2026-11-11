@@ -42,6 +42,11 @@ pub trait Game {
     ) {
     }
 
+    /// Transfers a renderer compiled during a game's loading phase to the runtime.
+    fn take_prepared_renderer(&mut self) -> Option<engine_graphics::renders::SceneRenderer> {
+        None
+    }
+
     /// Returns the scene streamed and drawn by the engine with its camera actor, or `None`
     fn scene(&mut self) -> Option<(&mut Scene, Actor)> {
         None

@@ -6,7 +6,7 @@ weight = 90
 sources = ["engine_graphics/src/lib.rs", "engine_graphics/src/sprites", "engine_graphics/src/renders/mod.rs", "engine_graphics/src/renders/scene_renderer.rs", "engine_graphics/src/world/scenes", "engine/src/lib.rs", "engine/src/games/game_instance.rs", "engine_graphics/src/sprites/sprite_sheet.rs", "engine_graphics/src/sprites/sprite_sheet_error.rs", "engine_graphics/src/renders/scene_renderer_lighting_pass.rs", "engine_graphics/src/renders/scene_renderer_lighting_clear.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cache.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_blocks.wgsl", "engine_graphics/src/renders/scene_renderer_lighting.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_cascades.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_mips.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_optical.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_spread.wgsl", "engine_graphics/src/renders/scene_renderer_lighting_sprites.wgsl"]
 +++
 
-Game code generally needs only `SpriteSheet`. Integrators providing their own render loop can use `SceneRenderer` and `SceneGraphics`; the engine also uses them internally. `SceneRenderer`, `SceneRendererViewMode`, `SceneGraphicsOverlay`, `SceneGraphicsOverlayShape`, and `SceneGraphicsTemperature` are re-exported from `engine`; borrowed scene graphics records live in `engine_graphics`.
+Game code generally needs only `SpriteSheet`. Integrators providing their own render loop can use `SceneRenderer` and `SceneGraphics`; the engine also uses them internally. `SceneRenderer`, `SceneRendererViewMode`, `SceneGraphicsShaded`, `SceneGraphicsOverlay`, `SceneGraphicsOverlayShape`, and `SceneGraphicsTemperature` are re-exported from `engine`; borrowed scene graphics records live in `engine_graphics`.
 
 ## SpriteSheet
 
@@ -42,7 +42,7 @@ linear light and alpha linearly.
 
 ## Scene graphics and renderer
 
-`SceneGraphics`, `SceneGraphicsCellular`, `SceneGraphicsFluid`, `SceneGraphicsGas`, `SceneGraphicsPressure`, `SceneGraphicsTemperature`, `SceneGraphicsOverlay`, `SceneGraphicsOverlayShape`, `SceneGraphicsSprites`, `SceneGraphicsParallax`, `SceneGraphicsParallaxBatch`, and `SceneGraphicsMaterialSurfaces` (in `engine_graphics::world::scenes`) are borrowed descriptions of one frame:
+`SceneGraphics`, `SceneGraphicsCellular`, `SceneGraphicsFluid`, `SceneGraphicsGas`, `SceneGraphicsPressure`, `SceneGraphicsTemperature`, `SceneGraphicsShaded`, `SceneGraphicsOverlay`, `SceneGraphicsOverlayShape`, `SceneGraphicsSprites`, `SceneGraphicsParallax`, `SceneGraphicsParallaxBatch`, and `SceneGraphicsMaterialSurfaces` (in `engine_graphics::world::scenes`) are borrowed descriptions of one frame:
 
 - the visible tile dimensions;
 - optional resident cellular buffers and ring placement;
