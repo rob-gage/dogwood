@@ -39,7 +39,7 @@ impl Acoustics {
                 mapped_at_creation: false,
             })
         };
-        let shader = d.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = engine_host::acceleration::create_shader_module(d, wgpu::ShaderModuleDescriptor {
             label: Some("acoustics"),
             source: wgpu::ShaderSource::Wgsl(include_str!("acoustics.wgsl").into()),
         });

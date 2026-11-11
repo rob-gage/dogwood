@@ -92,7 +92,7 @@ impl ChemistryCellularTilePass {
         for binding in 1..=24 {
             entries.push(storage_entry(binding, matches!(binding, 13..=18 | 20 | 22..=24)));
         }
-        let bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
+        let bind_group_layout: wgpu::BindGroupLayout = engine_host::acceleration::create_bind_group_layout(device,
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`ChemistryCellularTilePass.bind_group_layout`"),
                 entries: &entries,
@@ -103,26 +103,26 @@ impl ChemistryCellularTilePass {
         let select_entries: Vec<wgpu::BindGroupLayoutEntry> = select_bindings.iter()
             .map(|binding| entries[*binding as usize])
             .collect();
-        let select_bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
+        let select_bind_group_layout: wgpu::BindGroupLayout = engine_host::acceleration::create_bind_group_layout(device,
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`ChemistryCellularTilePass.select_bind_group_layout`"),
                 entries: &select_entries,
             },
         );
-        let reacting_bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
+        let reacting_bind_group_layout: wgpu::BindGroupLayout = engine_host::acceleration::create_bind_group_layout(device,
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`ChemistryCellularTilePass.reacting_bind_group_layout`"),
                 entries: &[storage_entry(0, false), storage_entry(1, false)],
             },
         );
-        let pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
+        let pipeline_layout: wgpu::PipelineLayout = engine_host::acceleration::create_pipeline_layout(device,
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("`ChemistryCellularTilePass.pipeline_layout`"),
                 bind_group_layouts: &[Some(&bind_group_layout)],
                 immediate_size: 0,
             },
         );
-        let select_pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
+        let select_pipeline_layout: wgpu::PipelineLayout = engine_host::acceleration::create_pipeline_layout(device,
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("`ChemistryCellularTilePass.select_pipeline_layout`"),
                 bind_group_layouts: &[
@@ -138,7 +138,7 @@ impl ChemistryCellularTilePass {
             include_str!("../thermal/thermal_transition.wgsl"),
             include_str!("../thermal/thermal_conversion.wgsl"),
         ].join("\n");
-        let shader_module: wgpu::ShaderModule = device.create_shader_module(
+        let shader_module: wgpu::ShaderModule = engine_host::acceleration::create_shader_module(device,
             wgpu::ShaderModuleDescriptor {
                 label: Some("`ChemistryCellularTilePass.shader_module`"),
                 source: wgpu::ShaderSource::Wgsl(shader_source.into()),

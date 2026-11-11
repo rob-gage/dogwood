@@ -65,7 +65,7 @@ impl SceneRendererCellularPass {
         is_cached: bool,
     ) -> Self {
         let device: &wgpu::Device = accelerator.device();
-        let bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
+        let bind_group_layout: wgpu::BindGroupLayout = engine_host::acceleration::create_bind_group_layout(device,
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`SceneRendererCellularPass.bind_group_layout`"),
                 entries: &[
@@ -152,14 +152,14 @@ impl SceneRendererCellularPass {
                 ],
             },
         );
-        let pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
+        let pipeline_layout: wgpu::PipelineLayout = engine_host::acceleration::create_pipeline_layout(device,
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("`SceneRendererCellularPass.pipeline_layout`"),
                 bind_group_layouts: &[Some(&bind_group_layout), Some(lighting_bind_group_layout)],
                 immediate_size: 0,
             },
         );
-        let shader_module: wgpu::ShaderModule = device.create_shader_module(
+        let shader_module: wgpu::ShaderModule = engine_host::acceleration::create_shader_module(device,
             wgpu::ShaderModuleDescriptor {
                 label: Some("`SceneRendererCellularPass.shader_module`"),
                 source: wgpu::ShaderSource::Wgsl(

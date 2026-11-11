@@ -124,7 +124,7 @@ impl SceneRendererDecorationsPass {
             },
             count: None,
         };
-        let view_bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
+        let view_bind_group_layout: wgpu::BindGroupLayout = engine_host::acceleration::create_bind_group_layout(device,
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`SceneRendererDecorationsPass.view_bind_group_layout`"),
                 entries: &[
@@ -169,7 +169,7 @@ impl SceneRendererDecorationsPass {
                 ],
             },
         );
-        let batch_bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
+        let batch_bind_group_layout: wgpu::BindGroupLayout = engine_host::acceleration::create_bind_group_layout(device,
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`SceneRendererDecorationsPass.batch_bind_group_layout`"),
                 entries: &[wgpu::BindGroupLayoutEntry {
@@ -184,7 +184,7 @@ impl SceneRendererDecorationsPass {
                 }],
             },
         );
-        let pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
+        let pipeline_layout: wgpu::PipelineLayout = engine_host::acceleration::create_pipeline_layout(device,
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("`SceneRendererDecorationsPass.pipeline_layout`"),
                 bind_group_layouts: &[
@@ -195,7 +195,7 @@ impl SceneRendererDecorationsPass {
                 immediate_size: 0,
             },
         );
-        let shader_module: wgpu::ShaderModule = device.create_shader_module(
+        let shader_module: wgpu::ShaderModule = engine_host::acceleration::create_shader_module(device,
             wgpu::ShaderModuleDescriptor {
                 label: Some("`SceneRendererDecorationsPass.shader_module`"),
                 source: wgpu::ShaderSource::Wgsl(
@@ -209,7 +209,7 @@ impl SceneRendererDecorationsPass {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let field_bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
+        let field_bind_group_layout: wgpu::BindGroupLayout = engine_host::acceleration::create_bind_group_layout(device,
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`SceneRendererDecorationsPass.field_bind_group_layout`"),
                 entries: &[
@@ -256,14 +256,14 @@ impl SceneRendererDecorationsPass {
                 ],
             },
         );
-        let field_pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
+        let field_pipeline_layout: wgpu::PipelineLayout = engine_host::acceleration::create_pipeline_layout(device,
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("`SceneRendererDecorationsPass.field_pipeline_layout`"),
                 bind_group_layouts: &[Some(&field_bind_group_layout)],
                 immediate_size: 0,
             },
         );
-        let field_module: wgpu::ShaderModule = device.create_shader_module(
+        let field_module: wgpu::ShaderModule = engine_host::acceleration::create_shader_module(device,
             wgpu::ShaderModuleDescriptor {
                 label: Some("`SceneRendererDecorationsPass.field_module`"),
                 source: wgpu::ShaderSource::Wgsl(

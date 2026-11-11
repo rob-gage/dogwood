@@ -159,7 +159,7 @@ impl LightingCache {
         );
         let c = wgpu::ShaderStages::COMPUTE;
         let rw = wgpu::BufferBindingType::Storage { read_only: false };
-        let layout = if let Some(t) = template { t.layout.clone() } else { d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let layout = if let Some(t) = template { t.layout.clone() } else { engine_host::acceleration::create_bind_group_layout(d, &wgpu::BindGroupLayoutDescriptor {
             label: Some("lighting cache"),
             entries: &[
                 buffer_entry(0, c, wgpu::BufferBindingType::Uniform, false),
@@ -191,7 +191,7 @@ impl LightingCache {
                 buffer_binding(7,&local_changes),
             ],
         });
-        let clear_layout = if let Some(t) = template { t.clear_layout.clone() } else { d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let clear_layout = if let Some(t) = template { t.clear_layout.clone() } else { engine_host::acceleration::create_bind_group_layout(d, &wgpu::BindGroupLayoutDescriptor {
             label: Some("zero fluence"),
             entries: &[
                 buffer_entry(0, c, wgpu::BufferBindingType::Uniform, false),
@@ -214,13 +214,13 @@ impl LightingCache {
                 (t.prefix_rows.clone(), t.prefix_columns.clone(), t.compare.clone(),
                     t.build_arguments.clone(), t.clear_fluence.clone(), t.clear_light.clone())
             } else {
-        let module = d.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let module = engine_host::acceleration::create_shader_module(d, wgpu::ShaderModuleDescriptor {
             label: Some("lighting cache"),
             source: wgpu::ShaderSource::Wgsl(
                 include_str!("scene_renderer_lighting_cache.wgsl").into(),
             ),
         });
-        let pipeline_layout = d.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        let pipeline_layout = engine_host::acceleration::create_pipeline_layout(d, &wgpu::PipelineLayoutDescriptor {
             label: Some("lighting cache"),
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
@@ -235,13 +235,13 @@ impl LightingCache {
                 cache: None,
             })
         };
-        let clear_module = d.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let clear_module = engine_host::acceleration::create_shader_module(d, wgpu::ShaderModuleDescriptor {
             label: Some("zero fluence"),
             source: wgpu::ShaderSource::Wgsl(
                 include_str!("scene_renderer_lighting_clear.wgsl").into(),
             ),
         });
-        let clear_pipeline_layout = d.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        let clear_pipeline_layout = engine_host::acceleration::create_pipeline_layout(d, &wgpu::PipelineLayoutDescriptor {
             label: Some("zero fluence"),
             bind_group_layouts: &[Some(&clear_layout)],
             immediate_size: 0,
@@ -556,7 +556,7 @@ impl SceneRendererLightingPass {
         let device: &wgpu::Device = accelerator.device();
         let fragment_and_compute: wgpu::ShaderStages =
             wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE;
-        let lighting_bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
+        let lighting_bind_group_layout: wgpu::BindGroupLayout = engine_host::acceleration::create_bind_group_layout(device,
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`SceneRendererLightingPass.lighting_bind_group_layout`"),
                 entries: &[
@@ -625,7 +625,7 @@ impl SceneRendererLightingPass {
             mapped_at_creation: false,
         });
         // sprite rasterization
-        let sprite_bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
+        let sprite_bind_group_layout: wgpu::BindGroupLayout = engine_host::acceleration::create_bind_group_layout(device,
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`SceneRendererLightingPass.sprite_bind_group_layout`"),
                 entries: &[
@@ -645,7 +645,7 @@ impl SceneRendererLightingPass {
             },
         );
         let sprite_texture_bind_group_layout: wgpu::BindGroupLayout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            engine_host::acceleration::create_bind_group_layout(device, &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`SceneRendererLightingPass.sprite_texture_bind_group_layout`"),
                 entries: &[texture_entry(
                     0,
@@ -669,7 +669,7 @@ impl SceneRendererLightingPass {
                 },
             ],
         });
-        let sprite_pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
+        let sprite_pipeline_layout: wgpu::PipelineLayout = engine_host::acceleration::create_pipeline_layout(device,
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("`SceneRendererLightingPass.sprite_pipeline_layout`"),
                 bind_group_layouts: &[
@@ -679,7 +679,7 @@ impl SceneRendererLightingPass {
                 immediate_size: 0,
             },
         );
-        let sprite_module: wgpu::ShaderModule = device.create_shader_module(
+        let sprite_module: wgpu::ShaderModule = engine_host::acceleration::create_shader_module(device,
             wgpu::ShaderModuleDescriptor {
                 label: Some("`SceneRendererLightingPass.sprite_module`"),
                 source: wgpu::ShaderSource::Wgsl(
@@ -777,7 +777,7 @@ impl SceneRendererLightingPass {
         });
         // optical field
         let read_storage: wgpu::BufferBindingType = wgpu::BufferBindingType::Storage { read_only: true };
-        let optical_bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
+        let optical_bind_group_layout: wgpu::BindGroupLayout = engine_host::acceleration::create_bind_group_layout(device,
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`SceneRendererLightingPass.optical_bind_group_layout`"),
                 entries: &[
@@ -797,14 +797,14 @@ impl SceneRendererLightingPass {
                 ],
             },
         );
-        let optical_pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
+        let optical_pipeline_layout: wgpu::PipelineLayout = engine_host::acceleration::create_pipeline_layout(device,
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("`SceneRendererLightingPass.optical_pipeline_layout`"),
                 bind_group_layouts: &[Some(&optical_bind_group_layout), Some(&lighting_bind_group_layout)],
                 immediate_size: 0,
             },
         );
-        let optical_module: wgpu::ShaderModule = device.create_shader_module(
+        let optical_module: wgpu::ShaderModule = engine_host::acceleration::create_shader_module(device,
             wgpu::ShaderModuleDescriptor {
                 label: Some("`SceneRendererLightingPass.optical_module`"),
                 source: wgpu::ShaderSource::Wgsl(lighting_shader_source(
@@ -844,7 +844,7 @@ impl SceneRendererLightingPass {
         // cascades
         let read_write_storage: wgpu::BufferBindingType =
             wgpu::BufferBindingType::Storage { read_only: false };
-        let cascade_bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
+        let cascade_bind_group_layout: wgpu::BindGroupLayout = engine_host::acceleration::create_bind_group_layout(device,
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`SceneRendererLightingPass.cascade_bind_group_layout`"),
                 entries: &[
@@ -859,14 +859,14 @@ impl SceneRendererLightingPass {
                 ],
             },
         );
-        let cascade_pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
+        let cascade_pipeline_layout: wgpu::PipelineLayout = engine_host::acceleration::create_pipeline_layout(device,
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("`SceneRendererLightingPass.cascade_pipeline_layout`"),
                 bind_group_layouts: &[Some(&cascade_bind_group_layout)],
                 immediate_size: 0,
             },
         );
-        let cascade_module: wgpu::ShaderModule = device.create_shader_module(
+        let cascade_module: wgpu::ShaderModule = engine_host::acceleration::create_shader_module(device,
             wgpu::ShaderModuleDescriptor {
                 label: Some("`SceneRendererLightingPass.cascade_module`"),
                 source: wgpu::ShaderSource::Wgsl(
@@ -905,7 +905,7 @@ impl SceneRendererLightingPass {
             mapped_at_creation: false,
         });
         // spread
-        let spread_bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
+        let spread_bind_group_layout: wgpu::BindGroupLayout = engine_host::acceleration::create_bind_group_layout(device,
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`SceneRendererLightingPass.spread_bind_group_layout`"),
                 entries: &[
@@ -924,14 +924,14 @@ impl SceneRendererLightingPass {
                 ],
             },
         );
-        let spread_pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
+        let spread_pipeline_layout: wgpu::PipelineLayout = engine_host::acceleration::create_pipeline_layout(device,
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("`SceneRendererLightingPass.spread_pipeline_layout`"),
                 bind_group_layouts: &[Some(&spread_bind_group_layout)],
                 immediate_size: 0,
             },
         );
-        let spread_module=device.create_shader_module(wgpu::ShaderModuleDescriptor{label:Some("spread module"),source:wgpu::ShaderSource::Wgsl(include_str!("scene_renderer_lighting_spread.wgsl").into())});
+        let spread_module=engine_host::acceleration::create_shader_module(device, wgpu::ShaderModuleDescriptor{label:Some("spread module"),source:wgpu::ShaderSource::Wgsl(include_str!("scene_renderer_lighting_spread.wgsl").into())});
         let spread_pipelines:Vec<wgpu::ComputePipeline>=[32u32,64,128,256].into_iter().map(|size|{
             engine_host::acceleration::create_compute_pipeline(device, &wgpu::ComputePipelineDescriptor{label:Some("spread pipeline"),layout:Some(&spread_pipeline_layout),module:&spread_module,entry_point:Some("spread_lines"),compilation_options:wgpu::PipelineCompilationOptions{constants:&[("WORKGROUP_SIZE",f64::from(size))],..Default::default()},cache:None})
         }).collect();
@@ -942,20 +942,20 @@ impl SceneRendererLightingPass {
             mapped_at_creation: false,
         });
         // uniform blocks
-        let block_bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
+        let block_bind_group_layout: wgpu::BindGroupLayout = engine_host::acceleration::create_bind_group_layout(device,
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`SceneRendererLightingPass.block_bind_group_layout`"),
                 entries: &[texture_entry(0, wgpu::ShaderStages::COMPUTE), storage_texture_entry(1)],
             },
         );
-        let block_pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
+        let block_pipeline_layout: wgpu::PipelineLayout = engine_host::acceleration::create_pipeline_layout(device,
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("`SceneRendererLightingPass.block_pipeline_layout`"),
                 bind_group_layouts: &[Some(&block_bind_group_layout)],
                 immediate_size: 0,
             },
         );
-        let block_module: wgpu::ShaderModule = device.create_shader_module(
+        let block_module: wgpu::ShaderModule = engine_host::acceleration::create_shader_module(device,
             wgpu::ShaderModuleDescriptor {
                 label: Some("`SceneRendererLightingPass.block_module`"),
                 source: wgpu::ShaderSource::Wgsl(include_str!("scene_renderer_lighting_blocks.wgsl").into()),
@@ -968,20 +968,20 @@ impl SceneRendererLightingPass {
             "classify",
         );
         // light mips
-        let mip_bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
+        let mip_bind_group_layout: wgpu::BindGroupLayout = engine_host::acceleration::create_bind_group_layout(device,
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`SceneRendererLightingPass.mip_bind_group_layout`"),
                 entries: &[texture_entry(0, wgpu::ShaderStages::COMPUTE), storage_texture_entry(1)],
             },
         );
-        let mip_pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
+        let mip_pipeline_layout: wgpu::PipelineLayout = engine_host::acceleration::create_pipeline_layout(device,
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("`SceneRendererLightingPass.mip_pipeline_layout`"),
                 bind_group_layouts: &[Some(&mip_bind_group_layout)],
                 immediate_size: 0,
             },
         );
-        let mip_module: wgpu::ShaderModule = device.create_shader_module(
+        let mip_module: wgpu::ShaderModule = engine_host::acceleration::create_shader_module(device,
             wgpu::ShaderModuleDescriptor {
                 label: Some("`SceneRendererLightingPass.mip_module`"),
                 source: wgpu::ShaderSource::Wgsl(include_str!("scene_renderer_lighting_mips.wgsl").into()),

@@ -59,9 +59,19 @@ For surface format choice and recovery, see [windows and surfaces](@/internals/r
 
 ## Pipeline creation diagnostics
 
-Engine graphics and world passes create pipelines through the host's
-`acceleration::create_compute_pipeline` and `create_render_pipeline` helpers. Each call logs
-its label, start, and completion duration. `pipeline_creation_count()` returns the process-wide
-number of pipeline creations begun; an isolated warmup/descent test can compare it before and
-after runtime transitions to detect first-use compilation. This counter does not include
-third-party egui pipelines or driver-internal compilation work.
+Engine graphics and world passes use the host's cached shader-module, bind-group-layout,
+pipeline-layout, compute-pipeline, and render-pipeline factories. An `Accelerator` owns an
+`Arc` to its device's cache; clones share it. Identical WGSL sources, binding layouts, and
+pipeline descriptors reuse the same handles across scene/renderer lifetimes. Debug labels do
+not affect cache identity. Specialization constants, workgroup initialization, entry points,
+vertex layouts, target formats, blend/depth/multisample state, and multiview masks do.
+
+Only cache misses log a pipeline's label, start, and completion duration.
+`pipeline_creation_count()` returns the process-wide number of actual engine pipeline creations
+begun, excluding cache hits. An isolated warmup/world-recreation test can compare it before and
+after transitions. This counter excludes third-party egui pipelines and driver-internal work.
+
+The cache retains modules, layouts and pipelines, not world buffers or textures. It is scoped
+to one device and is released with the last `Accelerator` clone, including its registry entry.
+Raw devices not registered through an `Accelerator` use the factories without caching. This is
+in-process reuse, not a persistent on-disk shader cache; a new process/device starts cold.

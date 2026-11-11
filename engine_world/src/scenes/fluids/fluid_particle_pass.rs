@@ -283,7 +283,7 @@ impl FluidParticlePass {
                 count: None,
             }
         };
-        let bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
+        let bind_group_layout: wgpu::BindGroupLayout = engine_host::acceleration::create_bind_group_layout(device,
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`FluidParticlePass.bind_group_layout`"),
                 entries: &[
@@ -316,7 +316,7 @@ impl FluidParticlePass {
             },
         );
         let boundary_motion_bind_group_layout: wgpu::BindGroupLayout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            engine_host::acceleration::create_bind_group_layout(device, &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`FluidParticlePass.boundary_motion_bind_group_layout`"),
                 entries: &[
                     uniform_entry(),
@@ -331,7 +331,7 @@ impl FluidParticlePass {
                 ],
             });
         let actor_projection_bind_group_layout: wgpu::BindGroupLayout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            engine_host::acceleration::create_bind_group_layout(device, &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`FluidParticlePass.actor_projection_bind_group_layout`"),
                 entries: &[
                     uniform_entry(),
@@ -349,7 +349,7 @@ impl FluidParticlePass {
                 ],
             });
         let actor_sample_bind_group_layout: wgpu::BindGroupLayout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            engine_host::acceleration::create_bind_group_layout(device, &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`FluidParticlePass.actor_sample_bind_group_layout`"),
                 entries: &[
                     uniform_entry(),
@@ -362,7 +362,7 @@ impl FluidParticlePass {
                 ],
             });
         let actor_commit_bind_group_layout: wgpu::BindGroupLayout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            engine_host::acceleration::create_bind_group_layout(device, &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`FluidParticlePass.actor_commit_bind_group_layout`"),
                 entries: &[
                     uniform_entry(),
@@ -375,7 +375,7 @@ impl FluidParticlePass {
                 ],
             });
         let conversion_bind_group_layout: wgpu::BindGroupLayout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            engine_host::acceleration::create_bind_group_layout(device, &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`FluidParticlePass.conversion_bind_group_layout`"),
                 entries: &[
                     uniform_entry(),
@@ -402,40 +402,40 @@ impl FluidParticlePass {
                 ],
             });
         let conversion_spawn_bind_group_layout: wgpu::BindGroupLayout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            engine_host::acceleration::create_bind_group_layout(device, &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`FluidParticlePass.conversion_spawn_bind_group_layout`"),
                 entries: &[storage_entry(1, false)],
             });
         let prepare_fluid_spawn_bind_group_layout: wgpu::BindGroupLayout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            engine_host::acceleration::create_bind_group_layout(device, &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`FluidParticlePass.prepare_fluid_spawn_bind_group_layout`"),
                 entries: &[storage_entry(55, false)],
             });
-        let prepare_bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
+        let prepare_bind_group_layout: wgpu::BindGroupLayout = engine_host::acceleration::create_bind_group_layout(device,
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`FluidParticlePass.prepare_bind_group_layout`"),
                 entries: &[uniform_entry(), storage_entry(10, false)],
             },
         );
         let prepare_raster_bind_group_layout: wgpu::BindGroupLayout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            engine_host::acceleration::create_bind_group_layout(device, &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`FluidParticlePass.prepare_raster_bind_group_layout`"),
                 entries: &[uniform_entry(), storage_entry(16, false)],
             });
-        let dispatch_bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
+        let dispatch_bind_group_layout: wgpu::BindGroupLayout = engine_host::acceleration::create_bind_group_layout(device,
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`FluidParticlePass.dispatch_bind_group_layout`"),
                 entries: &[storage_entry(0, false)],
             },
         );
-        let pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
+        let pipeline_layout: wgpu::PipelineLayout = engine_host::acceleration::create_pipeline_layout(device,
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("`FluidParticlePass.pipeline_layout`"),
                 bind_group_layouts: &[Some(&bind_group_layout)],
                 immediate_size: 0,
             },
         );
-        let prepare_pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
+        let prepare_pipeline_layout: wgpu::PipelineLayout = engine_host::acceleration::create_pipeline_layout(device,
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("`FluidParticlePass.prepare_pipeline_layout`"),
                 bind_group_layouts: &[
@@ -446,7 +446,7 @@ impl FluidParticlePass {
             },
         );
         let prepare_raster_pipeline_layout: wgpu::PipelineLayout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            engine_host::acceleration::create_pipeline_layout(device, &wgpu::PipelineLayoutDescriptor {
                 label: Some("`FluidParticlePass.prepare_raster_pipeline_layout`"),
                 bind_group_layouts: &[
                     Some(&prepare_raster_bind_group_layout),
@@ -455,30 +455,30 @@ impl FluidParticlePass {
                 immediate_size: 0,
             });
         let boundary_motion_pipeline_layout: wgpu::PipelineLayout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            engine_host::acceleration::create_pipeline_layout(device, &wgpu::PipelineLayoutDescriptor {
                 label: Some("`FluidParticlePass.boundary_motion_pipeline_layout`"),
                 bind_group_layouts: &[Some(&boundary_motion_bind_group_layout)],
                 immediate_size: 0,
             });
         let actor_projection_pipeline_layout: wgpu::PipelineLayout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            engine_host::acceleration::create_pipeline_layout(device, &wgpu::PipelineLayoutDescriptor {
                 label: Some("`FluidParticlePass.actor_projection_pipeline_layout`"),
                 bind_group_layouts: &[Some(&actor_projection_bind_group_layout)],
                 immediate_size: 0,
             });
         let actor_sample_pipeline_layout: wgpu::PipelineLayout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            engine_host::acceleration::create_pipeline_layout(device, &wgpu::PipelineLayoutDescriptor {
                 label: Some("`FluidParticlePass.actor_sample_pipeline_layout`"),
                 bind_group_layouts: &[Some(&actor_sample_bind_group_layout)],
                 immediate_size: 0,
             });
         let actor_commit_pipeline_layout: wgpu::PipelineLayout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            engine_host::acceleration::create_pipeline_layout(device, &wgpu::PipelineLayoutDescriptor {
                 label: Some("`FluidParticlePass.actor_commit_pipeline_layout`"),
                 bind_group_layouts: &[Some(&actor_commit_bind_group_layout)],
                 immediate_size: 0,
             });
-        let conversion_pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
+        let conversion_pipeline_layout: wgpu::PipelineLayout = engine_host::acceleration::create_pipeline_layout(device,
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("`FluidParticlePass.conversion_pipeline_layout`"),
                 bind_group_layouts: &[
@@ -489,7 +489,7 @@ impl FluidParticlePass {
             },
         );
         let prepare_fluid_spawn_pipeline_layout: wgpu::PipelineLayout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            engine_host::acceleration::create_pipeline_layout(device, &wgpu::PipelineLayoutDescriptor {
                 label: Some("`FluidParticlePass.prepare_fluid_spawn_pipeline_layout`"),
                 bind_group_layouts: &[
                     Some(&prepare_fluid_spawn_bind_group_layout),
@@ -526,7 +526,7 @@ impl FluidParticlePass {
                 "__FLUID_RASTER_ALIGNMENT_WORDS__",
                 &(device.limits().min_storage_buffer_offset_alignment / 4).to_string(),
             );
-        let shader_module: wgpu::ShaderModule = device.create_shader_module(
+        let shader_module: wgpu::ShaderModule = engine_host::acceleration::create_shader_module(device,
             wgpu::ShaderModuleDescriptor {
                 label: Some("`FluidParticlePass.shader_module`"),
                 source: wgpu::ShaderSource::Wgsl(Cow::Owned(shader_source)),

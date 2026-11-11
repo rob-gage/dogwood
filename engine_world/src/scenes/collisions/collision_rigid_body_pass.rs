@@ -112,7 +112,7 @@ impl CollisionRigidBodyPass {
                 count: None,
             }
         };
-        let bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
+        let bind_group_layout: wgpu::BindGroupLayout = engine_host::acceleration::create_bind_group_layout(device,
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`CollisionRigidBodyPass.bind_group_layout`"),
                 entries: &[
@@ -145,14 +145,14 @@ impl CollisionRigidBodyPass {
                 ],
             },
         );
-        let pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
+        let pipeline_layout: wgpu::PipelineLayout = engine_host::acceleration::create_pipeline_layout(device,
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("`CollisionRigidBodyPass.pipeline_layout`"),
                 bind_group_layouts: &[Some(&bind_group_layout)],
                 immediate_size: 0,
             },
         );
-        let shader_module: wgpu::ShaderModule = device.create_shader_module(
+        let shader_module: wgpu::ShaderModule = engine_host::acceleration::create_shader_module(device,
             wgpu::ShaderModuleDescriptor {
                 label: Some("`CollisionRigidBodyPass.shader_module`"),
                 source: wgpu::ShaderSource::Wgsl(include_str!("collision_rigid_body.wgsl").into()),

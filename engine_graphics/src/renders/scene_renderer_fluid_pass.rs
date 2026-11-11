@@ -53,7 +53,7 @@ impl SceneRendererFluidPass {
     /// Creates fluid rendering resources
     pub fn new(accelerator: &Accelerator, lighting_bind_group_layout: &wgpu::BindGroupLayout) -> Self {
         let device: &wgpu::Device = accelerator.device();
-        let bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
+        let bind_group_layout: wgpu::BindGroupLayout = engine_host::acceleration::create_bind_group_layout(device,
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`SceneRendererFluidPass.bind_group_layout`"),
                 entries: &[
@@ -160,14 +160,14 @@ impl SceneRendererFluidPass {
                 ],
             },
         );
-        let pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
+        let pipeline_layout: wgpu::PipelineLayout = engine_host::acceleration::create_pipeline_layout(device,
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("`SceneRendererFluidPass.pipeline_layout`"),
                 bind_group_layouts: &[Some(&bind_group_layout), Some(lighting_bind_group_layout)],
                 immediate_size: 0,
             },
         );
-        let shader_module: wgpu::ShaderModule = device.create_shader_module(
+        let shader_module: wgpu::ShaderModule = engine_host::acceleration::create_shader_module(device,
             wgpu::ShaderModuleDescriptor {
                 label: Some("`SceneRendererFluidPass.shader_module`"),
                 source: wgpu::ShaderSource::Wgsl(

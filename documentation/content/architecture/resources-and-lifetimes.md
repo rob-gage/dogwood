@@ -190,3 +190,8 @@ The first `Scene::sample_acoustics` call with resident tiles allocates a scene-o
 ## Game resource catalogue
 
 `engine::resources::Resources` owns a loose catalogue or an in-memory package index. Keep one instance for the game lifetime. Each `ResourceReader` owns an independent bounded file handle or a decompressed byte cursor and may outlive the catalogue. Music workers own their readers; dropping a music stream cancels and joins its decoder outside the audio callback. See [Resources and distributions](@/external-api/resources-build.md).
+
+GPU shader modules, layouts and compute/render pipelines created through the host factories
+are cached for the lifetime of their `Accelerator` device, independently of scene lifetimes.
+World buffers and textures remain scene-owned. See [GPU accelerator](@/internals/runtime/accelerator.md#pipeline-creation-diagnostics)
+for cache identity, ownership, and compilation counters.

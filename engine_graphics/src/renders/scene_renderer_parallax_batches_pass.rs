@@ -44,7 +44,7 @@ impl SceneRendererParallaxBatchesPass {
     /// Creates the resources, sampling the lighting group of a layout
     pub fn new(accelerator: &Accelerator, lighting_bind_group_layout: &wgpu::BindGroupLayout) -> Self {
         let device: &wgpu::Device = accelerator.device();
-        let view_bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
+        let view_bind_group_layout: wgpu::BindGroupLayout = engine_host::acceleration::create_bind_group_layout(device,
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`SceneRendererParallaxBatchesPass.view_bind_group_layout`"),
                 entries: &[
@@ -77,13 +77,13 @@ impl SceneRendererParallaxBatchesPass {
             },
             count: None,
         };
-        let texture_bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
+        let texture_bind_group_layout: wgpu::BindGroupLayout = engine_host::acceleration::create_bind_group_layout(device,
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`SceneRendererParallaxBatchesPass.texture_bind_group_layout`"),
                 entries: &[texture_entry(0), texture_entry(1)],
             },
         );
-        let batch_bind_group_layout: wgpu::BindGroupLayout = device.create_bind_group_layout(
+        let batch_bind_group_layout: wgpu::BindGroupLayout = engine_host::acceleration::create_bind_group_layout(device,
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("`SceneRendererParallaxBatchesPass.batch_bind_group_layout`"),
                 entries: &[
@@ -110,7 +110,7 @@ impl SceneRendererParallaxBatchesPass {
                 ],
             },
         );
-        let pipeline_layout: wgpu::PipelineLayout = device.create_pipeline_layout(
+        let pipeline_layout: wgpu::PipelineLayout = engine_host::acceleration::create_pipeline_layout(device,
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("`SceneRendererParallaxBatchesPass.pipeline_layout`"),
                 bind_group_layouts: &[
@@ -122,7 +122,7 @@ impl SceneRendererParallaxBatchesPass {
                 immediate_size: 0,
             },
         );
-        let shader_module: wgpu::ShaderModule = device.create_shader_module(
+        let shader_module: wgpu::ShaderModule = engine_host::acceleration::create_shader_module(device,
             wgpu::ShaderModuleDescriptor {
                 label: Some("`SceneRendererParallaxBatchesPass.shader_module`"),
                 source: wgpu::ShaderSource::Wgsl(

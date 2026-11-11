@@ -13,6 +13,7 @@ pub struct Accelerator {
     device: wgpu::Device,
     /// Queue used to submit GPU work
     queue: wgpu::Queue,
+    _pipelines: std::sync::Arc<super::pipelines::PipelineStore>,
 }
 
 impl Accelerator {
@@ -100,7 +101,9 @@ impl Accelerator {
         super::performance::configure();
         let instance = Self::create_instance()?;
         let (adapter, device, queue) = pollster::block_on(Self::initialize(&instance))?;
-        Ok(Self { instance, adapter, device, queue })
+        let pipelines = std::sync::Arc::new(super::pipelines::PipelineStore::default());
+        super::pipelines::register(&device, &pipelines);
+        Ok(Self { instance, adapter, device, queue, _pipelines: pipelines })
     }
 
     /// Returns the WGPU instance used by this context
